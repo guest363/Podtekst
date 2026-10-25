@@ -373,6 +373,14 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
                     .inner_size(WINDOW_W, WINDOW_H)
                     .min_inner_size(WINDOW_MIN_W, WINDOW_MIN_H)
                     .visible(visible)
+                    // target="_blank" (донат, внешние ссылки) открываем в системном
+                    // браузере: WebView2 сам новое окно не создаёт.
+                    .on_new_window(|url, _| {
+                        if matches!(url.scheme(), "http" | "https") {
+                            crate::opener_url(url.as_str());
+                        }
+                        tauri::webview::NewWindowResponse::Deny
+                    })
                     // Живой VU-метр до старта записи использует getUserMedia.
                     .on_permission_request(|_, kind| match kind {
                         tauri::webview::PermissionKind::Microphone => {

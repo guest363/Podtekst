@@ -210,7 +210,6 @@
 .input-field:focus { border-color: var(--accent-blue); box-shadow: 0 0 0 3px rgba(36, 86, 198, 0.12); }
 
 /* ---------- Футер ---------- */
-.page-footer { display: flex; justify-content: center; align-items: center; padding: 12px 6px; }
 
 /* ---------- Скроллбары (консистентный минималистичный стиль) ---------- */
 ::-webkit-scrollbar {

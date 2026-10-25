@@ -149,12 +149,6 @@
         </section>
       {/if}
     </main>
-
-    <footer class="page-footer">
-      <button class="btn-secondary btn-sm" onclick={() => (ui.donateOpen = true)}>
-        Поддержать разработку
-      </button>
-    </footer>
   </div>
 {/if}
 

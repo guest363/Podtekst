@@ -82,9 +82,15 @@ const DEFAULT_HTTP_PORT: u16 = 8765;
 
 fn opener_url(url: &str) {
     #[cfg(target_os = "windows")]
-    let _ = std::process::Command::new("cmd")
-        .args(["/C", "start", url])
-        .spawn();
+    {
+        use std::os::windows::process::CommandExt;
+        // Без CREATE_NO_WINDOW `cmd /C start` мигает консолью поверх UI.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
+    }
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(url).spawn();
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
