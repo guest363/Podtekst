@@ -17,7 +17,7 @@ clap = { version = "4.5", features = ["derive"] }
 tiny_http = "0.12"
 fs2 = "0.4"
 hound = "3.5"
-symphonia = { version = "0.5", default-features = false, features = ["mp3", "wav", "pcm", "isomp4", "ogg", "vorbis", "aac", "flac"] }
+symphonia = { version = "0.6", default-features = false, features = ["mp3", "wav", "pcm", "isomp4", "ogg", "vorbis", "aac", "flac"] }
 opus-decoder = "0.1"
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
