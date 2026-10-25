@@ -1,0 +1,7 @@
+{
+  "save_dir": "~/Recordings",
+  "knowledge_dirs": ["~/knowledge"],
+  "record_mode": "split",
+  "auto_transcribe": true,
+  "engine": "auto"
+}

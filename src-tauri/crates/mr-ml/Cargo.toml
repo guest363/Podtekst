@@ -1,0 +1,28 @@
+[package]
+name = "mr-ml"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.92"
+description = "Математика диаризации v2: мульти-прототипы, Венгерский алгоритм, Margin Gate (ONNX-рантайм за фичей onnx)"
+license = "MIT"
+repository = "https://github.com/guest363/meeting-record"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[features]
+default = []
+onnx = ["dep:ort"]
+# Аппаратные Execution Providers (опционально; при недоступности — CPU-fallback):
+# ort-cuda (Linux/Windows, NVIDIA), ort-directml (Windows, любой GPU), ort-coreml (macOS).
+ort-cuda = ["onnx", "ort/cuda"]
+ort-directml = ["onnx", "ort/directml"]
+ort-coreml = ["onnx", "ort/coreml"]
+
+[dependencies.ort]
+version = "=2.0.0-rc.15"
+optional = true
+default-features = false
+features = ["std", "download-binaries", "tls-rustls"]

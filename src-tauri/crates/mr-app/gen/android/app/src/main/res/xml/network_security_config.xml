@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ядро приложения — HTTP-сервер этого же процесса: WebView ходит на loopback.
+     Разрешаем plain-http только на 127.0.0.1/localhost, остальной трафик — TLS. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain>127.0.0.1</domain>
+        <domain>localhost</domain>
+    </domain-config>
+</network-security-config>

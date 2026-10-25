@@ -1,0 +1,57 @@
+name: Bug report
+description: Сообщить об ошибке
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Не прикладывайте личные записи, расшифровки и `voiceprints.json`.
+        Для уязвимостей используйте SECURITY.md, а не публичный issue.
+  - type: input
+    id: version
+    attributes:
+      label: Версия
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Платформа
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Android
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Как воспроизвести
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ожидаемое поведение
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Логи и вывод
+      description: Удалите пути, имена людей и другие личные данные.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Проверки
+      options:
+        - label: Я не приложил персональные данные и секреты
+          required: true
+        - label: Я проверил, что это не запрос на поддержку устройства
+          required: false

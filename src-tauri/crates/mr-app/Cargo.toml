@@ -1,0 +1,68 @@
+[package]
+name = "mr-app"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.92"
+description = "Meeting Recorder — нативное ядро (CLI + HTTP REST + трей; Tauri WebView за фичей)"
+license = "MIT"
+repository = "https://github.com/guest363/meeting-record"
+
+[[bin]]
+name = "meeting-recorder"
+path = "src/main.rs"
+
+# Мобильные сборки Tauri (Android/iOS) подключают ядро как cdylib/staticlib
+# через JNI-обёртку `mobile_entry_point`; rlib — для бина и тестов.
+[lib]
+name = "mr_app_lib"
+path = "src/lib.rs"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+chrono.workspace = true
+clap.workspace = true
+tiny_http.workspace = true
+fs2.workspace = true
+mr-packs = { path = "../mr-packs" }
+mr-ml = { path = "../mr-ml" }
+mr-models = { path = "../mr-models" }
+mr-audio = { path = "../mr-audio" }
+
+# SIGINT/SIGTERM-финализация записи (unix).
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2.1", optional = true , features = [] }
+
+[features]
+default = ["onnx"]
+onnx = ["mr-ml/onnx"]
+tauri-ui = [
+  "dep:tauri",
+  "dep:tauri-build",
+  "dep:tauri-plugin-single-instance",
+  "dep:tauri-plugin-autostart",
+  "dep:tauri-plugin-global-shortcut",
+]
+
+[dependencies.tauri]
+version = "2.1"
+optional = true
+default-features = false
+features = ["tray-icon", "wry"]
+
+[dependencies.tauri-plugin-single-instance]
+version = "2.1"
+optional = true
+
+[dependencies.tauri-plugin-autostart]
+version = "2.1"
+optional = true
+
+[dependencies.tauri-plugin-global-shortcut]
+version = "2.1"
+optional = true

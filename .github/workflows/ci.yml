@@ -1,0 +1,82 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: No personal data or build artifacts in git
+        run: |
+          bad=$(git ls-files | grep -E '(^|/)(people|external_people|voiceprints|config)\.json$|\.(log|apk|onnx|part)$' || true)
+          if [ -n "$bad" ]; then
+            echo "В git попали личные данные или артефакты:"
+            echo "$bad"
+            exit 1
+          fi
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  rust:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99" # закреплён rust-toolchain.toml; MSRV по lock-файлу — 1.92 (ort)
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy (zero warnings)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --locked
+      - name: Release build (default features, no system deps)
+        run: cargo build --release -p mr-app --locked
+      - name: Clippy (tauri-ui feature; tauri_shell.rs иначе не компилируется)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+          cargo clippy -p mr-app --features tauri-ui --all-targets --locked -- -D warnings
+
+  frontend:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build frontend (Svelte)
+        working-directory: ui/web/frontend
+        run: |
+          corepack enable
+          yarn install --immutable
+          yarn check
+          yarn build
+      - name: Static build is committed
+        run: |
+          # yarn build очищает static/ и не создаёт .mr-stamp — его пишет run.sh.
+          git checkout -- ../static/.mr-stamp
+          expected="$(cd "$(git rev-parse --show-toplevel)" && find ui/web/frontend/src ui/web/frontend/index.html ui/web/frontend/package.json ui/web/frontend/yarn.lock ui/web/frontend/vite.config.ts -type f -exec sha256sum {} + | sha256sum | cut -d' ' -f1)"
+          test "$(cat ../static/.mr-stamp)" = "$expected"
+          git diff --exit-code -- ../static

@@ -1,0 +1,6 @@
+# Тулчейн закреплён для воспроизводимых сборок (владелец: последний стабильный).
+# Минимум для сборки (MSRV по Cargo.lock): Rust 1.92 — требует ort 2.0.0-rc.15
+# (Tauri v2 — 1.90). Обновлять вместе с Cargo.lock и .github/workflows/*.yml.
+[toolchain]
+channel = "1.99"
+profile = "default"

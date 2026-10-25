@@ -1,0 +1,24 @@
+[package]
+name = "mr-audio"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.92"
+description = "Нативный захват и декодирование аудио без FFmpeg: Linux — PipeWire/PulseAudio, Windows/macOS — импорт файлов"
+license = "MIT"
+repository = "https://github.com/guest363/meeting-record"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+hound.workspace = true
+symphonia.workspace = true
+# OGG/Opus (Telegram-голосовые): symphonia 0.5 знает контейнер, но не декодер.
+opus-decoder.workspace = true
+
+# Linux (libpulse) и Android (libaaudio) грузятся в рантайме через dlopen.
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+libc.workspace = true
+
+[features]
+default = []

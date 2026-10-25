@@ -1,0 +1,12 @@
+[
+  {
+    "name": "Иван Петров",
+    "role": "Backend Developer (Example Team)",
+    "domain": "example"
+  },
+  {
+    "name": "Мария Сидорова",
+    "role": "QA Engineer (Example Team)",
+    "domain": "example"
+  }
+]

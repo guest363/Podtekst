@@ -1,0 +1,149 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # --- Rust-ядро 0.1: тесты + нативные бинарники ---
+  build-rust-core:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            artifact: meeting-recorder-linux-x86_64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: meeting-recorder-macos-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: meeting-recorder-windows-x86_64.exe
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99" # закреплён rust-toolchain.toml; MSRV по lock-файлу — 1.92 (ort)
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build frontend (Svelte)
+        shell: bash
+        run: |
+          corepack enable
+          cd "$GITHUB_WORKSPACE/ui/web/frontend" && yarn install --immutable && yarn build
+      - name: Rust unit tests (host)
+        run: cargo test --workspace --locked
+      - name: Build release core
+        run: cargo build --release -p mr-app --locked --target ${{ matrix.target }}
+      - name: Pack artifact (бинарник + лицензии)
+        shell: bash
+        run: |
+          mkdir -p release-pkg
+          BIN="target/${{ matrix.target }}/release/meeting-recorder"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then BIN="$BIN.exe"; fi
+          cp "$BIN" release-pkg/${{ matrix.artifact }}
+          # Уникальные имена: иначе три платформы дают одинаковые LICENSE-файлы
+          # и GitHub Release перезаписывает их друг другом.
+          cp "$GITHUB_WORKSPACE/LICENSE" "release-pkg/LICENSE-${{ matrix.artifact }}.txt"
+          cp "$GITHUB_WORKSPACE/THIRD_PARTY_NOTICES.md" "release-pkg/THIRD_PARTY_NOTICES-${{ matrix.artifact }}.md"
+          cp "$GITHUB_WORKSPACE/THIRD_PARTY_LICENSES.md" "release-pkg/THIRD_PARTY_LICENSES-${{ matrix.artifact }}.md"
+          ls -la release-pkg/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: src-tauri/release-pkg/
+
+  # --- Tauri v2 bundles (окно + трей; нужен системный WebView) ---
+  build-tauri:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            args: "--features tauri-ui"
+          - os: macos-14
+            args: "--features tauri-ui --target universal-apple-darwin"
+          - os: windows-latest
+            args: "--features tauri-ui"
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux WebKit deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99" # закреплён rust-toolchain.toml; MSRV по lock-файлу — 1.92 (ort)
+      - name: Add macOS universal targets
+        if: matrix.os == 'macos-14'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build frontend (Svelte)
+        shell: bash
+        run: |
+          corepack enable
+          cd "$GITHUB_WORKSPACE/ui/web/frontend" && yarn install --immutable && yarn build
+      - name: Rust unit tests (host)
+        run: cargo test --workspace --locked
+      # projectPath: нестандартная раскладка — tauri.conf.json лежит в
+      # crates/mr-app, а не в <корень>/src-tauri.
+      - name: Build Tauri bundle
+        id: tauri
+        uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: src-tauri/crates/mr-app
+          args: ${{ matrix.args }}
+      - name: Upload bundles as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-bundles-${{ matrix.os }}
+          if-no-files-found: error
+          path: ${{ steps.tauri.outputs.artifactPaths }}
+
+  # Публикация — только после успеха ВСЕХ сборок (core-бинарники + Tauri-бандлы).
+  # Автообновление (updater/latest.json) отключено до генерации ключей подписи.
+  publish:
+    needs: [build-rust-core, build-tauri]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Checksums
+        run: |
+          # GitHub Release кладёт ассеты плоско: в SHA256SUMS нужны basename.
+          find artifacts -type f -print0 | sort -z | xargs -0 sha256sum \
+            | sed 's#  artifacts/.*/#  #' > SHA256SUMS
+          cat SHA256SUMS
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Meeting Recorder ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/**/*
+            SHA256SUMS

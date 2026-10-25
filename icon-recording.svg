@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
+  <defs>
+    <filter id="rec-card-shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#d42b2b" flood-opacity="0.12"/>
+    </filter>
+    <radialGradient id="rec-tally-glow" cx="370" cy="116" r="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ef4444" stop-opacity="0.85"/>
+      <stop offset="50%" stop-color="#f43f5e" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#ef4444" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Squircle Base Plate (Чистый белый с рубиновой активной каймой) -->
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="#ffffff" stroke="#fecdd3" stroke-width="4" filter="url(#rec-card-shadow)"/>
+
+  <!-- Bubble 1: Голос (Глубокий черничный/индиго #0f1e33 с плавным Безье-хвостиком) -->
+  <path d="M 172 100 
+           L 326 100 C 374 100, 400 126, 400 174 
+           L 400 214 C 400 262, 374 288, 326 288 
+           L 172 288 
+           C 142 288, 120 296, 96 320 
+           C 106 300, 110 282, 110 258 
+           L 110 174 C 110 126, 136 100, 172 100 Z" 
+        fill="#0f1e33"/>
+
+  <!-- Активные звуковые волны записи (Рубиновый + Розовый + Белый пик) -->
+  <g fill="#ef4444">
+    <rect x="150" y="170" width="16" height="56" rx="8"/>
+    <rect x="180" y="136" width="16" height="124" rx="8" fill="#f43f5e"/>
+    <rect x="210" y="118" width="16" height="160" rx="8" fill="#ffffff"/>
+    <rect x="240" y="132" width="16" height="132" rx="8" fill="#f43f5e"/>
+    <rect x="270" y="156" width="16" height="84" rx="8"/>
+    <rect x="300" y="176" width="16" height="44" rx="8"/>
+  </g>
+
+  <!-- Светящийся индикатор активной записи REC Tally -->
+  <circle cx="370" cy="116" r="38" fill="url(#rec-tally-glow)"/>
+  <circle cx="370" cy="116" r="16" fill="#fee2e2" stroke="#ef4444" stroke-width="3"/>
+  <circle cx="370" cy="116" r="10" fill="#ef4444"/>
+  <circle cx="370" cy="116" r="3.5" fill="#ffffff"/>
+
+  <!-- Bubble 2: Карточка живой расшифровки (Белая, аккуратный скругленный сквиркл) -->
+  <rect x="168" y="214" width="244" height="166" rx="58" fill="#ffffff" stroke="#0f1e33" stroke-width="11"/>
+
+  <!-- Строки живой расшифровки -->
+  <g fill="#64748b">
+    <circle cx="210" cy="272" r="13" fill="#ef4444"/>
+    <rect x="242" y="261" width="130" height="22" rx="11" fill="#0f1e33"/>
+    
+    <circle cx="210" cy="320" r="13" fill="#8b5cf6"/>
+    <rect x="242" y="309" width="94" height="22" rx="11" fill="#94a3b8"/>
+  </g>
+</svg>
