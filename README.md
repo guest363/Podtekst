@@ -64,7 +64,8 @@ cd meeting-record
   Сейчас работают импорт готовых файлов и расшифровка; живой захват WASAPI — в разработке.
 - **macOS**: двойной клик по `run.command` в Finder.
   Сейчас работают импорт готовых файлов и расшифровка; живой захват CoreAudio — в разработке.
-- Готовые пакеты (`.exe`, `.dmg`, `.AppImage`) — во вкладке
+- Готовые пакеты (по одному на платформу: Windows `.exe`, macOS `.dmg`,
+  Linux `.AppImage`) — во вкладке
   [Releases](https://github.com/guest363/meeting-record/releases).
   Бинарники 0.1.0 не подписаны: macOS Gatekeeper и Windows SmartScreen могут
   показать предупреждение.

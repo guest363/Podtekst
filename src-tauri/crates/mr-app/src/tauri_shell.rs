@@ -35,19 +35,19 @@ use crate::recording::RecordingState;
 ))]
 use crate::recording::toggle_recording_with_notify;
 
-/// Геометрия главного окна: ширина держит двухколоночный макет
-/// (брейкпоинт схлопывания в style.css — 940px, запас сверху).
+/// Геометрия главного окна: ширина равна контенту (`.page` max-width 860px
+/// + отступы body 32px + запас на скроллбар).
 #[cfg(feature = "tauri-ui")]
-pub(crate) const WINDOW_W: f64 = 1280.0;
+pub(crate) const WINDOW_W: f64 = 920.0;
 /// Высота главного окна.
 #[cfg(feature = "tauri-ui")]
 pub(crate) const WINDOW_H: f64 = 860.0;
-/// Минимальная ширина окна: уже нельзя — схлопнется в одну колонку.
+/// Минимальная ширина окна: ниже 480px ломается мобильная вёрстка.
 #[cfg(feature = "tauri-ui")]
-pub(crate) const WINDOW_MIN_W: f64 = 1020.0;
+pub(crate) const WINDOW_MIN_W: f64 = 480.0;
 /// Минимальная высота окна.
 #[cfg(feature = "tauri-ui")]
-pub(crate) const WINDOW_MIN_H: f64 = 700.0;
+pub(crate) const WINDOW_MIN_H: f64 = 560.0;
 
 #[cfg(all(
     feature = "tauri-ui",

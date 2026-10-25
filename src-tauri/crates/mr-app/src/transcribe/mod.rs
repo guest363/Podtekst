@@ -176,7 +176,7 @@ pub struct TranscribeReport {
 /// Параметры окон ASR над VAD-сегментами.
 const MAX_SEGMENT_SEC: f32 = 20.0;
 const SEGMENT_GAP_SEC: f32 = 0.5;
-const SEGMENT_PAD_SEC: f64 = 0.12;
+const SEGMENT_PAD_SEC: f64 = 0.25;
 
 /// Полный проход: файл → реплики с именами спикеров → md/txt/transcript.json.
 pub fn transcribe_file(
@@ -266,11 +266,14 @@ pub fn transcribe_file(
             .vad
             .process_all(samples)
             .map_err(|e| format!("VAD: {e}"))?;
-        let segs = vad_segments_from_probs(&probs, 0.25, 0.25, 0.5);
-        let grouped = diarize::group_segments(
-            &segs.iter().map(|(a, b)| (*a, *b)).collect::<Vec<_>>(),
-            MAX_SEGMENT_SEC,
-            SEGMENT_GAP_SEC,
+        let segs = vad_segments_from_probs(&probs, 0.1, 0.25, 0.5);
+        let grouped = diarize::merge_quiet_short(
+            samples,
+            diarize::group_segments(
+                &segs.iter().map(|(a, b)| (*a, *b)).collect::<Vec<_>>(),
+                MAX_SEGMENT_SEC,
+                SEGMENT_GAP_SEC,
+            ),
         );
         speech_sec += grouped.iter().map(|(a, b)| (b - a) as f64).sum::<f64>();
         on_event(
@@ -302,11 +305,18 @@ pub fn transcribe_file(
             let hi = ((b * 16000.0) as usize).min(samples.len());
             let chunk = &samples[lo..hi];
             let text = if use_gigaam {
+                // Тихая речь: жадный RNNT предпочитает blank и теряет слова.
+                // Штраф включаем только для тихих фрагментов, чтобы не портить обычную речь.
+                let rms =
+                    (chunk.iter().map(|x| x * x).sum::<f32>() / chunk.len().max(1) as f32).sqrt();
+                // 5.0 — минимум, на котором тихий счёт «шесть, семь, восемь, девять»
+                // распознаётся целиком; для обычной речи штраф не включаем.
+                let blank_penalty = if rms < 0.015 { 5.0 } else { 0.0 };
                 models
                     .gigaam
                     .as_mut()
                     .ok_or("нет GigaAM-модели")?
-                    .transcribe_segment(chunk)
+                    .transcribe_segment_penalized(chunk, blank_penalty)
                     .map_err(|e| format!("GigaAM: {e}"))?
             } else {
                 models

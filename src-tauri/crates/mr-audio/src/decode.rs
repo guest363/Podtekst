@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use opus_decoder::OpusDecoder;
-use symphonia::core::codecs::CODEC_TYPE_OPUS;
+use symphonia::core::codecs::{CODEC_TYPE_AAC, CODEC_TYPE_OPUS};
 
 use super::capture::stream::resample_to;
 use super::{AudioError, Result};
@@ -59,6 +59,13 @@ pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
         None
     };
     let mut pre_skip = codec_params.delay.unwrap_or(0) as usize;
+    // Symphonia не достаёт AAC priming из edit list MP4: без отсечения
+    // речь в VAD смещается на ~21 мс, и тихие короткие слова теряются.
+    // shortcut: AAC-LC priming 1024; для HE-AAC (редко) может быть 2048.
+    // upgrade: читать edit list / iTunSMPB.
+    if pre_skip == 0 && codec_params.codec == CODEC_TYPE_AAC {
+        pre_skip = 1024;
+    }
     let mut decoder = if opus.is_some() {
         None
     } else {
@@ -114,7 +121,12 @@ pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
         let buf = pcm_buf.as_mut().expect("bufer только что создан");
         buf.copy_interleaved_ref(decoded);
         let got = spec.channels.count().max(1);
-        for frame in buf.samples().chunks(got) {
+        // AAC/MP3 отдают priming-сэмплы в начале: без их отсечения VAD
+        // слышит речь на 20+ мс позже и теряет тихие короткие слова.
+        let frames = buf.samples().len() / got;
+        let skip = pre_skip.min(frames);
+        pre_skip -= skip;
+        for frame in buf.samples().chunks(got).skip(skip) {
             for (c, ch) in chans.iter_mut().enumerate() {
                 ch.push(frame.get(c % got).copied().unwrap_or(0.0).clamp(-1.0, 1.0));
             }

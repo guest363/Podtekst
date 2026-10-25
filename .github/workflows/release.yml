@@ -13,63 +13,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # --- Rust-ядро 0.1: тесты + нативные бинарники ---
-  build-rust-core:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            artifact: meeting-recorder-linux-x86_64
-          - os: macos-14
-            target: aarch64-apple-darwin
-            artifact: meeting-recorder-macos-arm64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: meeting-recorder-windows-x86_64.exe
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: src-tauri
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.99" # закреплён rust-toolchain.toml; MSRV по lock-файлу — 1.92 (ort)
-          targets: ${{ matrix.target }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Build frontend (Svelte)
-        shell: bash
-        run: |
-          corepack enable
-          cd "$GITHUB_WORKSPACE/ui/web/frontend" && yarn install --immutable && yarn build
-      - name: Rust unit tests (host)
-        run: cargo test --workspace --locked
-      - name: Build release core
-        env:
-          MACOSX_DEPLOYMENT_TARGET: "13.4"
-        run: cargo build --release -p mr-app --locked --target ${{ matrix.target }}
-      - name: Pack artifact (бинарник + лицензии)
-        shell: bash
-        run: |
-          mkdir -p release-pkg
-          BIN="target/${{ matrix.target }}/release/meeting-recorder"
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then BIN="$BIN.exe"; fi
-          cp "$BIN" release-pkg/${{ matrix.artifact }}
-          # Уникальные имена: иначе три платформы дают одинаковые LICENSE-файлы
-          # и GitHub Release перезаписывает их друг другом.
-          cp "$GITHUB_WORKSPACE/LICENSE" "release-pkg/LICENSE-${{ matrix.artifact }}.txt"
-          cp "$GITHUB_WORKSPACE/THIRD_PARTY_NOTICES.md" "release-pkg/THIRD_PARTY_NOTICES-${{ matrix.artifact }}.md"
-          cp "$GITHUB_WORKSPACE/THIRD_PARTY_LICENSES.md" "release-pkg/THIRD_PARTY_LICENSES-${{ matrix.artifact }}.md"
-          ls -la release-pkg/
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: src-tauri/release-pkg/
-
   # --- Tauri v2 bundles (окно + трей; нужен системный WebView) ---
   build-tauri:
     strategy:
@@ -77,12 +20,12 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
-            args: "--features tauri-ui"
+            args: "--features tauri-ui --bundles appimage"
           - os: macos-14
             # pyke не поставляет x86_64 ONNX Runtime, поэтому macOS — arm64.
-            args: "--features tauri-ui --target aarch64-apple-darwin"
+            args: "--features tauri-ui --target aarch64-apple-darwin --bundles dmg"
           - os: windows-latest
-            args: "--features tauri-ui"
+            args: "--features tauri-ui --bundles nsis"
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -121,13 +64,18 @@ jobs:
         shell: bash
         run: |
           mkdir -p bundle-pkg
-          find "$GITHUB_WORKSPACE/src-tauri/target" -type f \
-            \( -name 'MeetingRecorder*.deb' -o -name 'MeetingRecorder*.rpm' \
-               -o -name 'MeetingRecorder*.AppImage' -o -name 'MeetingRecorder*.dmg' \
-               -o -name 'MeetingRecorder*.msi' -o -name 'MeetingRecorder*.exe' \) \
+          # Один пакет на платформу: AppImage / dmg / NSIS setup.exe.
+          find "$GITHUB_WORKSPACE/src-tauri/target" -type f -path '*/bundle/*' \
+            \( -name '*.AppImage' -o -name '*.dmg' -o -name '*-setup.exe' \) \
             -print0 | while IFS= read -r -d '' f; do
               cp "$f" "bundle-pkg/$(basename "$f")"
             done
+          count=$(find bundle-pkg -maxdepth 1 -type f | wc -l)
+          if [ "$count" -ne 1 ]; then
+            echo "Ожидался ровно один пакет, найдено: $count"
+            ls -la bundle-pkg/
+            exit 1
+          fi
           ls -la bundle-pkg/
       - name: Upload bundles as workflow artifact
         uses: actions/upload-artifact@v4
@@ -137,10 +85,10 @@ jobs:
           # upload-artifact не наследует defaults.run.working-directory.
           path: src-tauri/bundle-pkg/*
 
-  # Публикация — только после успеха ВСЕХ сборок (core-бинарники + Tauri-бандлы).
+  # Публикация — только после успеха сборок Tauri-бандлов.
   # Автообновление (updater/latest.json) отключено до генерации ключей подписи.
   publish:
-    needs: [build-rust-core, build-tauri]
+    needs: [build-tauri]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4

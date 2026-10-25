@@ -98,6 +98,16 @@ impl GigaAM {
     /// Распознаёт один VAD-сегмент (16 кГц моно), возвращает текст.
     /// Фичи: 64-dim HTK mel (см. `features::nemo_mel`), упаковка [1, 64, T] (NeMo channel-first).
     pub fn transcribe_segment(&mut self, samples: &[f32]) -> Result<String, String> {
+        self.transcribe_segment_penalized(samples, 0.0)
+    }
+
+    /// То же, но с штрафом на blank: положительное значение поощряет токены
+    /// (нужно для тихой короткой речи, где жадный декодер выбирает blank).
+    pub fn transcribe_segment_penalized(
+        &mut self,
+        samples: &[f32],
+        blank_penalty: f32,
+    ) -> Result<String, String> {
         if samples.len() < 1600 {
             return Ok(String::new());
         }
@@ -153,7 +163,10 @@ impl GigaAM {
             let enc_frame = &frames_data[t * 768..(t + 1) * 768];
             // Цикл joiner: пока не blank — эмитим токены (защита от зацикливания)
             for _ in 0..16 {
-                let logits = self.joint_logits(enc_frame, &g)?;
+                let mut logits = self.joint_logits(enc_frame, &g)?;
+                if blank_penalty != 0.0 {
+                    logits[BLANK_ID as usize] -= blank_penalty;
+                }
                 let y = argmax(&logits) as i64;
                 if y == BLANK_ID {
                     break;

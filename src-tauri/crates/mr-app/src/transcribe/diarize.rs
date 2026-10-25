@@ -43,6 +43,43 @@ pub(crate) fn group_segments(segments: &[(f32, f32)], max_dur: f32, gap: f32) ->
     grouped
 }
 
+/// Склейка тихих коротких фрагментов через более длинную паузу: счёт
+/// «шесть, семь, восемь» ребёнок произносит тихо и с паузами, и по отдельности
+/// ASR теряет слова. Громкую и длинную речь не трогаем.
+pub(crate) fn merge_quiet_short(samples: &[f32], groups: Vec<(f32, f32)>) -> Vec<(f32, f32)> {
+    const SHORT_SEC: f32 = 2.0;
+    const MAX_MERGED_SEC: f32 = 12.0;
+    const QUIET_RMS: f32 = 0.02;
+    const MAX_GAP_SEC: f32 = 3.0;
+    let rms = |a: f32, b: f32| -> f32 {
+        let lo = (a.max(0.0) * 16000.0) as usize;
+        let hi = ((b.max(0.0) * 16000.0) as usize).min(samples.len());
+        if hi <= lo {
+            return 0.0;
+        }
+        let s = &samples[lo..hi];
+        (s.iter().map(|x| x * x).sum::<f32>() / s.len() as f32).sqrt()
+    };
+    let mut out: Vec<(f32, f32)> = Vec::new();
+    for (s, e) in groups {
+        if let Some(last) = out.last_mut() {
+            let gap = s - last.1;
+            let incoming_short = e - s <= SHORT_SEC;
+            if incoming_short
+                && (0.0..=MAX_GAP_SEC).contains(&gap)
+                && last.1 - last.0 <= MAX_MERGED_SEC
+                && rms(last.0, last.1) < QUIET_RMS
+                && rms(s, e) < QUIET_RMS
+            {
+                last.1 = e;
+                continue;
+            }
+        }
+        out.push((s, e));
+    }
+    out
+}
+
 /// Лучшие образцы речи спикера для карточки в UI.
 fn pick_samples(utterances: &[Utterance], max_samples: usize) -> Vec<Sample> {
     let mut scored: Vec<(f64, &Utterance)> = utterances
@@ -673,7 +710,38 @@ pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<Strin
 
 #[cfg(test)]
 mod tests {
-    use super::split_words_by_bounds;
+    use super::{merge_quiet_short, split_words_by_bounds};
+
+    /// Тихие короткие фрагменты склеиваются, громкая речь — нет.
+    #[test]
+    fn merge_quiet_short_keeps_loud_separate() {
+        let mut samples = vec![0.005f32; 16 * 16000];
+        for x in samples[6 * 16000..7 * 16000].iter_mut() {
+            *x = 0.1;
+        }
+        let groups = vec![
+            (0.0, 1.0),
+            (2.0, 3.0),
+            (4.0, 5.0),
+            (6.0, 7.0),
+            (8.0, 9.0),
+            (10.0, 13.0),
+        ];
+        let out = merge_quiet_short(&samples, groups);
+        assert_eq!(out, vec![(0.0, 5.0), (6.0, 7.0), (8.0, 9.0), (10.0, 13.0)]);
+    }
+
+    /// Склейка не растягивает одну реплику больше лимита.
+    #[test]
+    fn merge_quiet_short_caps_merged_duration() {
+        let samples = vec![0.005f32; 16 * 16000];
+        let groups: Vec<(f32, f32)> = (0..8)
+            .map(|i| (i as f32 * 2.0, i as f32 * 2.0 + 1.0))
+            .collect();
+        let out = merge_quiet_short(&samples, groups);
+        assert_eq!(out.len(), 2);
+        assert!(out[0].1 - out[0].0 <= 13.0);
+    }
 
     /// Регрессия: раньше правая граница среза считалась от остатка
     /// (`words.len() - lo`) и паниковала при lo > words.len()/2.
