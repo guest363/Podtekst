@@ -33,7 +33,7 @@ jobs:
       run:
         working-directory: src-tauri
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.99" # закреплён rust-toolchain.toml; MSRV по lock-файлу — 1.92 (ort)
@@ -85,7 +85,7 @@ jobs:
       run:
         working-directory: src-tauri
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Linux WebKit deps
         if: matrix.os == 'ubuntu-22.04'
         run: |
