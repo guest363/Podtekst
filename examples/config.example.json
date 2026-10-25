@@ -1,0 +1,6 @@
+{
+  "save_dir": "~/Recordings",
+  "record_mode": "split",
+  "auto_transcribe": true,
+  "engine": "auto"
+}

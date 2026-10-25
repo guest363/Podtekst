@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/capability",
+  "identifier": "default",
+  "description": "Базовые возможности Meeting Recorder на всех платформах: окно и IPC ядра.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:default"
+  ]
+}

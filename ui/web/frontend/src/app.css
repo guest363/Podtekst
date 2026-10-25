@@ -1,0 +1,11 @@
+/* Глобальные стили. Порядок импортов = порядок каскада (как раньше <link>).
+ * tokens/base — в именованных слоях; компонентные <style> в .svelte-файлах
+ * не слоятся и потому побеждают базу — так задумано: компонент поверх базы. */
+@import './styles/tokens.css' layer(tokens);
+@import './styles/base.css' layer(components);
+@import './styles/deck.css' layer(components);
+@import './styles/lists.css' layer(components);
+@import './styles/modal.css' layer(components);
+@import './styles/transcript.css' layer(components);
+@import './styles/toast.css' layer(components);
+@import './styles/responsive.css' layer(components);

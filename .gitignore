@@ -1,0 +1,74 @@
+# Virtual environments
+.venv*/
+venv*/
+ENV*/
+env*/
+
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Runtime caches and backups
+people-cache.json
+*.bak
+*.tmp
+*.swp
+*~
+
+# === Личные данные владельца (НЕ коммитить в Open Source!) ===
+# Хранятся в системной директории пользователя (~/.local/share/meeting-recorder/),
+# сюда попадают только при локальном запуске из корня репозитория (legacy).
+people.json
+external_people.json
+voiceprints.json
+voiceprints.json.bak
+config.json
+
+# Recordings directory
+Recordings/
+
+# Скачанные ML-модели и голосовые пакеты (генерируются локально)
+models/
+packs/
+*.voicepack.zip
+*.voicepack.json
+!examples/demo.voicepack.json
+*.part
+
+# Rust build artifacts
+src-tauri/target/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Build artifacts
+build/
+dist/
+*.spec.bak
+
+# Локальные ярлыки (генерирует setup-autostart.sh с путём этого клона)
+meeting-recorder.desktop
+autostart.desktop
+ui/web/frontend/.svelte-check/
+
+# Машинно-зависимое состояние Yarn (не исходник и не lockfile)
+ui/web/frontend/.yarn/install-state.gz
+
+# Секреты и ключи подписи — случайный коммит исключён
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Android APK (артефакт сборки, в git не нужен)
+*.apk

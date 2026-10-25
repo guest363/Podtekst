@@ -1,0 +1,63 @@
+# Android-сборка Meeting Recorder
+
+Приложение собирается из того же Rust-ядра: на устройстве работает встроенный
+HTTP-сервер (`127.0.0.1:8765`) и окно Tauri WebView, которое его открывает —
+Web UI используется без изменений.
+
+## Сборка (один скрипт)
+
+```bash
+./build-android.sh            # debug-APK (arm64), подписан debug-ключом
+RELEASE=1 ./build-android.sh  # релизная сборка (для Play нужен свой keystore)
+```
+
+Скрипт сам: собирает фронт (при изменениях) → Rust-ядро под
+`aarch64-linux-android` → APK через gradle — и **кладёт готовый APK в общую
+папку сборок `dist/` в корне репозитория**: `dist/meeting-recorder-android.apk`
+(каждая сборка перезаписывает). Оригинал лежит в дебрях gradle-вывода
+(`gen/android/app/build/outputs/apk/…`), но туда ходить не нужно.
+Установка на подключённое устройство:
+
+```bash
+~/Android/Sdk/platform-tools/adb install -r <путь-до-apk>
+```
+
+Требования (один раз): Android SDK + NDK (`~/Android/Sdk`), JDK 21,
+Rust (rustup), Node.js + Yarn, нативный tauri-cli
+(`cargo install tauri-cli --version ^2.12 --locked` — gradle-таска сборки
+зовёт CLI: путь берётся из `CARGO_TAURI_BIN` либо из `~/.cargo/bin`
+текущего пользователя, см. `gen/android/buildSrc/…/BuildTask.kt`).
+
+Отладка на эмуляторе/устройстве: `adb logcat | grep -i tauri` и
+`adb logcat | grep mr_app`.
+
+## Что уже работает на Android
+
+- Полный Web UI: записи, плеер, фрагменты спикеров, настройки, голосовые пакеты.
+- Живой захват с микрофона через нативный бэкенд AAudio (`mr-audio/src/capture/android.rs`)
+  с автозапросом runtime-разрешения `RECORD_AUDIO` при запуске приложения.
+- Импорт аудио/видео через «Выбрать файл» и drag&drop, расшифровка на устройстве
+  **(экспериментально** — ONNX Runtime под Android ещё не подтверждён живым
+  прогоном на устройстве; модели качаются приложением в свой каталог данных**)**.
+- Локальная HTTP-раздача только на loopback (network security config закрывает
+  весь остальной plain-трафик).
+
+## Чего на Android пока нет
+
+- **Захват системного звука** — в Android системный аудиопоток изолирован политиками безопасности
+  (требует MediaProjection / Foreground Service), поэтому пишется только микрофон.
+- Трей, глобальные горячие клавиши, автозапуск, автообновление —
+  десктоп-эксклюзивы Tauri (за `#[cfg]` в `tauri_shell.rs`).
+- Транскрипция зависит от ONNX Runtime под Android: нативная библиотека
+  `libonnxruntime` должна загрузиться на устройстве — проверьте первую
+  расшифровку; если упадёт, в карточке модели будет понятная ошибка.
+
+## Архитектура
+
+- `src-tauri/crates/mr-app/src/lib.rs` — `mobile_main()` с
+  `#[tauri::mobile_entry_point]`: поднимает HTTP-ядро и окно, кладёт данные в
+  системный каталог приложения (`MEETING_RECORDER_DATA_DIR`).
+- `gen/android/` — сгенерированный gradle-проект Tauri (коммитится; правки
+  манифеста/иконок живут здесь). Регенерация: `tauri android init`.
+- Каталоги данных на устройстве: `/data/data/io.github.guest363.meetingrecord/files/`
+  (записи — `Recordings/`, модели — `models/`, паки — `packs/`).
