@@ -38,7 +38,7 @@ jobs:
         with:
           toolchain: "1.99" # закреплён rust-toolchain.toml; MSRV по lock-файлу — 1.92 (ort)
           targets: ${{ matrix.target }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Build frontend (Svelte)
@@ -97,7 +97,7 @@ jobs:
       - name: Add macOS universal targets
         if: matrix.os == 'macos-14'
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Build frontend (Svelte)
