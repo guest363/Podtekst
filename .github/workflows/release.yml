@@ -111,7 +111,7 @@ jobs:
       # crates/mr-app, а не в <корень>/src-tauri.
       - name: Build Tauri bundle
         id: tauri
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         with:
           projectPath: src-tauri/crates/mr-app
           args: ${{ matrix.args }}
