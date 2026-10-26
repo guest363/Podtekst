@@ -16,7 +16,8 @@
     settings,
     statusBadge,
   } from './lib/settings.svelte.ts'
-  import { dismissSupport, loadSupportInfo, support } from './lib/support.svelte.ts'
+  import { loadSupportInfo } from './lib/support.svelte.ts'
+  import { checkUpdate, dismissUpdate, update } from './lib/update.svelte.ts'
   import { initRouting, on, ui } from './lib/ui.svelte.ts'
   import { renderMarkdown } from './lib/markdown'
   import RecordingDeck from './components/RecordingDeck.svelte'
@@ -50,19 +51,30 @@
     if (introOpen && e.key === 'Escape') closeIntro()
   }
 
-  const helpMarkdown = isMobile
-    ? `1. Нажмите **«Начать запись»** или выберите готовый аудио- или видеофайл.
-2. После остановки расшифровка запускается автоматически. Это можно выключить: «Настройки» → «Запись».
-3. Для распознавания и разделения спикеров скачайте базовые модели ИИ ниже.
-4. В разделе **«Текст и спикеры»** прослушайте фрагменты и привяжите голос к человеку.
-
-Записи, расшифровки и голосовые отпечатки хранятся только на этом устройстве и никуда не отправляются.`
-    : `1. Нажмите **«Начать запись»** или перетащите готовый аудио- или видеофайл. Из любого приложения запись включает и выключает **Ctrl+Shift+R** (на macOS – **Cmd+Shift+R**).
-2. После остановки расшифровка запускается автоматически. Это можно выключить: «Настройки» → «Запись».
-3. Для распознавания и разделения спикеров скачайте базовые модели ИИ ниже.
-4. В разделе **«Текст и спикеры»** прослушайте фрагменты и привяжите голос к человеку.
-
-Записи, расшифровки и голосовые отпечатки хранятся только на этом компьютере и никуда не отправляются.`
+  function buildHelp(): string {
+    const steps = isMobile
+      ? [
+          '1. Нажмите **«Начать запись»** или выберите готовый аудиофайл.',
+          '2. После остановки расшифровка запускается автоматически. Это можно выключить: «Настройки» → «Запись».',
+        ]
+      : [
+          '1. Нажмите **«Начать запись»** или перетащите готовый аудио- или видеофайл. Из любого приложения запись включает и выключает **Ctrl+Shift+R** (на macOS – **Cmd+Shift+R**).',
+          '2. После остановки расшифровка запускается автоматически. Это можно выключить: «Настройки» → «Запись».',
+        ]
+    if (!coreInstalled) {
+      steps.push('3. Для распознавания и разделения спикеров скачайте базовые модели ИИ ниже.')
+    }
+    steps.push(
+      `${steps.length + 1}. В разделе **«Текст и спикеры»** прослушайте фрагменты и привяжите голос к человеку.`,
+    )
+    steps.push('')
+    steps.push(
+      isMobile
+        ? 'Записи, расшифровки и голосовые отпечатки хранятся только на этом устройстве и никуда не отправляются.'
+        : 'Записи, расшифровки и голосовые отпечатки хранятся только на этом компьютере и никуда не отправляются.',
+    )
+    return steps.join('\n')
+  }
 
   onMount(() => {
     initRouting()
@@ -83,6 +95,7 @@
       loadRecordMode(),
       loadAutoTranscribe(),
       loadSupportInfo(),
+      checkUpdate(),
     ])
   })
 </script>
@@ -133,21 +146,27 @@
     </header>
 
     <main class="main-column">
-      <RecordingDeck />
-      <Recordings />
-
-      {#if support.visible}
-        <section class="card donate">
+      {#if update.isNewer && !update.dismissed}
+        <section class="card update-card" aria-label="Доступно обновление">
           <div class="card-header">
-            <span class="card-title">{support.title}</span>
-            <button class="btn-secondary" onclick={() => void dismissSupport()}>Скрыть</button>
+            <span class="card-title">Доступна версия {update.latest}</span>
+            <button class="icon-btn" aria-label="Скрыть предложение обновления" onclick={dismissUpdate}>
+              ✕
+            </button>
           </div>
-          <div class="donate-text">{support.statsText}</div>
+          <div class="help-text">
+            У вас установлена версия {update.current}. Новую версию можно скачать со страницы релиза.
+          </div>
           <div class="row-start">
-            <button class="btn-primary" onclick={() => (ui.donateOpen = true)}>Поддержать проект</button>
+            <a class="btn-primary" href={update.url} target="_blank" rel="noopener noreferrer">
+              Скачать обновление
+            </a>
+            <button class="btn-secondary" onclick={dismissUpdate}>Позже</button>
           </div>
         </section>
       {/if}
+      <RecordingDeck />
+      <Recordings />
     </main>
   </div>
 {/if}
@@ -168,16 +187,16 @@
         <button class="icon-btn" aria-label="Закрыть справку" onclick={closeIntro}>✕</button>
       </div>
       <div class="help-text md-body">
-        {@html renderMarkdown(helpMarkdown)}
+        {@html renderMarkdown(buildHelp())}
       </div>
 
+      {#if !coreInstalled}
       <div class="intro-models-card">
         <div class="intro-models-head">
           <span class="intro-models-title">Локальные модели ИИ</span>
           <span class="intro-models-sub">
-            {coreInstalled
-              ? 'Все базовые модели установлены и готовы к оффлайн-работе.'
-              : 'Для локального распознавания русской речи скачайте базовые модели (~300 МБ). Whisper (1.1 ГБ) можно установить позже в Настройках.'}
+            Для локального распознавания русской речи скачайте базовые модели (~300 МБ).
+            Whisper (1.1 ГБ) можно установить позже в Настройках.
           </span>
         </div>
 
@@ -219,6 +238,7 @@
           <div class="empty-note">Загрузка информации о моделях…</div>
         {/if}
       </div>
+      {/if}
 
       <div class="row-end intro-actions">
         {#if coreInstalled}

@@ -237,7 +237,8 @@ pub fn start_stream(
             )));
         }
 
-        spawn_stream(
+        super::foreground_service(false, true);
+        let result = spawn_stream(
             lib,
             stream,
             path.to_path_buf(),
@@ -245,7 +246,11 @@ pub fn start_stream(
             actual_rate,
             actual_channels,
             actual_format,
-        )
+        );
+        if result.is_err() {
+            super::foreground_service(false, false);
+        }
+        result
     }
 }
 
@@ -269,6 +274,7 @@ fn spawn_stream(
                     let _ = (lib.stream_request_stop)(stream);
                     let _ = (lib.stream_close)(stream);
                 }
+                super::foreground_service(false, false);
                 return;
             }
         };
@@ -355,5 +361,6 @@ fn spawn_stream(
             let _ = (lib.stream_close)(stream);
         }
         let _ = writer.flush();
+        super::foreground_service(false, false);
     })
 }

@@ -12,8 +12,9 @@
     statusBadge,
     togglePack,
   } from '../lib/settings.svelte.ts'
-  import { readJsonSafe } from '../lib/api'
+  import { isMobile, readJsonSafe } from '../lib/api'
   import type { ModelInfo } from '../lib/api'
+  import { checkUpdate, update } from '../lib/update.svelte.ts'
   import People from './People.svelte'
 
   let tab = $state<'record' | 'people' | 'voices' | 'models'>('record')
@@ -21,7 +22,7 @@
   on('models-changed', () => void loadModels())
 
   function onWindowKey(e: KeyboardEvent): void {
-    if (ui.settingsOpen && e.key === 'Escape') {
+    if (ui.settingsOpen && !ui.donateOpen && e.key === 'Escape') {
       ui.settingsOpen = false
     }
   }
@@ -44,7 +45,19 @@
     aria-label="Настройки"
   >
     <div class="app-drawer-top">
-      <div class="modal-title">Настройки</div>
+      <div class="settings-heading">
+        <div class="modal-title">Настройки</div>
+        <div class="settings-version">
+          Версия {update.current || '…'} ·
+          <button
+            class="link-btn"
+            disabled={update.checking}
+            onclick={() => void checkUpdate(true, true)}
+          >
+            {update.checking ? 'Проверяю…' : 'Проверить обновления'}
+          </button>
+        </div>
+      </div>
       <button class="icon-btn" aria-label="Закрыть настройки" onclick={() => (ui.settingsOpen = false)}>✕</button>
     </div>
 
@@ -88,21 +101,26 @@
         <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Запись">
           <div class="card-title">Режим записи</div>
           <div class="seg-bar" role="group" aria-label="Режим записи">
-            <button
-              class="seg-item {settings.recordMode === 'split' ? 'active' : ''}"
-              onclick={() => void setRecordMode('split')}
-            >
-              Встреча · 2 канала
-            </button>
+            {#if !isMobile}
+              <button
+                class="seg-item {settings.recordMode === 'split' ? 'active' : ''}"
+                onclick={() => void setRecordMode('split')}
+              >
+                Встреча · 2 канала
+              </button>
+            {/if}
             <button
               class="seg-item {settings.recordMode === 'mix' ? 'active' : ''}"
               onclick={() => void setRecordMode('mix')}
             >
-              Обычная · 1 канал
+              {isMobile ? 'Микрофон · 1 канал' : 'Обычная · 1 канал'}
             </button>
           </div>
           <div class="help-text">
-            {#if settings.recordMode === 'split'}
+            {#if isMobile}
+              На телефоне доступен только микрофон. Запись идёт в один канал; экран можно
+              погасить — запись продолжится.
+            {:else if settings.recordMode === 'split'}
               Ваш голос и голоса собеседников пишутся в разные каналы: слова не накладываются друг на
               друга при расшифровке.
             {:else}
@@ -232,23 +250,49 @@
     </div>
 
     <div class="app-drawer-bottom">
+      <button class="support-link" onclick={() => (ui.donateOpen = true)}>Поддержать проект</button>
       <button class="btn-primary" onclick={() => (ui.settingsOpen = false)}>Готово</button>
     </div>
   </div>
 {/if}
 
 <style>
+  .settings-heading {
+    display: flex; flex-direction: column; gap: 1px; min-width: 0;
+  }
+  .settings-version {
+    font-size: 11.5px; color: var(--text-faint);
+    display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  }
+  .link-btn {
+    border: none; background: none; padding: 0;
+    font: inherit; color: var(--accent-blue); cursor: pointer;
+    text-decoration: underline; text-underline-offset: 2px;
+  }
+  .link-btn:hover { color: var(--text-primary); }
+  .link-btn:disabled { color: var(--text-faint); cursor: wait; text-decoration: none; }
+  .support-link {
+    margin-right: auto;
+    border: none; background: none; padding: 6px 0;
+    font-family: inherit; font-size: 12px; font-weight: 600;
+    color: var(--text-faint); cursor: pointer;
+    text-decoration: underline; text-underline-offset: 3px;
+  }
+  .support-link:hover { color: var(--text-muted); }
   .settings-tabs {
     display: flex; gap: 4px;
     border-bottom: 1px solid var(--border-soft);
     padding: 0 20px;
     background: #fff;
     flex-shrink: 0;
+    overflow: hidden;
   }
   @media (max-width: 640px) {
     .settings-tabs {
-      padding: 0 14px;
-      overflow-x: auto;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0;
+      padding: 0 10px;
     }
   }
   .settings-tab {

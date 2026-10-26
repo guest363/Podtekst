@@ -92,21 +92,68 @@ fn mel_filters_kaldi(
     fb
 }
 
-// shortcut: наивная O(n²)-ДПФ вместо FFT — при fft_size 320–512 и кадре 10 мс
-// это доли секунды на минуту речи; upgrade: radix-2 FFT при поддержке >30 мин.
-fn dft_power(frame: &[f64]) -> Vec<f64> {
-    let n = frame.len();
-    let mut out = vec![0.0; n / 2 + 1];
-    for (k, slot) in out.iter_mut().enumerate() {
-        let (mut re, mut im) = (0.0, 0.0);
-        for (i, &x) in frame.iter().enumerate() {
-            let ang = 2.0 * std::f64::consts::PI * k as f64 * i as f64 / n as f64;
-            re += x * ang.cos();
-            im -= x * ang.sin();
-        }
-        *slot = re * re + im * im;
+/// Прямое ДПФ. Только для длин с простым множителем > 5 (в пайплайне таких
+/// нет), чтобы алгоритм оставался точным для любого `fft_size`.
+fn dft(x: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let n = x.len();
+    (0..n)
+        .map(|k| {
+            x.iter()
+                .enumerate()
+                .fold((0.0f64, 0.0f64), |(re, im), (i, &(xr, xi))| {
+                    let ang = 2.0 * std::f64::consts::PI * (k * i % n) as f64 / n as f64;
+                    let (s, c) = ang.sin_cos();
+                    (re + xr * c + xi * s, im + xi * c - xr * s)
+                })
+        })
+        .collect()
+}
+
+/// Смешанное БПФ Кули–Тьюки по множителям 2 и 5 — точное ДПФ для всех
+/// используемых `fft_size` (320, 400, 512) за O(n log n) вместо O(n²).
+/// Наивное ДПФ тратило ~0.2 с CPU на секунду аудио и вешало диаризацию
+/// длинной записи на десятки минут.
+fn fft(x: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let n = x.len();
+    if n <= 1 {
+        return x.to_vec();
     }
-    out
+    let r = if n.is_multiple_of(2) {
+        2
+    } else if n.is_multiple_of(5) {
+        5
+    } else {
+        return dft(x);
+    };
+    let m = n / r;
+    let tw: Vec<(f64, f64)> = (0..n)
+        .map(|k| {
+            let ang = -2.0 * std::f64::consts::PI * k as f64 / n as f64;
+            let (s, c) = ang.sin_cos();
+            (c, s)
+        })
+        .collect();
+    let subs: Vec<Vec<(f64, f64)>> = (0..r)
+        .map(|j| fft(&(0..m).map(|i| x[i * r + j]).collect::<Vec<_>>()))
+        .collect();
+    (0..n)
+        .map(|k| {
+            (0..r).fold((0.0f64, 0.0f64), |(re, im), j| {
+                let (yr, yi) = subs[j][k % m];
+                let (c, s) = tw[j * k % n];
+                (re + yr * c - yi * s, im + yr * s + yi * c)
+            })
+        })
+        .collect()
+}
+
+/// Мощностной спектр кадра: бины `0..=n/2` (вход вещественный).
+fn fft_power(frame: &[f64]) -> Vec<f64> {
+    fft(&frame.iter().map(|&x| (x, 0.0)).collect::<Vec<_>>())
+        .iter()
+        .take(frame.len() / 2 + 1)
+        .map(|(re, im)| re * re + im * im)
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -235,7 +282,7 @@ pub fn log_mel_frames(samples: &[f32], p: FrontendParams) -> Vec<Vec<f32>> {
         for i in 0..p.win_length {
             frame[i] *= win[i];
         }
-        let power = dft_power(&frame);
+        let power = fft_power(&frame);
         let mut mel = vec![0f32; p.n_mels];
         for (m, row) in fb.iter().enumerate() {
             let e: f64 = row.iter().zip(power.iter()).map(|(w, q)| w * q).sum();
@@ -339,5 +386,42 @@ mod tests {
         let tone_e: f32 = w.iter().map(|r| r.iter().sum::<f32>()).sum();
         let sil_e: f32 = sil.iter().map(|r| r.iter().sum::<f32>()).sum();
         assert!(tone_e > sil_e);
+    }
+
+    /// БПФ должно совпадать с прямым ДПФ для всех используемых размеров кадра.
+    #[test]
+    fn fft_matches_direct_dft() {
+        let reference = |frame: &[f64]| -> Vec<f64> {
+            let n = frame.len();
+            (0..=n / 2)
+                .map(|k| {
+                    let (mut re, mut im) = (0.0f64, 0.0f64);
+                    for (i, &x) in frame.iter().enumerate() {
+                        let ang = 2.0 * std::f64::consts::PI * k as f64 * i as f64 / n as f64;
+                        re += x * ang.cos();
+                        im -= x * ang.sin();
+                    }
+                    re * re + im * im
+                })
+                .collect()
+        };
+        for n in [320usize, 400, 512] {
+            // Детерминированный «шумовой» сигнал: несколько тонов и гармоник.
+            let frame: Vec<f64> = (0..n)
+                .map(|i| {
+                    let t = i as f64;
+                    (t * 0.11).sin() * 0.4 + (t * 0.37).cos() * 0.2 + (t * 1.7).sin() * 0.05
+                })
+                .collect();
+            let fast = fft_power(&frame);
+            let slow = reference(&frame);
+            assert_eq!(fast.len(), slow.len());
+            for (k, (a, b)) in fast.iter().zip(slow.iter()).enumerate() {
+                assert!(
+                    (a - b).abs() <= 1e-6 * (1.0 + b.abs()),
+                    "fft_size {n}, бин {k}: {a} != {b}"
+                );
+            }
+        }
     }
 }

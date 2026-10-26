@@ -2,6 +2,7 @@ package io.github.guest363.meetingrecord
 
 import android.Manifest
 import android.content.pm.ActivityInfo
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
@@ -21,8 +22,29 @@ class MainActivity : TauriActivity() {
       WindowInsetsCompat.CONSUMED
     }
 
-    if (!PermissionHelper.hasPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO))) {
-      requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO)) { _ -> }
+    val needed = mutableListOf(Manifest.permission.RECORD_AUDIO)
+    if (Build.VERSION.SDK_INT >= 33) {
+      needed.add(Manifest.permission.POST_NOTIFICATIONS)
     }
+    if (!PermissionHelper.hasPermissions(this, needed.toTypedArray())) {
+      requestPermissions(needed.toTypedArray()) { _ -> }
+    }
+  }
+
+  // JNI-мост из Rust: FindClass из нативной нити не видит классы приложения,
+  // поэтому вызываем методы activity, а не ищем RecordingService через JNI.
+  @Suppress("unused")
+  fun startRecordingService() {
+    RecordingService.startRecording(this)
+  }
+
+  @Suppress("unused")
+  fun startProcessingService() {
+    RecordingService.startProcessing(this)
+  }
+
+  @Suppress("unused")
+  fun stopRecordingService() {
+    RecordingService.stop(this)
   }
 }

@@ -16,22 +16,26 @@
   let renaming = $state('')
   let renameValue = $state('')
   let savingName = $state(false)
+  let deleteTarget = $state<RecordingItem | null>(null)
+  let deleting = $state(false)
 
   // В карточке показываем последние 5 записей. Остальные скрыты за дровером.
+  // На телефоне видео не импортируется (нет ffmpeg) и не показывается.
   const VISIBLE = 5
+  const items = $derived(isMobile ? recordings.items.filter((r) => !r.is_video) : recordings.items)
   const filtered = $derived(
     search.trim() === ''
-      ? recordings.items
-      : recordings.items.filter((r) => r.name.toLowerCase().includes(search.trim().toLowerCase())),
+      ? items
+      : items.filter((r) => r.name.toLowerCase().includes(search.trim().toLowerCase())),
   )
   const visible = $derived(
     search.trim() === ''
-      ? recordings.items.slice(0, VISIBLE)
+      ? items.slice(0, VISIBLE)
       : filtered.slice(0, VISIBLE),
   )
   const hiddenCount = $derived(
     search.trim() === ''
-      ? Math.max(0, recordings.items.length - VISIBLE)
+      ? Math.max(0, items.length - VISIBLE)
       : Math.max(0, filtered.length - VISIBLE),
   )
 
@@ -56,7 +60,20 @@
   }
 
   function onWindowKey(e: KeyboardEvent): void {
-    if (drawerOpen && e.key === 'Escape') closeDrawer()
+    if (e.key !== 'Escape') return
+    if (deleteTarget) {
+      deleteTarget = null
+      return
+    }
+    if (drawerOpen) closeDrawer()
+  }
+
+  async function confirmDelete(): Promise<void> {
+    if (!deleteTarget || deleting) return
+    deleting = true
+    const ok = await deleteRecording(deleteTarget)
+    deleting = false
+    if (ok) deleteTarget = null
   }
 
   function onDrop(e: DragEvent): void {
@@ -140,6 +157,16 @@
               <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z" />
             </svg>
           </button>
+          <button
+            class="rec-delete-icon"
+            title={rec.owned ? 'Удалить запись' : 'Убрать из приложения'}
+            aria-label={rec.owned ? `Удалить запись ${rec.name}` : `Убрать запись ${rec.name} из приложения`}
+            onclick={() => (deleteTarget = rec)}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v6M14 11v6" />
+            </svg>
+          </button>
         </span>
       {/if}
       <span class="rec-meta">
@@ -160,21 +187,13 @@
       durationSec={rec.duration_sec || 0}
     />
     <div class="rec-actions">
-      {#if rec.is_video}
+      {#if rec.is_video && !isMobile}
         <button class="btn-secondary btn-sm" title="Извлечь звук из видео в MP3" onclick={() => void extractMp3(rec.path)}>
           MP3
         </button>
       {/if}
       <button class="btn-secondary btn-sm" onclick={() => openTranscript(rec.path, rec.is_video)}>
         Текст и спикеры
-      </button>
-      <button
-        class="btn-secondary btn-sm rec-delete"
-        title="Удалить запись и её расшифровку"
-        aria-label={`Удалить запись ${rec.name}`}
-        onclick={() => void deleteRecording(rec.name, rec.path)}
-      >
-        Удалить
       </button>
     </div>
   </div>
@@ -202,9 +221,9 @@
   ondrop={onDrop}
 >
   <div class="card-header">
-    <span class="card-title">Записи и видео <span class="count-badge">{recordings.items.length}</span></span>
+    <span class="card-title">{isMobile ? 'Записи' : 'Записи и видео'} <span class="count-badge">{items.length}</span></span>
     <div class="header-actions">
-      {#if recordings.items.length > 2}
+      {#if items.length > 2}
         <input
           type="search"
           class="input-field card-search"
@@ -217,7 +236,9 @@
       <input
         type="file"
         bind:this={uploadInput}
-        accept="audio/*,video/*,.mp4,.mkv,.mov,.avi,.webm,.m4v,.mp3,.wav,.m4a,.ogg,.flac"
+        accept={isMobile
+          ? 'audio/*,.mp3,.wav,.m4a,.ogg,.flac,.aac,.opus'
+          : 'audio/*,video/*,.mp4,.mkv,.mov,.avi,.webm,.m4v,.mp3,.wav,.m4a,.ogg,.flac'}
         hidden
         onchange={() => {
           const f = uploadInput?.files?.[0]
@@ -230,10 +251,14 @@
     </div>
   </div>
   <div class="help-text">
-    Поддерживаются аудио и видео: <b>MP3, WAV, MP4, MKV, MOV, WEBM</b>.{#if !isMobile} Файл можно перетащить сюда.{/if}
+    {#if isMobile}
+      Поддерживаются аудиофайлы: <b>MP3, WAV, M4A, OGG, FLAC</b>. Видео на телефоне не импортируется.
+    {:else}
+      Поддерживаются аудио и видео: <b>MP3, WAV, MP4, MKV, MOV, WEBM</b>. Файл можно перетащить сюда.
+    {/if}
   </div>
   <div class="recordings-list">
-    {#if recordings.items.length === 0}
+    {#if items.length === 0}
       <div class="empty-note">Записей пока нет</div>
     {:else}
       {#each visible as rec (rec.path)}
@@ -255,7 +280,7 @@
   <div class="app-drawer-overlay" role="presentation" onclick={closeDrawer}></div>
   <div class="app-drawer rec-drawer" role="dialog" aria-modal="true" aria-label="Все записи" tabindex="-1">
     <div class="app-drawer-top">
-      <span class="card-title">Все записи · {recordings.items.length}</span>
+      <span class="card-title">Все записи · {items.length}</span>
       <button class="icon-btn" aria-label="Закрыть список записей" onclick={closeDrawer}>✕</button>
     </div>
     <div class="app-drawer-body">
@@ -276,6 +301,51 @@
             {@render recRow(rec)}
           {/each}
         {/if}
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if deleteTarget}
+  <div
+    class="modal-overlay open"
+    role="dialog"
+    tabindex="-1"
+    aria-modal="true"
+    aria-label={deleteTarget.owned ? 'Удаление записи' : 'Удаление из приложения'}
+    onmousedown={(e) => {
+      if (e.target === e.currentTarget && !deleting) deleteTarget = null
+    }}
+  >
+    <div class="modal-box delete-box">
+      <div class="modal-top">
+        <div class="modal-title">
+          {deleteTarget.owned ? 'Удалить запись?' : 'Убрать из приложения?'}
+        </div>
+        <button
+          class="icon-btn"
+          aria-label="Закрыть подтверждение"
+          disabled={deleting}
+          onclick={() => (deleteTarget = null)}
+        >
+          ✕
+        </button>
+      </div>
+      <div class="help-text">
+        {#if deleteTarget.owned}
+          «{deleteTarget.name}» и её расшифровка будут удалены с диска. Это действие нельзя отменить.
+        {:else}
+          «{deleteTarget.name}» исчезнет из приложения. Сам файл и расшифровка останутся на диске —
+          приложение удаляет только свою ссылку на него.
+        {/if}
+      </div>
+      <div class="row-end">
+        <button class="btn-secondary" disabled={deleting} onclick={() => (deleteTarget = null)}>
+          Отмена
+        </button>
+        <button class="btn-primary" disabled={deleting} onclick={() => void confirmDelete()}>
+          {deleting ? 'Удаляю…' : deleteTarget.owned ? 'Удалить' : 'Убрать из приложения'}
+        </button>
       </div>
     </div>
   </div>
@@ -319,7 +389,19 @@
       flex-wrap: wrap;
     }
   }
-  /* Кнопка удаления — сдержанный красный, чтобы отличалась от нейтральных действий. */
-  .rec-delete { color: var(--accent-rec); }
-  .rec-delete:hover { color: var(--accent-rec-hover); background: #fee2e2; }
+  .rec-delete-icon {
+    margin-left: auto;
+    flex-shrink: 0;
+    border: none; background: transparent;
+    color: var(--text-faint); cursor: pointer;
+    padding: 6px; border-radius: var(--radius-sm);
+    min-width: 30px; min-height: 30px;
+    display: inline-flex; align-items: center; justify-content: center;
+    opacity: 0.55;
+    transition: opacity 140ms ease, color 140ms ease, background 140ms ease;
+  }
+  .rec-delete-icon:hover {
+    opacity: 1; color: var(--accent-rec); background: var(--bg-inset);
+  }
+  .delete-box { max-width: 440px; }
 </style>

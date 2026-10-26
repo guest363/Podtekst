@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use serde_json::json;
 
 use super::json_response;
-use super::media::{header_value, inside_save_dir, is_media_ext, safe_file_name};
+use super::media::{
+    header_value, inside_save_dir, is_media_ext, is_video_path, safe_file_name, video_supported,
+};
 use crate::config::save_dir;
 
 pub(super) fn handle_recording_rename(
@@ -99,6 +101,7 @@ pub(super) fn handle_recording_rename(
         );
         return;
     }
+    let was_owned = crate::media_registry::load_registry().is_owned(&old_path);
     if std::fs::rename(&old_path, &new_path).is_err() {
         json_response(
             request,
@@ -106,6 +109,12 @@ pub(super) fn handle_recording_rename(
             500,
         );
         return;
+    }
+    crate::media_registry::path_renamed(&old_path, &new_path);
+    // Старые записи узнаём по имени файла: после переименования шаблон уже
+    // не совпадёт, поэтому фиксируем путь в реестре явно.
+    if was_owned {
+        crate::media_registry::mark_owned(&new_path);
     }
     let old_stem = old_path
         .file_stem()
@@ -162,6 +171,22 @@ pub(super) fn handle_recording_delete(
         );
         return;
     }
+    // Файл, который приложение не создавало (положили в папку вручную или
+    // принесли извне), не удаляем: убираем только запись из списка.
+    if !crate::media_registry::load_registry().is_owned(&p) {
+        crate::media_registry::hide(&p);
+        json_response(
+            request,
+            json!({
+                "ok": true,
+                "kept": true,
+                "deleted": [],
+                "name": p.file_name().map(|s| s.to_string_lossy()).unwrap_or_default(),
+            }),
+            200,
+        );
+        return;
+    }
     let dir = p.parent().map(|d| d.to_path_buf()).unwrap_or_else(save_dir);
     let stem = p
         .file_stem()
@@ -172,6 +197,7 @@ pub(super) fn handle_recording_delete(
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default()];
     let _ = std::fs::remove_file(&p);
+    crate::media_registry::unmark_owned(&p);
     for suffix in [".transcript.json", ".md", ".txt"] {
         let side = dir.join(format!("{stem}{suffix}"));
         if side.exists() && std::fs::remove_file(&side).is_ok() {
@@ -206,6 +232,14 @@ pub(super) fn handle_upload(mut request: tiny_http::Request) {
     }
     let raw = header_value(&request, "X-Filename").unwrap_or_else(|| "uploaded_media".to_string());
     let fname = safe_file_name(raw.trim());
+    if !video_supported() && is_video_path(Path::new(&fname)) {
+        json_response(
+            request,
+            json!({"ok": false, "error": "На Android видео не поддерживается. Выберите аудиофайл (MP3, WAV, M4A, OGG, FLAC)."}),
+            400,
+        );
+        return;
+    }
     let dir = save_dir();
     let _ = std::fs::create_dir_all(&dir);
     let dest = crate::recording::unique_media_path(&dir, &fname);
@@ -287,6 +321,7 @@ pub(super) fn handle_upload(mut request: tiny_http::Request) {
         );
         return;
     }
+    crate::media_registry::mark_imported(&dest);
     json_response(
         request,
         json!({"ok": true, "path": dest.to_string_lossy(), "name": dest.file_name().map(|s| s.to_string_lossy()).unwrap_or_default()}),
@@ -294,6 +329,14 @@ pub(super) fn handle_upload(mut request: tiny_http::Request) {
     );
 }
 pub(super) fn handle_extract_audio(request: tiny_http::Request, body: serde_json::Value) {
+    if !video_supported() {
+        json_response(
+            request,
+            json!({"ok": false, "error": "Извлечение звука из видео недоступно на Android"}),
+            501,
+        );
+        return;
+    }
     let media = body
         .get("file")
         .and_then(|v| v.as_str())
@@ -355,11 +398,14 @@ pub(super) fn handle_extract_audio(request: tiny_http::Request, body: serde_json
         ]
     };
     match std::process::Command::new("ffmpeg").args(&args).output() {
-        Ok(o) if o.status.success() && out.exists() => json_response(
-            request,
-            json!({"ok": true, "path": out.to_string_lossy(), "name": out.file_name().map(|s| s.to_string_lossy()).unwrap_or_default()}),
-            200,
-        ),
+        Ok(o) if o.status.success() && out.exists() => {
+            crate::media_registry::mark_owned(&out);
+            json_response(
+                request,
+                json!({"ok": true, "path": out.to_string_lossy(), "name": out.file_name().map(|s| s.to_string_lossy()).unwrap_or_default()}),
+                200,
+            )
+        }
         Ok(o) => {
             let err = String::from_utf8_lossy(&o.stderr)
                 .chars()

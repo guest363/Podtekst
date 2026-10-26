@@ -112,6 +112,7 @@ impl Drop for RunningGuard {
         *current_file_cell()
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = String::new();
+        mr_audio::capture::foreground_processing_stop();
     }
 }
 
@@ -136,6 +137,8 @@ pub fn spawn_transcription_worker(audio_path: PathBuf, opts: TranscribeOptions) 
     *current_file_cell()
         .lock()
         .unwrap_or_else(|e| e.into_inner()) = audio_path.to_string_lossy().to_string();
+    // Android: не даём системе заснуть посреди часовой расшифровки.
+    mr_audio::capture::foreground_processing_start();
     emit(serde_json::json!({"type": "stage", "pct": 0, "message": "Подготовка к расшифровке…"}));
     let guard = RunningGuard(flag);
     std::thread::spawn(move || {

@@ -1,5 +1,5 @@
 // Голосовые пакеты и модели ИИ: состояние и загрузка (живут только в Настройках).
-import { readJsonSafe } from './api'
+import { isMobile, readJsonSafe } from './api'
 import type { ModelInfo, Voicepack } from './api'
 import { toast } from './toast.svelte.ts'
 import { loadPeople } from './people.svelte.ts'
@@ -38,6 +38,10 @@ export async function setAutoTranscribe(enabled: boolean): Promise<void> {
 }
 
 export async function loadRecordMode(): Promise<void> {
+  if (isMobile) {
+    settings.recordMode = 'mix'
+    return
+  }
   try {
     const d = await readJsonSafe(await fetch('/api/record/mode'))
     if (d.mode === 'mix' || d.mode === 'split') settings.recordMode = d.mode

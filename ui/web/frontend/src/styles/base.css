@@ -82,8 +82,6 @@
 .md-body h1, .md-body h2, .md-body h3 { color: var(--text-primary); font-weight: 800; margin: 8px 0 4px; }
 .md-body hr { border: none; border-top: 1px solid var(--border-soft); margin: 10px 0; }
 .empty-note { font-size: 12.5px; color: var(--text-faint); text-align: center; padding: 12px; }
-.donate { border-color: var(--border-card); background: var(--bg-inset); }
-.donate-text { font-size: 13px; color: var(--text-muted); }
 .row-start { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .row-start .input-field { flex: 1 1 200px; }
 .row-end { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
@@ -175,7 +173,7 @@
 .btn-secondary:active { transform: scale(0.97); }
 .btn-secondary:disabled { opacity: 0.55; cursor: wait; transform: none; }
 .btn-primary {
-  background: #16233a; border: 1px solid #0f172a; color: #fff;
+  background: #16233a; border: 1px solid #0f172a; color: #fff; text-decoration: none;
   padding: 7px 16px; border-radius: var(--radius-pill);
   font-size: 12.5px; font-weight: 600; cursor: pointer;
   display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;

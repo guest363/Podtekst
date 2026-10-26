@@ -111,6 +111,30 @@ pub fn mix_channels(mic: &[f32], sys: &[f32], mode: ChannelMode) -> (Vec<f32>, V
     }
 }
 
+/// Запись моно WAV 16 кГц (режим `mix`, в том числе Android).
+pub fn write_mono_wav(path: &Path, samples: &[f32], sample_rate: u32) -> Result<PathBuf> {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer =
+        hound::WavWriter::create(path, spec).map_err(|e| AudioError::Record(e.to_string()))?;
+    for &x in samples {
+        writer
+            .write_sample((x.clamp(-1.0, 1.0) * 32767.0) as i16)
+            .map_err(|e| AudioError::Record(e.to_string()))?;
+    }
+    writer
+        .finalize()
+        .map_err(|e| AudioError::Record(e.to_string()))?;
+    Ok(path.to_path_buf())
+}
+
 /// Запись стерео WAV 16 кГц (микрофон — левый, система — правый).
 pub fn write_stereo_wav(
     path: &Path,
@@ -182,6 +206,10 @@ mod tests {
         let p = dir.join("t.wav");
         write_stereo_wav(&p, &[0.0, 0.5, -0.5], &[0.0, -0.5, 0.5], 16000).unwrap();
         assert!(p.exists());
+        let m = dir.join("m.wav");
+        write_mono_wav(&m, &[0.0, 0.5, -0.5], 16000).unwrap();
+        let reader = hound::WavReader::open(&m).unwrap();
+        assert_eq!(reader.spec().channels, 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

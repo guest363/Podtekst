@@ -86,11 +86,21 @@ jobs:
           path: src-tauri/bundle-pkg/*
 
   # Публикация — только после успеха сборок Tauri-бандлов.
-  # Автообновление (updater/latest.json) отключено до генерации ключей подписи.
+  # Приложение проверяет обновления по последнему GitHub Release, поэтому
+  # тег обязан совпадать с версией в Cargo.toml.
   publish:
     needs: [build-tauri]
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v4
+      - name: Validate tag matches app version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver="$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/crates/mr-app/Cargo.toml | head -n1)"
+          if [ "$tag" != "$ver" ]; then
+            echo "Тег v$tag не совпадает с версией приложения $ver"
+            exit 1
+          fi
       - uses: actions/download-artifact@v4
         with:
           path: artifacts

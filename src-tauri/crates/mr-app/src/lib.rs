@@ -18,6 +18,7 @@ mod config;
 mod desktop;
 mod http;
 mod ipc;
+mod media_registry;
 mod recording;
 #[cfg(feature = "tauri-ui")]
 mod tauri_shell;
@@ -93,7 +94,12 @@ fn opener_url(url: &str) {
     }
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(url).spawn();
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    // Android: системный intent VIEW. xdg-open в APK нет.
+    #[cfg(target_os = "android")]
+    let _ = std::process::Command::new("/system/bin/am")
+        .args(["start", "-a", "android.intent.action.VIEW", "-d", url])
+        .spawn();
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android")))]
     let _ = std::process::Command::new("xdg-open").arg(url).spawn();
 }
 /// Мобильная точка входа (Android/iOS): то же HTTP-ядро + окно WebView
@@ -628,6 +634,22 @@ mod live_api_tests {
         let (st, _, _) = http(port, "GET", "/audio/nope.mp3", &[], &[]);
         assert!(st == 404, "чужой файл должен давать 404, а не {st}");
 
+        // Фрагмент спикера из stereo WAV: выбранный канал отдаётся моно,
+        // чтобы в наушниках не звучало эхо второго канала.
+        let snippet = format!("/api/media/snippet?file={fname_enc}&start=0&end=1&channel=0");
+        let (st, hs, wav) = http(port, "GET", &snippet, &[], &[]);
+        assert_eq!(st, 200, "snippet канала: {st}");
+        assert!(
+            hs.iter()
+                .any(|(k, v)| k == "content-type" && v == "audio/wav"),
+            "нет WAV content-type: {hs:?}"
+        );
+        assert_eq!(
+            u16::from_le_bytes([wav[22], wav[23]]),
+            1,
+            "фрагмент должен быть моно"
+        );
+
         // Переименование записи: расширение сохраняется, старый файл исчезает.
         let rename_body = json!({"path": item.get("path").and_then(|x| x.as_str()).unwrap_or(""), "name": "Совещание с командой"});
         let (st, v) = json(http(
@@ -761,7 +783,9 @@ mod live_api_tests {
             .unwrap_or(false));
 
         // Голосовые отпечатки: save → видны в people/voiceprints → delete.
-        let emb: Vec<f64> = (0..32).map(|i| (i as f64) / 32.0).collect();
+        let emb: Vec<f64> = (0..mr_ml::EMBEDDING_DIM)
+            .map(|i| (i as f64) / mr_ml::EMBEDDING_DIM as f64)
+            .collect();
         let save_body = serde_json::json!({"name": "Тестовый Голос", "embedding": emb, "audio_file": "", "old_name": ""});
         let (st, v) = json(http(
             port,
@@ -774,6 +798,23 @@ mod live_api_tests {
             (st, v.get("ok").and_then(|x| x.as_bool())),
             (200, Some(true))
         );
+        // Сохранение обязано писать и центроид, и прототип: иначе матчинг
+        // деградирует до одного среднего вектора и теряет разные условия записи.
+        let vp: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(base.join("packs/default/voiceprints.json")).unwrap(),
+        )
+        .unwrap();
+        let prof = vp["profiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "Тестовый Голос")
+            .expect("профиль не сохранён");
+        assert_eq!(
+            prof["embedding"].as_array().unwrap().len(),
+            mr_ml::EMBEDDING_DIM
+        );
+        assert_eq!(prof["prototypes"].as_array().unwrap().len(), 1);
         let (_, v) = json(http(port, "GET", "/api/voiceprints", &[], &[]));
         assert!(v
             .get("voiceprints")
@@ -795,16 +836,42 @@ mod live_api_tests {
                 .iter()
                 .any(|p| p.get("name").and_then(|n| n.as_str()) == Some("Тестовый Голос")))
             .unwrap_or(false));
+        // После удаления голоса открытая расшифровка не должна оставаться
+        // «узнанной» этим профилем.
+        let transcript = rec.join("Совещание с командой.transcript.json");
+        std::fs::write(
+            &transcript,
+            serde_json::to_vec(&json!({
+                "meta": {"speakers_info": [{
+                    "name": "Тестовый Голос", "matched": true,
+                    "matched_name": "Тестовый Голос"
+                }]},
+                "utterances": []
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         let (st, v) = json(http(
             port,
             "POST",
             "/api/voiceprints/delete",
             &[("Content-Type", "application/json")],
-            json!({"name":"Тестовый Голос"}).to_string().as_bytes(),
+            json!({
+                "name": "Тестовый Голос",
+                "audio_file": rec.join("Совещание с командой.wav").to_string_lossy()
+            })
+            .to_string()
+            .as_bytes(),
         ));
         assert_eq!(
             (st, v.get("ok").and_then(|x| x.as_bool())),
             (200, Some(true))
+        );
+        let cleared: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&transcript).unwrap()).unwrap();
+        assert_eq!(
+            cleared["meta"]["speakers_info"][0]["matched"].as_bool(),
+            Some(false)
         );
 
         // Пакеты и поддержка.
@@ -849,6 +916,57 @@ mod live_api_tests {
                 .and_then(|x| x.as_bool()),
             Some(true)
         );
+
+        // Удаление внешнего файла: из списка уходит, на диске остаётся.
+        let external = rec.join("важное-внешнее.wav");
+        std::fs::write(&external, b"external file").unwrap();
+        let (_, v) = json(http(port, "GET", "/api/recordings", &[], &[]));
+        let ext_item = v
+            .get("recordings")
+            .and_then(|x| x.as_array())
+            .and_then(|a| {
+                a.iter()
+                    .find(|r| r.get("name").and_then(|n| n.as_str()) == Some("важное-внешнее.wav"))
+            })
+            .expect("внешний файл должен быть в списке");
+        assert_eq!(ext_item.get("owned").and_then(|x| x.as_bool()), Some(false));
+        let (st, v) = json(http(
+            port,
+            "POST",
+            "/api/recordings/delete",
+            &[("Content-Type", "application/json")],
+            serde_json::to_vec(&json!({"path": external.to_string_lossy()}))
+                .unwrap()
+                .as_slice(),
+        ));
+        assert_eq!(st, 200);
+        assert_eq!(v.get("kept").and_then(|x| x.as_bool()), Some(true));
+        assert!(external.exists(), "внешний файл нельзя удалять");
+        let (_, v) = json(http(port, "GET", "/api/recordings", &[], &[]));
+        assert!(!v
+            .get("recordings")
+            .and_then(|x| x.as_array())
+            .map(|a| a
+                .iter()
+                .any(|r| r.get("name").and_then(|n| n.as_str()) == Some("важное-внешнее.wav")))
+            .unwrap_or(false));
+
+        // Свою запись удаляем с диска вместе с расшифровкой.
+        let owned = rec.join("own.wav");
+        std::fs::write(&owned, b"own file").unwrap();
+        crate::media_registry::mark_owned(&owned);
+        let (st, v) = json(http(
+            port,
+            "POST",
+            "/api/recordings/delete",
+            &[("Content-Type", "application/json")],
+            serde_json::to_vec(&json!({"path": owned.to_string_lossy()}))
+                .unwrap()
+                .as_slice(),
+        ));
+        assert_eq!(st, 200);
+        assert_eq!(v.get("kept").and_then(|x| x.as_bool()), None);
+        assert!(!owned.exists(), "свою запись удаляем");
 
         // Видео принимают в расшифровку (декодер: symphonia → ffmpeg-извлечение).
         if std::process::Command::new("ffmpeg")

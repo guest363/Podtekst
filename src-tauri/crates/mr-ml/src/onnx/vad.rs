@@ -77,10 +77,42 @@ impl SileroVad {
 
     /// Прогон всего сигнала окнами 512, возвращает вероятность на окно.
     pub fn process_all(&mut self, samples: &[f32]) -> Result<Vec<f32>, String> {
+        self.process_all_with(samples, |_, _| {})
+    }
+
+    /// То же с прогрессом и пропуском цифровой тишины. На Android один
+    /// inference на окно 32 мс — главный тормоз часовых записей; окна полной
+    /// тишины не отправляем в ONNX, а сразу считаем неречевыми.
+    pub fn process_all_with<F>(
+        &mut self,
+        samples: &[f32],
+        mut progress: F,
+    ) -> Result<Vec<f32>, String>
+    where
+        F: FnMut(usize, usize),
+    {
         self.reset();
-        let mut probs = Vec::new();
-        for chunk in samples.chunks(VAD_WINDOW) {
-            probs.push(self.process_window(chunk)?);
+        let chunks: Vec<&[f32]> = samples.chunks(VAD_WINDOW).collect();
+        let total = chunks.len();
+        let mut probs = Vec::with_capacity(total);
+        let mut silent_run = 0usize;
+        for (i, chunk) in chunks.into_iter().enumerate() {
+            let peak = chunk.iter().fold(0.0f32, |acc, x| acc.max(x.abs()));
+            if peak < 1e-4 {
+                silent_run += 1;
+                // Короткую паузу не сбрасываем: Silero терял бы контекст
+                // начала следующей фразы. Сброс — только после ~1 с тишины.
+                if silent_run == 32 {
+                    self.reset();
+                }
+                probs.push(0.0);
+            } else {
+                silent_run = 0;
+                probs.push(self.process_window(chunk)?);
+            }
+            if i % 256 == 0 || i + 1 == total {
+                progress(i + 1, total);
+            }
         }
         Ok(probs)
     }

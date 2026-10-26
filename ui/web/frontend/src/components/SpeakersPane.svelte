@@ -66,7 +66,7 @@
   // Фрагмент играет сразу по клику: без верхнего плеера и без полосы прогресса.
   // WAV-записи (наши, самые большие) нарезает ядро: маленький файл играется с нуля,
   // перемотка по гигабайтному WAV вешала WebView. Прочие форматы — медиафрагмент #t=.
-  function toggleSample(key: string, start: number, end: number): void {
+  function toggleSample(key: string, start: number, end: number, channel?: number | null): void {
     if (playingKey === key) {
       stopSample()
       return
@@ -91,9 +91,10 @@
 
     const isWav = /\.wav$/i.test(ui.currentTranscriptPath || '')
     if (isWav) {
+      const ch = channel === null || channel === undefined ? '' : `&channel=${channel}`
       audio.src =
         `/api/media/snippet?file=${encPath(baseName(ui.currentTranscriptPath))}` +
-        `&start=${start}&end=${Math.max(start, end)}`
+        `&start=${start}&end=${Math.max(start, end)}${ch}`
       void audio.play().catch(() => {
         if (audio.paused) done()
       })
@@ -187,7 +188,7 @@
       const r = await fetch('/api/voiceprints/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, audio_file: ui.currentTranscriptPath }),
       })
       const d = await readJsonSafe(r)
       if (d.ok) {
@@ -203,14 +204,14 @@
   }
 </script>
 
-{#snippet sampleRow(s: { start: number; end: number; text?: string; full_text?: string }, key: string)}
+{#snippet sampleRow(s: { start: number; end: number; text?: string; full_text?: string; channel?: number | null }, key: string)}
   <div class="sample-row">
     <button
       class="sample-play {playingKey === key ? 'playing' : ''}"
       title={playingKey === key ? 'Остановить фрагмент' : `Прослушать фрагмент: ${(s.text || '').slice(0, 80)}`}
       aria-label={playingKey === key ? 'Остановить фрагмент' : `Прослушать фрагмент: ${(s.text || '').slice(0, 60)}`}
       aria-pressed={playingKey === key}
-      onclick={() => toggleSample(key, s.start, s.end ?? s.start)}
+      onclick={() => toggleSample(key, s.start, s.end ?? s.start, s.channel)}
     >
       {#if playingKey === key}
         <svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true">
@@ -255,7 +256,7 @@
               {#if spk.matched}
                 Узнан: {spk.matched_name || spk.name}
               {:else}
-                {(spk.channel === 0 ? 'Микрофон' : 'Собеседник') + (spk.utterances_count ? ` • реплик: ${spk.utterances_count}` : '')}
+                {(spk.channel === 0 ? 'Микрофон' : spk.channel === 1 ? 'Собеседник' : 'Спикер') + (spk.utterances_count ? ` • реплик: ${spk.utterances_count}` : '')}
               {/if}
             </span>
           </div>

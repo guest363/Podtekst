@@ -1,8 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Захват микрофона (VU-метр WebView / будущий AAudio-рекордер). -->
+    <!-- Захват микрофона (VU-метр WebView / AAudio-рекордер). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Долгая запись/расшифровка не должны засыпать вместе с экраном. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
@@ -34,6 +40,13 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Foreground service: Android не глушит микрофон, когда экран погас. -->
+        <service
+            android:name=".RecordingService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="microphone|dataSync" />
 
         <provider
           android:name="androidx.core.content.FileProvider"

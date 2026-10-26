@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { baseName, fmtClock, fmtClockShort, pluralSpeakers } from '../lib/api'
+  import { baseName, fmtClock, fmtClockShort, isMobile, pluralSpeakers } from '../lib/api'
   import { copyText, toast } from '../lib/toast.svelte.ts'
   import { closeTranscript, ui } from '../lib/ui.svelte.ts'
   import { emptyHint, engine, openTranscriptFile, startTranscription, transcript } from '../lib/transcript.svelte.ts'
@@ -205,7 +205,7 @@
             <span class="btn-text-short">Расшифровать</span>
           </button>
 
-          {#if transcript.extractVisible}
+          {#if transcript.extractVisible && !isMobile}
             <button class="btn-secondary btn-sm desktop-only-btn" onclick={() => void extractMp3(ui.currentTranscriptPath)}>
               Извлечь MP3
             </button>
@@ -220,10 +220,18 @@
   </header>
 
   {#if engine.running}
-    <div class="transcript-progress">
+    <div class="transcript-progress" aria-live="polite">
+      <div class="transcript-progress-head">
+        <span class="transcript-progress-title">
+          {otherRunning ? 'Движок занят другой записью' : 'Идёт расшифровка'} · {engine.pct}%
+        </span>
+        {#if engine.file}
+          <span class="transcript-progress-file" title={engine.file}>{baseName(engine.file)}</span>
+        {/if}
+      </div>
       <div class="help-text">
         {#if otherRunning}
-          Движок расшифровывает другую запись – «{baseName(engine.file)}». {engine.msg}
+          Дождитесь окончания «{baseName(engine.file)}». {engine.msg}
         {:else}
           {engine.msg}
         {/if}

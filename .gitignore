@@ -25,6 +25,7 @@ external_people.json
 voiceprints.json
 voiceprints.json.bak
 config.json
+media_registry.json
 
 # Recordings directory
 Recordings/

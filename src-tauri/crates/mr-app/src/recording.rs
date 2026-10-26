@@ -120,6 +120,13 @@ pub(crate) fn start_recording_inner(st: &mut RecordingState, mode: &str) -> serd
     if st.is_recording {
         return json!({"ok": false, "error": "Запись уже идёт"});
     }
+    // На Android системного канала нет: split даёт второй канал из нулей,
+    // зря удваивает файл и время VAD. Пишем моно.
+    let mode = if cfg!(target_os = "android") {
+        "mix"
+    } else {
+        mode
+    };
     let dir = save_dir();
     let _ = std::fs::create_dir_all(&dir);
     let started = now_secs();
@@ -129,6 +136,7 @@ pub(crate) fn start_recording_inner(st: &mut RecordingState, mode: &str) -> serd
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or(fname);
+    crate::media_registry::mark_owned(&out);
     // Тесты и машины без аудио: явный фейк вместо молчаливой тишины.
     if std::env::var("MR_FAKE_CAPTURE").is_ok() {
         let _ = mr_audio::write_stereo_wav(&out, &vec![0.0; 16000], &vec![0.0; 16000], 16000);
@@ -169,7 +177,10 @@ pub(crate) fn start_recording_inner(st: &mut RecordingState, mode: &str) -> serd
     };
     let session = match mr_audio::capture::start_capture(&request) {
         Ok(session) => session,
-        Err(e) => return json!({"ok": false, "error": e.to_string()}),
+        Err(e) => {
+            crate::media_registry::unmark_owned(&out);
+            return json!({"ok": false, "error": e.to_string()});
+        }
     };
     let has_sys = session.system.is_some();
     st.capture = Some(std::sync::Arc::new(Mutex::new(session)));
@@ -249,7 +260,11 @@ pub(crate) fn stop_recording_inner(st: &mut RecordingState) -> serde_json::Value
             mic.resize(max_len, 0.0);
             sys.resize(max_len, 0.0);
             let (l, r) = mr_audio::mix_channels(&mic, &sys, ChannelMode::parse(&st.mode));
-            mr_audio::write_stereo_wav(&out_path, &l, &r, 16000).map_err(|e| e.to_string())?;
+            if st.mode == "mix" {
+                mr_audio::write_mono_wav(&out_path, &l, 16000).map_err(|e| e.to_string())?;
+            } else {
+                mr_audio::write_stereo_wav(&out_path, &l, &r, 16000).map_err(|e| e.to_string())?;
+            }
             for p in [mic_path.as_ref(), sys_path.as_ref()].into_iter().flatten() {
                 let _ = std::fs::remove_file(p);
             }
@@ -262,13 +277,18 @@ pub(crate) fn stop_recording_inner(st: &mut RecordingState) -> serde_json::Value
         match finalize() {
             Ok(p) => peak = Some(p),
             Err(e) => {
+                crate::media_registry::unmark_owned(&out_path);
                 st.current_file = None;
                 return json!({"ok": false, "error": format!("Не удалось склеить запись: {e}")});
             }
         }
     }
     // Фейк-режим тестов: файл уже записан в start, остаётся только переименовать.
+    let old_path = PathBuf::from(&file);
     let (file, name) = finalize_recording_name(&file, started, ended);
+    if old_path != Path::new(&file) {
+        crate::media_registry::path_renamed(&old_path, Path::new(&file));
+    }
     st.current_file = Some(file.clone());
     let mut resp = json!({"ok": true, "file": file, "filename": name, "elapsed_sec": elapsed});
     if let Some(p) = peak {

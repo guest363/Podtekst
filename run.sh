@@ -114,7 +114,9 @@ if [ "$NEEDS_FRONT_BUILD" = 1 ]; then
     fi
     echo "→ Собираю фронт (Svelte + Vite)…"
     (cd "$FRONT_DIR" && "${YARN[@]}" install --immutable && "${YARN[@]}" build)
-    FRONT_HASH="$(find "$FRONT_DIR/src" "$FRONT_DIR/index.html" "$FRONT_DIR/package.json" "$FRONT_DIR/yarn.lock" "$FRONT_DIR/vite.config.ts" -type f -print 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do sha256sum "$f"; done | sha256sum | cut -d' ' -f1)"
+    # Пути в хеше — относительно корня репозитория: тот же расчёт в CI,
+    # иначе абсолютный путь в run.sh давал другой хеш.
+    FRONT_HASH="$(cd "$SCRIPT_DIR" && find ui/web/frontend/src ui/web/frontend/index.html ui/web/frontend/package.json ui/web/frontend/yarn.lock ui/web/frontend/vite.config.ts -type f -print 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do sha256sum "$f"; done | sha256sum | cut -d' ' -f1)"
     echo "$FRONT_HASH" > "$FRONT_STAMP"
 fi
 

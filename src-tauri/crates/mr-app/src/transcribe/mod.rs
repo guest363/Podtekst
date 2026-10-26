@@ -132,6 +132,8 @@ pub struct Sample {
     pub dur: f64,
     pub text: String,
     pub full_text: String,
+    /// Канал исходной записи: фрагмент проигрывается изолированно.
+    pub channel: Option<i32>,
 }
 
 /// Параметры запуска транскрибации.
@@ -177,6 +179,47 @@ pub struct TranscribeReport {
 const MAX_SEGMENT_SEC: f32 = 20.0;
 const SEGMENT_GAP_SEC: f32 = 0.5;
 const SEGMENT_PAD_SEC: f64 = 0.25;
+
+/// Штраф на blank только для короткой тихой речи. На длинных фрагментах,
+/// почти-тишине и громкой речи штраф выключен: иначе декодер выдумывает
+/// повторяющийся текст на шуме.
+fn quiet_blank_penalty(duration_sec: f64, rms: f32) -> f32 {
+    if duration_sec <= 4.0 && (0.0015..0.015).contains(&rms) {
+        2.0
+    } else {
+        0.0
+    }
+}
+
+/// Признак зацикливания ASR: один и тот же токен/слог повторяется десятки раз
+/// или текст почти полностью состоит из нескольких слов. Такой фрагмент —
+/// галлюцинация декодера на шуме, а не речь; в отчёт он не попадает.
+fn looks_like_asr_loop(text: &str) -> bool {
+    let words: Vec<String> = text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect();
+    if words.len() < 8 {
+        return false;
+    }
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    let mut max_run = 1usize;
+    let mut run = 1usize;
+    for (i, w) in words.iter().enumerate() {
+        *counts.entry(w.as_str()).or_default() += 1;
+        if i > 0 {
+            run = if words[i] == words[i - 1] { run + 1 } else { 1 };
+            max_run = max_run.max(run);
+        }
+    }
+    let unique_ratio = counts.len() as f32 / words.len() as f32;
+    let max_count = counts.values().copied().max().unwrap_or(0);
+    max_run >= 8
+        || (max_run >= 6 && unique_ratio < 0.4)
+        || (max_count >= 10 && max_count as f32 / words.len() as f32 >= 0.35)
+        || (words.len() >= 20 && unique_ratio < 0.22)
+}
 
 /// Полный проход: файл → реплики с именами спикеров → md/txt/transcript.json.
 pub fn transcribe_file(
@@ -259,12 +302,20 @@ pub fn transcribe_file(
 
     // VAD + группировка
     let mut channel_grouped: HashMap<usize, Vec<(f64, f64)>> = HashMap::new();
-    let mut speech_sec = 0.0;
-    for (ch, label) in chan_list.iter() {
+    let channel_count = chan_list.len().max(1) as f64;
+    for (ch_i, (ch, label)) in chan_list.iter().enumerate() {
         let samples = &channel_samples[ch];
+        let base = 6.0 + 8.0 * ch_i as f64 / channel_count;
+        let span = 8.0 / channel_count;
         let probs = models
             .vad
-            .process_all(samples)
+            .process_all_with(samples, |done, total| {
+                let pct = (base + span * done as f64 / total.max(1) as f64) as u8;
+                on_event(
+                    pct.clamp(6, 14),
+                    &format!("Поиск речи ({label}): {done} из {total} окон"),
+                );
+            })
             .map_err(|e| format!("VAD: {e}"))?;
         let segs = vad_segments_from_probs(&probs, 0.1, 0.25, 0.5);
         let grouped = diarize::merge_quiet_short(
@@ -275,9 +326,8 @@ pub fn transcribe_file(
                 SEGMENT_GAP_SEC,
             ),
         );
-        speech_sec += grouped.iter().map(|(a, b)| (b - a) as f64).sum::<f64>();
         on_event(
-            14,
+            (base + span) as u8,
             &format!("{label}: найдено {} фрагментов", grouped.len()),
         );
         channel_grouped.insert(
@@ -290,7 +340,6 @@ pub fn transcribe_file(
     }
     let total_segs: usize = channel_grouped.values().map(|v| v.len()).sum();
     let mut done_segs = 0usize;
-    let mut words = 0usize;
     let mut channel_utts: HashMap<usize, Vec<Utterance>> = HashMap::new();
     for (ch, label) in chan_list.iter() {
         let samples = &channel_samples[ch];
@@ -306,12 +355,14 @@ pub fn transcribe_file(
             let chunk = &samples[lo..hi];
             let text = if use_gigaam {
                 // Тихая речь: жадный RNNT предпочитает blank и теряет слова.
-                // Штраф включаем только для тихих фрагментов, чтобы не портить обычную речь.
+                // Штраф включаем только для коротких фрагментов с речевой
+                // громкостью: на длинном шуме и почти-тишине он заставляет
+                // декодер выдумывать повторяющийся текст.
                 let rms =
                     (chunk.iter().map(|x| x * x).sum::<f32>() / chunk.len().max(1) as f32).sqrt();
-                // 5.0 — подобранный минимум для тихой короткой речи;
-                // для обычной речи штраф не включаем.
-                let blank_penalty = if rms < 0.015 { 5.0 } else { 0.0 };
+                // Длительность — до padding-а, иначе короткая реплика у границы
+                // 4 секунд теряет штраф из-за добавленных 0.5 с.
+                let blank_penalty = quiet_blank_penalty(*e - *s, rms);
                 models
                     .gigaam
                     .as_mut()
@@ -333,8 +384,8 @@ pub fn transcribe_file(
                 pct.min(80),
                 &format!("Реплик распознано: {done_segs} из {total_segs}"),
             );
-            if !text.is_empty() {
-                words += text.split_whitespace().count();
+            // Зацикленный вывод жадного декодера на шуме — не речь.
+            if !text.is_empty() && !looks_like_asr_loop(&text) {
                 utts.push(Utterance {
                     start: (a * 100.0).round() / 100.0,
                     end: (b * 100.0).round() / 100.0,
@@ -357,6 +408,7 @@ pub fn transcribe_file(
     for (ch, _label) in chan_list.iter() {
         let samples = &channel_samples[ch];
         let mut utts = channel_utts.remove(ch).unwrap_or_default();
+        on_event(80, "Ищу смену голоса внутри длинных реплик…");
         utts = diarize::split_long_by_speaker_change(samples, utts, &mut embed_ext);
         let (prefix, ch_idx) = if is_stereo {
             (
@@ -390,20 +442,40 @@ pub fn transcribe_file(
         speakers_info.extend(infos);
         all_utts.extend(utts);
     }
+    // Один и тот же голос в микрофоне и системе — одна карточка, а не два
+    // разных «Участник N» / «Собеседник N». Дубли эха схлопываем до одной фразы.
+    diarize::reconcile_channels(&mut speakers_info, &mut all_utts);
+    diarize::dedupe_cross_channel(&mut all_utts);
     all_utts.sort_by(|a, b| a.start.total_cmp(&b.start).then(a.speaker.cmp(&b.speaker)));
-    // Слияние соседних реплик одного спикера (зазор ≤ 1.0 с)
-    let mut merged: Vec<Utterance> = vec![];
-    for u in all_utts {
-        if let Some(last) = merged.last_mut() {
-            if last.speaker == u.speaker && u.start - last.end <= 1.0 {
-                last.text = format!("{} {}", last.text, u.text).trim().to_string();
-                last.end = u.end;
-                continue;
+    let merged = diarize::merge_utterances(all_utts);
+    diarize::refresh_speaker_stats(&mut speakers_info, &merged);
+    let words = merged
+        .iter()
+        .map(|u| u.text.split_whitespace().count())
+        .sum::<usize>();
+    // Уникальное покрытие таймлайна: сумма по каналам давала «232 с» в
+    // трёхминутной встрече из-за одновременной речи микрофона и системы.
+    let mut spans: Vec<(f64, f64)> = merged
+        .iter()
+        .map(|u| (u.start.max(0.0), u.end.max(u.start)))
+        .collect();
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut covered = 0.0;
+    let mut cur: Option<(f64, f64)> = None;
+    for (s, e) in spans {
+        match cur {
+            None => cur = Some((s, e)),
+            Some((a, b)) if s <= b => cur = Some((a, b.max(e))),
+            Some((a, b)) => {
+                covered += b - a;
+                cur = Some((s, e));
             }
         }
-        merged.push(u);
     }
-    speakers_info.retain(|s| s.utterances_count > 0 || merged.iter().any(|u| u.speaker == s.name));
+    if let Some((a, b)) = cur {
+        covered += b - a;
+    }
+    let speech_sec = covered;
 
     let speakers: Vec<String> = {
         let mut s = vec![];
@@ -470,4 +542,44 @@ pub fn transcribe_file(
         speaker_method: method,
         duration_sec,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{looks_like_asr_loop, quiet_blank_penalty};
+
+    #[test]
+    fn detects_repeated_asr_hallucination() {
+        let looped = format!(
+            "Проверка того, как пишутся{} пишется либо.",
+            "-и".repeat(40)
+        );
+        assert!(looks_like_asr_loop(&looped));
+        assert!(looks_like_asr_loop(
+            "кстати, кстати, кстати, кстати, кстати, кстати, кстати, кстати, всё"
+        ));
+        assert!(looks_like_asr_loop(
+            "Да-да-да-да-да-да-да-да-да-да-да-да, вот так вот оно и было"
+        ));
+    }
+
+    #[test]
+    fn blank_penalty_only_for_short_quiet_speech() {
+        assert_eq!(quiet_blank_penalty(2.6, 0.011), 2.0);
+        assert_eq!(quiet_blank_penalty(10.0, 0.011), 0.0);
+        assert_eq!(quiet_blank_penalty(2.6, 0.0003), 0.0);
+        assert_eq!(quiet_blank_penalty(2.6, 0.2), 0.0);
+    }
+
+    #[test]
+    fn keeps_normal_speech_with_small_repetitions() {
+        assert!(!looks_like_asr_loop(
+            "Проверка того, как пишется, пишется ли."
+        ));
+        assert!(!looks_like_asr_loop(
+            "Да-да-да, хорошо, встретимся завтра в десять утра."
+        ));
+
+        assert!(!looks_like_asr_loop(""));
+    }
 }

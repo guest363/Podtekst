@@ -2256,6 +2256,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "thiserror 2.0.21",
  "tiny_http",
+ "ureq 2.12.1",
 ]
 
 [[package]]

@@ -40,6 +40,40 @@ mod macos;
 #[cfg(target_os = "android")]
 mod android;
 
+type ForegroundHandler = Box<dyn Fn(bool, bool) + Send + Sync>;
+
+static FOREGROUND_HANDLER: std::sync::OnceLock<std::sync::Mutex<Option<ForegroundHandler>>> =
+    std::sync::OnceLock::new();
+
+/// Android-оболочка регистрирует здесь JNI-мост к foreground service.
+/// `processing=false` — микрофон, `true` — расшифровка; второй аргумент — start/stop.
+pub fn set_foreground_handler(handler: ForegroundHandler) {
+    let slot = FOREGROUND_HANDLER.get_or_init(|| std::sync::Mutex::new(None));
+    if let Ok(mut guard) = slot.lock() {
+        *guard = Some(handler);
+    }
+}
+
+pub(crate) fn foreground_service(processing: bool, start: bool) {
+    let Some(slot) = FOREGROUND_HANDLER.get() else {
+        return;
+    };
+    if let Ok(guard) = slot.lock() {
+        if let Some(handler) = guard.as_ref() {
+            handler(processing, start);
+        }
+    }
+}
+
+/// Android: foreground service для расшифровки в фоне. На других ОС — no-op.
+pub fn foreground_processing_start() {
+    foreground_service(true, true);
+}
+
+pub fn foreground_processing_stop() {
+    foreground_service(true, false);
+}
+
 pub use stream::{read_raw_f32, resample_to};
 
 /// Устройство звука, доступное для захвата.

@@ -143,7 +143,7 @@
         {#if isRecording}
           Идёт запись
         {:else if engine.running}
-          {engine.file ? `Расшифровка: ${baseName(engine.file)}` : 'Идёт расшифровка…'}
+          Расшифровка {engine.pct}%{engine.file ? ` · ${baseName(engine.file)}` : ''}
         {:else if Object.keys(engine.downloading).length > 0}
           {@const activeId = Object.keys(engine.downloading)[0]}
           {@const activePct = engine.downloading[activeId]}
@@ -153,6 +153,22 @@
         {/if}
       </span>
     </div>
+
+    {#if engine.running}
+      <div class="deck-transcribe" aria-label="Ход расшифровки">
+        <div
+          class="vu-track progress-track"
+          role="progressbar"
+          aria-valuenow={engine.pct}
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-label="Прогресс расшифровки"
+        >
+          <div class="vu-bar" style={`width: ${engine.pct}%`}></div>
+        </div>
+        <div class="deck-transcribe-msg">{engine.msg}</div>
+      </div>
+    {/if}
 
     <div class="timer-readout {isRecording ? 'recording' : ''}" aria-label="Время записи">
       {timerText}
@@ -164,19 +180,23 @@
         <div class="vu-track"><div class="vu-bar" style={`width: ${micLevel}%`}></div></div>
         <span class="vu-db">{micRms > 0.001 ? `${micDb}\u00A0дБ` : '–\u00A0дБ'}</span>
       </div>
-      <div class="vu-row">
-        <span class="vu-label">Собеседники</span>
-        <div class="vu-track"><div class="vu-bar" style={`width: ${sysLevel}%`}></div></div>
-        <span class="vu-db">{sysLevel > 0 ? `${sysLevel}%` : '–'}</span>
-      </div>
-    </div>
-
-    <div class="mic-strip">
-      <span>Микрофон: <span class="mic-name">{micName}</span></span>
-      {#if micMuted}
-        <span class="status-badge warn">Выключен в системе</span>
+      {#if !isMobile}
+        <div class="vu-row">
+          <span class="vu-label">Собеседники</span>
+          <div class="vu-track"><div class="vu-bar" style={`width: ${sysLevel}%`}></div></div>
+          <span class="vu-db">{sysLevel > 0 ? `${sysLevel}%` : '–'}</span>
+        </div>
       {/if}
     </div>
+
+    {#if !isMobile}
+      <div class="mic-strip">
+        <span>Микрофон: <span class="mic-name">{micName}</span></span>
+        {#if micMuted}
+          <span class="status-badge warn">Выключен в системе</span>
+        {/if}
+      </div>
+    {/if}
 
     <button class="btn-record-main {isRecording ? 'active' : 'idle'}" onclick={toggleRecord}>
       <span>{isRecording ? 'Остановить запись' : 'Начать запись'}</span>

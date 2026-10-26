@@ -4,6 +4,7 @@ pub(crate) mod files;
 pub(crate) mod media;
 pub(crate) mod people;
 pub(crate) mod transcribe_api;
+pub(crate) mod update;
 
 use std::io::Read;
 use std::sync::{Arc, Mutex};
@@ -23,6 +24,7 @@ use self::people::{
 use self::transcribe_api::{
     handle_models_update, handle_transcribe_start, serve_transcribe_stream, serve_transcript,
 };
+use self::update::handle_update_check;
 use crate::config::config_lock;
 use crate::config::{
     app_data_dir, configured_auto_transcribe, configured_record_mode, save_auto_transcribe,
@@ -267,6 +269,12 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                             "core": "rust",
                         }),
                         200,
+                    );
+                }
+                (tiny_http::Method::Get, "/api/update/check") => {
+                    handle_update_check(
+                        request,
+                        query_param(&query, "force").as_deref() == Some("1"),
                     );
                 }
                 (tiny_http::Method::Get, "/api/recordings") => {
@@ -664,14 +672,26 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     handle_upload(request);
                 }
                 (tiny_http::Method::Post, "/api/record/start") => {
-                    let body = read_body_to_json(&mut request);
-                    let mode = body.get("mode").and_then(|m| m.as_str()).unwrap_or("split");
-                    let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-                    let res = start_recording_inner(&mut st, mode);
-                    if res.get("ok").and_then(|x| x.as_bool()) == Some(true) {
-                        save_record_mode(mode);
+                    #[cfg(feature = "onnx")]
+                    let transcribing = crate::transcribe::is_transcribe_running();
+                    #[cfg(not(feature = "onnx"))]
+                    let transcribing = false;
+                    if transcribing {
+                        json_response(
+                            request,
+                            json!({"ok": false, "error": "Дождитесь окончания расшифровки"}),
+                            409,
+                        );
+                    } else {
+                        let body = read_body_to_json(&mut request);
+                        let mode = body.get("mode").and_then(|m| m.as_str()).unwrap_or("split");
+                        let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
+                        let res = start_recording_inner(&mut st, mode);
+                        if res.get("ok").and_then(|x| x.as_bool()) == Some(true) {
+                            save_record_mode(mode);
+                        }
+                        json_response(request, res, 200);
                     }
-                    json_response(request, res, 200);
                 }
                 (tiny_http::Method::Post, "/api/record/stop") => {
                     let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
@@ -685,8 +705,20 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     serve_transcribe_stream(request);
                 }
                 (tiny_http::Method::Post, "/api/transcribe/start") => {
-                    let body = read_body_to_json(&mut request);
-                    handle_transcribe_start(request, body);
+                    let recording = {
+                        let st = state.lock().unwrap_or_else(|e| e.into_inner());
+                        st.is_recording
+                    };
+                    if recording {
+                        json_response(
+                            request,
+                            json!({"ok": false, "error": "Сначала остановите запись"}),
+                            409,
+                        );
+                    } else {
+                        let body = read_body_to_json(&mut request);
+                        handle_transcribe_start(request, body);
+                    }
                 }
                 (tiny_http::Method::Post, "/api/models/update") => {
                     let body = read_body_to_json(&mut request);

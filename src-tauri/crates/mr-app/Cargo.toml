@@ -30,10 +30,13 @@ mr-packs = { path = "../mr-packs" }
 mr-ml = { path = "../mr-ml" }
 mr-models = { path = "../mr-models" }
 mr-audio = { path = "../mr-audio" }
+ureq.workspace = true
 
 # SIGINT/SIGTERM-финализация записи (unix).
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
+
+
 
 [build-dependencies]
 tauri-build = { version = "2.1", optional = true , features = [] }

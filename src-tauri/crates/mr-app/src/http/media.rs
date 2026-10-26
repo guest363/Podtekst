@@ -19,8 +19,21 @@ pub(super) fn is_media_ext(ext: &str) -> bool {
     AUDIO_EXTS.contains(&ext) || VIDEO_EXTS.contains(&ext)
 }
 
-fn is_video_ext(ext: &str) -> bool {
+pub(super) fn is_video_ext(ext: &str) -> bool {
     VIDEO_EXTS.contains(&ext)
+}
+
+pub(super) fn is_video_path(p: &Path) -> bool {
+    p.extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .map(|e| is_video_ext(&e))
+        .unwrap_or(false)
+}
+
+/// Android: видео требует внешнего ffmpeg, которого в APK нет. UI скрывает
+/// импорт видео, а сервер дополнительно отклоняет такие файлы.
+pub(super) fn video_supported() -> bool {
+    !cfg!(target_os = "android")
 }
 
 /// Верхняя граница кэшей листинга: без неё удалённые записи оставались в памяти навсегда.
@@ -106,13 +119,14 @@ pub(super) fn recordings_list() -> Vec<serde_json::Value> {
     let Ok(rd) = std::fs::read_dir(&dir) else {
         return out;
     };
+    let registry = crate::media_registry::load_registry();
     for entry in rd.flatten() {
         let p = entry.path();
         let ext = p
             .extension()
             .map(|e| e.to_string_lossy().to_lowercase())
             .unwrap_or_default();
-        if !is_media_ext(&ext) {
+        if !is_media_ext(&ext) || registry.is_hidden(&p) {
             continue;
         }
         let md = entry.metadata().ok();
@@ -161,6 +175,7 @@ pub(super) fn recordings_list() -> Vec<serde_json::Value> {
             "date": date,
             "has_transcript": has_transcript,
             "speakers_count": speakers_count,
+            "owned": registry.is_owned(&p),
         }));
     }
     out.sort_by_key(|v| std::cmp::Reverse(v.get("mtime").and_then(|x| x.as_u64()).unwrap_or(0)));
@@ -423,6 +438,7 @@ pub(super) fn serve_media_snippet(request: tiny_http::Request, query: &str) {
     let end = super::query_param(query, "end")
         .and_then(|v| v.parse::<f64>().ok())
         .unwrap_or(0.0);
+    let channel = super::query_param(query, "channel").and_then(|v| v.parse::<usize>().ok());
     if !(0.0..=MAX_SNIPPET_SEC).contains(&(end - start)) || start < 0.0 {
         bad(request, "Bad time range", 400);
         return;
@@ -456,6 +472,12 @@ pub(super) fn serve_media_snippet(request: tiny_http::Request, query: &str) {
         bad(request, "Not a RIFF/WAVE file", 415);
         return;
     };
+    if let Some(ch) = channel {
+        if ch >= info.channels as usize {
+            bad(request, "Bad channel", 400);
+            return;
+        }
+    }
     let file_len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     let data_available = info.data_len.min(file_len.saturating_sub(info.data_offset));
     let block = u64::from(info.channels) * u64::from(info.bits) / 8;
@@ -480,12 +502,55 @@ pub(super) fn serve_media_snippet(request: tiny_http::Request, query: &str) {
         bad(request, "Read error", 500);
         return;
     }
-    let mut body = wav_header_bytes(&info, n_bytes as u32);
-    body.extend_from_slice(&pcm);
+    let body = match channel {
+        Some(ch) => match mono_channel_snippet(&info, &pcm, ch) {
+            Some(b) => b,
+            None => {
+                bad(request, "Bad channel", 400);
+                return;
+            }
+        },
+        None => {
+            let mut b = wav_header_bytes(&info, n_bytes as u32);
+            b.extend_from_slice(&pcm);
+            b
+        }
+    };
     let resp = tiny_http::Response::from_data(body)
         .with_header(hdr("Content-Type: audio/wav"))
         .with_header(hdr("Cache-Control: no-store"));
     let _ = request.respond(resp);
+}
+
+/// Моно-фрагмент выбранного канала: для split-записей фрагмент спикера не
+/// должен звучать вместе с эхом другого канала. Поддерживаются PCM и float
+/// WAV; размер сэмпла берётся из заголовка.
+fn mono_channel_snippet(info: &WavInfo, pcm: &[u8], channel: usize) -> Option<Vec<u8>> {
+    let sample_bytes = info.bits as usize / 8;
+    let frame_bytes = info.channels as usize * sample_bytes;
+    if sample_bytes == 0 || frame_bytes == 0 || channel >= info.channels as usize {
+        return None;
+    }
+    let frames = pcm.len() / frame_bytes;
+    if frames == 0 {
+        return None;
+    }
+    let mut out_pcm = Vec::with_capacity(frames * sample_bytes);
+    for f in 0..frames {
+        let off = f * frame_bytes + channel * sample_bytes;
+        out_pcm.extend_from_slice(&pcm[off..off + sample_bytes]);
+    }
+    let mono = WavInfo {
+        audio_format: info.audio_format,
+        channels: 1,
+        rate: info.rate,
+        bits: info.bits,
+        data_offset: 44,
+        data_len: out_pcm.len() as u64,
+    };
+    let mut body = wav_header_bytes(&mono, out_pcm.len() as u32);
+    body.extend_from_slice(&out_pcm);
+    Some(body)
 }
 
 /// Папка записей канонически (для проверок принадлежности путей).
@@ -541,5 +606,22 @@ mod tests {
     fn wav_header_rejects_garbage() {
         assert!(parse_wav_header(b"").is_none());
         assert!(parse_wav_header(b"RIFX....WAVEfmt ").is_none());
+    }
+
+    #[test]
+    fn snippet_channel_is_isolated_and_mono() {
+        let info = info();
+        // Два стерео-сэмпла: L=100, R=200, L=300, R=400 (i16 LE).
+        let pcm: Vec<u8> = [100i16, 200, 300, 400]
+            .iter()
+            .flat_map(|x| x.to_le_bytes())
+            .collect();
+        let body = mono_channel_snippet(&info, &pcm, 0).expect("канал 0");
+        let parsed = parse_wav_header(&body[..44]).expect("заголовок");
+        assert_eq!(parsed.channels, 1);
+        assert_eq!(parsed.data_len, 4);
+        let expected = [pcm[0], pcm[1], pcm[4], pcm[5]];
+        assert_eq!(&body[44..], &expected[..]);
+        assert!(mono_channel_snippet(&info, &pcm, 2).is_none());
     }
 }

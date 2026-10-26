@@ -66,6 +66,7 @@ fn default_qual() -> f64 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpeakerProfile {
     pub name: String,
+    #[serde(default)]
     pub embedding: Vec<f64>,
     #[serde(default)]
     pub samples_count: u32,

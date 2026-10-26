@@ -1,12 +1,11 @@
 //! Расшифровка: SSE-стрим событий, запуск воркера, скачивание моделей.
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde_json::json;
 
-use super::media::inside_save_dir;
-use super::{hdr, json_response, query_param};
+use super::media::{inside_save_dir, is_video_path, video_supported};
+use super::{json_response, query_param};
 use crate::config::{app_data_dir, save_dir};
 
 pub(super) fn serve_transcript(request: tiny_http::Request, query: &str) {
@@ -68,90 +67,62 @@ pub(super) fn serve_transcript(request: tiny_http::Request, query: &str) {
 /// курсора получает только новые события — проигрывание всей истории повторяло
 /// пользователю устаревшие ошибки и чужие «модель готова».
 pub(super) fn serve_transcribe_stream(request: tiny_http::Request) {
-    let since = request
-        .headers()
-        .iter()
-        .find(|h| h.field.equiv("Last-Event-ID"))
-        .and_then(|h| h.value.as_str().trim().parse::<usize>().ok())
-        .unwrap_or_else(|| {
-            // Без курсора — только будущее: история могла относиться к прошлым запускам.
-            crate::transcribe::take_new_events(usize::MAX).1
-        });
-    struct ChannelReader {
-        rx: std::sync::mpsc::Receiver<Vec<u8>>,
-        buf: Vec<u8>,
-        pos: usize,
+    #[cfg(not(feature = "onnx"))]
+    {
+        let _ = request.respond(tiny_http::Response::from_string(
+            "data: {\"type\":\"error\",\"message\":\"соберите с --features onnx\"}\n\n",
+        ));
     }
-    impl Read for ChannelReader {
-        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
-            while self.pos >= self.buf.len() {
-                match self.rx.recv() {
-                    Ok(chunk) => {
-                        if chunk.is_empty() {
-                            return Ok(0);
-                        }
-                        self.buf = chunk;
-                        self.pos = 0;
-                    }
-                    Err(_) => return Ok(0),
-                }
-            }
-            let n = std::cmp::min(out.len(), self.buf.len() - self.pos);
-            out[..n].copy_from_slice(&self.buf[self.pos..self.pos + n]);
-            self.pos += n;
-            Ok(n)
+    // Ответ пишем сами: tiny_http копит тело в BufWriter на 1 КБ и отдаёт его
+    // клиенту только по заполнении — SSE-события опаздывали на десятки секунд,
+    // и прогресс расшифровки выглядел зависшим. Здесь буфер сбрасывается
+    // после каждого пакета.
+    #[cfg(feature = "onnx")]
+    {
+        use std::io::Write;
+        let mut since = request
+            .headers()
+            .iter()
+            .find(|h| h.field.equiv("Last-Event-ID"))
+            .and_then(|h| h.value.as_str().trim().parse::<usize>().ok())
+            .unwrap_or_else(|| {
+                // Без курсора — только будущее: история могла относиться к прошлым запускам.
+                crate::transcribe::take_new_events(usize::MAX).1
+            });
+        let mut out = request.into_writer();
+        if out
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\n\
+                  Cache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n",
+            )
+            .and_then(|_| out.flush())
+            .is_err()
+        {
+            return;
         }
-    }
-    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
-    std::thread::spawn(move || {
-        #[cfg(feature = "onnx")]
-        let mut since = since;
-        #[cfg(feature = "onnx")]
         loop {
             let (fresh, total, running) = crate::transcribe::take_new_events(since);
+            let mut buf = String::new();
             for (i, e) in fresh.iter().enumerate() {
                 // Абсолютный id события: браузер подставит его в Last-Event-ID при реконнекте.
-                let line = format!(
+                buf.push_str(&format!(
                     "id: {}\ndata: {}\n\n",
                     since + i,
                     serde_json::to_string(e).unwrap_or_default()
-                );
-                if tx.send(line.into_bytes()).is_err() {
-                    return;
-                }
+                ));
             }
             since = total;
+            if (!buf.is_empty() && out.write_all(buf.as_bytes()).is_err())
+                || out.flush().is_err()
+            {
+                return;
+            }
             if !running {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(300));
         }
-        #[cfg(not(feature = "onnx"))]
-        let _ = tx.send(
-            format!(
-                "data: {}\n\n",
-                serde_json::json!({"type": "error", "message": "соберите с --features onnx"})
-            )
-            .into_bytes(),
-        );
-    });
-    let reader = ChannelReader {
-        rx,
-        buf: vec![],
-        pos: 0,
-    };
-    let resp = tiny_http::Response::new(
-        200.into(),
-        vec![
-            hdr("Content-Type: text/event-stream; charset=utf-8"),
-            hdr("Cache-Control: no-cache"),
-            hdr("Connection: keep-alive"),
-        ],
-        reader,
-        None,
-        None,
-    );
-    let _ = request.respond(resp);
+    }
 }
 
 #[cfg(feature = "onnx")]
@@ -192,6 +163,14 @@ pub(super) fn handle_transcribe_start(request: tiny_http::Request, body: serde_j
         json_response(
             request,
             json!({"ok": false, "error": "Файл вне папки записей"}),
+            400,
+        );
+        return;
+    }
+    if !video_supported() && is_video_path(Path::new(&audio_file)) {
+        json_response(
+            request,
+            json!({"ok": false, "error": "На Android видео не поддерживается. Импортируйте аудиофайл."}),
             400,
         );
         return;

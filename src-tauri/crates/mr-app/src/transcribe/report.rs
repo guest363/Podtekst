@@ -47,6 +47,7 @@ fn sample_to_json(s: &Sample) -> serde_json::Value {
     serde_json::json!({
         "start": s.start, "end": s.end, "dur": s.dur,
         "text": s.text, "full_text": s.full_text,
+        "channel": s.channel,
     })
 }
 

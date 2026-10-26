@@ -21,7 +21,7 @@ jobs:
           fetch-depth: 0
       - name: No personal data or build artifacts in git
         run: |
-          bad=$(git ls-files | grep -E '(^|/)(people|external_people|voiceprints|config)\.json$|\.(log|apk|onnx|part)$' || true)
+          bad=$(git ls-files | grep -E '(^|/)(people|external_people|voiceprints|config|media_registry)\.json$|\.(log|apk|onnx|part)$' || true)
           if [ -n "$bad" ]; then
             echo "В git попали личные данные или артефакты:"
             echo "$bad"

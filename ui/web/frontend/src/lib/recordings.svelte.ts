@@ -1,5 +1,5 @@
 // Записи: список, загрузка файлов, извлечение MP3.
-import { encPath, readJsonSafe } from './api'
+import { encPath, isMobile, readJsonSafe } from './api'
 import type { RecordingItem } from './api'
 import { toast } from './toast.svelte.ts'
 import { emit, openTranscript } from './ui.svelte.ts'
@@ -20,6 +20,10 @@ export async function loadRecordings(): Promise<void> {
 }
 
 export async function handleFileUpload(file: File, btn: HTMLButtonElement): Promise<void> {
+  if (isMobile && isVideoPath(file.name)) {
+    toast('На телефоне видео не поддерживается. Выберите аудиофайл: MP3, WAV, M4A, OGG или FLAC.', 'error')
+    return
+  }
   const oldText = btn.textContent
   btn.textContent = 'Загрузка…'
   btn.disabled = true
@@ -45,27 +49,36 @@ export async function handleFileUpload(file: File, btn: HTMLButtonElement): Prom
   }
 }
 
-export async function deleteRecording(name: string, rawPath: string): Promise<void> {
-  if (!confirm(`Удалить «${name}» вместе с расшифровкой? Действие необратимо.`)) return
+export async function deleteRecording(rec: RecordingItem): Promise<boolean> {
   try {
     const r = await fetch('/api/recordings/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: rawPath }),
+      body: JSON.stringify({ path: rec.path }),
     })
     const d = await readJsonSafe(r)
     if (d.ok) {
-      toast('Запись удалена')
+      toast(
+        d.kept
+          ? 'Убрано из приложения — файл остался на диске'
+          : 'Запись удалена',
+      )
       emit('recordings-changed')
-    } else {
-      toast(d.error || 'Не удалось удалить запись', 'error')
+      return true
     }
+    toast(d.error || 'Не удалось удалить запись', 'error')
+    return false
   } catch (e) {
     toast('Не удалось удалить запись: ' + (e as Error).message, 'error')
+    return false
   }
 }
 
 export async function extractMp3(rawPath: string): Promise<void> {
+  if (isMobile) {
+    toast('Извлечение MP3 из видео недоступно на телефоне', 'error')
+    return
+  }
   try {
     const r = await fetch('/api/media/extract_audio', {
       method: 'POST',

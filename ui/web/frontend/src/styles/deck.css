@@ -34,6 +34,13 @@
 }
 .timer-readout.recording { color: var(--accent-rec); }
 
+.deck-transcribe { display: flex; flex-direction: column; gap: 4px; }
+.deck-transcribe .progress-track { height: 10px; }
+.deck-transcribe-msg {
+  font-size: 11.5px; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 .vu-meter-box {
   background: var(--bg-inset);
   border: 1px solid var(--border-soft);
@@ -57,7 +64,7 @@
   border-radius: var(--radius-pill);
   transition: width 60ms linear;
 }
-.progress-track { height: 8px; background: var(--bg-inset); box-shadow: none; }
+.progress-track { flex: none; height: 8px; background: #e2e8f0; box-shadow: none; }
 .progress-track .vu-bar { background: var(--accent-blue); transition: width 300ms ease-out; }
 
 .mic-strip {

@@ -136,7 +136,26 @@
 .speakers-drawer-overlay { display: none; }
 .speakers-drawer-top { display: none; }
 .transcript-speakers-wrap { display: contents; }
-.transcript-progress { display: flex; flex-direction: column; gap: 6px; }
+.transcript-progress {
+  display: flex; flex-direction: column; gap: 6px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-inner);
+  padding: 10px 12px;
+}
+.transcript-progress-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 10px; flex-wrap: wrap;
+}
+.transcript-progress-title {
+  font-size: 13px; font-weight: 700; color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.transcript-progress-file {
+  font-size: 11.5px; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 100%;
+}
 
 .transcript-empty {
   display: flex; flex-direction: column; gap: 10px; align-items: flex-start;
@@ -388,6 +407,13 @@
 @media (max-width: 940px) {
   .transcript-page {
     gap: 12px;
+  }
+  .transcript-progress {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: #fff;
+    box-shadow: 0 4px 14px rgba(15, 30, 51, 0.08);
   }
   .transcript-page-header {
     gap: 10px;

@@ -83,7 +83,8 @@ cd ui/web/frontend && yarn check && yarn build  # Фронт: типы (svelte-c
 - **[P10] Root Cause.** Чинить причину на базовом слое; верификация — живым прогоном на реальной записи.
 - **[P11] Строгая типизация и документация на русском.** Публичные API — с doc-комментариями.
 - **[P12] Безопасность пользовательских данных.** Аудио, голосовые отпечатки и статистика — только локально.
-  Единственный сетевой исходящий трафик: скачивание открытых весов моделей (автообновлений нет).
+  Исходящий трафик: скачивание открытых весов моделей и проверка последнего релиза
+  на GitHub (без аудио и идентификаторов). Автоустановка обновлений не выполняется.
 
 ---
 
@@ -92,7 +93,8 @@ cd ui/web/frontend && yarn check && yarn build  # Фронт: типы (svelte-c
 | Задача | Куда смотреть |
 |--------|---------------|
 | HTTP REST, CLI, IPC, автозапуск | `mr-app/src/main.rs`, `config.rs`, `ipc.rs`, `recording.rs`, `desktop.rs` |
-| HTTP-хендлеры (медиа/люди/расшифровка) | `mr-app/src/http/{mod,media,files,people,transcribe_api}.rs` |
+| HTTP-хендлеры (медиа/люди/расшифровка/обновления) | `mr-app/src/http/{mod,media,files,people,transcribe_api,update}.rs` |
+| Реестр своих/внешних файлов и скрытых записей | `mr-app/src/media_registry.rs` |
 | Сквозная транскрибация (VAD→ASR→диаризация→md/txt/json) | `mr-app/src/transcribe/{mod,events,diarize,report}.rs` |
 | ONNX-инференс: Silero, GigaAM RNNT, Whisper, эмбеддинги | `src-tauri/crates/mr-ml/src/onnx/` |
 | Математика диаризации (прототипы, Венгрия, кластеризация) | `src-tauri/crates/mr-ml/src/{lib.rs,cluster.rs}` |

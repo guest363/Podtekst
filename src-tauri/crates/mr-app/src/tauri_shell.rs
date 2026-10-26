@@ -392,6 +392,36 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
             {
                 eprintln!("не удалось создать окно: {e}");
             }
+            // Android: без foreground service микрофон глушится при погасшем
+            // экране. Регистрируем JNI-мост заранее — им пользуются запись и
+            // расшифровка из фоновых потоков.
+            #[cfg(target_os = "android")]
+            if let Some(win) = app.get_webview_window("main") {
+                let (tx, rx) = std::sync::mpsc::channel();
+                if win
+                    .with_webview(move |webview| {
+                        let _ = tx.send(webview.jni_handle());
+                    })
+                    .is_ok()
+                {
+                    if let Ok(handle) = rx.recv_timeout(std::time::Duration::from_secs(2)) {
+                        mr_audio::capture::set_foreground_handler(Box::new(
+                            move |processing, start| {
+                                handle.exec(move |env, activity, _| {
+                                    let method = if !start {
+                                        "stopRecordingService"
+                                    } else if processing {
+                                        "startProcessingService"
+                                    } else {
+                                        "startRecordingService"
+                                    };
+                                    let _ = env.call_method(activity, method, "()V", &[]);
+                                });
+                            },
+                        ));
+                    }
+                }
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

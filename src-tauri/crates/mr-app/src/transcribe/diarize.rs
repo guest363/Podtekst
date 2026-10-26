@@ -1,7 +1,7 @@
 //! Диаризация: эхоподавление, субсегментация, кластеризация канала
 //! и сопоставление спикеров с профилями Voice Packs.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use mr_ml::onnx::embed::EmbeddingExtractor;
 use mr_ml::{interval_gap, match_voiceprints_matrix, SpeakerProfile};
@@ -66,7 +66,7 @@ pub(crate) fn merge_quiet_short(samples: &[f32], groups: Vec<(f32, f32)>) -> Vec
             let incoming_short = e - s <= SHORT_SEC;
             if incoming_short
                 && (0.0..=MAX_GAP_SEC).contains(&gap)
-                && last.1 - last.0 <= MAX_MERGED_SEC
+                && e - last.0 <= MAX_MERGED_SEC
                 && rms(last.0, last.1) < QUIET_RMS
                 && rms(s, e) < QUIET_RMS
             {
@@ -110,6 +110,7 @@ fn pick_samples(utterances: &[Utterance], max_samples: usize) -> Vec<Sample> {
                 dur: sample_dur,
                 text: preview,
                 full_text: text.to_string(),
+                channel: u.channel,
             }
         })
         .collect()
@@ -215,36 +216,85 @@ pub(crate) fn suppress_echo(left: &[f32], right: &[f32]) -> Vec<f32> {
     out
 }
 
-/// Профили спикеров из включённых Voice Packs (v2 + legacy-массив).
-pub(crate) fn load_profiles() -> Vec<SpeakerProfile> {
-    let app = packs::default_app_data_dir();
-    let mut by_name: HashMap<String, SpeakerProfile> = HashMap::new();
-    for pack_dir in packs::get_active_packs(&app).unwrap_or_default() {
-        let f = pack_dir.join("voiceprints.json");
-        let text = match std::fs::read_to_string(&f) {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-        let v: serde_json::Value = match serde_json::from_str(&text) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let arr = if let Some(a) = v.get("profiles").and_then(|x| x.as_array()) {
-            a.clone()
-        } else if let Some(a) = v.as_array() {
-            a.clone()
-        } else {
-            continue;
-        };
-        for p in arr {
-            if let Ok(prof) = serde_json::from_value::<SpeakerProfile>(p) {
-                if !prof.name.trim().is_empty() && !prof.embedding.is_empty() {
-                    by_name.insert(prof.name.to_lowercase(), prof);
-                }
-            }
+/// Прочитать один `voiceprints.json`, отбросив чужое векторное пространство
+/// и битые размерности. Профили без центроида, но с прототипами, собираются
+/// из прототипов: иначе старый/импортированный пакет молча выпадает из матчинга.
+fn read_profiles_file(file: &std::path::Path) -> Vec<SpeakerProfile> {
+    let text = match std::fs::read_to_string(file) {
+        Ok(t) => t,
+        Err(_) => return vec![],
+    };
+    let v: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(_) => return vec![],
+    };
+    if let Some(space) = v.get("embedding_space").and_then(|x| x.as_str()) {
+        if space != mr_ml::EMBEDDING_SPACE {
+            return vec![];
         }
     }
-    by_name.into_values().collect()
+    let arr = if let Some(a) = v.get("profiles").and_then(|x| x.as_array()) {
+        a.clone()
+    } else if let Some(a) = v.as_array() {
+        a.clone()
+    } else {
+        return vec![];
+    };
+    let mut out = vec![];
+    for p in arr {
+        let Ok(mut prof) = serde_json::from_value::<SpeakerProfile>(p) else {
+            continue;
+        };
+        if prof.name.trim().is_empty() {
+            continue;
+        }
+        prof.prototypes
+            .retain(|x| x.embedding.len() == mr_ml::EMBEDDING_DIM);
+        if prof.embedding.len() != mr_ml::EMBEDDING_DIM
+            || prof.embedding.iter().all(|x| x.abs() < 1e-12)
+        {
+            let vecs: Vec<Vec<f64>> = prof
+                .prototypes
+                .iter()
+                .map(|x| x.embedding.clone())
+                .collect();
+            let ws: Vec<f64> = prof
+                .prototypes
+                .iter()
+                .map(|x| x.duration_sec.max(0.5) * x.quality.max(0.1))
+                .collect();
+            prof.embedding = mr_ml::weighted_centroid(&vecs, &ws);
+        }
+        if prof.embedding.len() == mr_ml::EMBEDDING_DIM
+            && prof.embedding.iter().any(|x| x.abs() > 1e-12)
+        {
+            out.push(prof);
+        }
+    }
+    out
+}
+
+/// Профили спикеров из включённых Voice Packs (v2/v3 + legacy-массив).
+/// Корневой `voiceprints.json` читается первым как fallback: активные паки
+/// важнее старых локальных данных.
+pub(crate) fn load_profiles() -> Vec<SpeakerProfile> {
+    let app = packs::default_app_data_dir();
+    let mut files = vec![app.join("voiceprints.json")];
+    files.extend(
+        packs::get_active_packs(&app)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|d| d.join("voiceprints.json")),
+    );
+    let mut by_name: HashMap<String, SpeakerProfile> = HashMap::new();
+    for f in files {
+        for prof in read_profiles_file(&f) {
+            by_name.insert(prof.name.trim().to_lowercase(), prof);
+        }
+    }
+    let mut out: Vec<SpeakerProfile> = by_name.into_values().collect();
+    out.sort_by_key(|a| a.name.to_lowercase());
+    out
 }
 
 /// Минимальная длительность реплики для core-кластеризации, с.
@@ -295,6 +345,14 @@ pub(crate) fn diarize_channel(
                 }
             }
         }
+        // Векторы голосов — самый долгий шаг после ASR: без счётчика
+        // прогресс замирал на 79% и расшифровка выглядела зависшей.
+        if i % 20 == 0 || i + 1 == n {
+            on_event(
+                (80 + 8 * i / n.max(1)) as u8,
+                &format!("Определяю спикеров: {i} из {n} реплик"),
+            );
+        }
     }
     let valid: Vec<usize> = (0..n).filter(|&i| embs[i].is_some()).collect();
     if valid.is_empty() {
@@ -338,7 +396,7 @@ pub(crate) fn diarize_channel(
         let mut uniq: Vec<usize> = core_labels.clone();
         uniq.sort();
         uniq.dedup();
-        if max_speakers > 1 && uniq.len() > max_speakers {
+        if max_speakers > 0 && uniq.len() > max_speakers {
             core_labels = agglomerative(&core_vecs, f64::INFINITY, Some(max_speakers));
         } else if min_speakers > 1 && uniq.len() < min_speakers && core_vecs.len() >= min_speakers {
             core_labels = agglomerative(&core_vecs, f64::INFINITY, Some(min_speakers));
@@ -480,23 +538,19 @@ pub(crate) fn diarize_channel(
     if raw_clusters.len() == 1 && unmatched.len() == 1 {
         cluster_name.insert(raw_clusters[0], default_name.to_string());
     } else {
-        let used: std::collections::HashSet<String> = cluster_name.values().cloned().collect();
-        let mut used = used;
+        let mut used: std::collections::HashSet<String> = cluster_name.values().cloned().collect();
         let default_used = used.contains(default_name);
-        for (num, c) in unmatched.into_iter().enumerate() {
-            let num = num + 1;
-            let name = if num == 1 && !default_used && !generic.contains(&default_name) {
+        let mut next_num = 1usize;
+        for (idx, c) in unmatched.into_iter().enumerate() {
+            let name = if idx == 0 && !default_used && !generic.contains(&default_name) {
                 default_name.to_string()
             } else {
-                let mut idx = if num == 1 && (default_used && !generic.contains(&default_name)) {
-                    num + 1
-                } else {
-                    num
-                };
-                while used.contains(&format!("{prefix} {idx}")) {
-                    idx += 1;
+                while used.contains(&format!("{prefix} {next_num}")) {
+                    next_num += 1;
                 }
-                format!("{prefix} {idx}")
+                let name = format!("{prefix} {next_num}");
+                next_num += 1;
+                name
             };
             used.insert(name.clone());
             cluster_name.insert(c, name);
@@ -593,6 +647,367 @@ pub(crate) fn diarize_channel(
         u.diarized = true;
     }
     infos
+}
+
+/// Слова для сравнения текстов: пунктуация и регистр не важны.
+fn words_of(text: &str) -> HashSet<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+fn word_count(text: &str) -> usize {
+    text.split_whitespace().count()
+}
+
+fn words_contained(small: &str, big: &str) -> bool {
+    let a = words_of(small);
+    let b = words_of(big);
+    !a.is_empty() && a.is_subset(&b)
+}
+
+/// Похожесть двух распознанных фраз (Jaccard по словам). Эхо одной и той же
+/// речи в двух каналах обычно даёт 0.6+, разные фразы — заметно меньше.
+pub(crate) fn text_similarity(a: &str, b: &str) -> f64 {
+    let wa = words_of(a);
+    let wb = words_of(b);
+    if wa.is_empty() || wb.is_empty() {
+        return 0.0;
+    }
+    let inter = wa.intersection(&wb).count() as f64;
+    let union = wa.union(&wb).count() as f64;
+    let j = inter / union.max(1.0);
+    // ASR в двух каналах может добавить/потерять служебные слова.
+    if wa.is_subset(&wb) || wb.is_subset(&wa) {
+        j.max(0.85)
+    } else {
+        j
+    }
+}
+
+fn interval_overlap(a0: f64, a1: f64, b0: f64, b1: f64) -> f64 {
+    (a1.min(b1) - a0.max(b0)).max(0.0)
+}
+
+struct Dsu {
+    parent: Vec<usize>,
+}
+
+impl Dsu {
+    fn new(n: usize) -> Self {
+        Self {
+            parent: (0..n).collect(),
+        }
+    }
+    fn find(&mut self, x: usize) -> usize {
+        if self.parent[x] != x {
+            self.parent[x] = self.find(self.parent[x]);
+        }
+        self.parent[x]
+    }
+    fn union(&mut self, a: usize, b: usize) {
+        let (ra, rb) = (self.find(a), self.find(b));
+        if ra != rb {
+            self.parent[rb] = ra;
+        }
+    }
+}
+
+/// Суммарное перекрытие реплик двух спикеров и признак «та же фраза».
+fn pair_evidence(by_name: &HashMap<&str, Vec<&Utterance>>, a: &str, b: &str) -> (f64, bool) {
+    let mut overlap = 0.0;
+    let mut echo = false;
+    for u in by_name.get(a).into_iter().flatten() {
+        for v in by_name.get(b).into_iter().flatten() {
+            if u.channel == v.channel {
+                continue;
+            }
+            let ov = interval_overlap(u.start, u.end, v.start, v.end);
+            if ov > 0.0 {
+                overlap += ov;
+                if !echo && text_similarity(&u.text, &v.text) >= 0.55 {
+                    echo = true;
+                }
+            }
+        }
+    }
+    (overlap, echo)
+}
+
+/// Объединение спикеров, которые звучат в обоих каналах (эхо микрофона):
+/// одинаковый голос + перекрывающиеся реплики. Возвращает канонические имена.
+pub(crate) fn reconcile_channels(infos: &mut Vec<SpeakerInfo>, utterances: &mut [Utterance]) {
+    let n = infos.len();
+    if n < 2 {
+        return;
+    }
+    let by_name: HashMap<&str, Vec<&Utterance>> = {
+        let mut map: HashMap<&str, Vec<&Utterance>> = HashMap::new();
+        for u in utterances.iter() {
+            map.entry(u.speaker.as_str()).or_default().push(u);
+        }
+        map
+    };
+    let mut dsu = Dsu::new(n);
+    for i in 0..n {
+        for j in (i + 1)..n {
+            if infos[i].channel == infos[j].channel && infos[i].name != infos[j].name {
+                continue;
+            }
+            // Разные профили — это разные люди, даже если голоса похожи.
+            if infos[i].matched && infos[j].matched && infos[i].name != infos[j].name {
+                continue;
+            }
+            let sim = match (&infos[i].embedding, &infos[j].embedding) {
+                (Some(a), Some(b)) => mr_ml::cosine_similarity(a, b),
+                _ => 0.0,
+            };
+            let (overlap, echo) = pair_evidence(&by_name, &infos[i].name, &infos[j].name);
+            let short = infos[i].utterances_count <= 2 || infos[j].utterances_count <= 2;
+            let same_name = infos[i].name == infos[j].name;
+            let should_merge = same_name
+                || (sim >= 0.55 && overlap >= 0.3)
+                || (sim >= 0.75 && !infos[i].matched && !infos[j].matched)
+                || ((infos[i].matched || infos[j].matched) && sim >= 0.50 && overlap >= 0.3)
+                || ((infos[i].matched ^ infos[j].matched) && sim >= 0.65)
+                || ((infos[i].matched ^ infos[j].matched) && echo && overlap >= 0.5)
+                || (echo && sim >= 0.45 && overlap >= 0.3)
+                || (echo && short && overlap >= 0.8);
+            if should_merge {
+                dsu.union(i, j);
+            }
+        }
+    }
+
+    let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
+    for i in 0..n {
+        let root = dsu.find(i);
+        groups.entry(root).or_default().push(i);
+    }
+    let mut roots: Vec<usize> = groups.keys().copied().collect();
+    roots.sort_unstable();
+    let mut out = Vec::with_capacity(groups.len());
+    let mut names: HashMap<String, String> = HashMap::new();
+    for root in roots {
+        let members = groups.remove(&root).unwrap_or_default();
+        if members.is_empty() {
+            continue;
+        }
+        // Приоритет имени: узнанный профиль → системный канал → больше речи.
+        let primary = members
+            .iter()
+            .copied()
+            .find(|&m| infos[m].matched)
+            .or_else(|| {
+                members
+                    .iter()
+                    .copied()
+                    .filter(|&m| infos[m].channel == Some(1))
+                    .max_by(|&a, &b| {
+                        infos[a]
+                            .total_speech_sec
+                            .total_cmp(&infos[b].total_speech_sec)
+                    })
+            })
+            .or_else(|| {
+                members.iter().copied().max_by(|&a, &b| {
+                    infos[a]
+                        .total_speech_sec
+                        .total_cmp(&infos[b].total_speech_sec)
+                })
+            })
+            .unwrap_or(members[0]);
+        let canonical = infos[primary].name.clone();
+        let mut merged = infos[primary].clone();
+        merged.name = canonical.clone();
+        merged.utterances_count = members.iter().map(|&m| infos[m].utterances_count).sum();
+        merged.total_speech_sec = (members
+            .iter()
+            .map(|&m| infos[m].total_speech_sec)
+            .sum::<f64>()
+            * 10.0)
+            .round()
+            / 10.0;
+        merged.similarity = members
+            .iter()
+            .map(|&m| infos[m].similarity)
+            .fold(0.0, f64::max);
+        merged.matched = members.iter().any(|&m| infos[m].matched);
+        if merged.matched_name.is_none() {
+            merged.matched_name = members.iter().find_map(|&m| infos[m].matched_name.clone());
+        }
+        if merged.embedding.is_none() {
+            merged.embedding = members.iter().find_map(|&m| infos[m].embedding.clone());
+        }
+        for &m in &members {
+            for (name, score) in &infos[m].candidates {
+                if !merged
+                    .candidates
+                    .iter()
+                    .any(|(n, _)| n.to_lowercase() == name.to_lowercase())
+                {
+                    merged.candidates.push((name.clone(), *score));
+                }
+            }
+            for s in &infos[m].samples {
+                let duplicate = merged.samples.iter().any(|x| {
+                    (x.start - s.start).abs() < 0.05
+                        || (text_similarity(&x.text, &s.text) >= 0.75
+                            && interval_overlap(x.start, x.end, s.start, s.end) > 0.2)
+                });
+                if !duplicate {
+                    merged.samples.push(s.clone());
+                }
+            }
+            names.insert(infos[m].name.clone(), canonical.clone());
+        }
+        // Фрагменты играем из основного канала: у системного канала нет
+        // эха комнаты, у микрофонного — нет голоса собеседника.
+        let primary_ch = infos[primary].channel;
+        let primary_samples: Vec<Sample> = merged
+            .samples
+            .iter()
+            .filter(|s| s.channel == primary_ch)
+            .cloned()
+            .collect();
+        if !primary_samples.is_empty() {
+            merged.samples = primary_samples;
+        }
+        merged.samples.sort_by(|a, b| a.start.total_cmp(&b.start));
+        merged.candidates.sort_by(|a, b| b.1.total_cmp(&a.1));
+        out.push(merged);
+    }
+    *infos = out;
+    for u in utterances.iter_mut() {
+        if let Some(name) = names.get(&u.speaker) {
+            u.speaker = name.clone();
+        }
+    }
+}
+
+fn better_utterance(a: &Utterance, b: &Utterance) -> bool {
+    let wa = word_count(&a.text);
+    let wb = word_count(&b.text);
+    // Системный канал обычно чище микрофона (там нет эха комнаты). Берём
+    // его, если он не потерял больше ~30% слов; иначе доверяем более полному.
+    if a.channel != b.channel {
+        if a.channel == Some(1) && wa * 10 >= wb * 7 {
+            return true;
+        }
+        if b.channel == Some(1) && wb * 10 >= wa * 7 {
+            return false;
+        }
+    }
+    if wa != wb {
+        return wa > wb;
+    }
+    a.end - a.start >= b.end - b.start
+}
+
+/// Одна и та же фраза, попавшая в оба канала (эхо), остаётся в одном виде.
+pub(crate) fn dedupe_cross_channel(utterances: &mut Vec<Utterance>) {
+    if utterances.len() < 2 {
+        return;
+    }
+    let mut order: Vec<usize> = (0..utterances.len()).collect();
+    order.sort_by(|&a, &b| utterances[a].start.total_cmp(&utterances[b].start));
+    let mut keep = vec![true; utterances.len()];
+    for (pos, &i) in order.iter().enumerate() {
+        if !keep[i] {
+            continue;
+        }
+        for &j in &order[pos + 1..] {
+            if utterances[j].start > utterances[i].end + 0.75 {
+                break;
+            }
+            if !keep[j]
+                || utterances[i].channel == utterances[j].channel
+                || utterances[i].speaker != utterances[j].speaker
+            {
+                continue;
+            }
+            let ov = interval_overlap(
+                utterances[i].start,
+                utterances[i].end,
+                utterances[j].start,
+                utterances[j].end,
+            );
+            if ov <= 0.0 {
+                continue;
+            }
+            if text_similarity(&utterances[i].text, &utterances[j].text) < 0.55 {
+                continue;
+            }
+            if better_utterance(&utterances[j], &utterances[i]) {
+                keep[i] = false;
+                break;
+            }
+            keep[j] = false;
+        }
+    }
+    let mut idx = 0usize;
+    utterances.retain(|_| {
+        let k = keep[idx];
+        idx += 1;
+        k
+    });
+}
+
+/// Склейка соседних реплик одного спикера. Перекрывающиеся дубли не
+/// складываются в «два раза одно и то же», а заменяются лучшим вариантом.
+pub(crate) fn merge_utterances(utterances: Vec<Utterance>) -> Vec<Utterance> {
+    let mut merged: Vec<Utterance> = Vec::with_capacity(utterances.len());
+    for u in utterances {
+        if let Some(last) = merged.last_mut() {
+            if last.speaker == u.speaker {
+                let ov = interval_overlap(last.start, last.end, u.start, u.end);
+                let min_dur = (last.end - last.start).min(u.end - u.start).max(0.1);
+                // Перекрытие ≥25% — один и тот же фрагмент, попавший в оба
+                // канала (или задвоенный ASR-сегмент). Оставляем лучший
+                // вариант, а не склеиваем две копии текста.
+                if ov / min_dur >= 0.25 {
+                    if better_utterance(&u, last) {
+                        last.text = u.text.clone();
+                        last.channel = u.channel;
+                    }
+                    last.start = last.start.min(u.start);
+                    last.end = last.end.max(u.end);
+                    continue;
+                }
+                if u.start - last.end <= 1.0 {
+                    if !words_contained(&u.text, &last.text) {
+                        last.text = format!("{} {}", last.text, u.text).trim().to_string();
+                    }
+                    last.end = last.end.max(u.end);
+                    continue;
+                }
+            }
+        }
+        merged.push(u);
+    }
+    merged
+}
+
+/// Пересчёт счётчиков после объединения/дедупликации: карточки не должны
+/// показывать старые числа реплик и секунд.
+pub(crate) fn refresh_speaker_stats(infos: &mut Vec<SpeakerInfo>, utterances: &[Utterance]) {
+    let mut stats: HashMap<&str, (usize, f64)> = HashMap::new();
+    for u in utterances {
+        let e = stats.entry(u.speaker.as_str()).or_default();
+        e.0 += 1;
+        e.1 += (u.end - u.start).max(0.0);
+    }
+    for info in infos.iter_mut() {
+        if let Some((count, sec)) = stats.get(info.name.as_str()) {
+            info.utterances_count = *count;
+            info.total_speech_sec = (*sec * 10.0).round() / 10.0;
+        } else {
+            info.utterances_count = 0;
+            info.total_speech_sec = 0.0;
+        }
+    }
+    infos.retain(|s| s.utterances_count > 0);
 }
 
 /// Разрез длинных реплик при смене голоса: скользящее окно эмбеддингов 1.6 с /
@@ -709,7 +1124,163 @@ pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<Strin
 
 #[cfg(test)]
 mod tests {
-    use super::{merge_quiet_short, split_words_by_bounds};
+    use super::{
+        dedupe_cross_channel, merge_quiet_short, merge_utterances, read_profiles_file,
+        reconcile_channels, refresh_speaker_stats, split_words_by_bounds, SpeakerInfo, Utterance,
+    };
+
+    fn info(name: &str, ch: i32, emb: Vec<f64>, count: usize, sec: f64) -> SpeakerInfo {
+        SpeakerInfo {
+            id: format!("spk_{name}"),
+            name: name.to_string(),
+            channel: Some(ch),
+            matched: false,
+            matched_name: None,
+            similarity: 0.0,
+            candidates: vec![],
+            embedding: Some(emb),
+            samples: vec![],
+            utterances_count: count,
+            total_speech_sec: sec,
+        }
+    }
+
+    fn utt(start: f64, end: f64, speaker: &str, ch: i32, text: &str) -> Utterance {
+        Utterance {
+            start,
+            end,
+            speaker: speaker.to_string(),
+            channel: Some(ch),
+            text: text.to_string(),
+            diarized: true,
+        }
+    }
+
+    #[test]
+    fn merges_same_voice_from_both_channels() {
+        let mut infos = vec![
+            info("Участник 2", 0, vec![1.0, 0.0, 0.0], 1, 4.0),
+            info("Собеседник 1", 1, vec![1.0, 0.0, 0.0], 1, 4.0),
+        ];
+        let mut utts = vec![
+            utt(1.0, 5.0, "Участник 2", 0, "привет как дела"),
+            utt(1.2, 5.2, "Собеседник 1", 1, "привет как дела"),
+        ];
+        reconcile_channels(&mut infos, &mut utts);
+        assert_eq!(infos.len(), 1);
+        assert_eq!(infos[0].name, "Собеседник 1");
+        assert_eq!(utts[0].speaker, "Собеседник 1");
+        dedupe_cross_channel(&mut utts);
+        assert_eq!(utts.len(), 1);
+        assert_eq!(utts[0].channel, Some(1));
+    }
+
+    #[test]
+    fn merges_same_voice_across_channels_without_overlap() {
+        let mut infos = vec![
+            info("Участник 1", 0, vec![1.0, 0.0], 1, 3.0),
+            info("Собеседник 1", 1, vec![1.0, 0.0], 1, 3.0),
+        ];
+        let mut utts = vec![
+            utt(1.0, 3.0, "Участник 1", 0, "первая реплика"),
+            utt(20.0, 22.0, "Собеседник 1", 1, "вторая реплика"),
+        ];
+        reconcile_channels(&mut infos, &mut utts);
+        assert_eq!(infos.len(), 1);
+        assert_eq!(utts[0].speaker, "Собеседник 1");
+        assert_eq!(utts[1].speaker, "Собеседник 1");
+    }
+
+    #[test]
+    fn merges_short_echo_even_with_weak_embedding() {
+        let mut infos = vec![
+            info("Участник 5", 0, vec![1.0, 0.0], 1, 1.8),
+            info("Собеседник 1", 1, vec![0.3, 0.95], 1, 3.0),
+        ];
+        let mut utts = vec![
+            utt(10.0, 11.8, "Участник 5", 0, "Страничку."),
+            utt(9.8, 12.8, "Собеседник 1", 1, "Страничку."),
+        ];
+        reconcile_channels(&mut infos, &mut utts);
+        assert_eq!(infos.len(), 1);
+        assert_eq!(utts[0].speaker, "Собеседник 1");
+        assert_eq!(utts[1].speaker, "Собеседник 1");
+    }
+
+    #[test]
+    fn different_matched_profiles_are_never_merged() {
+        let mut a = info("Иван", 0, vec![1.0, 0.0], 1, 5.0);
+        a.matched = true;
+        a.matched_name = Some("Иван".to_string());
+        let mut b = info("Пётр", 1, vec![1.0, 0.0], 1, 5.0);
+        b.matched = true;
+        b.matched_name = Some("Пётр".to_string());
+        let mut infos = vec![a, b];
+        let mut utts = vec![
+            utt(1.0, 6.0, "Иван", 0, "одна и та же фраза"),
+            utt(1.0, 6.0, "Пётр", 1, "одна и та же фраза"),
+        ];
+        reconcile_channels(&mut infos, &mut utts);
+        assert_eq!(infos.len(), 2);
+    }
+
+    #[test]
+    fn different_voices_are_not_merged() {
+        let mut infos = vec![
+            info("Я", 0, vec![1.0, 0.0], 1, 5.0),
+            info("Собеседник 1", 1, vec![0.0, 1.0], 1, 5.0),
+        ];
+        let mut utts = vec![
+            utt(1.0, 6.0, "Я", 0, "сегодня хорошая погода"),
+            utt(1.0, 6.0, "Собеседник 1", 1, "совсем другой разговор"),
+        ];
+        reconcile_channels(&mut infos, &mut utts);
+        assert_eq!(infos.len(), 2);
+    }
+
+    #[test]
+    fn overlapping_same_speaker_keeps_best_copy_not_concat() {
+        let utts = vec![
+            utt(10.0, 20.0, "Собеседник 1", 0, "один два три четыре"),
+            utt(10.2, 20.2, "Собеседник 1", 1, "один два три четыре пять"),
+        ];
+        let merged = merge_utterances(utts);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].text, "один два три четыре пять");
+    }
+
+    #[test]
+    fn non_overlapping_same_speaker_is_joined() {
+        let utts = vec![
+            utt(1.0, 2.0, "Я", 0, "первая фраза"),
+            utt(2.4, 3.0, "Я", 0, "вторая фраза"),
+        ];
+        let merged = merge_utterances(utts);
+        assert_eq!(merged.len(), 1);
+        assert!(merged[0].text.contains("первая"));
+        assert!(merged[0].text.contains("вторая"));
+    }
+
+    #[test]
+    fn speaker_stats_follow_final_utterances() {
+        let mut infos = vec![
+            info("Я", 0, vec![1.0, 0.0], 9, 99.0),
+            info("Пропавший", 0, vec![0.0, 1.0], 9, 99.0),
+        ];
+        let utts = vec![utt(1.0, 3.0, "Я", 0, "раз"), utt(3.5, 4.0, "Я", 0, "два")];
+        refresh_speaker_stats(&mut infos, &utts);
+        assert_eq!(infos.len(), 1);
+        assert_eq!(infos[0].utterances_count, 2);
+        assert_eq!(infos[0].total_speech_sec, 2.5);
+    }
+
+    #[test]
+    fn short_word_is_not_lost_as_substring() {
+        let utts = vec![utt(1.0, 2.0, "Я", 0, "да"), utt(2.2, 3.0, "Я", 0, "давай")];
+        let merged = merge_utterances(utts);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].text, "да давай");
+    }
 
     /// Тихие короткие фрагменты склеиваются, громкая речь — нет.
     #[test]
@@ -739,7 +1310,7 @@ mod tests {
             .collect();
         let out = merge_quiet_short(&samples, groups);
         assert_eq!(out.len(), 2);
-        assert!(out[0].1 - out[0].0 <= 13.0);
+        assert!(out[0].1 - out[0].0 <= 12.0);
     }
 
     /// Регрессия: раньше правая граница среза считалась от остатка
@@ -765,6 +1336,46 @@ mod tests {
         let texts = split_words_by_bounds(&words, &[0.0, 2.0, 4.0]);
         assert_eq!(texts.len(), 2);
         assert_eq!(texts.join(" "), "a b c d e");
+    }
+
+    #[test]
+    fn profile_loader_skips_foreign_embedding_space_and_uses_prototypes() {
+        let dir = std::env::temp_dir().join(format!("mr-vp-space-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("voiceprints.json");
+        let emb = vec![0.1f64; mr_ml::EMBEDDING_DIM];
+        std::fs::write(
+            &file,
+            serde_json::to_string(&serde_json::json!({
+                "version": 3,
+                "embedding_space": "another-space",
+                "profiles": [{"name": "Чужой", "embedding": emb.clone()}],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(read_profiles_file(&file).is_empty());
+
+        std::fs::write(
+            &file,
+            serde_json::to_string(&serde_json::json!({
+                "version": 3,
+                "embedding_space": mr_ml::EMBEDDING_SPACE,
+                "profiles": [{
+                    "name": "Свой",
+                    "prototypes": [{
+                        "id": "p1", "embedding": emb, "duration_sec": 4.0,
+                        "quality": 1.0, "created_at": "", "snippet_relpath": null
+                    }]
+                }],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let got = read_profiles_file(&file);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].embedding.len(), mr_ml::EMBEDDING_DIM);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

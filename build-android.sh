@@ -35,7 +35,7 @@ else
 fi
 FRONT_DIR="$SCRIPT_DIR/ui/web/frontend"
 FRONT_STAMP="$SCRIPT_DIR/src-tauri/target/android-frontend.stamp"
-FRONT_HASH="$(find "$FRONT_DIR/src" "$FRONT_DIR/index.html" "$FRONT_DIR/package.json" "$FRONT_DIR/yarn.lock" "$FRONT_DIR/vite.config.ts" -type f -print 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do sha256sum "$f"; done | sha256sum | cut -d' ' -f1)"
+FRONT_HASH="$(cd "$SCRIPT_DIR" && find ui/web/frontend/src ui/web/frontend/index.html ui/web/frontend/package.json ui/web/frontend/yarn.lock ui/web/frontend/vite.config.ts -type f -print 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do sha256sum "$f"; done | sha256sum | cut -d' ' -f1)"
 if [ ! -f "$SCRIPT_DIR/ui/web/static/js/app.js" ] || [ "$FRONT_HASH" != "$(cat "$FRONT_STAMP" 2>/dev/null)" ]; then
     echo "→ Собираю фронт (Svelte + Vite)…"
     (cd "$FRONT_DIR" && "${YARN[@]}" install --immutable && "${YARN[@]}" build)

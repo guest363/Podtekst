@@ -11,7 +11,7 @@
 .recordings-list .rec-item:first-child { border-top: none; padding-top: 2px; }
 #recordingsCard.dragover { outline: 2px solid var(--accent-blue); outline-offset: -2px; border-radius: var(--radius-card); }
 .rec-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.rec-name-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.rec-name-row { display: flex; align-items: center; gap: 4px; min-width: 0; width: 100%; }
 .rec-name { font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
 .rec-rename {
   flex-shrink: 0; border: none; background: transparent; color: var(--text-faint);

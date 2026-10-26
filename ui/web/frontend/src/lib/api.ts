@@ -35,6 +35,7 @@ export interface SpeakerSample {
   dur?: number
   text?: string
   full_text?: string
+  channel?: number | null
 }
 
 export interface SpeakerCandidate {
@@ -80,6 +81,7 @@ export interface RecordingItem {
   date?: string
   has_transcript: boolean
   speakers_count?: number
+  owned?: boolean
 }
 
 export function encPath(p: string): string {
