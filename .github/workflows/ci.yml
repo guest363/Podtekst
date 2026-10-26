@@ -16,7 +16,7 @@ jobs:
   hygiene:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: No personal data or build artifacts in git
@@ -37,7 +37,7 @@ jobs:
       run:
         working-directory: src-tauri
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.99" # закреплён rust-toolchain.toml; MSRV по lock-файлу — 1.92 (ort)
@@ -62,7 +62,7 @@ jobs:
   frontend:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
