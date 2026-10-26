@@ -1,4 +1,4 @@
-//! Диаризация: эхоподавление, субсегментация, кластеризация канала
+//! Диаризация: субсегментация, кластеризация канала
 //! и сопоставление спикеров с профилями Voice Packs.
 
 use std::collections::{HashMap, HashSet};
@@ -114,106 +114,6 @@ fn pick_samples(utterances: &[Utterance], max_samples: usize) -> Vec<Sample> {
             }
         })
         .collect()
-}
-
-/// Подавление эха колонок: гасит в левом канале участки, повторяющие правый
-/// (тише ≥8 дБ, корреляция огибающих ≥0.75, задержка 0–125 мс).
-pub(crate) fn suppress_echo(left: &[f32], right: &[f32]) -> Vec<f32> {
-    const FRAME: usize = 400; // 25 мс
-    const MAX_DELAY: usize = 5; // 125 мс
-    if left.len() != right.len() || left.len() < FRAME * 24 {
-        return left.to_vec();
-    }
-    let nf = left.len() / FRAME;
-    let env = |v: &[f32]| -> Vec<f32> {
-        (0..nf)
-            .map(|i| {
-                let s = &v[i * FRAME..(i + 1) * FRAME];
-                (s.iter().map(|x| x * x).sum::<f32>() / FRAME as f32).sqrt()
-            })
-            .collect()
-    };
-    let (el, er) = (env(left), env(right));
-    let noise_r = {
-        let mut s = er.clone();
-        s.sort_by(|a, b| a.total_cmp(b));
-        s[(nf as f64 * 0.3) as usize] + 1e-6
-    };
-    let atten = 10f32.powf(8.0 / 20.0);
-    let context = 10usize; // окно ±250 мс, задержка тракта 0..125 мс
-    let mut mask = vec![false; nf];
-    for i in 0..nf {
-        if er[i] < noise_r.max(0.02) * 4.0 || el[i] * atten >= er[i] {
-            continue;
-        }
-        let lo = i.saturating_sub(context);
-        let hi = (i + context + 1).min(nf);
-        if hi - lo < 4 {
-            continue;
-        }
-        let seg_l = &el[lo..hi];
-        let mean_l: f32 = seg_l.iter().sum::<f32>() / seg_l.len() as f32;
-        let den_l: f32 = seg_l
-            .iter()
-            .map(|x| (x - mean_l).powi(2))
-            .sum::<f32>()
-            .sqrt();
-        if den_l < 1e-9 {
-            continue;
-        }
-        // Ищем задержку тракта 0..125 мс с лучшей корреляцией огибающих
-        let mut best = 0.0f32;
-        for d in 0..=MAX_DELAY {
-            if lo + d >= hi {
-                break;
-            }
-            let seg_r: Vec<f32> = (lo..hi)
-                .map(|k| er[(k as isize - d as isize).max(lo as isize) as usize])
-                .collect();
-            let mean_r: f32 = seg_r.iter().sum::<f32>() / seg_r.len() as f32;
-            let den_r: f32 = seg_r
-                .iter()
-                .map(|x| (x - mean_r).powi(2))
-                .sum::<f32>()
-                .sqrt();
-            if den_r < 1e-9 {
-                continue;
-            }
-            let cov: f32 = seg_l
-                .iter()
-                .zip(seg_r.iter())
-                .map(|(a, b)| (a - mean_l) * (b - mean_r))
-                .sum();
-            best = best.max(cov / (den_l * den_r));
-            if best >= 0.75 {
-                break;
-            }
-        }
-        if best >= 0.75 {
-            mask[i] = true;
-        }
-    }
-    let mut out = left.to_vec();
-    let mut i = 0;
-    while i < nf {
-        if mask[i] {
-            let mut j = i;
-            while j < nf && mask[j] {
-                j += 1;
-            }
-            if j > i + 3 {
-                for f in (i.saturating_sub(1))..((j + 1).min(nf)) {
-                    for k in 0..FRAME {
-                        out[f * FRAME + k] = 0.0;
-                    }
-                }
-            }
-            i = j;
-        } else {
-            i += 1;
-        }
-    }
-    out
 }
 
 /// Прочитать один `voiceprints.json`, отбросив чужое векторное пространство

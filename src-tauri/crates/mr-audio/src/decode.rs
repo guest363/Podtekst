@@ -164,10 +164,10 @@ pub fn is_video_path(path: &Path) -> bool {
     matches!(ext.as_str(), "mp4" | "mkv" | "mov" | "avi" | "webm" | "m4v")
 }
 
-/// Длительность медиа без полного декодирования: WAV — из заголовка,
+/// Длительность и число каналов без полного декодирования: WAV — из заголовка,
 /// остальные контейнеры — `ffprobe` (он уже нужен для MKV/WebM/MOV/AVI).
-/// Возвращает `None`, если ни заголовок, ни ffprobe недоступны.
-pub fn media_duration_sec(path: &Path) -> Option<f64> {
+/// Возвращает `None`, если метаданные недоступны.
+pub fn media_info(path: &Path) -> Option<(f64, usize)> {
     let is_wav = path
         .extension()
         .map(|e| e.eq_ignore_ascii_case("wav"))
@@ -177,19 +177,22 @@ pub fn media_duration_sec(path: &Path) -> Option<f64> {
             let spec = reader.spec();
             let rate = u64::from(spec.sample_rate).max(1);
             let ch = u64::from(spec.channels).max(1);
-            return Some(reader.len() as f64 / ch as f64 / rate as f64);
+            let dur = reader.len() as f64 / ch as f64 / rate as f64;
+            return Some((dur, ch as usize));
         }
     }
-    // shortcut: ffprobe — внешний бинарник; без него длительность не- WAV
+    // shortcut: ffprobe — внешний бинарник; без него длительность не-WAV
     // догрузит плеер из метаданных. upgrade: symphonia для MP3/M4A/OGG.
     let out = std::process::Command::new("ffprobe")
         .args([
             "-v",
             "error",
+            "-select_streams",
+            "a:0",
             "-show_entries",
-            "format=duration",
+            "format=duration:stream=channels",
             "-of",
-            "default=noprint_wrappers=1:nokey=1",
+            "default=nw=1",
         ])
         .arg(path)
         .output()
@@ -197,7 +200,21 @@ pub fn media_duration_sec(path: &Path) -> Option<f64> {
     if !out.status.success() {
         return None;
     }
-    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+    let text = String::from_utf8_lossy(&out.stdout);
+    let (mut duration, mut channels) = (None, 1usize);
+    for line in text.lines() {
+        if let Some(v) = line.strip_prefix("duration=") {
+            duration = v.trim().parse::<f64>().ok();
+        } else if let Some(v) = line.strip_prefix("channels=") {
+            channels = v.trim().parse().unwrap_or(1).max(1);
+        }
+    }
+    Some((duration?, channels))
+}
+
+/// Длительность медиа без полного декодирования (см. [`media_info`]).
+pub fn media_duration_sec(path: &Path) -> Option<f64> {
+    media_info(path).map(|(d, _)| d)
 }
 
 /// Декодирование с fallback: сначала чистый Rust (symphonia), при неудаче —

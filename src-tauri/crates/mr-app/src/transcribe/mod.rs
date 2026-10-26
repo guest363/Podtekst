@@ -4,11 +4,12 @@
 //! → сопоставление с Voice Packs → `.md` / `.txt` / `.transcript.json`.
 //!
 //! * [`events`] — SSE-шина и фоновый воркер
-//! * [`diarize`] — эхоподавление, кластеризация, профили спикеров
+//! * [`diarize`] — кластеризация, профили спикеров
 //! * [`report`] — выходные форматы и статистика
 
 pub mod diarize;
 pub mod events;
+pub mod memory;
 pub mod report;
 
 use std::collections::HashMap;
@@ -227,6 +228,9 @@ pub fn transcribe_file(
     opts: &TranscribeOptions,
     on_event: &dyn Fn(u8, &str),
 ) -> Result<TranscribeReport, String> {
+    // Предел по памяти, а не по часам: весь файл лежит в памяти f32 16 кГц,
+    // поэтому отказ выдаём до декодирования, пока память ещё не занята.
+    memory::check(audio_path)?;
     // Видео: сначала извлекаем аудиодорожку (symphonia не берёт MKV/WebM/MOV/AVI),
     // затем сводим в моно — каналов «микрофон/система» у видеофайла нет.
     let video = is_video_path(audio_path);
@@ -254,12 +258,6 @@ pub fn transcribe_file(
         .first()
         .map(|c| c.len() as f64 / 16000.0)
         .unwrap_or(0.0);
-    // Защита от OOM: весь файл лежит в памяти float32, 4 ч стерео ≈ 1.8 ГБ.
-    if duration_sec > 4.0 * 3600.0 {
-        return Err(
-            "Запись длиннее 4 часов: разбейте файл на части и расшифруйте по очереди.".to_string(),
-        );
-    }
     events::emit_stage(2, "Загружаю модели…");
     let mut models = take_cached_models()?;
     let engine_name = if models.gigaam.is_some() && opts.engine != "whisper" {
@@ -283,22 +281,14 @@ pub fn transcribe_file(
         (vec![(0usize, opts.speaker_right.clone())], "общая запись")
     };
 
-    let mut channel_samples: HashMap<usize, Vec<f32>> = HashMap::new();
-    for (ch, _) in chan_list.iter() {
-        channel_samples.insert(
-            *ch,
-            channels
-                .get(*ch)
-                .cloned()
-                .unwrap_or_else(|| channels[0].clone()),
-        );
-    }
-    // Подавление эха колонок в split-режиме
-    if is_stereo {
-        let cleaned = diarize::suppress_echo(&channel_samples[&0], &channel_samples[&1]);
-        channel_samples.insert(0, cleaned);
-        events::emit_stage(10, "Эхо динамиков подавлено");
-    }
+    // Каналы отдаём как есть: `channels` больше нигде не нужен, поэтому
+    // раскладываем его по индексам без копий (иначе длинная запись занимала
+    // вдвое больше памяти).
+    let channel_samples: HashMap<usize, Vec<f32>> = channels
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| chan_list.iter().any(|(ch, _)| ch == i))
+        .collect();
 
     // VAD + группировка
     let mut channel_grouped: HashMap<usize, Vec<(f64, f64)>> = HashMap::new();
