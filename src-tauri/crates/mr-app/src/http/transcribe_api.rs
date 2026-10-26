@@ -112,9 +112,7 @@ pub(super) fn serve_transcribe_stream(request: tiny_http::Request) {
                 ));
             }
             since = total;
-            if (!buf.is_empty() && out.write_all(buf.as_bytes()).is_err())
-                || out.flush().is_err()
-            {
+            if (!buf.is_empty() && out.write_all(buf.as_bytes()).is_err()) || out.flush().is_err() {
                 return;
             }
             if !running {

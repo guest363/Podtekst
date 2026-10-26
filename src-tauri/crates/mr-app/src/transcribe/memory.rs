@@ -112,10 +112,7 @@ mod tests {
         assert!(fits(79, 100));
         assert!(!fits(81, 100));
         assert!(fits(peak_bytes(3600.0, 2), 6 * 1024 * 1024 * 1024));
-        assert!(!fits(
-            peak_bytes(10.0 * 3600.0, 2),
-            6 * 1024 * 1024 * 1024
-        ));
+        assert!(!fits(peak_bytes(10.0 * 3600.0, 2), 6 * 1024 * 1024 * 1024));
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
