@@ -68,8 +68,31 @@ fn resource_dir() -> Option<PathBuf> {
     })
 }
 
+/// Command-line запуск (`run.command`) идёт мимо .app-бандла, а TCC требует
+/// NSMicrophoneUsageDescription до первого обращения к микрофону. Вшиваем
+/// Info.plist в секцию __TEXT бинарника — macOS читает её как у бандла.
+fn embed_macos_info_plist() {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
+        return;
+    }
+    let plist = Path::new(env!("CARGO_MANIFEST_DIR")).join("Info.plist");
+    if !plist.is_file() {
+        println!(
+            "cargo:warning={} not found; microphone permission may be denied",
+            plist.display()
+        );
+        return;
+    }
+    println!("cargo:rerun-if-changed={}", plist.display());
+    println!(
+        "cargo:rustc-link-arg-bin=meeting-recorder=-Wl,-sectcreate,__TEXT,__info_plist,{}",
+        plist.display()
+    );
+}
+
 fn main() {
     link_clang_rt_on_apple();
+    embed_macos_info_plist();
     println!("cargo:rerun-if-env-changed=CC");
     println!("cargo:rerun-if-env-changed=TARGET_CC");
 

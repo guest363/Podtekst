@@ -50,9 +50,9 @@ git status --short
 ## 3. Тег и релиз
 
 ```bash
-git tag -a v0.1.0 -m "Meeting Recorder 0.1.0"
+git tag -a v0.1.1 -m "Meeting Recorder 0.1.1"
 git push origin main
-git push origin v0.1.0
+git push origin v0.1.1
 ```
 
 После push:
@@ -68,11 +68,11 @@ git push origin v0.1.0
 Если workflow упал, исправьте причину, удалите тег и создайте заново:
 
 ```bash
-git tag -d v0.1.0
-git push origin :refs/tags/v0.1.0
+git tag -d v0.1.1
+git push origin :refs/tags/v0.1.1
 # после исправления и merge в main
-git tag -a v0.1.0 -m "Meeting Recorder 0.1.0"
-git push origin v0.1.0
+git tag -a v0.1.1 -m "Meeting Recorder 0.1.1"
+git push origin v0.1.1
 ```
 
 ## 4. Подпись
@@ -82,11 +82,22 @@ git push origin v0.1.0
 что Gatekeeper/SmartScreen могут показать предупреждение. Ключи и сертификаты
 в репозиторий не коммитятся.
 
+Подпись macOS включается без правки workflow: задайте в GitHub Actions секреты
+
+* `APPLE_CERTIFICATE` — base64 от `.p12` сертификата Developer ID Application;
+* `APPLE_CERTIFICATE_PASSWORD` — пароль `.p12`;
+* `APPLE_SIGNING_IDENTITY` — например `Developer ID Application: ООО «…» (TEAMID)`;
+* `APPLE_ID`, `APPLE_PASSWORD` — Apple ID и app-specific password для нотаризации;
+* `APPLE_TEAM_ID` — Team ID.
+
+Если `APPLE_CERTIFICATE` не задан, сборка остаётся неподписанной, а в README
+остаётся инструкция `xattr -dr com.apple.quarantine /Applications/MeetingRecorder.app`.
+
 ## 5. Проверка после релиза
 
 ```bash
-gh release view v0.1.0
-gh release download v0.1.0 --pattern SHA256SUMS
+gh release view v0.1.1
+gh release download v0.1.1 --pattern SHA256SUMS
 sha256sum -c SHA256SUMS
 ```
 

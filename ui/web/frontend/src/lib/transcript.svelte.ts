@@ -114,7 +114,7 @@ function handleEngineEvent(e: MessageEvent): void {
       return
     }
     engine.msg = evt.message || 'Обработка…'
-    if (evt.pct !== undefined) engine.pct = Math.max(5, Math.min(100, evt.pct))
+    if (evt.pct !== undefined) engine.pct = Math.max(engine.pct, Math.max(5, Math.min(100, evt.pct)))
   } else if (evt.type === 'segment') {
     engine.msg = `Реплик распознано: ${evt.done || 0} из ${evt.total || 0}`
     if (evt.pct !== undefined) engine.pct = evt.pct

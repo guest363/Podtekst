@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { baseName, isMobile, readJsonSafe } from '../lib/api'
-  import { settings } from '../lib/settings.svelte.ts'
+  import { hasSystemAudio, settings } from '../lib/settings.svelte.ts'
   import { toast } from '../lib/toast.svelte.ts'
   import { emit } from '../lib/ui.svelte.ts'
   import { engine, syncEngineFromStatus } from '../lib/transcript.svelte.ts'
@@ -180,7 +180,7 @@
         <div class="vu-track"><div class="vu-bar" style={`width: ${micLevel}%`}></div></div>
         <span class="vu-db">{micRms > 0.001 ? `${micDb}\u00A0дБ` : '–\u00A0дБ'}</span>
       </div>
-      {#if !isMobile}
+      {#if hasSystemAudio()}
         <div class="vu-row">
           <span class="vu-label">Собеседники</span>
           <div class="vu-track"><div class="vu-bar" style={`width: ${sysLevel}%`}></div></div>

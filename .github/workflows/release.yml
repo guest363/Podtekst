@@ -50,6 +50,33 @@ jobs:
           cd "$GITHUB_WORKSPACE/ui/web/frontend" && yarn install --immutable && yarn build
       - name: Rust unit tests (host)
         run: cargo test --workspace --locked
+      # Подпись и нотаризация включаются сами, когда в репозитории заданы
+      # секреты Apple Developer. Без них сборка остаётся неподписанной:
+      # macOS покажет предупреждение Gatekeeper (см. README).
+      - name: Configure macOS signing (optional)
+        if: matrix.os == 'macos-14'
+        shell: bash
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$CERT" ]; then
+            {
+              echo "APPLE_CERTIFICATE=$CERT"
+              echo "APPLE_CERTIFICATE_PASSWORD=$CERT_PASSWORD"
+              echo "APPLE_SIGNING_IDENTITY=$IDENTITY"
+              echo "APPLE_ID=$APPLE_ID"
+              echo "APPLE_PASSWORD=$APPLE_PASSWORD"
+              echo "APPLE_TEAM_ID=$TEAM_ID"
+            } >> "$GITHUB_ENV"
+            echo "macOS: подпись и нотаризация включены"
+          else
+            echo "macOS: секреты Apple не заданы, сборка без подписи"
+          fi
       # projectPath: нестандартная раскладка — tauri.conf.json лежит в
       # crates/mr-app, а не в <корень>/src-tauri.
       - name: Build Tauri bundle

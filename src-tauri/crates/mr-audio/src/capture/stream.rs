@@ -133,6 +133,54 @@ pub fn resample_to(samples: &[f32], from: u32, to: u32) -> Vec<f32> {
     out
 }
 
+/// Потоковый ресемплер для живого захвата: устройство отдаёт 44.1/48 кГц,
+/// моделям нужно 16 кГц. Усреднение по окну подавляет высокие частоты перед
+/// прореживанием, дробный шаг не даёт накопить дрейф за час записи.
+pub struct StreamingResampler {
+    step: f64,
+    pos: f64,
+    pending: Vec<f32>,
+}
+
+impl StreamingResampler {
+    /// `None`, если частоты совпадают (ресемплинг не нужен).
+    pub fn new(from: u32, to: u32) -> Option<Self> {
+        (from != to && from > 0 && to > 0).then(|| Self {
+            step: from as f64 / to as f64,
+            pos: 0.0,
+            pending: Vec::new(),
+        })
+    }
+
+    pub fn push(&mut self, input: &[f32]) -> Vec<f32> {
+        self.pending.extend_from_slice(input);
+        let mut out = Vec::with_capacity((self.pending.len() as f64 / self.step) as usize + 2);
+        while self.pos + self.step <= self.pending.len() as f64 {
+            let start = self.pos.floor() as usize;
+            let end = ((self.pos + self.step).ceil() as usize).min(self.pending.len());
+            if end <= start {
+                break;
+            }
+            if self.step > 1.5 {
+                let sum: f32 = self.pending[start..end].iter().sum();
+                out.push(sum / (end - start) as f32);
+            } else {
+                let i = start.min(self.pending.len().saturating_sub(2));
+                let frac = (self.pos - i as f64) as f32;
+                out.push(self.pending[i] * (1.0 - frac) + self.pending[i + 1] * frac);
+            }
+            self.pos += self.step;
+        }
+        // Оставляем дробный хвост и один сэмпл контекста для следующего блока.
+        let consumed = self.pos.floor() as usize;
+        if consumed > 0 {
+            self.pending.drain(..consumed);
+            self.pos -= consumed as f64;
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,5 +225,39 @@ mod tests {
         // Нулевые частоты (битый заголовок) не паникуют — возвращаем как есть.
         assert_eq!(resample_to(&s, 0, 16000).len(), s.len());
         assert_eq!(resample_to(&s, 48000, 0).len(), s.len());
+    }
+
+    #[test]
+    fn streaming_resampler_48k_to_16k_keeps_duration_and_level() {
+        let mut resampler = StreamingResampler::new(48_000, 16_000).expect("48k→16k");
+        let mut out = Vec::new();
+        for _ in 0..100 {
+            out.extend(resampler.push(&vec![0.5f32; 480]));
+        }
+        assert!((out.len() as i64 - 16_000).abs() <= 3, "{}", out.len());
+        assert!(out.iter().all(|x| (*x - 0.5).abs() < 1e-6));
+    }
+
+    #[test]
+    fn streaming_resampler_44k1_to_16k_keeps_duration() {
+        let mut resampler = StreamingResampler::new(44_100, 16_000).expect("44.1k→16k");
+        let mut out = Vec::new();
+        for _ in 0..100 {
+            out.extend(resampler.push(&vec![0.25f32; 441]));
+        }
+        assert!((out.len() as i64 - 16_000).abs() <= 3, "{}", out.len());
+    }
+
+    #[test]
+    fn streaming_resampler_is_monotonic_across_blocks() {
+        let mut resampler = StreamingResampler::new(48_000, 16_000).expect("48k→16k");
+        let mut out = Vec::new();
+        for block in 0..100 {
+            let start = block * 480;
+            let samples: Vec<f32> = (0..480).map(|i| (start + i) as f32).collect();
+            out.extend(resampler.push(&samples));
+        }
+        assert!(out.windows(2).all(|w| w[0] <= w[1] + 1e-3));
+        assert!(out.first().copied().unwrap_or(0.0) < 2.0);
     }
 }

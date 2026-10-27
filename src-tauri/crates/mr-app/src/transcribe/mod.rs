@@ -399,7 +399,9 @@ pub fn transcribe_file(
         let samples = &channel_samples[ch];
         let mut utts = channel_utts.remove(ch).unwrap_or_default();
         on_event(80, "Ищу смену голоса внутри длинных реплик…");
-        utts = diarize::split_long_by_speaker_change(samples, utts, &mut embed_ext);
+        utts = diarize::split_long_by_speaker_change(samples, utts, &mut embed_ext, &|pct, msg| {
+            on_event(pct, msg)
+        });
         let (prefix, ch_idx) = if is_stereo {
             (
                 if *ch == 0 {

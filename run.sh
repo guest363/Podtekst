@@ -152,4 +152,9 @@ if [ "$NEEDS_FRONT_BUILD" = 1 ] || [ "$NEEDS_RUST_BUILD" = 1 ]; then
     fi
 fi
 
+# macOS: ad-hoc подпись даёт TCC стабильную личность для доступа к микрофону.
+if [ "$(uname -s)" = "Darwin" ] && [ -f "$BIN" ]; then
+    codesign --force --sign - "$BIN" 2>/dev/null || true
+fi
+
 exec "$BIN" "${CLEAN_ARGS[@]}"

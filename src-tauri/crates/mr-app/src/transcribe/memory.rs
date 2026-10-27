@@ -64,11 +64,33 @@ fn parse_mem_available(text: &str) -> Option<u64> {
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub(crate) fn available_bytes() -> Option<u64> {
-    // SAFETY: sysconf не пишет в память и не требует разыменования указателей.
+    // `_SC_AVPHYS_PAGES` на macOS считает только совсем свободные страницы и
+    // после работы любой программы показывает единицы гигабайт — из-за этого
+    // часовую запись ошибочно объявляли не помещающейся в память. Берём
+    // free + inactive + speculative из vm_statistics64: это то, что система
+    // реально может отдать без свопа.
+    // SAFETY: mach-вызовы заполняют структуру известного размера; указатели валидны.
     unsafe {
-        let pages = libc::sysconf(libc::_SC_AVPHYS_PAGES);
-        let page = libc::sysconf(libc::_SC_PAGESIZE);
-        (pages > 0 && page > 0).then(|| pages as u64 * page as u64)
+        #[allow(deprecated)]
+        let host = libc::mach_host_self();
+        let page_size = libc::sysconf(libc::_SC_PAGESIZE);
+        if page_size <= 0 {
+            return None;
+        }
+        let mut stats: libc::vm_statistics64 = std::mem::zeroed();
+        let mut count = libc::HOST_VM_INFO64_COUNT;
+        let status = libc::host_statistics64(
+            host,
+            libc::HOST_VM_INFO64,
+            &mut stats as *mut libc::vm_statistics64 as *mut libc::integer_t,
+            &mut count,
+        );
+        if status != 0 {
+            return None;
+        }
+        let pages =
+            stats.free_count as u64 + stats.inactive_count as u64 + stats.speculative_count as u64;
+        Some(pages * page_size as u64)
     }
 }
 

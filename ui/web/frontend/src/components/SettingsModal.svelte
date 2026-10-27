@@ -5,6 +5,7 @@
   import {
     createPack,
     exportPack,
+    hasSystemAudio,
     loadModels,
     setAutoTranscribe,
     setRecordMode,
@@ -101,7 +102,7 @@
         <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Запись">
           <div class="card-title">Режим записи</div>
           <div class="seg-bar" role="group" aria-label="Режим записи">
-            {#if !isMobile}
+            {#if hasSystemAudio()}
               <button
                 class="seg-item {settings.recordMode === 'split' ? 'active' : ''}"
                 onclick={() => void setRecordMode('split')}
@@ -113,11 +114,14 @@
               class="seg-item {settings.recordMode === 'mix' ? 'active' : ''}"
               onclick={() => void setRecordMode('mix')}
             >
-              {isMobile ? 'Микрофон · 1 канал' : 'Обычная · 1 канал'}
+              {hasSystemAudio() ? 'Обычная · 1 канал' : 'Микрофон · 1 канал'}
             </button>
           </div>
           <div class="help-text">
-            {#if isMobile}
+            {#if settings.platform === 'macos' && !hasSystemAudio()}
+              Системный звук на macOS не найден. Установите BlackHole 2ch и многовыходное
+              устройство (см. README) — или пишите только микрофон в один канал.
+            {:else if isMobile}
               На телефоне доступен только микрофон. Запись идёт в один канал; экран можно
               погасить — запись продолжится.
             {:else if settings.recordMode === 'split'}

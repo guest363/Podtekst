@@ -120,9 +120,11 @@ pub(crate) fn start_recording_inner(st: &mut RecordingState, mode: &str) -> serd
     if st.is_recording {
         return json!({"ok": false, "error": "Запись уже идёт"});
     }
-    // На Android системного канала нет: split даёт второй канал из нулей,
-    // зря удваивает файл и время VAD. Пишем моно.
-    let mode = if cfg!(target_os = "android") {
+    let catalog = mr_audio::capture::devices();
+    let has_system = catalog.default_system.is_some();
+    // Android и платформы без второго канала (на macOS — без BlackHole) не
+    // могут писать split: он дал бы канал из нулей и зря удвоил файл и VAD.
+    let mode = if cfg!(target_os = "android") || !has_system {
         "mix"
     } else {
         mode
@@ -147,7 +149,6 @@ pub(crate) fn start_recording_inner(st: &mut RecordingState, mode: &str) -> serd
         st.mode = mode.to_string();
         return json!({"ok": true, "file": out.to_string_lossy(), "filename": fname});
     }
-    let catalog = mr_audio::capture::devices();
     let mic_id = catalog.default_input.clone();
     let mic_dev = catalog
         .inputs
@@ -188,7 +189,12 @@ pub(crate) fn start_recording_inner(st: &mut RecordingState, mode: &str) -> serd
     notify_recording_state(true);
     st.start_time = started;
     st.current_file = Some(out.to_string_lossy().to_string());
-    st.mode = mode.to_string();
+    // Если системный канал не открылся, честно пишем моно, а не стерео с нулями.
+    st.mode = if has_sys {
+        mode.to_string()
+    } else {
+        "mix".to_string()
+    };
     json!({"ok": true, "file": out.to_string_lossy(), "filename": fname,
         "mic": mic_label, "mic_muted": muted,
         "sys": has_sys})
@@ -252,7 +258,12 @@ pub(crate) fn stop_recording_inner(st: &mut RecordingState) -> serde_json::Value
                 for p in [mic_path.as_ref(), sys_path.as_ref()].into_iter().flatten() {
                     let _ = std::fs::remove_file(p);
                 }
-                return Err("запись пустая (0 сэмплов)".to_string());
+                let hint = if cfg!(target_os = "macos") {
+                    ": проверьте доступ к микрофону в «Системные настройки» → «Конфиденциальность и безопасность» → «Микрофон»"
+                } else {
+                    ""
+                };
+                return Err(format!("запись пустая (0 сэмплов){hint}"));
             }
             let mut mic = mic;
             let mut sys = sys;
@@ -326,11 +337,13 @@ pub(crate) fn start_recording_with_notify(st: &mut RecordingState) -> serde_json
     let mode = crate::configured_record_mode();
     let res = start_recording_inner(st, &mode);
     if res.get("ok").and_then(|x| x.as_bool()) == Some(true) {
-        crate::desktop::notify_icon(
-            "Запись встреч",
-            "🔴 Запись началась (микрофон + система)",
-            "media-record",
-        );
+        let sys = res.get("sys").and_then(|x| x.as_bool()).unwrap_or(false);
+        let what = if sys {
+            "🔴 Запись началась (микрофон + система)"
+        } else {
+            "🔴 Запись началась (микрофон)"
+        };
+        crate::desktop::notify_icon("Запись встреч", what, "media-record");
     } else {
         let err = res
             .get("error")

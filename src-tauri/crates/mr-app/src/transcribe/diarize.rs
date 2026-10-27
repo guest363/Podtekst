@@ -910,36 +910,62 @@ pub(crate) fn refresh_speaker_stats(infos: &mut Vec<SpeakerInfo>, utterances: &[
     infos.retain(|s| s.utterances_count > 0);
 }
 
-/// Разрез длинных реплик при смене голоса: скользящее окно эмбеддингов 1.6 с /
-/// шаг 0.5 с; разрез при косинусном сходстве < 0.35 (локальный минимум; в
+/// Потолок числа окон на одну реплику: 8 эмбеддингов на 20-секундный
+/// фрагмент вместо 37 при шаге 0.5 с. Разрезаем только длинные реплики:
+/// на коротких смена голоса почти всегда совпадает с паузой VAD, а каждый
+/// лишний эмбеддинг на ARM стоит сотни миллисекунд.
+const SPLIT_MIN_DUR: f64 = 8.0;
+const SPLIT_MAX_WINDOWS: usize = 8;
+const SPLIT_WINDOW_SEC: f64 = 1.6;
+
+/// Шаг скользящего окна: на коротких репликах 0.5 с, на длинных растягивается
+/// так, чтобы уложиться в [`SPLIT_MAX_WINDOWS`].
+fn split_step(duration: f64) -> f64 {
+    let span = (duration - SPLIT_WINDOW_SEC).max(0.0);
+    (span / (SPLIT_MAX_WINDOWS - 1) as f64).max(0.5)
+}
+
+/// Разрез длинных реплик при смене голоса: скользящее окно эмбеддингов 1.6 с;
+/// разрез при косинусном сходстве < 0.35 (локальный минимум; в
 /// пространстве eres2netv2-192-v1 один голос даёт ~0.5+, смена диктора ≤ 0.22).
 pub(crate) fn split_long_by_speaker_change(
     samples: &[f32],
     utterances: Vec<Utterance>,
     extractor: &mut Option<EmbeddingExtractor>,
+    on_event: &dyn Fn(u8, &str),
 ) -> Vec<Utterance> {
     let Some(ext) = extractor else {
         return utterances;
     };
     let sr = 16000.0;
     let mut out = Vec::new();
-    for u in utterances {
+    let total = utterances.len();
+    for (index, u) in utterances.into_iter().enumerate() {
+        if index % 5 == 0 || index + 1 == total {
+            on_event(
+                80,
+                &format!("Ищу смену голоса: реплика {} из {total}", index + 1),
+            );
+        }
         let dur = u.end - u.start;
-        if dur < 3.2 {
+        if dur < SPLIT_MIN_DUR {
             out.push(u);
             continue;
         }
+        // Шаг растягивается только на длинных репликах; на коротких остаётся
+        // 0.5 с, чтобы не размывать границу смены голоса.
+        let step = split_step(dur);
         let mut wins: Vec<(f64, Vec<f64>)> = vec![];
         let mut t = u.start;
-        while t + 1.6 <= u.end + 1e-6 {
+        while t + SPLIT_WINDOW_SEC <= u.end + 1e-6 {
             let lo = (t * sr) as usize;
-            let hi = ((t + 1.6).min(u.end) * sr) as usize;
+            let hi = ((t + SPLIT_WINDOW_SEC).min(u.end) * sr) as usize;
             if hi > lo && hi <= samples.len() {
                 if let Ok(Some(e)) = ext.embed(&samples[lo..hi]) {
                     wins.push((t, e));
                 }
             }
-            t += 0.5;
+            t += step;
         }
         if wins.len() < 3 {
             out.push(u);
@@ -1026,7 +1052,8 @@ pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<Strin
 mod tests {
     use super::{
         dedupe_cross_channel, merge_quiet_short, merge_utterances, read_profiles_file,
-        reconcile_channels, refresh_speaker_stats, split_words_by_bounds, SpeakerInfo, Utterance,
+        reconcile_channels, refresh_speaker_stats, split_step, split_words_by_bounds, SpeakerInfo,
+        Utterance,
     };
 
     fn info(name: &str, ch: i32, emb: Vec<f64>, count: usize, sec: f64) -> SpeakerInfo {
@@ -1054,6 +1081,17 @@ mod tests {
             text: text.to_string(),
             diarized: true,
         }
+    }
+
+    #[test]
+    fn split_windows_are_capped_for_long_utterances() {
+        // Короткие реплики не трогаем, длинные укладываются в 8 окон.
+        assert_eq!(split_step(3.2), 0.5);
+        assert!((split_step(10.0) - 8.4 / 7.0).abs() < 1e-9);
+        let step = split_step(20.0);
+        let windows = ((20.0 - 1.6) / step + 1e-9).floor() as usize + 1;
+        assert_eq!(windows, 8, "step {step}");
+        assert!(split_step(60.0) > step);
     }
 
     #[test]

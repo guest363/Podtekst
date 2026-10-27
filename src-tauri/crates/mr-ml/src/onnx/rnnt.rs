@@ -29,8 +29,10 @@ pub struct GigaAM {
 impl GigaAM {
     pub fn load(dir: &Path) -> Result<Self, String> {
         let enc = OrtSession::load(&dir.join("gigaam_enc_q.onnx"), 0)?;
-        let dec = OrtSession::load(&dir.join("gigaam_dec_q.onnx"), 0)?;
-        let joint = OrtSession::load(&dir.join("gigaam_joint_q.onnx"), 0)?;
+        // Декодер и joint — крошечные матрицы на один кадр/токен: на пуле
+        // потоков синхронизация дороже вычислений, поэтому по одному потоку.
+        let dec = OrtSession::load(&dir.join("gigaam_dec_q.onnx"), 1)?;
+        let joint = OrtSession::load(&dir.join("gigaam_joint_q.onnx"), 1)?;
         let enc_input = enc
             .input_names
             .first()

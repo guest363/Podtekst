@@ -1,7 +1,7 @@
 # Meeting Recorder (Запись встреч) — AGENTS.md
 
 Нативное кроссплатформенное приложение для записи встреч и локальной ИИ-расшифровки
-(Linux PipeWire/PulseAudio — живой захват; macOS/Windows — импорт файлов, живой захват в разработке).
+(Linux PipeWire/PulseAudio — живой захват; macOS — CoreAudio: микрофон и BlackHole для системного звука; Windows — импорт файлов, живой захват в разработке).
 Стек: **Rust + Tauri v2 + ONNX Runtime** (zero-dependency бинарник ~20–30 МБ).
 Модели: **GigaAM-v3 e2e RNNT int8** (русский, SOTA) + **Whisper-turbo** (30+ языков) +
 **Silero VAD v6** + **ERes2NetV2 192-dim** (3D-Speaker) — всё локально, без облаков.
@@ -100,7 +100,7 @@ cd ui/web/frontend && yarn check && yarn build  # Фронт: типы (svelte-c
 | Математика диаризации (прототипы, Венгрия, кластеризация) | `src-tauri/crates/mr-ml/src/{lib.rs,cluster.rs}` |
 | Голосовые пакеты, импорт/экспорт пакетов | `mr-packs/src/{lib,manifest,transfer}.rs` |
 | Реестр и обновление моделей (манифест, зеркала, SHA-256) | `src-tauri/crates/mr-models/` + `models-manifest.json` рядом |
-| Аудио: устройства, сплит, WAV, symphonia-декодер | `src-tauri/crates/mr-audio/src/` |
+| Аудио: устройства, сплит, WAV, symphonia-декодер | `src-tauri/crates/mr-audio/src/` (macOS — `capture/macos.rs`) |
 | Web UI (Svelte 5 + Vite + TS, собирает `run.sh`) | `ui/web/frontend/src/` (исходники), `ui/web/static/` (только dist, руками не править) |
 | Конфиг Tauri (окно, трей, хоткеи) | `src-tauri/crates/mr-app/tauri.conf.json`, `capabilities/` рядом |
 | CI: тесты + бинарники + Tauri-бандлы | `.github/workflows/release.yml` |

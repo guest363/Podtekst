@@ -9,6 +9,8 @@ export const settings = $state({
   models: [] as ModelInfo[],
   newPackName: '',
   recordMode: 'split',
+  platform: '',
+  systemAudio: false,
   autoTranscribe: true,
 })
 
@@ -39,8 +41,16 @@ export async function setAutoTranscribe(enabled: boolean): Promise<void> {
 
 export async function loadRecordMode(): Promise<void> {
   if (isMobile) {
+    settings.platform = 'android'
     settings.recordMode = 'mix'
     return
+  }
+  try {
+    const st = await readJsonSafe(await fetch('/api/status'))
+    if (typeof st.platform === 'string') settings.platform = st.platform
+    settings.systemAudio = st.device?.has_system_audio === true
+  } catch {
+    /* платформа неизвестна — покажем режим как есть */
   }
   try {
     const d = await readJsonSafe(await fetch('/api/record/mode'))
@@ -48,6 +58,13 @@ export async function loadRecordMode(): Promise<void> {
   } catch {
     /* остаётся split */
   }
+  // Без второго канала split недоступен: бэкенд пишет моно.
+  if (!settings.systemAudio) settings.recordMode = 'mix'
+}
+
+/** Есть ли в системе источник звука собеседников (второй канал записи). */
+export function hasSystemAudio(): boolean {
+  return settings.systemAudio && !isMobile
 }
 
 export async function setRecordMode(mode: 'split' | 'mix'): Promise<void> {
