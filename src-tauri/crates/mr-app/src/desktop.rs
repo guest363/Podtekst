@@ -47,10 +47,7 @@ pub fn autostart_file_path() -> PathBuf {
         }
         return home_dir().join("MeetingRecorder-autostart.lnk");
     }
-    #[cfg_attr(
-        not(any(target_os = "macos", target_os = "windows")),
-        allow(unreachable_code)
-    )]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let base = std::env::var("XDG_CONFIG_HOME")
             .map(PathBuf::from)
@@ -94,10 +91,7 @@ pub fn install_autostart(exec_path: &str) -> Result<()> {
                 .to_string(),
         ));
     }
-    #[cfg_attr(
-        not(any(target_os = "macos", target_os = "windows")),
-        allow(unreachable_code)
-    )]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         // Кавычки обязательны: путь с пробелами иначе разваливает Exec на аргументы.
         let desktop = format!(

@@ -178,13 +178,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn devices_have_system_audio_without_virtual_cables() {
+    fn system_audio_info_is_consistent_with_monitor_device() {
         let info = get_audio_devices_info();
         if info.source.is_empty() {
             return; // нет аудиосервера — зондировать нечего
         }
+        // На macOS системный канал требует BlackHole/Loopback, на Linux —
+        // монитор выхода PulseAudio. Флаг и устройство должны совпадать.
+        assert_eq!(info.has_system_audio, info.sink_monitor.is_some());
+        #[cfg(target_os = "linux")]
         assert!(info.has_system_audio);
-        assert!(info.sink_monitor.is_some());
     }
 
     #[test]
