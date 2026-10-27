@@ -24,7 +24,7 @@ use self::people::{
 use self::transcribe_api::{
     handle_models_update, handle_transcribe_start, serve_transcribe_stream, serve_transcript,
 };
-use self::update::handle_update_check;
+use self::update::{handle_update_apply, handle_update_check, handle_update_progress};
 use crate::config::config_lock;
 use crate::config::{
     app_data_dir, configured_auto_transcribe, configured_record_mode, save_auto_transcribe,
@@ -276,6 +276,12 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                         request,
                         query_param(&query, "force").as_deref() == Some("1"),
                     );
+                }
+                (tiny_http::Method::Post, "/api/update/apply") => {
+                    handle_update_apply(request);
+                }
+                (tiny_http::Method::Get, "/api/update/progress") => {
+                    handle_update_progress(request);
                 }
                 (tiny_http::Method::Get, "/api/recordings") => {
                     json_response(request, json!({"recordings": recordings_list()}), 200);

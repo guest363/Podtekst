@@ -48,6 +48,24 @@ jobs:
         run: |
           corepack enable
           cd "$GITHUB_WORKSPACE/ui/web/frontend" && yarn install --immutable && yarn build
+      # Ключ подписи апдейтера — секрет репозитория. Без него пакет не подписать:
+      # отключаем updater-артефакты, чтобы релиз собрался как раньше (без самообновления).
+      - name: Updater signing
+        shell: bash
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEY" ]; then
+            {
+              echo "TAURI_SIGNING_PRIVATE_KEY=$KEY"
+              echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$PASSWORD"
+            } >> "$GITHUB_ENV"
+            echo "Апдейтер: пакеты будут подписаны"
+          else
+            node -e "const fs=require('fs');const f='crates/mr-app/tauri.conf.json';const c=JSON.parse(fs.readFileSync(f,'utf8'));c.bundle.createUpdaterArtifacts=false;fs.writeFileSync(f,JSON.stringify(c,null,2));"
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY не задан — релиз без автообновления"
+          fi
       - name: Rust unit tests (host)
         run: cargo test --workspace --locked
       # Подпись и нотаризация включаются сами, когда в репозитории заданы
@@ -91,15 +109,16 @@ jobs:
         shell: bash
         run: |
           mkdir -p bundle-pkg
-          # Один пакет на платформу: AppImage / dmg / NSIS setup.exe.
+          # Пакет для платформы + артефакты апдейтера: .app.tar.gz и подписи .sig.
           find "$GITHUB_WORKSPACE/src-tauri/target" -type f -path '*/bundle/*' \
-            \( -name '*.AppImage' -o -name '*.dmg' -o -name '*-setup.exe' \) \
+            \( -name '*.AppImage' -o -name '*.dmg' -o -name '*-setup.exe' \
+               -o -name '*.app.tar.gz' -o -name '*.sig' \) \
             -print0 | while IFS= read -r -d '' f; do
               cp "$f" "bundle-pkg/$(basename "$f")"
             done
-          count=$(find bundle-pkg -maxdepth 1 -type f | wc -l)
-          if [ "$count" -ne 1 ]; then
-            echo "Ожидался ровно один пакет, найдено: $count"
+          count=$(find bundle-pkg -maxdepth 1 -type f ! -name '*.sig' | wc -l)
+          if [ "$count" -lt 1 ]; then
+            echo "Не найден ни один установочный пакет"
             ls -la bundle-pkg/
             exit 1
           fi
@@ -137,6 +156,38 @@ jobs:
           find artifacts -type f -print0 | sort -z | xargs -0 sha256sum \
             | sed 's#  artifacts/.*/#  #' > SHA256SUMS
           cat SHA256SUMS
+      # Манифест штатного апдейтера Tauri: приложение читает его из
+      # releases/latest/download/latest.json и сверяет подпись пакета.
+      - name: Updater manifest
+        run: |
+          python3 - "$GITHUB_REF_NAME" <<'PY'
+          import json, pathlib, sys
+
+          tag, root = sys.argv[1], pathlib.Path("artifacts")
+          kinds = {
+              ".AppImage": "linux-x86_64",
+              ".app.tar.gz": "darwin-aarch64",
+              "-setup.exe": "windows-x86_64",
+          }
+          platforms = {}
+          for sig in root.rglob("*.sig"):
+              name = sig.name[:-4]
+              key = next((v for k, v in kinds.items() if name.endswith(k)), None)
+              if key:
+                  platforms[key] = {
+                      "url": f"https://github.com/guest363/meeting-record/releases/download/{tag}/{name}",
+                      "signature": sig.read_text().strip(),
+                  }
+          if platforms:
+              out = root / "updater"
+              out.mkdir(exist_ok=True)
+              (out / "latest.json").write_text(
+                  json.dumps({"version": tag.lstrip("v"), "platforms": platforms},
+                             ensure_ascii=False, indent=2))
+              print("latest.json:", ", ".join(platforms))
+          else:
+              print("Подписей нет — latest.json не создаём")
+          PY
       - name: Release
         uses: softprops/action-gh-release@v2
         with:

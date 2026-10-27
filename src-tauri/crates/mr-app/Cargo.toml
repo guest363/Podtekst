@@ -54,6 +54,7 @@ tauri-ui = [
   "dep:tauri-plugin-single-instance",
   "dep:tauri-plugin-autostart",
   "dep:tauri-plugin-global-shortcut",
+  "dep:tauri-plugin-updater",
 ]
 
 [dependencies.tauri]
@@ -72,4 +73,9 @@ optional = true
 
 [dependencies.tauri-plugin-global-shortcut]
 version = "2.1"
+optional = true
+
+# Самообновление: скачивает подписанный пакет и перезапускает приложение.
+[dependencies.tauri-plugin-updater]
+version = "2"
 optional = true

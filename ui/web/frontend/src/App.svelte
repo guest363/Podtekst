@@ -17,7 +17,7 @@
     statusBadge,
   } from './lib/settings.svelte.ts'
   import { loadSupportInfo } from './lib/support.svelte.ts'
-  import { checkUpdate, dismissUpdate, update } from './lib/update.svelte.ts'
+  import { applyUpdate, checkUpdate, dismissUpdate, update } from './lib/update.svelte.ts'
   import { initRouting, on, ui } from './lib/ui.svelte.ts'
   import { renderMarkdown } from './lib/markdown'
   import RecordingDeck from './components/RecordingDeck.svelte'
@@ -150,19 +150,36 @@
         <section class="card update-card" aria-label="Доступно обновление">
           <div class="card-header">
             <span class="card-title">Доступна версия {update.latest}</span>
-            <button class="icon-btn" aria-label="Скрыть предложение обновления" onclick={dismissUpdate}>
-              ✕
-            </button>
+            {#if !update.applying}
+              <button class="icon-btn" aria-label="Скрыть предложение обновления" onclick={dismissUpdate}>
+                ✕
+              </button>
+            {/if}
           </div>
           <div class="help-text">
-            У вас установлена версия {update.current}. Новую версию можно скачать со страницы релиза.
+            {#if update.applying}
+              Скачиваю обновление… {update.pct}%. После установки приложение перезапустится само.
+            {:else if update.error}
+              {update.error}
+            {:else}
+              У вас установлена версия {update.current}.
+              {update.selfUpdate
+                ? 'Обновление скачается и установится здесь.'
+                : 'Новую версию можно скачать со страницы релиза.'}
+            {/if}
           </div>
-          <div class="row-start">
-            <a class="btn-primary" href={update.url} target="_blank" rel="noopener noreferrer">
-              Скачать обновление
-            </a>
-            <button class="btn-secondary" onclick={dismissUpdate}>Позже</button>
-          </div>
+          {#if !update.applying}
+            <div class="row-start">
+              {#if update.selfUpdate}
+                <button class="btn-primary" onclick={applyUpdate}>Обновить и перезапустить</button>
+              {:else}
+                <a class="btn-primary" href={update.url} target="_blank" rel="noopener noreferrer">
+                  Скачать обновление
+                </a>
+              {/if}
+              <button class="btn-secondary" onclick={dismissUpdate}>Позже</button>
+            </div>
+          {/if}
         </section>
       {/if}
       <RecordingDeck />

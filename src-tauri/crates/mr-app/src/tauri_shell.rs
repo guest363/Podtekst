@@ -216,6 +216,8 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--tray"]),
         ))
+        // Самообновление: подписанный пакет из GitHub Release, установка — по кнопке в UI.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // Сначала без комбинации: на Wayland её регистрирует портал,
         // на X11/macOS/Windows — плагин. Иначе на Wayland был бы двойной тумблер.
         .plugin(tauri_plugin_global_shortcut::Builder::new().build());
@@ -229,6 +231,10 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
             }
         })
         .setup(move |app| {
+            // HTTP-сервер стартует раньше окна: отдаём ему handle для самообновления.
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            crate::http::update::set_app(app.handle().clone());
+
             // Мобильные платформы: каталог данных даёт система (файлы приложения).
             // Прописываем его ДО первого обращения конфига — save_dir, модели
             // и паки читают app_data_dir лениво через env.
