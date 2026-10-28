@@ -423,6 +423,7 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
             return;
         }
         let now = crate::recording::now_secs();
+        let now_iso = chrono::Utc::now().to_rfc3339();
         let vp_file = packs::ensure_default_pack(&app_data_dir())
             .map(|d| d.join("voiceprints.json"))
             .unwrap_or_else(|_| app_data_dir().join("packs/default/voiceprints.json"));
@@ -492,7 +493,7 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
                     "embedding": norm,
                     "duration_sec": 4.0,
                     "quality": 1.0,
-                    "created_at": now,
+                    "created_at": now_iso.clone(),
                     "snippet_relpath": null,
                 }));
                 p["embedding"] = json!(merged);
@@ -504,19 +505,19 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
             }
             p["name"] = json!(name.clone());
             p["prototypes"] = json!(protos);
-            p["updated_at"] = json!(now);
+            p["updated_at"] = json!(now_iso.clone());
         } else {
             profiles.push(json!({
                 "name": name.clone(),
                 "embedding": norm.clone(),
                 "samples_count": 1,
-                "updated_at": now,
+                "updated_at": now_iso.clone(),
                 "prototypes": [{
                     "id": format!("p{now}-1"),
                     "embedding": norm,
                     "duration_sec": 4.0,
                     "quality": 1.0,
-                    "created_at": now,
+                    "created_at": now_iso,
                     "snippet_relpath": null,
                 }],
             }));

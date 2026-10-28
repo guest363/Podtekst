@@ -1,13 +1,13 @@
 # Уведомления о сторонних компонентах (Third-Party Notices)
 
-Код проекта лицензируется по MIT (`LICENSE`). Ниже — лицензии и источники
+Код проекта лицензируется по MIT (`LICENSE`). Ниже - лицензии и источники
 сторонних материалов, которые использует или распространяет проект. Полный
-инвентарь Rust-зависимостей — в `THIRD_PARTY_LICENSES.md`, стандартные тексты
-лицензий — в `LICENSES/`.
+инвентарь Rust-зависимостей - в `THIRD_PARTY_LICENSES.md`, стандартные тексты
+лицензий - в `LICENSES/`.
 
 ## ИИ-модели (скачиваются приложением, в репозиторий не входят)
 
-Источники и SHA-256 — в `src-tauri/crates/mr-models/models-manifest.json`.
+Источники и SHA-256 - в `src-tauri/crates/mr-models/models-manifest.json`.
 
 | Модель | Лицензия | Источник |
 |--------|----------|----------|
@@ -23,24 +23,24 @@
 
 ## Тестовые фикстуры
 
-WAV-файлы `src-tauri/crates/mr-ml/tests/fixtures/speaker*.wav` — официальные
+WAV-файлы `src-tauri/crates/mr-ml/tests/fixtures/speaker*.wav` - официальные
 примеры датасета/тулкита 3D-Speaker (Alibaba, Apache-2.0); происхождение и
-производные — см. `src-tauri/crates/mr-ml/tests/fixtures/README.md`.
+производные - см. `src-tauri/crates/mr-ml/tests/fixtures/README.md`.
 
 ## Встроенные компоненты
 
-* **Rust-крейты** (`Cargo.lock`) — MIT, Apache-2.0, MPL-2.0, Unicode-3.0,
-  CDLA-Permissive-2.0, BSD, ISC, Zlib и 0BSD. Полный список — `THIRD_PARTY_LICENSES.md`.
+* **Rust-крейты** (`Cargo.lock`) - MIT, Apache-2.0, MPL-2.0, Unicode-3.0,
+  CDLA-Permissive-2.0, BSD, ISC, Zlib и 0BSD. Полный список - `THIRD_PARTY_LICENSES.md`.
   MPL-2.0-крейты (`symphonia`) используются без изменений; исходники доступны
   на crates.io.
-* **ONNX Runtime** (бинарники `ort` для CPU-инференса) — MIT,
+* **ONNX Runtime** (бинарники `ort` для CPU-инференса) - MIT,
   https://github.com/microsoft/onnxruntime/blob/main/LICENSE.
-* **Web UI** — собственный код проекта; Svelte runtime (MIT) входит в
-  собранный `ui/web/static/js/app.js`, исходники Svelte — https://github.com/sveltejs/svelte.
-* **Android-сборка** — AndroidX, Material Components и Kotlin (Apache-2.0),
+* **Web UI** - собственный код проекта; Svelte runtime (MIT) входит в
+  собранный `ui/web/static/js/app.js`, исходники Svelte - https://github.com/sveltejs/svelte.
+* **Android-сборка** - AndroidX, Material Components и Kotlin (Apache-2.0),
   https://developer.android.com/jetpack/androidx .
-* **Gradle wrapper** — Apache-2.0, https://gradle.org/license/ .
+* **Gradle wrapper** - Apache-2.0, https://gradle.org/license/ .
 
 ## Иконки
 
-`icon.png`, `icon.svg`, `icon.ico`, `icon.icns` — собственные материалы проекта.
+`icon.png`, `icon.svg`, `icon.ico`, `icon.icns` - собственные материалы проекта.

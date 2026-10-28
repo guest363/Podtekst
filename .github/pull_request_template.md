@@ -11,7 +11,8 @@
 - [ ] `cd ui/web/frontend && yarn check && yarn build` (если трогал UI)
 - [ ] Пересобранная статика `ui/web/static` закоммичена
 - [ ] В diff нет `people.json`, `voiceprints.json`, `config.json`, логов, записей и моделей
-- [ ] Лицензия вклада — MIT (см. `CONTRIBUTING.md`)
+- [ ] В описании PR и коммитах нет личных данных (имен, названий файлов, тем бесед - только технические параметры: моно/стерео, длительность, N спикеров, см. P12 в AGENTS.md)
+- [ ] Лицензия вклада - MIT (см. `CONTRIBUTING.md`)
 
 ## Связанные issue
 

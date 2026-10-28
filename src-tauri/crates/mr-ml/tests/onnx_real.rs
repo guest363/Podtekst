@@ -347,12 +347,12 @@ fn eres2netv2_parity_with_official_reference() {
     assert!(same >= 0.45, "один диктор, два дубля: {same:.3}");
     assert!(cross <= 0.30, "разные дикторы слишком похожи: {cross:.3}");
 
-    // 3) Стабильность коротких фрагментов 1.0/1.5/3.0 с: каждый кусок ближе
+    // 3) Стабильность коротких фрагментов 0.6/1.0/1.5/3.0 с: каждый кусок ближе
     //    к полному клипу своего диктора, чем к чужому
-    for dur_s in [1.0f64, 1.5, 3.0] {
+    for dur_s in [0.6f64, 1.0, 1.5, 3.0] {
         let n = (16000.0 * dur_s) as usize;
         for (i, w) in s1a.chunks(n).enumerate() {
-            if w.len() < 16000 {
+            if w.len() < n {
                 continue;
             }
             let e = ext.embed(w).expect("embed").expect("вектор");

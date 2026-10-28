@@ -1,6 +1,6 @@
 [package]
 name = "mr-models"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 rust-version = "1.92"
 description = "Реестр и обновление ИИ-моделей: манифест, зеркала, докачка, SHA-256"

@@ -43,6 +43,86 @@ pub const SAME_SPEAKER_MERGE_SIM: f64 = 0.55;
 /// Максимум прототипов одного спикера в voiceprints v2.
 pub const MAX_PROTOTYPES: usize = 10;
 
+/// Нормализация меток времени в канонический формат RFC3339 (P1, P9).
+///
+/// Ранние версии бэкенда сохраняли поле `updated_at` в `voiceprints.json v3`
+/// как Unix epoch seconds в виде целых чисел (например, 1745778899) или числовых строк.
+/// Десериализатор прозрачно нормализует числовые секунды в строку RFC3339 (например,
+/// "2026-10-22T00:00:00Z"), а уже существующие строковые даты пропускает без изменений.
+fn normalize_timestamp_rfc3339(s: &str) -> String {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Ok(secs) = trimmed.parse::<i64>() {
+        if let Some(dt) = chrono::DateTime::from_timestamp(secs, 0) {
+            return dt.to_rfc3339();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn deserialize_as_string<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct StringOrNumberVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for StringOrNumberVisitor {
+        type Value = String;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("an RFC3339 timestamp string or epoch number")
+        }
+
+        fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(normalize_timestamp_rfc3339(v))
+        }
+
+        fn visit_string<E>(self, v: String) -> std::result::Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(normalize_timestamp_rfc3339(&v))
+        }
+
+        fn visit_u64<E>(self, v: u64) -> std::result::Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            let s = chrono::DateTime::from_timestamp(v as i64, 0)
+                .map(|dt| dt.to_rfc3339())
+                .unwrap_or_else(|| v.to_string());
+            Ok(s)
+        }
+
+        fn visit_i64<E>(self, v: i64) -> std::result::Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            let s = chrono::DateTime::from_timestamp(v, 0)
+                .map(|dt| dt.to_rfc3339())
+                .unwrap_or_else(|| v.to_string());
+            Ok(s)
+        }
+
+        fn visit_f64<E>(self, v: f64) -> std::result::Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            let s = chrono::DateTime::from_timestamp(v as i64, 0)
+                .map(|dt| dt.to_rfc3339())
+                .unwrap_or_else(|| (v as u64).to_string());
+            Ok(s)
+        }
+    }
+
+    deserializer.deserialize_any(StringOrNumberVisitor)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Prototype {
     pub id: String,
@@ -51,7 +131,7 @@ pub struct Prototype {
     pub duration_sec: f64,
     #[serde(default = "default_qual")]
     pub quality: f64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_as_string")]
     pub created_at: String,
     pub snippet_relpath: Option<String>,
 }
@@ -70,7 +150,7 @@ pub struct SpeakerProfile {
     pub embedding: Vec<f64>,
     #[serde(default)]
     pub samples_count: u32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_as_string")]
     pub updated_at: String,
     #[serde(default)]
     pub prototypes: Vec<Prototype>,
@@ -474,5 +554,19 @@ mod tests {
         // Пустые входы.
         assert!(linear_sum_assignment_max(&[]) == vec![]);
         assert!(linear_sum_assignment_max(&[vec![]]) == vec![]);
+    }
+
+    #[test]
+    fn test_deserialize_string_or_number() {
+        let json_int = r#"{"name":"Тест","embedding":[0.1],"samples_count":1,"updated_at":1745778899,"prototypes":[{"id":"p1","name":"Тест","embedding":[0.1],"duration_sec":2.0,"quality":1.0,"created_at":1745778800,"snippet_relpath":null}]}"#;
+        let profile: SpeakerProfile = serde_json::from_str(json_int).unwrap();
+        assert!(profile.updated_at.starts_with("2025-04-27T18:34:59"));
+        assert!(profile.prototypes[0]
+            .created_at
+            .starts_with("2025-04-27T18:33:20"));
+
+        let json_str = r#"{"name":"Тест","embedding":[0.1],"samples_count":1,"updated_at":"2026-10-28T16:00:00Z","prototypes":[]}"#;
+        let profile_str: SpeakerProfile = serde_json::from_str(json_str).unwrap();
+        assert_eq!(profile_str.updated_at, "2026-10-28T16:00:00Z");
     }
 }

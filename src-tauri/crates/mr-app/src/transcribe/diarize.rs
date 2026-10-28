@@ -119,7 +119,7 @@ fn pick_samples(utterances: &[Utterance], max_samples: usize) -> Vec<Sample> {
 /// Прочитать один `voiceprints.json`, отбросив чужое векторное пространство
 /// и битые размерности. Профили без центроида, но с прототипами, собираются
 /// из прототипов: иначе старый/импортированный пакет молча выпадает из матчинга.
-fn read_profiles_file(file: &std::path::Path) -> Vec<SpeakerProfile> {
+pub(crate) fn read_profiles_file(file: &std::path::Path) -> Vec<SpeakerProfile> {
     let text = match std::fs::read_to_string(file) {
         Ok(t) => t,
         Err(_) => return vec![],
@@ -198,7 +198,16 @@ pub(crate) fn load_profiles() -> Vec<SpeakerProfile> {
 }
 
 /// Минимальная длительность реплики для core-кластеризации, с.
-const CORE_MIN_DUR: f64 = 1.4;
+///
+/// Снижено с 1.4 до 0.6 с (P10): в реальных диалогах второй спикер нередко отвечает
+/// только короткими репликами («Ну да», «Хорошо», 0.6–1.0 с). При прежнем пороге 1.4 с
+/// в core-пуле оставался единственный доминирующий спикер, а второй участник полностью
+/// терялся, принудительно привязываясь к чужому центроиду.
+///
+/// Замеры ERes2NetV2 (тест `onnx_real::eres2netv2_parity_with_official_reference`):
+/// на окнах 0.6 с сходство со своим голосом составляет 0.41–0.79, с чужим — 0.04–0.19
+/// (дельта > 0.22), что обеспечивает устойчивое разделение спикеров в кластеризации.
+const CORE_MIN_DUR: f64 = 0.6;
 
 /// Кластеры короче 2% речи — обычно шумные короткие эмбеддинги. Клеим их
 /// к ближайшему крупному голосу (косинус ≥ 0.30), а непохожие оставляем:
@@ -1110,15 +1119,18 @@ pub(crate) fn refresh_speaker_stats(infos: &mut Vec<SpeakerInfo>, utterances: &[
     infos.retain(|s| s.utterances_count > 0);
 }
 
-/// Режем реплики в тихих впадинах на куски 1.5–6 с (до 7.5 с, если паузы
-/// нет). Смена голоса почти всегда попадает на паузу, а эмбеддинг
+/// Разбивает длинные реплики в моно по естественным паузам тишины (RMS по окнам 20 мс,
+/// паузы от ~140 мс) на фрагменты от 0.6 до 6 с (до 6.6 с, если паузы нет).
+///
+/// Зачем это нужно: в моно микрофон пишет обоих людей в один канал. Эмбеддинг
 /// 20-секундного куска сплошной речи — это «средний голос» двух людей, и
 /// кластеризация сливает весь разговор в одного спикера. Соседние куски
 /// одного голоса потом снова склеиваются в [`merge_utterances`].
 pub(crate) fn split_at_pauses(samples: &[f32], utterances: &[Utterance]) -> Vec<Utterance> {
     const FRAME_SEC: f64 = 0.02;
-    const MIN_UNIT_SEC: f64 = 1.5;
+    const MIN_UNIT_SEC: f64 = 0.6;
     const PAUSE_MAX_UNIT: f64 = 6.0;
+    const MIN_PAUSE_FRAMES: usize = 5; // 5 сглаженных кадров = тишина от ~140 мс в сыром звуке (отсекает смычки согласных 30–100 мс)
     let frame = (FRAME_SEC * 16000.0) as usize;
     let rms: Vec<f64> = samples
         .chunks(frame)
@@ -1154,8 +1166,8 @@ pub(crate) fn split_at_pauses(samples: &[f32], utterances: &[Utterance]) -> Vec<
     for u in utterances {
         let words: Vec<&str> = u.text.split_whitespace().collect();
         let mut bounds = vec![u.start];
-        // Режем и короткие реплики (≥2 минимальных куска): вопрос и ответ
-        // часто звучат в одном VAD-фрагменте, а пауза между ними есть.
+        // Режем в естественных тихих паузах (от 0.6 с, паузы от ~140 мс): короткие реплики-ответы
+        // («Ну да», «Хорошо») часто примыкают к чужой речи внутри одного VAD-окна.
         while *bounds.last().unwrap() + MIN_UNIT_SEC * 2.0 < u.end {
             let from = *bounds.last().unwrap();
             let lo = ((from + MIN_UNIT_SEC) / FRAME_SEC) as usize;
@@ -1165,19 +1177,50 @@ pub(crate) fn split_at_pauses(samples: &[f32], utterances: &[Utterance]) -> Vec<
             if lo >= hi {
                 break;
             }
-            let (bi, bv) = (lo..hi)
-                .map(|i| (i, smooth[i]))
-                .min_by(|a, b| a.1.total_cmp(&b.1))
-                .unwrap();
-            // Нет паузы в окне — режем принудительно по границе 6 с, а не
-            // в случайной тишине посреди слова. Если после этого остался бы
-            // огрызок короче MIN_UNIT_SEC, реплику не трогаем.
-            let cut = if bv <= quiet {
-                (bi as f64 * FRAME_SEC).clamp(u.start + 0.2, u.end - MIN_UNIT_SEC)
-            } else if from + PAUSE_MAX_UNIT + MIN_UNIT_SEC <= u.end {
-                from + PAUSE_MAX_UNIT
-            } else {
-                break;
+            // Ищем первую тихую паузу в окне (минимум внутри впадины от ~140 мс).
+            let mut quiet_start = None;
+            let mut cut = None;
+            for i in lo..hi {
+                if smooth[i] <= quiet {
+                    if quiet_start.is_none() {
+                        quiet_start = Some(i);
+                    }
+                } else if let Some(qs) = quiet_start {
+                    if i - qs >= MIN_PAUSE_FRAMES {
+                        let best_i = (qs..i)
+                            .min_by(|&a, &b| smooth[a].total_cmp(&smooth[b]))
+                            .unwrap();
+                        let cut_time = best_i as f64 * FRAME_SEC;
+                        if cut_time + MIN_UNIT_SEC <= u.end && cut_time >= from + MIN_UNIT_SEC {
+                            cut = Some(cut_time);
+                            break;
+                        }
+                    }
+                    quiet_start = None;
+                }
+            }
+            if cut.is_none() {
+                if let Some(qs) = quiet_start {
+                    if hi - qs >= MIN_PAUSE_FRAMES {
+                        let best_i = (qs..hi)
+                            .min_by(|&a, &b| smooth[a].total_cmp(&smooth[b]))
+                            .unwrap();
+                        let cut_time = best_i as f64 * FRAME_SEC;
+                        if cut_time + MIN_UNIT_SEC <= u.end && cut_time >= from + MIN_UNIT_SEC {
+                            cut = Some(cut_time);
+                        }
+                    }
+                }
+            }
+            let cut = match cut {
+                Some(c) if c > from + 0.2 => c,
+                _ => {
+                    if from + PAUSE_MAX_UNIT + MIN_UNIT_SEC <= u.end {
+                        from + PAUSE_MAX_UNIT
+                    } else {
+                        break;
+                    }
+                }
             };
             if cut <= from + 0.2 {
                 break;
@@ -1339,7 +1382,21 @@ pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<Strin
         let nw = if k + 1 == bounds.len() - 1 {
             words.len().saturating_sub(pos)
         } else {
-            ((words.len() as f64 * frac).round() as usize).max(1)
+            let remaining_segs = bounds.len() - 1 - (k + 1);
+            let max_nw = words.len().saturating_sub(pos + remaining_segs).max(1);
+            let raw_nw = ((words.len() as f64 * frac).round() as usize).clamp(1, max_nw);
+            let mut snapped = raw_nw;
+            let target = pos + raw_nw;
+            let is_punct = |s: &str| s.ends_with(['.', '!', '?', ',', ';', ':']);
+            if target > pos && target <= words.len() && is_punct(words[target - 1]) {
+                // Уже на знаке препинания
+            } else if target > pos + 1 && is_punct(words[target - 2]) {
+                // Предыдущее слово оканчивалось знаком препинания (граница предложения)
+                snapped = (raw_nw - 1).clamp(1, max_nw);
+            } else if target < words.len() && is_punct(words[target]) && raw_nw < max_nw {
+                snapped = (raw_nw + 1).clamp(1, max_nw);
+            }
+            snapped
         };
         let lo = pos.min(words.len());
         let hi = (lo + nw).min(words.len());
@@ -1745,5 +1802,166 @@ mod tests {
         assert_eq!(texts[0], "one");
         assert_eq!(texts[1], "");
         assert_eq!(texts[2], "");
+    }
+
+    #[test]
+    fn split_words_snaps_to_punctuation() {
+        // Пропорция со сдвигом должна аккуратно привязываться к точке,
+        // не отрывая первое слово следующего предложения.
+        let words = vec![
+            "Первая",
+            "фраза",
+            "завершена.",
+            "Вторая",
+            "фраза",
+            "началась",
+        ];
+        let bounds = vec![0.0, 2.8, 6.0];
+        let texts = split_words_by_bounds(&words, &bounds);
+        assert_eq!(texts.len(), 2);
+        assert_eq!(texts[0], "Первая фраза завершена.");
+        assert_eq!(texts[1], "Вторая фраза началась");
+    }
+
+    #[test]
+    fn pauses_isolate_short_dialog_response() {
+        let sr = 16000usize;
+        let mut samples = vec![0.1f32; 6 * sr];
+        // Пауза 1: 3.00 - 3.22 с (220 мс)
+        for x in samples[3 * sr..(3 * sr + (sr * 22 / 100))].iter_mut() {
+            *x = 0.0;
+        }
+        // Пауза 2: 3.70 - 3.92 с (220 мс) — короткая реплика 0.70 с (типично для «Ну да», «Да»)
+        for x in samples[37 * sr / 10..(37 * sr / 10 + (sr * 22 / 100))].iter_mut() {
+            *x = 0.0;
+        }
+        let u = Utterance {
+            start: 0.0,
+            end: 6.0,
+            speaker: "X".to_string(),
+            channel: None,
+            text: "Вводная фраза первого спикера. Короткий ответ. Финальная фраза разговора."
+                .to_string(),
+            diarized: false,
+        };
+        let out = split_at_pauses(&samples, &[u]);
+        assert_eq!(out.len(), 3);
+        assert!(out[1].text.contains("Короткий ответ"));
+        assert_eq!(
+            out.iter()
+                .map(|s| s.text.clone())
+                .collect::<Vec<_>>()
+                .join(" "),
+            "Вводная фраза первого спикера. Короткий ответ. Финальная фраза разговора."
+        );
+    }
+
+    #[test]
+    fn continuous_speech_with_micro_closures_is_not_fragmented() {
+        let sr = 16000usize;
+        let mut samples = vec![0.1f32; (4.5 * sr as f64) as usize];
+        // Микросмычки согласных 40 мс (2 кадра) на 1.0 с и 2.5 с — не должны резать
+        for x in samples[sr..sr + (sr * 4 / 100)].iter_mut() {
+            *x = 0.0;
+        }
+        for x in samples[25 * sr / 10..25 * sr / 10 + (sr * 4 / 100)].iter_mut() {
+            *x = 0.0;
+        }
+        let u = Utterance {
+            start: 0.0,
+            end: 4.5,
+            speaker: "X".to_string(),
+            channel: None,
+            text: "Непрерывный поток слов без настоящих пауз в диалоге".to_string(),
+            diarized: false,
+        };
+        let out = split_at_pauses(&samples, &[u]);
+        // Без пауз от ~140 мс и длине < 6 с реплика не дробится
+        assert_eq!(out.len(), 1);
+        assert_eq!(
+            out[0].text,
+            "Непрерывный поток слов без настоящих пауз в диалоге"
+        );
+    }
+
+    #[test]
+    fn pause_discrimination_distinguishes_closures_from_dialog_turns() {
+        let sr = 16000usize;
+        // 1. Пауза 90 мс (смычка согласных / микрозаминка) — НЕ должна резать
+        let mut samples_closure = vec![0.1f32; 4 * sr];
+        for x in samples_closure[2 * sr..(2 * sr + (sr * 9 / 100))].iter_mut() {
+            *x = 0.0;
+        }
+        let u1 = Utterance {
+            start: 0.0,
+            end: 4.0,
+            speaker: "X".to_string(),
+            channel: None,
+            text: "Фраза со смычкой внутри слова".to_string(),
+            diarized: false,
+        };
+        let out1 = split_at_pauses(&samples_closure, &[u1]);
+        assert_eq!(out1.len(), 1, "90 мс пауза не должна дробить реплику");
+
+        // 2. Пауза 150 мс (реальная межрепликовая диалоговая пауза) — ДОЛЖНА резать
+        let mut samples_turn = vec![0.1f32; 4 * sr];
+        for x in samples_turn[2 * sr..(2 * sr + (sr * 15 / 100))].iter_mut() {
+            *x = 0.0;
+        }
+        let u2 = Utterance {
+            start: 0.0,
+            end: 4.0,
+            speaker: "X".to_string(),
+            channel: None,
+            text: "Первая реплика диалога. Ответная реплика собеседника.".to_string(),
+            diarized: false,
+        };
+        let out2 = split_at_pauses(&samples_turn, &[u2]);
+        assert_eq!(
+            out2.len(),
+            2,
+            "150 мс пауза должна разделять реплики в диалоге"
+        );
+    }
+
+    #[test]
+    fn pauses_split_long_window_leaving_no_chunks_over_max_duration() {
+        let sr = 16000usize;
+        let total_sec = 20.0f64;
+        let mut samples = vec![0.1f32; (total_sec * sr as f64) as usize];
+        // Паузы 220 мс каждую секунду от 1.0 с до 19.0 с
+        for sec in 1..20 {
+            let start = sec * sr;
+            let end = start + (sr * 22 / 100);
+            for x in samples[start..end].iter_mut() {
+                *x = 0.0;
+            }
+        }
+        let words: Vec<String> = (1..=40).map(|i| format!("слово{i}")).collect();
+        let u = Utterance {
+            start: 0.0,
+            end: total_sec,
+            speaker: "X".to_string(),
+            channel: None,
+            text: words.join(" "),
+            diarized: false,
+        };
+        let out = split_at_pauses(&samples, &[u]);
+        assert!(
+            out.len() >= 15,
+            "длинное окно должно быть нарезано по регулярным паузам: {}",
+            out.len()
+        );
+        for seg in &out {
+            let dur = seg.end - seg.start;
+            assert!(
+                dur <= 6.6,
+                "сегмент {}-{} слишком длинный ({dur} с > 6.6 с)",
+                seg.start,
+                seg.end
+            );
+        }
+        assert_eq!(out.first().unwrap().start, 0.0);
+        assert_eq!(out.last().unwrap().end, total_sec);
     }
 }

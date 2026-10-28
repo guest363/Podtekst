@@ -62,11 +62,11 @@ git push origin v0.1.1
 3. Проверьте **Releases**: тег, заметки, артефакты и `SHA256SUMS`.
 4. Скачайте по одному артефакту на платформу и проверьте запуск на чистой машине.
 5. Проверка обновлений: на предыдущей версии откройте «Настройки» →
-   «Проверить обновления» — должен появиться баннер с новым тегом. В
+   «Проверить обновления» - должен появиться баннер с новым тегом. В
    установленной сборке (AppImage / `.app` / NSIS) кнопка «Обновить и
    перезапустить» скачивает подписанный пакет и перезапускает приложение;
    при запуске из исходников (`run.sh`) остаётся ссылка на релиз.
-6. Проверьте, что в релизе есть `latest.json` и файлы `*.sig` — по ним
+6. Проверьте, что в релизе есть `latest.json` и файлы `*.sig` - по ним
    приложение находит и проверяет обновление.
 
 Если workflow упал, исправьте причину, удалите тег и создайте заново:
@@ -82,7 +82,7 @@ git push origin v0.1.1
 ## 4. Подпись
 
 Сейчас релизы не подписаны. Для macOS нужен Apple Developer ID и notarization,
-для Windows — code signing certificate. До этого в release notes указывайте,
+для Windows - code signing certificate. До этого в release notes указывайте,
 что Gatekeeper/SmartScreen могут показать предупреждение. Ключи и сертификаты
 в репозиторий не коммитятся.
 
@@ -98,7 +98,7 @@ cargo tauri signer generate -w ~/.tauri/meeting-recorder.key
 
 Приватный ключ (`~/.tauri/meeting-recorder.key`) сохраните в надёжном месте и
 добавьте в GitHub Actions секретом `TAURI_SIGNING_PRIVATE_KEY` (содержимое
-файла). Если у ключа есть пароль — ещё и `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+файла). Если у ключа есть пароль - ещё и `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
 Потеря ключа означает, что уже установленные копии больше не смогут
 обновляться: им придётся один раз скачать пакет вручную.
 
@@ -108,11 +108,11 @@ cargo tauri signer generate -w ~/.tauri/meeting-recorder.key
 
 Подпись macOS включается без правки workflow: задайте в GitHub Actions секреты
 
-* `APPLE_CERTIFICATE` — base64 от `.p12` сертификата Developer ID Application;
-* `APPLE_CERTIFICATE_PASSWORD` — пароль `.p12`;
-* `APPLE_SIGNING_IDENTITY` — например `Developer ID Application: ООО «…» (TEAMID)`;
-* `APPLE_ID`, `APPLE_PASSWORD` — Apple ID и app-specific password для нотаризации;
-* `APPLE_TEAM_ID` — Team ID.
+* `APPLE_CERTIFICATE` - base64 от `.p12` сертификата Developer ID Application;
+* `APPLE_CERTIFICATE_PASSWORD` - пароль `.p12`;
+* `APPLE_SIGNING_IDENTITY` - например `Developer ID Application: ООО «…» (TEAMID)`;
+* `APPLE_ID`, `APPLE_PASSWORD` - Apple ID и app-specific password для нотаризации;
+* `APPLE_TEAM_ID` - Team ID.
 
 Если `APPLE_CERTIFICATE` не задан, сборка остаётся неподписанной, а в README
 остаётся инструкция `xattr -dr com.apple.quarantine /Applications/MeetingRecorder.app`.

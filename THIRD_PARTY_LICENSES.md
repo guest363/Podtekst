@@ -1,31 +1,31 @@
 # Third-Party Licenses
 
-Инвентарь Rust-зависимостей из `Cargo.lock`. Стандартные тексты лицензий — в `LICENSES/`. Точные copyright-уведомления
-пакетов — в upstream-репозиториях и на crates.io.
+Инвентарь Rust-зависимостей из `Cargo.lock`. Стандартные тексты лицензий - в `LICENSES/`. Точные copyright-уведомления
+пакетов - в upstream-репозиториях и на crates.io.
 Файл сгенерирован из `cargo metadata --format-version 1 --locked`;
 обновляйте его при изменении `Cargo.lock`.
 
 ## Сводка
 
-* `MIT OR Apache-2.0` — 106
-* `Unicode-3.0` — 18
-* `Apache-2.0 OR MIT` — 12
-* `MPL-2.0` — 12
-* `MIT` — 11
-* `MIT/Apache-2.0` — 9
-* `ISC` — 3
-* `Apache-2.0` — 3
-* `CDLA-Permissive-2.0` — 2
-* `0BSD OR MIT OR Apache-2.0` — 1
-* `Zlib OR Apache-2.0 OR MIT` — 1
-* `(Apache-2.0 OR MIT) AND BSD-3-Clause` — 1
-* `Unlicense OR MIT` — 1
-* `MIT OR Zlib OR Apache-2.0` — 1
-* `Apache-2.0 AND ISC` — 1
-* `Apache-2.0 OR ISC OR MIT` — 1
-* `BSD-3-Clause` — 1
-* `(MIT OR Apache-2.0) AND Unicode-3.0` — 1
-* `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` — 1
+* `MIT OR Apache-2.0` - 106
+* `Unicode-3.0` - 18
+* `Apache-2.0 OR MIT` - 12
+* `MPL-2.0` - 12
+* `MIT` - 11
+* `MIT/Apache-2.0` - 9
+* `ISC` - 3
+* `Apache-2.0` - 3
+* `CDLA-Permissive-2.0` - 2
+* `0BSD OR MIT OR Apache-2.0` - 1
+* `Zlib OR Apache-2.0 OR MIT` - 1
+* `(Apache-2.0 OR MIT) AND BSD-3-Clause` - 1
+* `Unlicense OR MIT` - 1
+* `MIT OR Zlib OR Apache-2.0` - 1
+* `Apache-2.0 AND ISC` - 1
+* `Apache-2.0 OR ISC OR MIT` - 1
+* `BSD-3-Clause` - 1
+* `(MIT OR Apache-2.0) AND Unicode-3.0` - 1
+* `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - 1
 
 ## Пакеты
 
@@ -220,8 +220,8 @@
 
 ## Отдельные компоненты
 
-* **ONNX Runtime** — MIT, https://github.com/microsoft/onnxruntime/blob/main/LICENSE
-* **Svelte runtime** — MIT, https://github.com/sveltejs/svelte
-* **AndroidX / Material / Kotlin** — Apache-2.0, https://developer.android.com/jetpack/androidx
-* **Gradle wrapper** — Apache-2.0, https://gradle.org/license/
+* **ONNX Runtime** - MIT, https://github.com/microsoft/onnxruntime/blob/main/LICENSE
+* **Svelte runtime** - MIT, https://github.com/sveltejs/svelte
+* **AndroidX / Material / Kotlin** - Apache-2.0, https://developer.android.com/jetpack/androidx
+* **Gradle wrapper** - Apache-2.0, https://gradle.org/license/
 
