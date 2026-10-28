@@ -33,7 +33,7 @@ use recording::start_recording_with_notify;
 #[derive(Debug, Parser)]
 #[command(
     name = "meeting-recorder",
-    version = "0.1.1",
+    version = env!("CARGO_PKG_VERSION"),
     about = "Локальный рекордер встреч (Rust-ядро)"
 )]
 struct Cli {
@@ -290,7 +290,8 @@ pub fn run_cli() {
     }
 
     println!(
-        "Meeting Recorder (Rust-ядро v0.1.1) — HTTP http://127.0.0.1:{}",
+        "Meeting Recorder (Rust-ядро v{}) — HTTP http://127.0.0.1:{}",
+        env!("CARGO_PKG_VERSION"),
         cli.port
     ); // Нативное окно Tauri (только CI-сборка с фичей `tauri-ui` и системным WebView)
     #[cfg(feature = "tauri-ui")]
