@@ -398,10 +398,18 @@ pub fn transcribe_file(
     for (ch, _label) in chan_list.iter() {
         let samples = &channel_samples[ch];
         let mut utts = channel_utts.remove(ch).unwrap_or_default();
-        on_event(80, "Ищу смену голоса внутри длинных реплик…");
-        utts = diarize::split_long_by_speaker_change(samples, utts, &mut embed_ext, &|pct, msg| {
-            on_event(pct, msg)
-        });
+        // В стерео каналы уже разделены по голосам, и прежний разрез по
+        // эмбеддингам там не трогаем. В моно реплики режем по паузам:
+        // иначе 20 секунд сплошного диалога дают «средний голос» двух людей.
+        utts = if is_stereo {
+            on_event(80, "Ищу смену голоса внутри длинных реплик…");
+            diarize::split_long_by_speaker_change(samples, utts, &mut embed_ext, &|pct, msg| {
+                on_event(pct, msg)
+            })
+        } else {
+            on_event(80, "Делю речь на паузы для спикеров…");
+            diarize::split_at_pauses(samples, &utts)
+        };
         let (prefix, ch_idx) = if is_stereo {
             (
                 if *ch == 0 {
