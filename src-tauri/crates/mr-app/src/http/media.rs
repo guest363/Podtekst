@@ -248,6 +248,44 @@ pub(super) fn guess_media_type(p: &Path) -> String {
     .to_string()
 }
 
+/// Разбор заголовка Range (RFC 7233).
+/// Поддерживает `bytes=S-E`, `bytes=S-` и суффикс `bytes=-N` (последние N байт).
+/// Возвращает `Some((start, end))` включительно или `None`, если заголовок невалиден.
+pub(super) fn parse_byte_range(range_header: &str, file_size: u64) -> Option<(u64, u64)> {
+    if file_size == 0 {
+        return None;
+    }
+    let spec = range_header.strip_prefix("bytes=")?;
+    let (s, e) = spec.split_once('-')?;
+    let s = s.trim();
+    let e = e.trim();
+    if s.is_empty() {
+        // Суффиксный диапазон: последние N байт (нужно плееру для чтения moov в конце MP4).
+        let suffix = e.parse::<u64>().ok()?;
+        if suffix == 0 {
+            return None;
+        }
+        let start = file_size.saturating_sub(suffix);
+        let end = file_size - 1;
+        Some((start, end))
+    } else {
+        let start = s.parse::<u64>().ok()?;
+        if start >= file_size {
+            return None;
+        }
+        let end = if e.is_empty() {
+            file_size - 1
+        } else {
+            e.parse::<u64>().ok()?.min(file_size - 1)
+        };
+        if start <= end {
+            Some((start, end))
+        } else {
+            None
+        }
+    }
+}
+
 /// Раздача медиа из папки записей с поддержкой Range (для перемотки и `#t=` фрагментов).
 pub(super) fn serve_audio_file(request: tiny_http::Request, url_path: &str) {
     let enc = url_path.strip_prefix("/audio/").unwrap_or("");
@@ -275,54 +313,57 @@ pub(super) fn serve_audio_file(request: tiny_http::Request, url_path: &str) {
     let ctype = guess_media_type(&real);
     let range = header_value(&request, "Range").unwrap_or_default();
     if range.starts_with("bytes=") {
-        let spec = range.trim_start_matches("bytes=");
-        let (s, e) = spec.split_once('-').unwrap_or((spec, ""));
-        if let Ok(start) = s.trim().parse::<u64>() {
-            let end = e
-                .trim()
-                .parse::<u64>()
-                .unwrap_or(size.saturating_sub(1))
-                .min(size.saturating_sub(1));
-            if start < size && start <= end {
-                let len = end - start + 1;
-                let mut f = match std::fs::File::open(&real) {
-                    Ok(f) => f,
-                    Err(_) => {
-                        let resp =
-                            tiny_http::Response::from_string("Read error").with_status_code(500);
-                        let _ = request.respond(resp);
-                        return;
-                    }
-                };
-                use std::io::Seek;
-                if f.seek(std::io::SeekFrom::Start(start)).is_err() {
-                    let resp = tiny_http::Response::from_string("Read error").with_status_code(500);
+        if let Some((start, end)) = parse_byte_range(&range, size) {
+            let len = end - start + 1;
+            let mut f = match std::fs::File::open(&real) {
+                Ok(f) => f,
+                Err(_) => {
+                    let resp =
+                        tiny_http::Response::from_string("Read error").with_status_code(500);
                     let _ = request.respond(resp);
                     return;
                 }
-                // Стримим с диска: `bytes=0-` от видеоплеера не должен
-                // аллоцировать файл целиком в память.
-                let reader = f.take(len);
-                let resp = tiny_http::Response::new(
-                    206.into(),
-                    vec![
-                        hdr(&format!("Content-Type: {ctype}")),
-                        hdr(&format!("Content-Range: bytes {start}-{end}/{size}")),
-                        hdr(&format!("Content-Length: {len}")),
-                        hdr("Accept-Ranges: bytes"),
-                    ],
-                    reader,
-                    Some(len as usize),
-                    None,
-                );
+            };
+            use std::io::Seek;
+            if f.seek(std::io::SeekFrom::Start(start)).is_err() {
+                let resp = tiny_http::Response::from_string("Read error").with_status_code(500);
                 let _ = request.respond(resp);
                 return;
             }
+            // Стримим с диска: `bytes=0-` от видеоплеера не должен аллоцировать файл в память.
+            // with_chunked_threshold(usize::MAX) предотвращает переключение tiny_http в chunked
+            // и отправляет точный Content-Length, необходимый для перемотки в GStreamer/WebKitGTK.
+            let reader = f.take(len);
+            let resp = tiny_http::Response::new(
+                206.into(),
+                vec![
+                    hdr(&format!("Content-Type: {ctype}")),
+                    hdr(&format!("Content-Range: bytes {start}-{end}/{size}")),
+                    hdr(&format!("Content-Length: {len}")),
+                    hdr("Accept-Ranges: bytes"),
+                ],
+                reader,
+                Some(len as usize),
+                None,
+            )
+            .with_chunked_threshold(usize::MAX);
+            let _ = request.respond(resp);
+            return;
+        } else {
+            // Неудовлетворимый диапазон (RFC 7233 4.4): 416 Range Not Satisfiable
+            let resp = tiny_http::Response::empty(416)
+                .with_header(hdr(&format!("Content-Range: bytes */{size}")))
+                .with_header(hdr("Accept-Ranges: bytes"));
+            let _ = request.respond(resp);
+            return;
         }
     }
     match std::fs::File::open(&real) {
         Ok(f) => {
             // Потоковая отдача: файл не грузится в память целиком (важно для видео в гигабайты).
+            // with_chunked_threshold(usize::MAX) сохраняет Content-Length вместо chunked-кодирования:
+            // без явного Content-Length GStreamer/WebKitGTK считает поток неперематываемым
+            // и не может найти moov-атом в конце MP4 (no 'moov' atom within the first 10 MB).
             let resp = tiny_http::Response::new(
                 200.into(),
                 vec![
@@ -333,7 +374,8 @@ pub(super) fn serve_audio_file(request: tiny_http::Request, url_path: &str) {
                 f,
                 Some(size as usize),
                 None,
-            );
+            )
+            .with_chunked_threshold(usize::MAX);
             let _ = request.respond(resp);
         }
         Err(_) => {
@@ -623,5 +665,28 @@ mod tests {
         let expected = [pcm[0], pcm[1], pcm[4], pcm[5]];
         assert_eq!(&body[44..], &expected[..]);
         assert!(mono_channel_snippet(&info, &pcm, 2).is_none());
+    }
+
+    #[test]
+    fn parse_byte_range_rfc7233() {
+        // Обычные диапазоны start-end
+        assert_eq!(parse_byte_range("bytes=0-9", 100), Some((0, 9)));
+        assert_eq!(parse_byte_range("bytes=10-20", 100), Some((10, 20)));
+        assert_eq!(parse_byte_range("bytes=50-200", 100), Some((50, 99)));
+
+        // Открытый диапазон start-
+        assert_eq!(parse_byte_range("bytes=50-", 100), Some((50, 99)));
+
+        // Суффиксный диапазон -N (последние N байт)
+        assert_eq!(parse_byte_range("bytes=-20", 100), Some((80, 99)));
+        assert_eq!(parse_byte_range("bytes=-150", 100), Some((0, 99)));
+
+        // Невалидные и выходящие за пределы
+        assert_eq!(parse_byte_range("bytes=-0", 100), None);
+        assert_eq!(parse_byte_range("bytes=100-", 100), None);
+        assert_eq!(parse_byte_range("bytes=150-200", 100), None);
+        assert_eq!(parse_byte_range("bytes=50-40", 100), None);
+        assert_eq!(parse_byte_range("invalid", 100), None);
+        assert_eq!(parse_byte_range("bytes=0-10", 0), None);
     }
 }
