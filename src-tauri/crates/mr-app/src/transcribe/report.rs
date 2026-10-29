@@ -34,6 +34,7 @@ pub(crate) fn speaker_to_json(s: &SpeakerInfo) -> serde_json::Value {
         "matched": s.matched,
         "matched_name": s.matched_name,
         "similarity": s.similarity,
+        "silhouette": s.silhouette,
         "candidates": s.candidates.iter().map(|(n, v)| serde_json::json!({"name": n, "similarity": v})).collect::<Vec<_>>(),
         "embedding": s.embedding,
         "sample": s.samples.first().map(sample_to_json),

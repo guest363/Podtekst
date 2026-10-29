@@ -33,26 +33,17 @@ use crate::config::{
 use crate::recording::now_secs;
 use crate::recording::{start_recording_inner, stop_recording_inner, RecordingState};
 
-/// Способы поддержки проекта. Владелец заполняет при релизе: ссылка на сбор
-/// Т-Банка (https://vpbanks.../share/...) и адрес TON-кошелька (UQ…/EQ…).
-/// Пустые строки не попадают в ответ – UI покажет заглушку «скоро».
-const DONATE_TBANK_URL: &str = "https://t.tb.ru/pm_short/8nsXmBmCIGj";
-const DONATE_TON_ADDRESS: &str = "";
+const DONATE_TIPS_URL: &str = "https://tips.tips/000490393";
 
-/// Список активных методов доната для /api/support/info.
 fn donation_methods() -> serde_json::Value {
-    let mut methods = vec![];
-    if !DONATE_TBANK_URL.is_empty() {
-        methods.push(json!({
-            "title": "Сбор в Т-Банке",
-            "desc": "СБП или банковская карта",
-            "url": DONATE_TBANK_URL
-        }));
+    if DONATE_TIPS_URL.is_empty() {
+        return json!([]);
     }
-    if !DONATE_TON_ADDRESS.is_empty() {
-        methods.push(json!({"title": "TON-кошелёк", "address": DONATE_TON_ADDRESS}));
-    }
-    json!(methods)
+    json!([{
+        "title": "Чаевые автору",
+        "desc": "СБП или банковская карта",
+        "url": DONATE_TIPS_URL
+    }])
 }
 
 fn json_response(request: tiny_http::Request, value: serde_json::Value, status: u16) {

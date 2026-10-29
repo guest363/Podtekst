@@ -119,16 +119,19 @@ impl SileroVad {
 }
 
 /// Превращает вероятности окон в сегменты речи [start,end] в секундах.
+/// К началу добавляются два окна pre-roll, чтобы сохранить начальные согласные.
 pub fn vad_segments_from_probs(
     probs: &[f32],
     threshold: f32,
     min_speech_sec: f32,
     min_silence_sec: f32,
 ) -> Vec<(f32, f32)> {
+    const PREROLL_WINDOWS: usize = 2;
     let win_sec = VAD_WINDOW as f32 / 16000.0;
     let mut segs = Vec::new();
     let mut start: Option<usize> = None;
     let mut silence_run = 0usize;
+    let mut last_end = 0usize;
     let min_sil_windows = (min_silence_sec / win_sec).round() as usize;
     for (i, &p) in probs.iter().enumerate() {
         if p >= threshold {
@@ -139,19 +142,22 @@ pub fn vad_segments_from_probs(
         } else if let Some(s) = start {
             silence_run += 1;
             if silence_run >= min_sil_windows.max(1) {
-                let (a, b) = (s, i - silence_run + 1);
+                let a = s.saturating_sub(PREROLL_WINDOWS).max(last_end);
+                let b = i - silence_run + 1;
                 if (b as f32 - a as f32) * win_sec >= min_speech_sec {
                     segs.push((a as f32 * win_sec, b as f32 * win_sec));
                 }
+                last_end = b;
                 start = None;
                 silence_run = 0;
             }
         }
     }
     if let Some(s) = start {
+        let a = s.saturating_sub(PREROLL_WINDOWS).max(last_end);
         let b = probs.len();
-        if (b as f32 - s as f32) * win_sec >= min_speech_sec {
-            segs.push((s as f32 * win_sec, b as f32 * win_sec));
+        if (b as f32 - a as f32) * win_sec >= min_speech_sec {
+            segs.push((a as f32 * win_sec, b as f32 * win_sec));
         }
     }
     segs
@@ -170,5 +176,16 @@ mod tests {
         let segs = vad_segments_from_probs(&probs, 0.5, 0.25, 0.3);
         assert_eq!(segs.len(), 1);
         assert!(segs[0].1 - segs[0].0 > 1.8);
+    }
+
+    #[test]
+    fn segments_include_two_preroll_windows() {
+        let mut probs = vec![0.0f32; 5];
+        probs.extend(vec![0.9; 10]);
+        probs.extend(vec![0.0; 16]);
+        let segs = vad_segments_from_probs(&probs, 0.5, 0.25, 0.5);
+        assert_eq!(segs.len(), 1);
+        assert!((segs[0].0 - 3.0 * 0.032).abs() < 1e-6);
+        assert!((segs[0].1 - 15.0 * 0.032).abs() < 1e-6);
     }
 }

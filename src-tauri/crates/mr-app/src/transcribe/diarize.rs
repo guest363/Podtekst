@@ -10,25 +10,43 @@ use mr_packs as packs;
 use super::{Sample, SpeakerInfo, Utterance};
 
 /// Группировка VAD-сегментов в окна для ASR (≤ `max_dur`, склейка по паузе ≤ `gap`).
-pub(crate) fn group_segments(segments: &[(f32, f32)], max_dur: f32, gap: f32) -> Vec<(f32, f32)> {
+/// Длинную речь режем по минимуму вероятности VAD во второй половине окна.
+pub(crate) fn group_segments(
+    segments: &[(f32, f32)],
+    probs: &[f32],
+    max_dur: f32,
+    gap: f32,
+) -> Vec<(f32, f32)> {
+    let win_sec = mr_ml::onnx::vad::VAD_WINDOW as f32 / 16000.0;
     let mut norm: Vec<(f32, f32)> = Vec::new();
     for &(s, e) in segments {
-        let dur = e - s;
-        if dur <= max_dur {
+        if e - s <= max_dur {
             norm.push((s, e));
-        } else {
-            let n = (dur / max_dur).ceil() as usize;
-            let step = dur / n as f32;
-            for i in 0..n {
-                let a = s + i as f32 * step;
-                let b = if i + 1 == n {
-                    e
-                } else {
-                    s + (i + 1) as f32 * step
-                };
-                norm.push((a, b));
-            }
+            continue;
         }
+        if probs.is_empty() {
+            let n = ((e - s) / max_dur).ceil() as usize;
+            let step = (e - s) / n as f32;
+            for i in 0..n {
+                norm.push((s + i as f32 * step, s + (i + 1) as f32 * step));
+            }
+            continue;
+        }
+        let mut a = s;
+        while e - a > max_dur {
+            let window_end = a + max_dur;
+            let mid = a + max_dur / 2.0;
+            let lo = (mid / win_sec).ceil().max(0.0) as usize;
+            let hi = ((window_end / win_sec).ceil().max(0.0) as usize).min(probs.len());
+            let cut = (lo..hi)
+                .min_by(|&i, &j| probs[i].total_cmp(&probs[j]))
+                .map(|i| i as f32 * win_sec)
+                .filter(|&cut| cut > a && cut <= window_end)
+                .unwrap_or(window_end);
+            norm.push((a, cut));
+            a = cut;
+        }
+        norm.push((a, e));
     }
     let mut grouped: Vec<(f32, f32)> = Vec::new();
     for (s, e) in norm {
@@ -429,6 +447,7 @@ pub(crate) fn diarize_channel(
             matched: false,
             matched_name: None,
             similarity: 0.0,
+            silhouette: 0.0,
             candidates: vec![],
             embedding: None,
             samples: vec![],
@@ -541,6 +560,13 @@ pub(crate) fn diarize_channel(
     // При явно заданном минимуме спикеров не сглаживаем: метки важнее.
     if channel_idx.is_none() && min_speakers == 0 {
         smooth_labels_mono(utterances, &embs, &durs, &quals, &mut label_of);
+    }
+    let final_vecs: Vec<Vec<f64>> = valid.iter().map(|&i| embs[i].clone().unwrap()).collect();
+    let final_labels: Vec<usize> = valid.iter().map(|&i| label_of[&i]).collect();
+    let final_scores = mr_ml::cluster::silhouette_scores(&final_vecs, &final_labels);
+    let mut silhouettes = vec![0.0f64; n];
+    for (&i, score) in valid.iter().zip(final_scores) {
+        silhouettes[i] = score;
     }
     // Глобальное сопоставление кластеров с профилями
     let mut raw_clusters: Vec<usize> = label_of.values().copied().collect();
@@ -682,6 +708,19 @@ pub(crate) fn diarize_channel(
         }
         let member_utts: Vec<Utterance> = members.iter().map(|&i| utterances[i].clone()).collect();
         let samples = pick_samples(&member_utts, 3);
+        let (weighted_sil, sil_weight) =
+            members
+                .iter()
+                .filter(|&&i| embs[i].is_some())
+                .fold((0.0, 0.0), |(sum, total), &i| {
+                    let weight = durs[i].min(8.0) * quals[i];
+                    (sum + silhouettes[i] * weight, total + weight)
+                });
+        let speaker_silhouette = if sil_weight > 0.0 {
+            weighted_sil / sil_weight
+        } else {
+            0.0
+        };
         let emb = {
             let vecs: Vec<Vec<f64>> = members.iter().filter_map(|&i| embs[i].clone()).collect();
             let ws: Vec<f64> = members
@@ -708,6 +747,7 @@ pub(crate) fn diarize_channel(
             matched: is_matched,
             matched_name: if is_matched { Some(name.clone()) } else { None },
             similarity: (sim * 1000.0).round() / 1000.0,
+            silhouette: (speaker_silhouette * 1000.0).round() / 1000.0,
             candidates: cands,
             embedding: emb.filter(|v| v.iter().any(|&x| x.abs() > 1e-12)),
             samples,
@@ -718,6 +758,7 @@ pub(crate) fn diarize_channel(
     for (i, u) in utterances.iter_mut().enumerate() {
         u.speaker = cluster_name[&label_of[&i]].clone();
         u.diarized = true;
+        u.silhouette = silhouettes[i];
     }
     infos
 }
@@ -906,6 +947,17 @@ pub(crate) fn reconcile_channels(infos: &mut Vec<SpeakerInfo>, utterances: &mut 
             .iter()
             .map(|&m| infos[m].similarity)
             .fold(0.0, f64::max);
+        let sil_weight: f64 = members.iter().map(|&m| infos[m].total_speech_sec).sum();
+        if sil_weight > 0.0 {
+            merged.silhouette = (members
+                .iter()
+                .map(|&m| infos[m].silhouette * infos[m].total_speech_sec)
+                .sum::<f64>()
+                / sil_weight
+                * 1000.0)
+                .round()
+                / 1000.0;
+        }
         merged.matched = members.iter().any(|&m| infos[m].matched);
         if merged.matched_name.is_none() {
             merged.matched_name = members.iter().find_map(|&m| infos[m].matched_name.clone());
@@ -1061,8 +1113,12 @@ pub(crate) fn merge_utterances(utterances: Vec<Utterance>) -> Vec<Utterance> {
     for u in utterances {
         if let Some(last) = merged.last_mut() {
             if last.speaker == u.speaker {
+                let last_dur = (last.end - last.start).max(0.0);
+                let u_dur = (u.end - u.start).max(0.0);
+                let combined_silhouette = (last.silhouette * last_dur + u.silhouette * u_dur)
+                    / (last_dur + u_dur).max(f64::EPSILON);
                 let ov = interval_overlap(last.start, last.end, u.start, u.end);
-                let min_dur = (last.end - last.start).min(u.end - u.start).max(0.1);
+                let min_dur = last_dur.min(u_dur).max(0.1);
                 // Перекрытие ≥25% — один и тот же фрагмент, попавший в оба
                 // канала (или задвоенный ASR-сегмент). Оставляем лучший
                 // вариант, а не склеиваем две копии текста.
@@ -1078,6 +1134,7 @@ pub(crate) fn merge_utterances(utterances: Vec<Utterance>) -> Vec<Utterance> {
                     }
                     last.start = last.start.min(u.start);
                     last.end = last.end.max(u.end);
+                    last.silhouette = combined_silhouette;
                     continue;
                 }
                 if u.start - last.end <= 1.0 {
@@ -1089,6 +1146,7 @@ pub(crate) fn merge_utterances(utterances: Vec<Utterance>) -> Vec<Utterance> {
                         last.text = format!("{} {}", last.text, u.text).trim().to_string();
                     }
                     last.end = last.end.max(u.end);
+                    last.silhouette = combined_silhouette;
                     continue;
                 }
             }
@@ -1247,6 +1305,7 @@ pub(crate) fn split_at_pauses(samples: &[f32], utterances: &[Utterance]) -> Vec<
                 channel: u.channel,
                 text,
                 diarized: false,
+                silhouette: 0.0,
             });
         }
     }
@@ -1360,6 +1419,7 @@ pub(crate) fn split_long_by_speaker_change(
                 channel: u.channel,
                 text,
                 diarized: false,
+                silhouette: 0.0,
             });
         }
     }
@@ -1409,9 +1469,9 @@ pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::{
-        dedupe_cross_channel, merge_quiet_short, merge_tiny_clusters, merge_utterances,
-        read_profiles_file, reconcile_channels, refresh_speaker_stats, split_at_pauses,
-        split_words_by_bounds, SpeakerInfo, Utterance,
+        dedupe_cross_channel, group_segments, merge_quiet_short, merge_tiny_clusters,
+        merge_utterances, read_profiles_file, reconcile_channels, refresh_speaker_stats,
+        split_at_pauses, split_words_by_bounds, SpeakerInfo, Utterance,
     };
 
     fn info(name: &str, ch: i32, emb: Vec<f64>, count: usize, sec: f64) -> SpeakerInfo {
@@ -1422,6 +1482,7 @@ mod tests {
             matched: false,
             matched_name: None,
             similarity: 0.0,
+            silhouette: 0.0,
             candidates: vec![],
             embedding: Some(emb),
             samples: vec![],
@@ -1438,7 +1499,23 @@ mod tests {
             channel: Some(ch),
             text: text.to_string(),
             diarized: true,
+            silhouette: 0.5,
         }
+    }
+
+    #[test]
+    fn long_segments_cut_at_vad_minimum_in_second_half() {
+        let mut probs = vec![0.9f32; 188];
+        probs[31] = 0.0;
+        probs[94] = 0.1;
+        let out = group_segments(&[(0.0, 6.0)], &probs, 4.0, 0.5);
+        assert_eq!(out.len(), 2);
+        assert!((out[0].1 - 94.0 * 0.032).abs() < 1e-5);
+        assert_eq!(out[1].0, out[0].1);
+        assert!(out.iter().all(|(s, e)| e - s <= 4.0));
+
+        let fallback = group_segments(&[(0.0, 6.0)], &[], 4.0, 0.5);
+        assert_eq!(fallback, vec![(0.0, 3.0), (3.0, 6.0)]);
     }
 
     #[test]
@@ -1716,6 +1793,7 @@ mod tests {
             channel: None,
             text: "один два три четыре пять шесть семь восемь".to_string(),
             diarized: false,
+            silhouette: 0.0,
         };
         let out = split_at_pauses(&samples, &[utt()]);
         assert!(out.len() >= 2);
@@ -1843,6 +1921,7 @@ mod tests {
             text: "Вводная фраза первого спикера. Короткий ответ. Финальная фраза разговора."
                 .to_string(),
             diarized: false,
+            silhouette: 0.0,
         };
         let out = split_at_pauses(&samples, &[u]);
         assert_eq!(out.len(), 3);
@@ -1874,6 +1953,7 @@ mod tests {
             channel: None,
             text: "Непрерывный поток слов без настоящих пауз в диалоге".to_string(),
             diarized: false,
+            silhouette: 0.0,
         };
         let out = split_at_pauses(&samples, &[u]);
         // Без пауз от ~140 мс и длине < 6 с реплика не дробится
@@ -1899,6 +1979,7 @@ mod tests {
             channel: None,
             text: "Фраза со смычкой внутри слова".to_string(),
             diarized: false,
+            silhouette: 0.0,
         };
         let out1 = split_at_pauses(&samples_closure, &[u1]);
         assert_eq!(out1.len(), 1, "90 мс пауза не должна дробить реплику");
@@ -1915,6 +1996,7 @@ mod tests {
             channel: None,
             text: "Первая реплика диалога. Ответная реплика собеседника.".to_string(),
             diarized: false,
+            silhouette: 0.0,
         };
         let out2 = split_at_pauses(&samples_turn, &[u2]);
         assert_eq!(
@@ -1945,6 +2027,7 @@ mod tests {
             channel: None,
             text: words.join(" "),
             diarized: false,
+            silhouette: 0.0,
         };
         let out = split_at_pauses(&samples, &[u]);
         assert!(
