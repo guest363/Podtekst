@@ -244,6 +244,9 @@ pub fn transcribe_file(
     // Предел по памяти, а не по часам: весь файл лежит в памяти f32 16 кГц,
     // поэтому отказ выдаём до декодирования, пока память ещё не занята.
     memory::check(audio_path)?;
+    if !mr_audio::has_audio_track(audio_path) {
+        return Err("Файл не содержит аудиодорожки".to_string());
+    }
     // Видео: сначала извлекаем аудиодорожку (symphonia не берёт MKV/WebM/MOV/AVI),
     // затем сводим в моно — каналов «микрофон/система» у видеофайла нет.
     let video = is_video_path(audio_path);
@@ -252,7 +255,7 @@ pub fn transcribe_file(
     }
     let channels = decode_to_channels_16k_auto(audio_path).map_err(|e| e.to_string())?;
     if channels.is_empty() || channels.iter().all(|c| c.is_empty()) {
-        return Err("в файле нет звуковой дорожки".to_string());
+        return Err("Файл не содержит аудиодорожки".to_string());
     }
     let channels = if video {
         let n = channels.iter().map(|c| c.len()).max().unwrap_or(0);

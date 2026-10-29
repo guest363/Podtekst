@@ -1027,6 +1027,54 @@ mod live_api_tests {
                     "upload mkv: {st} {v}"
                 );
                 assert!(rec.join("клип тест.mkv").exists());
+
+                let mute_mp4 = rec.join("mute_video.mp4");
+                let gen_mute = std::process::Command::new("ffmpeg")
+                    .args([
+                        "-nostdin",
+                        "-v",
+                        "error",
+                        "-y",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        "testsrc=duration=1:size=64x64:rate=10",
+                        "-c:v",
+                        "libx264",
+                        "-pix_fmt",
+                        "yuv420p",
+                        &mute_mp4.to_string_lossy(),
+                    ])
+                    .status();
+                if gen_mute.map(|s| s.success()).unwrap_or(false) {
+                    let req_body = serde_json::json!({
+                        "file": mute_mp4.to_string_lossy().to_string(),
+                    })
+                    .to_string();
+                    let (st, v) = json(http(
+                        port,
+                        "POST",
+                        "/api/transcribe/start",
+                        &[("Content-Type", "application/json")],
+                        req_body.as_bytes(),
+                    ));
+                    #[cfg(feature = "onnx")]
+                    {
+                        assert_eq!(
+                            st, 400,
+                            "expected 400 Bad Request for video without audio: {v}"
+                        );
+                        assert_eq!(v.get("ok").and_then(|x| x.as_bool()), Some(false));
+                        assert_eq!(
+                            v.get("error").and_then(|x| x.as_str()),
+                            Some("Файл не содержит аудиодорожки")
+                        );
+                    }
+                    #[cfg(not(feature = "onnx"))]
+                    {
+                        assert_eq!(st, 501);
+                    }
+                }
             }
         }
 
