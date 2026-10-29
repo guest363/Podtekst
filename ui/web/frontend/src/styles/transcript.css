@@ -603,9 +603,14 @@
   }
 }
 
+.print-meta-header {
+  display: none;
+}
+
 @media print {
   @page { margin: 14mm; }
   body { padding: 0; background: #fff; }
+  .transcript-page-header,
   .transcript-header-sub,
   .btn-close-page,
   .transcript-progress,
@@ -616,10 +621,40 @@
   .speaker-popover-backdrop,
   .toast-stack,
   .modal-overlay { display: none !important; }
+  .print-meta-header {
+    display: block !important;
+    margin-bottom: 6mm;
+  }
+  .print-meta-title {
+    font-size: 18pt;
+    font-weight: 800;
+    margin: 0 0 3mm;
+    line-height: 1.25;
+    color: #111;
+  }
+  .print-meta-line {
+    font-size: 10.5pt;
+    color: #444;
+    margin: 1.5mm 0;
+    line-height: 1.4;
+  }
+  .print-meta-line strong {
+    color: #111;
+  }
+  .print-meta-line code {
+    font-family: monospace;
+    font-size: 10pt;
+    background: #f0f0f0;
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+  .print-meta-divider {
+    border: 0;
+    border-top: 1px solid #ccc;
+    margin: 4mm 0 6mm;
+  }
   .transcript-page,
   .transcript-grid { display: block; max-width: none; margin: 0; padding: 0; }
-  .transcript-page-header { padding: 0 0 8mm; border: 0; }
-  .transcript-page-title { white-space: normal; font-size: 20pt; }
   .markdown-body { max-height: none; overflow: visible; padding: 0; font-size: 11pt; }
   .markdown-body h1, .markdown-body h2, .markdown-body h3 { break-after: avoid; }
   .utterance { break-inside: avoid; background: none; border-left-color: #777; }

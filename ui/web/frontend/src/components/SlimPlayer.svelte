@@ -74,14 +74,14 @@
     <video bind:this={media} {src} id={mediaId || undefined} preload="auto" hidden
       aria-label={`Слушать ${fileName}`}
       onplay={() => (playing = true)} onpause={() => (playing = false)}
-      onseeked={syncTime}
+      onseeked={syncTime} ontimeupdate={syncTime}
       ondurationchange={() => media && isFinite(media.duration) && (mediaDur = media.duration || 0)}
       onloadedmetadata={() => media && isFinite(media.duration) && (mediaDur = media.duration || 0)}></video>
   {:else}
     <audio bind:this={media} {src} id={mediaId || undefined} preload="auto" hidden
       aria-label={`Слушать ${fileName}`}
       onplay={() => (playing = true)} onpause={() => (playing = false)}
-      onseeked={syncTime}
+      onseeked={syncTime} ontimeupdate={syncTime}
       ondurationchange={() => media && isFinite(media.duration) && (mediaDur = media.duration || 0)}
       onloadedmetadata={() => media && isFinite(media.duration) && (mediaDur = media.duration || 0)}></audio>
   {/if}

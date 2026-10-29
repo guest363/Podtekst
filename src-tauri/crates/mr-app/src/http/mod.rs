@@ -1,5 +1,6 @@
 //! HTTP REST API: роутер и обработчики эндпоинтов.
 
+pub(crate) mod export_dialog;
 pub(crate) mod files;
 pub(crate) mod media;
 pub(crate) mod people;
@@ -14,6 +15,7 @@ use mr_audio::get_audio_devices_info;
 use mr_packs as packs;
 use serde_json::json;
 
+use self::export_dialog::handle_save_dialog;
 use self::files::{
     handle_extract_audio, handle_recording_delete, handle_recording_rename, handle_upload,
 };
@@ -703,6 +705,9 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 (tiny_http::Method::Post, "/api/transcript/edit") => {
                     let body = read_body_to_json(&mut request);
                     handle_transcript_edit(request, body);
+                }
+                (tiny_http::Method::Post, "/api/export/save_dialog") => {
+                    handle_save_dialog(request, &query);
                 }
                 (tiny_http::Method::Get, "/api/transcribe_stream") => {
                     serve_transcribe_stream(request);

@@ -11,9 +11,15 @@
     file?: string
     speakers?: SpeakerInfo[]
     currentTime?: number
+    meta?: {
+      title: string
+      source: string
+      durStr?: string
+      speakers?: string[]
+    }
     onseek?: (sec: number) => void
   }
-  let { utterances, markdown, file = '', speakers = [], currentTime = 0, onseek }: Props = $props()
+  let { utterances, markdown, file = '', speakers = [], currentTime = 0, meta, onseek }: Props = $props()
 
   let search = $state('')
   let follow = $state(true)
@@ -30,11 +36,33 @@
   )
   let menuSpeaker = $derived(speakerMenu ? utterances[speakerMenu.index]?.speaker || 'Спикер' : '')
   let activeIndex = $derived.by(() => {
-    if (currentTime <= 0) return -1
-    return utterances.findIndex((u, i) => {
+    if (currentTime <= 0 || !utterances.length) return -1
+    // При одновременной речи и перекрытиях каналов выбираем реплику,
+    // начавшуюся позже всех (наибольший start <= currentTime).
+    // Старый findIndex зависал на первой длинной реплике и отставал на 2-5 секунд.
+    let bestIdx = -1
+    let bestStart = -1
+    for (let i = 0; i < utterances.length; i++) {
+      const u = utterances[i]
       const end = u.end ?? utterances[i + 1]?.start ?? Infinity
-      return currentTime >= u.start && currentTime < end
-    })
+      if (currentTime >= u.start && currentTime <= end) {
+        if (u.start >= bestStart) {
+          bestStart = u.start
+          bestIdx = i
+        }
+      }
+    }
+    if (bestIdx >= 0) return bestIdx
+
+    // В коротких паузах между репликами держим последнюю отзвучавшую (до 1.5 с)
+    for (let i = utterances.length - 1; i >= 0; i--) {
+      const u = utterances[i]
+      const end = u.end ?? u.start
+      if (currentTime >= end && currentTime - end <= 1.5) {
+        return i
+      }
+    }
+    return -1
   })
 
   $effect(() => {
@@ -311,6 +339,20 @@
     </div>
   </div>
   <div class="markdown-body">
+    {#if meta && utterances && utterances.length > 0}
+      <div class="print-meta-header">
+        <h1 class="print-meta-title">Расшифровка встречи: {meta.title}</h1>
+        <div class="print-meta-line">
+          <strong>Источник:</strong> <code>{meta.source}</code>{#if meta.durStr} ({meta.durStr}){/if}
+        </div>
+        {#if meta.speakers && meta.speakers.length > 0}
+          <div class="print-meta-line">
+            <strong>Спикеры:</strong> {meta.speakers.join(', ')}
+          </div>
+        {/if}
+        <hr class="print-meta-divider" />
+      </div>
+    {/if}
     {#each blocks as b, i (i)}
       {#if b.kind === 'utt' && (!q || (b as Block).search.includes(q))}
         <div
