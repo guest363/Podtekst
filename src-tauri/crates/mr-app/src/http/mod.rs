@@ -207,8 +207,10 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 let _ = request.respond(tiny_http::Response::empty(204));
                 return;
             }
-            // Раздача медиа для прослушивания (в т.ч. сниппетов спикеров через #t=)
-            if method == tiny_http::Method::Get && path.starts_with("/audio/") {
+            // Раздача медиа для прослушивания (в т.ч. сниппетов спикеров через #t= и HEAD-проб)
+            if (method == tiny_http::Method::Get || method == tiny_http::Method::Head)
+                && path.starts_with("/audio/")
+            {
                 serve_audio_file(request, &path);
                 return;
             }
