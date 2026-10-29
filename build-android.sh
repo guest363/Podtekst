@@ -3,8 +3,8 @@
 # Фронт (ui/web/static) → Rust-ядро (aarch64-linux-android) → APK + подсказка adb install.
 #
 # Требования (один раз): Android SDK + NDK в ~/Android/Sdk, JDK 21, Rust (rustup), Node+Yarn.
-# По умолчанию собирает debug-APK (подписан debug-ключом, ставится на устройство).
-# RELEASE=1 ./build-android.sh — релизная (без подписи: нужен свой keystore для Play).
+# По умолчанию собирает компактную релизную сборку (~32 МБ, подписана debug-ключом, готова к установке).
+# DEBUG=1 ./build-android.sh — отладочная с символами (~200 МБ APK + тяжелый кэш).
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
@@ -43,9 +43,11 @@ if [ ! -f "$SCRIPT_DIR/ui/web/static/js/app.js" ] || [ "$FRONT_HASH" != "$(cat "
 fi
 
 # --- APK ---
-MODE=(--debug)
-if [ "${RELEASE:-0}" = "1" ]; then
-    MODE=()
+# По умолчанию собираем релизную компактную сборку (~32 МБ, без раздувания кэша на 4 ГБ).
+# DEBUG=1 ./build-android.sh — только если явно нужны тяжелые отладочные символы.
+MODE=()
+if [ "${DEBUG:-0}" = "1" ]; then
+    MODE=(--debug)
 fi
 # Build-скрипт mr-app пишет tauri.settings.gradle только когда env
 # TAURI_ANDROID_PROJECT_PATH задан (его ставит CLI). Если до этого гоняли
@@ -77,4 +79,4 @@ echo ""
 echo "✓ APK готов: $APK"
 echo "  Установка на подключённое устройство:"
 echo "  $ANDROID_HOME/platform-tools/adb install -r \"$APK\""
-echo "  (debug-сборка ~200+ МБ из-за символов; RELEASE=1 даёт компактный unsigned-APK)"
+echo "  (компактная релизная сборка ~32 МБ, подписана debug-ключом; DEBUG=1 для отладочных символов)"
