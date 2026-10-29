@@ -1,6 +1,6 @@
 {
   "manifest_version": 1,
-  "updated_at": "2026-10-24T00:00:00",
+  "updated_at": "2026-10-29T00:00:00",
   "models": [
     {
       "id": "vad-silero-v6",
@@ -97,6 +97,23 @@
       "embedding_space": null,
       "license": "MIT",
       "description": "Merged-decoder с KV-кэшем, greedy-декодинг. Проверен живым прогоном на русской речи."
+    },
+    {
+      "id": "diar-pyannote-segmentation-3",
+      "title": "PyAnnote Segmentation 3.0 (речь и перекрытия)",
+      "version": "3.0.0",
+      "files": [
+        {
+          "filename": "pyannote-segmentation-3.0.onnx",
+          "url_hf": "https://huggingface.co/onnx-community/pyannote-segmentation-3.0/resolve/main/onnx/model.onnx",
+          "size_bytes": 5986908,
+          "sha256": "057ee564753071c0b09b5b611648b50ac188d50846bff5f01e9f7bbf1591ea25",
+          "optional": false
+        }
+      ],
+      "embedding_space": null,
+      "license": "MIT",
+      "description": "FP32 ONNX, вход [1,1,160000], выход [1,589,7]. Powerset: тишина, 3 локальных спикера и 3 класса одновременной речи; фрейм 16,875 мс."
     },
     {
       "id": "diar-eres2netv2-emb",

@@ -43,6 +43,42 @@ fn embedding_model_file(dir: &std::path::Path) -> Option<PathBuf> {
     .find_map(|f| model_file(dir, f))
 }
 
+fn segmentation_model_file(dir: &std::path::Path) -> Option<PathBuf> {
+    [
+        "pyannote-segmentation-3.0.onnx",
+        "diar-pyannote-segmentation-3/pyannote-segmentation-3.0.onnx",
+    ]
+    .iter()
+    .find_map(|f| model_file(dir, f))
+}
+
+#[test]
+fn pyannote_segmentation_matches_powerset_contract() {
+    let Some(dir) = models_dir() else {
+        eprintln!("SKIP: нет моделей");
+        return;
+    };
+    let Some(path) = segmentation_model_file(&dir) else {
+        eprintln!("SKIP: нет PyAnnote segmentation");
+        return;
+    };
+    let mut model = mr_ml::onnx::segmentation::SegmentationModel::load(&path).expect("load");
+    let result = model.segment(&vec![0.0; 16000 * 10]).expect("segment");
+    assert_eq!(result.windows.len(), 1);
+    assert_eq!(result.windows[0].classes.len(), 589);
+    assert_eq!(result.frames.len(), 589);
+    assert!(result.frames.iter().all(|&class| class < 7));
+
+    let sliding = model
+        .segment(&vec![0.0; 16000 * 10 + 8000])
+        .expect("sliding");
+    assert_eq!(sliding.windows.len(), 2);
+    assert_eq!(sliding.windows[0].classes.len(), 589);
+    assert_eq!(sliding.windows[1].start_sample, 16000);
+    assert_eq!(sliding.windows[1].classes.len(), 560);
+    assert!(sliding.frames.len() > 589);
+}
+
 /// Минимальный WAV-ридер: 16-бит PCM моно → f32 [-1, 1].
 fn read_wav_mono16(path: &std::path::Path) -> Option<(Vec<f32>, u32)> {
     let bytes = std::fs::read(path).ok()?;
