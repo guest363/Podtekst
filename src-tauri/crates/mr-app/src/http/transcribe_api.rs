@@ -173,6 +173,14 @@ pub(super) fn handle_transcribe_start(request: tiny_http::Request, body: serde_j
         );
         return;
     }
+    if !mr_audio::has_audio_track(Path::new(&audio_file)) {
+        json_response(
+            request,
+            json!({"ok": false, "error": "Файл не содержит аудиодорожки"}),
+            400,
+        );
+        return;
+    }
     if crate::transcribe::is_transcribe_running() {
         json_response(
             request,

@@ -172,6 +172,7 @@ pub fn write_stereo_wav(
 
 pub mod capture;
 pub mod decode;
+pub use decode::has_audio_track;
 
 #[cfg(test)]
 mod tests {

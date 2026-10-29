@@ -131,11 +131,83 @@ jobs:
           # upload-artifact не наследует defaults.run.working-directory.
           path: src-tauri/bundle-pkg/*
 
-  # Публикация — только после успеха сборок Tauri-бандлов.
+  # --- Android APK (aarch64) ---
+  build-android:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "21"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99"
+          targets: aarch64-linux-android
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Setup Android NDK
+        shell: bash
+        run: |
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export NDK_HOME="$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | sort -V | tail -n 1)"
+          if [ -z "$NDK_HOME" ] || [ ! -d "$NDK_HOME" ]; then
+            echo "Устанавливаю NDK 27..."
+            echo "y" | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.1.12297006"
+            export NDK_HOME="$ANDROID_HOME/ndk/27.1.12297006"
+          fi
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$NDK_HOME" >> "$GITHUB_ENV"
+          echo "Используется NDK: $NDK_HOME"
+      - name: Install tauri-cli
+        shell: bash
+        run: |
+          if ! command -v cargo-tauri >/dev/null 2>&1; then
+            curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+            cargo binstall -y --version "^2.12" tauri-cli || cargo install tauri-cli --version ^2.12 --locked
+          fi
+      - name: Build frontend (Svelte)
+        shell: bash
+        run: |
+          corepack enable
+          cd "$GITHUB_WORKSPACE/ui/web/frontend" && yarn install --immutable && yarn build
+      - name: Build Android APK
+        shell: bash
+        run: |
+          if [ "$CI" = "1" ]; then
+            export CI=true
+          fi
+          touch src-tauri/crates/mr-app/build.rs
+          cargo tauri android build \
+            --config src-tauri/crates/mr-app/tauri.conf.json \
+            --features tauri-ui \
+            --apk --target aarch64
+      - name: Collect Android APK
+        shell: bash
+        run: |
+          mkdir -p bundle-pkg
+          apk="$(find src-tauri/crates/mr-app/gen/android/app/build/outputs -name '*.apk' | head -n 1)"
+          if [ -z "$apk" ] || [ ! -f "$apk" ]; then
+            echo "Ошибка: APK не найден в outputs"
+            find src-tauri/crates/mr-app/gen/android -name '*.apk' || true
+            exit 1
+          fi
+          cp "$apk" bundle-pkg/meeting-recorder-android-arm64.apk
+          ls -la bundle-pkg/
+      - name: Upload Android APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-bundles-android
+          if-no-files-found: error
+          path: bundle-pkg/*
+
+  # Публикация — только после успеха сборок Tauri-бандлов и Android APK.
   # Приложение проверяет обновления по последнему GitHub Release, поэтому
   # тег обязан совпадать с версией в Cargo.toml.
   publish:
-    needs: [build-tauri]
+    needs: [build-tauri, build-android]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7

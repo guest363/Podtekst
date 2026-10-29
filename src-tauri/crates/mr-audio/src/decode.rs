@@ -35,7 +35,7 @@ pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
         .tracks()
         .iter()
         .find(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL)
-        .ok_or_else(|| AudioError::Other("в файле нет звука".to_string()))?;
+        .ok_or_else(|| AudioError::Other("Файл не содержит аудиодорожки".to_string()))?;
     let track_id = track.id;
     let codec_params = track.codec_params.clone();
     let src_rate = codec_params
@@ -201,15 +201,109 @@ pub fn media_info(path: &Path) -> Option<(f64, usize)> {
         return None;
     }
     let text = String::from_utf8_lossy(&out.stdout);
-    let (mut duration, mut channels) = (None, 1usize);
+    let (mut duration, mut channels) = (None, 0usize);
     for line in text.lines() {
         if let Some(v) = line.strip_prefix("duration=") {
             duration = v.trim().parse::<f64>().ok();
         } else if let Some(v) = line.strip_prefix("channels=") {
-            channels = v.trim().parse().unwrap_or(1).max(1);
+            channels = v.trim().parse().unwrap_or(0);
         }
     }
     Some((duration?, channels))
+}
+
+/// Проверяет наличие аудиодорожки в медиафайле без полного декодирования.
+pub fn has_audio_track(path: &Path) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    let is_wav = path
+        .extension()
+        .map(|e| e.eq_ignore_ascii_case("wav"))
+        .unwrap_or(false);
+    if is_wav {
+        return hound::WavReader::open(path)
+            .map(|r| r.spec().channels > 0 && r.len() > 0)
+            .unwrap_or(false);
+    }
+
+    // Сначала пробуем нативный symphonia-зонд (MP3, M4A, OGG, FLAC, WAV, MP4 с AAC).
+    if let Ok(file) = std::fs::File::open(path) {
+        let mss = symphonia::core::io::MediaSourceStream::new(Box::new(file), Default::default());
+        let mut hint = symphonia::core::probe::Hint::new();
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            hint.with_extension(ext);
+        }
+        if let Ok(probed) = symphonia::default::get_probe().format(
+            &hint,
+            mss,
+            &Default::default(),
+            &Default::default(),
+        ) {
+            if probed
+                .format
+                .tracks()
+                .iter()
+                .any(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL)
+            {
+                return true;
+            }
+            if !is_video_path(path) {
+                return false;
+            }
+        }
+    }
+
+    // Для видео-контейнеров (MKV, WebM, MOV, AVI) или MP4 с кодеками вне symphonia — ffprobe:
+    if let Ok(out) = std::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "default=nw=1",
+        ])
+        .arg(path)
+        .output()
+    {
+        if out.status.success() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            return text.contains("codec_type=audio");
+        }
+    }
+
+    // Фолбэк на ffmpeg, если ffprobe не установлен в системе:
+    if let Ok(out) = std::process::Command::new("ffmpeg")
+        .args([
+            "-nostdin",
+            "-v",
+            "error",
+            "-i",
+            &path.to_string_lossy(),
+            "-map",
+            "0:a:0",
+            "-f",
+            "null",
+            "-",
+        ])
+        .output()
+    {
+        if out.status.success() {
+            return true;
+        }
+        let err = String::from_utf8_lossy(&out.stderr);
+        if err.contains("matches no streams")
+            || err.contains("Output file does not contain any stream")
+            || err.contains("does not contain any stream")
+        {
+            return false;
+        }
+    }
+
+    false
 }
 
 /// Длительность медиа без полного декодирования (см. [`media_info`]).
@@ -267,10 +361,16 @@ fn ffmpeg_extract_to_wav(path: &Path) -> Result<std::path::PathBuf> {
         })?;
     if !out.status.success() || !tmp.exists() {
         let _ = std::fs::remove_file(&tmp);
-        let err = String::from_utf8_lossy(&out.stderr)
-            .chars()
-            .take(200)
-            .collect::<String>();
+        let err_raw = String::from_utf8_lossy(&out.stderr);
+        if err_raw.contains("does not contain any stream")
+            || err_raw.contains("Output file does not contain any stream")
+            || err_raw.contains("matches no streams")
+        {
+            return Err(AudioError::Other(
+                "Файл не содержит аудиодорожки".to_string(),
+            ));
+        }
+        let err = err_raw.chars().take(200).collect::<String>();
         return Err(AudioError::Other(format!(
             "ffmpeg не смог извлечь звук из видео: {}",
             err.trim()
@@ -412,6 +512,84 @@ mod tests {
                 chans.iter().any(|c| c.iter().any(|&x| x.abs() > 0.01)),
                 "{name}: тишина вместо тона 440 Гц"
             );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn video_without_audio_detected_cleanly() {
+        if std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "mr-no-audio-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let no_audio_mp4 = dir.join("no_audio.mp4");
+        let with_audio_mp4 = dir.join("with_audio.mp4");
+
+        let ok_no = std::process::Command::new("ffmpeg")
+            .args([
+                "-nostdin",
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=1:size=64x64:rate=10",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+            ])
+            .arg(&no_audio_mp4)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        let ok_with = std::process::Command::new("ffmpeg")
+            .args([
+                "-nostdin",
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=1:size=64x64:rate=10",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=1",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-shortest",
+            ])
+            .arg(&with_audio_mp4)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if ok_no && ok_with {
+            assert!(!has_audio_track(&no_audio_mp4));
+            assert!(has_audio_track(&with_audio_mp4));
+
+            let err = decode_to_channels_16k_auto(&no_audio_mp4).unwrap_err();
+            assert_eq!(err.to_string(), "Файл не содержит аудиодорожки");
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
