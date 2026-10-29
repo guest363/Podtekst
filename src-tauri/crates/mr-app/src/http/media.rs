@@ -318,8 +318,7 @@ pub(super) fn serve_audio_file(request: tiny_http::Request, url_path: &str) {
             let mut f = match std::fs::File::open(&real) {
                 Ok(f) => f,
                 Err(_) => {
-                    let resp =
-                        tiny_http::Response::from_string("Read error").with_status_code(500);
+                    let resp = tiny_http::Response::from_string("Read error").with_status_code(500);
                     let _ = request.respond(resp);
                     return;
                 }

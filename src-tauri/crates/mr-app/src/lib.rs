@@ -671,11 +671,17 @@ mod live_api_tests {
         );
 
         // Неудовлетворимый Range: 416 Range Not Satisfiable
-        let (st, hs, _) = http(port, "GET", &audio_target, &[("Range", "bytes=999999-")], &[]);
+        let (st, hs, _) = http(
+            port,
+            "GET",
+            &audio_target,
+            &[("Range", "bytes=999999-")],
+            &[],
+        );
         assert_eq!(st, 416, "Неудовлетворимый диапазон должен давать 416");
         assert!(
-            hs.iter().any(|(k, v)| k == "content-range"
-                && v == &format!("bytes */{}", wav_bytes.len())),
+            hs.iter()
+                .any(|(k, v)| k == "content-range" && v == &format!("bytes */{}", wav_bytes.len())),
             "416 обязан содержать Content-Range: bytes */size: {hs:?}"
         );
 
