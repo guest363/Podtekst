@@ -4,6 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use mr_ml::onnx::embed::EmbeddingExtractor;
+use mr_ml::onnx::segmentation::Segmentation;
 use mr_ml::{interval_gap, match_voiceprints_matrix, SpeakerProfile};
 use mr_packs as packs;
 
@@ -388,8 +389,8 @@ fn rms_quality(chunk: &[f32]) -> f64 {
     (rms / 0.05).clamp(0.3, 1.5)
 }
 
-/// Диаризация одного канала: эмбеддинги → core-кластеризация → short/micro-привязка
-/// → глобальное сопоставление с профилями (Венгерский + Margin Gate).
+/// Диаризация одного канала: чистые от перекрытий эмбеддинги → core-кластеризация
+/// → short/micro-привязка → ограниченное назначение → профили Voice Packs.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn diarize_channel(
     samples: &[f32],
@@ -398,6 +399,7 @@ pub(crate) fn diarize_channel(
     default_name: &str,
     prefix: &str,
     extractor: &mut Option<EmbeddingExtractor>,
+    segmentation: Option<&Segmentation>,
     profiles: &[SpeakerProfile],
     min_speakers: usize,
     max_speakers: usize,
@@ -419,9 +421,15 @@ pub(crate) fn diarize_channel(
         let hi = ((u.end.max(0.0) * sr) as usize).min(samples.len());
         if hi > lo && hi - lo >= (sr * 0.4) as usize {
             if let Some(ext) = extractor {
-                if let Ok(Some(e)) = ext.embed(&samples[lo..hi]) {
-                    quals[i] = rms_quality(&samples[lo..hi]);
-                    embs[i] = Some(e);
+                let mut chunk = samples[lo..hi].to_vec();
+                let clean_len = segmentation
+                    .map(|seg| seg.exclude_overlap(&mut chunk, lo))
+                    .unwrap_or(chunk.len());
+                if clean_len >= (sr * 0.4) as usize {
+                    if let Ok(Some(e)) = ext.embed(&chunk) {
+                        quals[i] = rms_quality(&chunk);
+                        embs[i] = Some(e);
+                    }
                 }
             }
         }
@@ -560,6 +568,17 @@ pub(crate) fn diarize_channel(
     // При явно заданном минимуме спикеров не сглаживаем: метки важнее.
     if channel_idx.is_none() && min_speakers == 0 {
         smooth_labels_mono(utterances, &embs, &durs, &quals, &mut label_of);
+    }
+    if let Some(segmentation) = segmentation {
+        super::speaker_assignment::apply(
+            segmentation,
+            utterances,
+            &embs,
+            &durs,
+            &quals,
+            &mut label_of,
+            max_speakers,
+        );
     }
     let final_vecs: Vec<Vec<f64>> = valid.iter().map(|&i| embs[i].clone().unwrap()).collect();
     let final_labels: Vec<usize> = valid.iter().map(|&i| label_of[&i]).collect();

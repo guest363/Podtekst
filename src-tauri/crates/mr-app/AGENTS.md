@@ -14,7 +14,7 @@
 - `src/main.rs` - точка входа CLI, разбор флагов (`--web`, `--tray`, `--toggle`), отдача встроенных статических ассетов.
 - `src/lib.rs` - общая инициализация сервисов, мобильная точка входа Tauri v2.
 - `src/http/` - модули HTTP REST API (`media`, `files`, `people`, `transcribe_api`, `update`).
-- `src/transcribe/` - сквозной конвейер транскрибации: `mod.rs` (координатор), `diarize.rs` (связка с кластеризацией и Min-Cut по VAD), `word_speakers.rs` (интервальное дерево и пословная атрибуция), `events.rs` (SSE-события), `report.rs` (генерация Markdown и JSON).
+- `src/transcribe/` - сквозной конвейер транскрибации: `mod.rs` (координатор), `diarize.rs` (чистые от перекрытий эмбеддинги и кластеризация), `speaker_assignment.rs` (Венгерский алгоритм для локальных спикеров PyAnnote), `word_speakers.rs` (интервальное дерево и пословная атрибуция), `events.rs` (SSE-события), `report.rs` (генерация Markdown и JSON).
 - `src/recording.rs` - управление активной сессией записи и таймерами памяти.
 - `src/media_registry.rs` - реестр записанных и внешних импортированных файлов.
 - `src/desktop.rs` - управление системным треем, глобальным хоткеем и автозапуском.

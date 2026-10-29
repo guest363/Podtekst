@@ -1,6 +1,6 @@
 //! Сквозной нативный ONNX-пайплайн транскрибации:
 //! VAD (Silero) → ASR (GigaAM-v3 RNNT / Whisper-turbo) → диаризация
-//! (эмбеддинги ERes2NetV2 + двухэшелонная кластеризация + Венгерский алгоритм)
+//! (PyAnnote-маски + ERes2NetV2 + кластеризация + Венгерский алгоритм)
 //! → сопоставление с Voice Packs → `.md` / `.txt` / `.transcript.json`.
 //!
 //! * [`events`] — SSE-шина и фоновый воркер
@@ -11,6 +11,7 @@ pub mod diarize;
 pub mod events;
 pub mod memory;
 pub mod report;
+mod speaker_assignment;
 mod word_speakers;
 
 use std::collections::HashMap;
@@ -22,6 +23,7 @@ use mr_packs as packs;
 
 use mr_ml::onnx::embed::EmbeddingExtractor;
 use mr_ml::onnx::rnnt::GigaAM;
+use mr_ml::onnx::segmentation::SegmentationModel;
 use mr_ml::onnx::vad::{vad_segments_from_probs, SileroVad};
 use mr_ml::onnx::whisper::Whisper;
 
@@ -51,6 +53,7 @@ pub struct ModelSet {
     gigaam: Option<GigaAM>,
     whisper: Option<Whisper>,
     embed: Option<EmbeddingExtractor>,
+    segmentation: Option<SegmentationModel>,
 }
 
 /// Кэш моделей процесса: веса в сотни МБ читаются с диска один раз,
@@ -72,7 +75,7 @@ fn return_cached_models(models: ModelSet) {
 }
 
 impl ModelSet {
-    /// Загрузка VAD + выбранного ASR + эмбеддера из `<app_data>/models`.
+    /// Загрузка VAD + выбранного ASR + моделей диаризации из `<app_data>/models`.
     pub fn load() -> Result<Self, String> {
         let vad_path = find_model_file("vad-silero-v6", ".onnx")
             .ok_or_else(|| "Модель Silero VAD не скачана. Откройте «Настройки» → «Модели ИИ» и нажмите «Скачать».".to_string())?;
@@ -85,6 +88,8 @@ impl ModelSet {
             .or_else(|| find_model_file("diar-pyannote-emb", ".onnx"))
             .or_else(|| find_model_file("diar-wespeaker-resnet34", ".onnx"));
         let embed = emb_path.and_then(|p| EmbeddingExtractor::load(&p).ok());
+        let segmentation = find_model_file("diar-pyannote-segmentation-3", ".onnx")
+            .and_then(|p| SegmentationModel::load(&p).ok());
         if gigaam.is_none() && whisper.is_none() {
             return Err("Нет модели распознавания речи. Скачайте GigaAM или Whisper: «Настройки» → «Модели ИИ».".to_string());
         }
@@ -93,6 +98,7 @@ impl ModelSet {
             gigaam,
             whisper,
             embed,
+            segmentation,
         })
     }
 }
@@ -395,13 +401,28 @@ pub fn transcribe_file(
 
     // Диаризация
     let profiles = diarize::load_profiles();
-    // Заимствуем эмбеддер на время диаризации; вернём в кэш перед выходом.
+    // Заимствуем модели на время диаризации; вернём в кэш перед выходом.
     let mut embed_ext = models.embed.take();
+    let mut segmenter = models.segmentation.take();
     let mut speakers_info: Vec<SpeakerInfo> = vec![];
     let mut all_utts: Vec<Utterance> = vec![];
     for (ch, _label) in chan_list.iter() {
         let samples = &channel_samples[ch];
         let source_utts = channel_utts.remove(ch).unwrap_or_default();
+        let segmentation = if embed_ext.is_some() && !source_utts.is_empty() {
+            on_event(80, "Ищу одновременную речь…");
+            segmenter
+                .as_mut()
+                .and_then(|model| match model.segment(samples) {
+                    Ok(result) => Some(result),
+                    Err(error) => {
+                        eprintln!("PyAnnote segmentation недоступна: {error}");
+                        None
+                    }
+                })
+        } else {
+            None
+        };
         // В стерео каналы уже разделены по голосам, и прежний разрез по
         // эмбеддингам там не трогаем. В моно реплики режем по паузам:
         // иначе 20 секунд сплошного диалога дают «средний голос» двух людей.
@@ -441,6 +462,7 @@ pub fn transcribe_file(
             &default_name,
             prefix,
             &mut embed_ext,
+            segmentation.as_ref(),
             &profiles,
             opts.min_speakers,
             opts.max_speakers,
@@ -541,6 +563,7 @@ pub fn transcribe_file(
     std::fs::write(&json_path, serde_json::to_string_pretty(&doc).unwrap())
         .map_err(|e| e.to_string())?;
     models.embed = embed_ext;
+    models.segmentation = segmenter;
     return_cached_models(models);
     report::record_stats(duration_sec);
     Ok(TranscribeReport {

@@ -149,7 +149,7 @@ pub(crate) fn split_utterance_by_word_speakers(
     tree: &DiarIntervalTree,
 ) -> Vec<Utterance> {
     let words: Vec<&str> = utterance.text.split_whitespace().collect();
-    if words.len() < 2 || utterance.end <= utterance.start || tree.root.is_none() {
+    if words.is_empty() || utterance.end <= utterance.start || tree.root.is_none() {
         return vec![utterance.clone()];
     }
     // shortcut: ASR пока не возвращает word timestamps, интерполяция; заменить при появлении alignment.
@@ -244,6 +244,17 @@ mod tests {
             source.text
         );
         assert_eq!(out[0].end, out[1].start);
+    }
+
+    #[test]
+    fn single_word_uses_dominant_speaker() {
+        let tree = DiarIntervalTree::new(&[utt(0.0, 2.0, "A", "a")]);
+        let source = utt(0.0, 2.0, "", "yes");
+        let out = split_utterance_by_word_speakers(&source, &tree);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].speaker, "A");
+        assert_eq!(out[0].text, "yes");
+        assert!(out[0].diarized);
     }
 
     #[test]
