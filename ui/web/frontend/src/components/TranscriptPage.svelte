@@ -5,11 +5,13 @@
   import { emptyHint, engine, openTranscriptFile, startTranscription, transcript } from '../lib/transcript.svelte.ts'
   import { extractMp3 } from '../lib/recordings.svelte.ts'
   import { peopleState } from '../lib/people.svelte.ts'
+  import { exportDocx, printTranscript } from '../lib/export.ts'
   import SlimPlayer from './SlimPlayer.svelte'
   import SpeakersPane from './SpeakersPane.svelte'
   import TranscriptDoc from './TranscriptDoc.svelte'
 
   let speakersDrawerOpen = $state(false)
+  let playbackTime = $state(0)
 
   // Расшифровывается ли именно эта запись (или движок занят другой).
   let thisRunning = $derived(engine.running && engine.file === ui.currentTranscriptPath)
@@ -19,6 +21,7 @@
   $effect(() => {
     if (ui.transcriptOpen && ui.currentTranscriptPath) {
       speakersDrawerOpen = false
+      playbackTime = 0
       void openTranscriptFile(ui.currentTranscriptPath)
     }
   })
@@ -164,6 +167,8 @@
             id="transcriptFullMedia"
             src={`/audio/${encodeURIComponent(baseName(ui.currentTranscriptPath))}`}
             aria-label={`Смотреть ${baseName(ui.currentTranscriptPath)}`}
+            ontimeupdate={(e) => (playbackTime = e.currentTarget.currentTime)}
+            onseeked={(e) => (playbackTime = e.currentTarget.currentTime)}
           ></video>
         {:else}
           <SlimPlayer
@@ -171,6 +176,7 @@
             isVideo={false}
             fileName={baseName(ui.currentTranscriptPath)}
             mediaId="transcriptFullMedia"
+            ontime={(sec) => (playbackTime = sec)}
           />
         {/if}
       </div>
@@ -211,6 +217,16 @@
             </button>
           {/if}
 
+          <button
+            class="btn-secondary btn-sm"
+            disabled={!transcript.utterances.length}
+            onclick={() => exportDocx(baseName(ui.currentTranscriptPath), transcript.utterances)}
+          >
+            DOCX
+          </button>
+          <button class="btn-secondary btn-sm" onclick={printTranscript} title="Печать или сохранение в PDF">
+            PDF
+          </button>
           <button class="btn-secondary btn-sm" onclick={() => void copyAll()} title="Скопировать весь текст расшифровки">
             Копировать текст
           </button>
@@ -295,6 +311,9 @@
       <TranscriptDoc
         utterances={transcript.utterances}
         markdown={transcript.markdown}
+        file={ui.currentTranscriptPath}
+        speakers={transcript.speakers}
+        currentTime={playbackTime}
         onseek={seekTo}
       />
     </div>

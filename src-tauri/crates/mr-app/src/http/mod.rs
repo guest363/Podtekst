@@ -4,6 +4,7 @@ pub(crate) mod files;
 pub(crate) mod media;
 pub(crate) mod people;
 pub(crate) mod transcribe_api;
+pub(crate) mod transcript_edit;
 pub(crate) mod update;
 
 use std::io::Read;
@@ -24,6 +25,7 @@ use self::people::{
 use self::transcribe_api::{
     handle_models_update, handle_transcribe_start, serve_transcribe_stream, serve_transcript,
 };
+use self::transcript_edit::handle_transcript_edit;
 use self::update::{handle_update_apply, handle_update_check, handle_update_progress};
 use crate::config::config_lock;
 use crate::config::{
@@ -697,6 +699,10 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 }
                 (tiny_http::Method::Get, "/api/transcript") => {
                     serve_transcript(request, &query);
+                }
+                (tiny_http::Method::Post, "/api/transcript/edit") => {
+                    let body = read_body_to_json(&mut request);
+                    handle_transcript_edit(request, body);
                 }
                 (tiny_http::Method::Get, "/api/transcribe_stream") => {
                     serve_transcribe_stream(request);

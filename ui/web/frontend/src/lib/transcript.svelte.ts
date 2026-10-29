@@ -51,6 +51,23 @@ export async function openTranscriptFile(rawPath: string): Promise<void> {
   transcript.hasText = Boolean((d.markdown && d.markdown.trim()) || transcript.utterances.length > 0)
 }
 
+export async function editTranscript(
+  rawPath: string,
+  change: { index?: number; text?: string; speaker?: string; old_speaker?: string },
+): Promise<void> {
+  const r = await fetch('/api/transcript/edit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: rawPath, ...change }),
+  })
+  const d = await readJsonSafe(r)
+  if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`)
+  transcript.utterances = d.utterances || []
+  transcript.speakers = d.speakers_info || []
+  transcript.markdown = d.markdown || ''
+  transcript.hasText = Boolean(transcript.markdown.trim() || transcript.utterances.length)
+}
+
 // Подсказка пустого состояния (модалка решает, показывать ли CTA).
 export function emptyHint(): string {
   if (ui.currentTranscriptIsVideo) {

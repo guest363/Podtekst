@@ -100,15 +100,17 @@ impl ModelSet {
 // ---------- Структуры результата ----------
 
 /// Одна распознанная реплика.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct Utterance {
     pub start: f64,
     pub end: f64,
     pub speaker: String,
     pub channel: Option<i32>,
     pub text: String,
+    #[serde(default)]
     pub diarized: bool,
     /// Силуэт назначения голоса: -1..1, больше — увереннее.
+    #[serde(default)]
     pub silhouette: f64,
 }
 

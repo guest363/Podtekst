@@ -26,6 +26,7 @@ chrono.workspace = true
 clap.workspace = true
 tiny_http.workspace = true
 fs2.workspace = true
+hound.workspace = true
 mr-packs = { path = "../mr-packs" }
 mr-ml = { path = "../mr-ml" }
 mr-models = { path = "../mr-models" }
