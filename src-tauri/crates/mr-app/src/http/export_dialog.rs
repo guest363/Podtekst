@@ -109,7 +109,11 @@ pub(super) fn handle_save_dialog(mut request: tiny_http::Request, query: &str) {
         return;
     }
 
-    let filter = if name.ends_with(".docx") { "*.docx" } else { "*.*" };
+    let filter = if name.ends_with(".docx") {
+        "*.docx"
+    } else {
+        "*.*"
+    };
 
     let is_headless = std::env::var("DISPLAY").is_err()
         && std::env::var("WAYLAND_DISPLAY").is_err()

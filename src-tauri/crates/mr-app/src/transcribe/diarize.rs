@@ -901,27 +901,30 @@ pub(crate) fn reconcile_channels(infos: &mut Vec<SpeakerInfo>, utterances: &mut 
             let short = infos[i].utterances_count <= 2 || infos[j].utterances_count <= 2;
             let same_name = infos[i].name == infos[j].name;
 
-            let should_merge = if infos[i].channel == infos[j].channel && infos[i].name != infos[j].name {
-                // Внутри одного канала: если один распознан, а второй — безымянный хвост (например, "Я" и профиль пользователя),
-                // либо оба безымянные ("Собеседник 2" и "3") — при уверенном сходстве (≥ 0.52) это один и тот же спикер.
-                // Разные распознанные профили никогда не объединяем.
-                !(infos[i].matched && infos[j].matched) && sim >= 0.52
-            } else {
-                // Разные каналы (микрофон и система) или совпадение имени:
-                same_name
-                    || (sim >= 0.55 && overlap >= 0.3)
-                    || (sim >= 0.58 && !infos[i].matched && !infos[j].matched)
-                    || ((infos[i].matched || infos[j].matched) && sim >= 0.50 && overlap >= 0.3)
-                    || ((infos[i].matched ^ infos[j].matched) && sim >= 0.55)
-                    || ((infos[i].matched ^ infos[j].matched) && echo && overlap >= 0.5)
-                    || (echo && sim >= 0.45 && overlap >= 0.3)
-                    || (echo && short && overlap >= 0.8)
-            };
+            let should_merge =
+                if infos[i].channel == infos[j].channel && infos[i].name != infos[j].name {
+                    // Внутри одного канала: если один распознан, а второй — безымянный хвост (например, "Я" и профиль пользователя),
+                    // либо оба безымянные ("Собеседник 2" и "3") — при уверенном сходстве (≥ 0.52) это один и тот же спикер.
+                    // Разные распознанные профили никогда не объединяем.
+                    !(infos[i].matched && infos[j].matched) && sim >= 0.52
+                } else {
+                    // Разные каналы (микрофон и система) или совпадение имени:
+                    same_name
+                        || (sim >= 0.55 && overlap >= 0.3)
+                        || (sim >= 0.58 && !infos[i].matched && !infos[j].matched)
+                        || ((infos[i].matched || infos[j].matched) && sim >= 0.50 && overlap >= 0.3)
+                        || ((infos[i].matched ^ infos[j].matched) && sim >= 0.55)
+                        || ((infos[i].matched ^ infos[j].matched) && echo && overlap >= 0.5)
+                        || (echo && sim >= 0.45 && overlap >= 0.3)
+                        || (echo && short && overlap >= 0.8)
+                };
 
             if should_merge {
                 let ri = dsu.find(i);
                 let rj = dsu.find(j);
-                if let (Some(&name_i), Some(&name_j)) = (matched_root.get(&ri), matched_root.get(&rj)) {
+                if let (Some(&name_i), Some(&name_j)) =
+                    (matched_root.get(&ri), matched_root.get(&rj))
+                {
                     if name_i != name_j {
                         continue; // Разные профили уже в этих компонентах — слияние строго запрещено!
                     }

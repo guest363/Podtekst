@@ -116,7 +116,8 @@ pub(super) fn apply(
             .collect();
         let mut assignment = HashMap::new();
         let mut assigned = vec![false; locals.len()];
-        let mut assigned_globals: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut assigned_globals: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
         for (local, global) in linear_sum_assignment_max(&scores) {
             if scores[local][global] >= 0.20 {
                 let gid = global_ids[global];
