@@ -624,6 +624,31 @@ mod live_api_tests {
             "нет audio content-type: {hs:?}"
         );
         assert_eq!(body.len(), wav_bytes.len());
+        assert!(
+            hs.iter()
+                .any(|(k, v)| k == "content-length" && v == &wav_bytes.len().to_string()),
+            "нет Content-Length в 200-ответе: {hs:?}"
+        );
+        assert!(
+            !hs.iter()
+                .any(|(k, v)| k == "transfer-encoding" && v.contains("chunked")),
+            "200-ответ для медиа не должен быть chunked: {hs:?}"
+        );
+
+        // HEAD-запрос для предварительной проверки размера и поддержки Range (WebKitGTK/GStreamer).
+        let (st, hs, head_body) = http(port, "HEAD", &audio_target, &[], &[]);
+        assert_eq!(st, 200, "HEAD /audio вернул {st}");
+        assert_eq!(head_body.len(), 0, "HEAD не должен возвращать тело");
+        assert!(
+            hs.iter().any(|(k, v)| k == "accept-ranges" && v == "bytes"),
+            "HEAD обязан сообщать Accept-Ranges: bytes"
+        );
+        assert!(
+            hs.iter()
+                .any(|(k, v)| k == "content-length" && v == &wav_bytes.len().to_string()),
+            "HEAD обязан содержать Content-Length: {hs:?}"
+        );
+
         let (st, hs, part) = http(port, "GET", &audio_target, &[("Range", "bytes=0-9")], &[]);
         assert_eq!(st, 206, "Range не поддержан");
         assert!(
@@ -632,6 +657,34 @@ mod live_api_tests {
             "нет Content-Range: {hs:?}"
         );
         assert_eq!(part.len(), 10);
+
+        // Суффиксный Range: последние N байт (нужно плееру для чтения moov в конце MP4).
+        let (st, hs, tail) = http(port, "GET", &audio_target, &[("Range", "bytes=-10")], &[]);
+        assert_eq!(st, 206, "Суффиксный Range не вернул 206");
+        assert_eq!(tail.len(), 10);
+        let exp_start = wav_bytes.len() - 10;
+        let exp_end = wav_bytes.len() - 1;
+        assert!(
+            hs.iter().any(|(k, v)| k == "content-range"
+                && v == &format!("bytes {exp_start}-{exp_end}/{}", wav_bytes.len())),
+            "неверный Content-Range для суффикса: {hs:?}"
+        );
+
+        // Неудовлетворимый Range: 416 Range Not Satisfiable
+        let (st, hs, _) = http(
+            port,
+            "GET",
+            &audio_target,
+            &[("Range", "bytes=999999-")],
+            &[],
+        );
+        assert_eq!(st, 416, "Неудовлетворимый диапазон должен давать 416");
+        assert!(
+            hs.iter()
+                .any(|(k, v)| k == "content-range" && v == &format!("bytes */{}", wav_bytes.len())),
+            "416 обязан содержать Content-Range: bytes */size: {hs:?}"
+        );
+
         let (st, _, _) = http(port, "GET", "/audio/nope.mp3", &[], &[]);
         assert!(st == 404, "чужой файл должен давать 404, а не {st}");
 
