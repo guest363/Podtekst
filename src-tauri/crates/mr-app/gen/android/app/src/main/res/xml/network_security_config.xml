@@ -3,7 +3,7 @@
      Разрешаем plain-http только на 127.0.0.1/localhost, остальной трафик — TLS. -->
 <network-security-config>
     <domain-config cleartextTrafficPermitted="true">
-        <domain>127.0.0.1</domain>
-        <domain>localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
     </domain-config>
 </network-security-config>
