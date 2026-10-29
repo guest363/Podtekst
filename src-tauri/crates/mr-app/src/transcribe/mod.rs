@@ -11,6 +11,7 @@ pub mod diarize;
 pub mod events;
 pub mod memory;
 pub mod report;
+mod word_speakers;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -107,6 +108,8 @@ pub struct Utterance {
     pub channel: Option<i32>,
     pub text: String,
     pub diarized: bool,
+    /// Силуэт назначения голоса: -1..1, больше — увереннее.
+    pub silhouette: f64,
 }
 
 /// Итог диаризации по одному спикеру.
@@ -118,6 +121,8 @@ pub struct SpeakerInfo {
     pub matched: bool,
     pub matched_name: Option<String>,
     pub similarity: f64,
+    /// Взвешенный по длительности силуэт фрагментов спикера.
+    pub silhouette: f64,
     pub candidates: Vec<(String, f64)>,
     pub embedding: Option<Vec<f64>>,
     pub samples: Vec<Sample>,
@@ -310,11 +315,7 @@ pub fn transcribe_file(
         let segs = vad_segments_from_probs(&probs, 0.1, 0.25, 0.5);
         let grouped = diarize::merge_quiet_short(
             samples,
-            diarize::group_segments(
-                &segs.iter().map(|(a, b)| (*a, *b)).collect::<Vec<_>>(),
-                MAX_SEGMENT_SEC,
-                SEGMENT_GAP_SEC,
-            ),
+            diarize::group_segments(&segs, &probs, MAX_SEGMENT_SEC, SEGMENT_GAP_SEC),
         );
         on_event(
             (base + span) as u8,
@@ -383,6 +384,7 @@ pub fn transcribe_file(
                     channel: Some(*ch as i32),
                     text,
                     diarized: false,
+                    silhouette: 0.0,
                 });
             }
         }
@@ -397,18 +399,21 @@ pub fn transcribe_file(
     let mut all_utts: Vec<Utterance> = vec![];
     for (ch, _label) in chan_list.iter() {
         let samples = &channel_samples[ch];
-        let mut utts = channel_utts.remove(ch).unwrap_or_default();
+        let source_utts = channel_utts.remove(ch).unwrap_or_default();
         // В стерео каналы уже разделены по голосам, и прежний разрез по
         // эмбеддингам там не трогаем. В моно реплики режем по паузам:
         // иначе 20 секунд сплошного диалога дают «средний голос» двух людей.
-        utts = if is_stereo {
+        let mut diar_utts = if is_stereo {
             on_event(80, "Ищу смену голоса внутри длинных реплик…");
-            diarize::split_long_by_speaker_change(samples, utts, &mut embed_ext, &|pct, msg| {
-                on_event(pct, msg)
-            })
+            diarize::split_long_by_speaker_change(
+                samples,
+                source_utts.clone(),
+                &mut embed_ext,
+                &|pct, msg| on_event(pct, msg),
+            )
         } else {
             on_event(80, "Делю речь на паузы для спикеров…");
-            diarize::split_at_pauses(samples, &utts)
+            diarize::split_at_pauses(samples, &source_utts)
         };
         let (prefix, ch_idx) = if is_stereo {
             (
@@ -429,7 +434,7 @@ pub fn transcribe_file(
         };
         let infos = diarize::diarize_channel(
             samples,
-            &mut utts,
+            &mut diar_utts,
             ch_idx,
             &default_name,
             prefix,
@@ -440,7 +445,12 @@ pub fn transcribe_file(
             &|pct, msg| on_event(pct, msg),
         );
         speakers_info.extend(infos);
-        all_utts.extend(utts);
+        let tree = word_speakers::DiarIntervalTree::new(&diar_utts);
+        for utterance in &source_utts {
+            all_utts.extend(word_speakers::split_utterance_by_word_speakers(
+                utterance, &tree,
+            ));
+        }
     }
     // Один и тот же голос в микрофоне и системе — одна карточка, а не два
     // разных «Участник N» / «Собеседник N». Дубли эха схлопываем до одной фразы.
@@ -523,6 +533,7 @@ pub fn transcribe_file(
         "utterances": merged.iter().map(|u| serde_json::json!({
             "start": u.start, "end": u.end, "speaker": u.speaker,
             "channel": u.channel, "text": u.text, "diarized": u.diarized,
+            "silhouette": u.silhouette,
         })).collect::<Vec<_>>(),
     });
     std::fs::write(&json_path, serde_json::to_string_pretty(&doc).unwrap())

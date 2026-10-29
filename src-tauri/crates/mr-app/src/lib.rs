@@ -917,6 +917,14 @@ mod live_api_tests {
                 .and_then(|x| x.as_bool()),
             Some(true)
         );
+        assert_eq!(
+            v.get("donation")
+                .and_then(|d| d.get("methods"))
+                .and_then(|m| m.get(0))
+                .and_then(|m| m.get("url"))
+                .and_then(|u| u.as_str()),
+            Some("https://tips.tips/000490393")
+        );
 
         // Удаление внешнего файла: из списка уходит, на диске остаётся.
         let external = rec.join("важное-внешнее.wav");
