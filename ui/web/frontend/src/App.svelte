@@ -212,7 +212,7 @@
         <div class="intro-models-head">
           <span class="intro-models-title">Локальные модели ИИ</span>
           <span class="intro-models-sub">
-            Для локального распознавания русской речи скачайте базовые модели (~300 МБ).
+            Для локального распознавания русской речи и разделения спикеров скачайте базовые модели (~306 МБ).
             Whisper (1.1 ГБ) можно установить позже в Настройках.
           </span>
         </div>
@@ -265,7 +265,7 @@
         {:else}
           <button class="btn-secondary" onclick={closeIntro}>Позже</button>
           <button class="btn-primary" onclick={() => void downloadAllCoreModels()}>
-            Скачать базовые модели (~300 МБ)
+            Скачать базовые модели (~306 МБ)
           </button>
         {/if}
       </div>

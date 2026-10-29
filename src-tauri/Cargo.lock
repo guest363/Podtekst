@@ -2368,6 +2368,7 @@ dependencies = [
  "chrono",
  "clap",
  "fs2",
+ "hound",
  "libc",
  "mr-audio",
  "mr-ml",

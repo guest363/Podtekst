@@ -5,11 +5,13 @@
   import { emptyHint, engine, openTranscriptFile, startTranscription, transcript } from '../lib/transcript.svelte.ts'
   import { extractMp3 } from '../lib/recordings.svelte.ts'
   import { peopleState } from '../lib/people.svelte.ts'
+  import { exportDocx, printTranscript } from '../lib/export.ts'
   import SlimPlayer from './SlimPlayer.svelte'
   import SpeakersPane from './SpeakersPane.svelte'
   import TranscriptDoc from './TranscriptDoc.svelte'
 
   let speakersDrawerOpen = $state(false)
+  let playbackTime = $state(0)
 
   // Расшифровывается ли именно эта запись (или движок занят другой).
   let thisRunning = $derived(engine.running && engine.file === ui.currentTranscriptPath)
@@ -19,6 +21,7 @@
   $effect(() => {
     if (ui.transcriptOpen && ui.currentTranscriptPath) {
       speakersDrawerOpen = false
+      playbackTime = 0
       void openTranscriptFile(ui.currentTranscriptPath)
     }
   })
@@ -34,14 +37,13 @@
     return 'реплик'
   }
 
-  function buildFullTranscriptMarkdown(): string {
-    if (!transcript.utterances || transcript.utterances.length === 0) {
-      return transcript.markdown?.trim() || ''
-    }
+  function getTranscriptMeta(): { title: string; source: string; durStr: string; speakers: string[] } {
+    const filename = baseName(ui.currentTranscriptPath) || 'Встреча'
+    const lastUtt = transcript.utterances?.[transcript.utterances.length - 1]
+    const durStr = lastUtt && lastUtt.end ? fmtClock(lastUtt.end) : ''
 
-    // Собираем уникальных спикеров и сопоставляем их с каталогом участников (роли/должности)
     const speakerMap = new Map<string, { name: string; role?: string }>()
-    for (const u of transcript.utterances) {
+    for (const u of transcript.utterances || []) {
       const name = (u.speaker || 'Спикер').trim()
       if (!name || speakerMap.has(name)) continue
       const person = peopleState.list.find((p) => p.name.toLowerCase() === name.toLowerCase())
@@ -51,7 +53,6 @@
       })
     }
 
-    // Идентифицированные участники (с ролями или реальными именами) идут первыми
     const isGeneric = (n: string) => /^(участник|собеседник|спикер)\s*\d*$/i.test(n)
     const identified: string[] = []
     const generic: string[] = []
@@ -65,18 +66,28 @@
       }
     }
 
-    const allSpeakers = [...identified, ...generic]
+    return {
+      title: filename,
+      source: filename,
+      durStr,
+      speakers: [...identified, ...generic],
+    }
+  }
 
-    const filename = baseName(ui.currentTranscriptPath) || 'Встреча'
-    const lastUtt = transcript.utterances[transcript.utterances.length - 1]
-    const durStr = lastUtt && lastUtt.end ? fmtClock(lastUtt.end) : ''
+  let transcriptMeta = $derived(getTranscriptMeta())
 
+  function buildFullTranscriptMarkdown(): string {
+    if (!transcript.utterances || transcript.utterances.length === 0) {
+      return transcript.markdown?.trim() || ''
+    }
+
+    const meta = transcriptMeta
     const lines: string[] = []
-    lines.push(`# Расшифровка встречи: ${filename}`)
+    lines.push(`# Расшифровка встречи: ${meta.title}`)
     lines.push('')
-    lines.push(`**Источник:** \`${filename}\`${durStr ? ` (${durStr})` : ''}`)
-    if (allSpeakers.length > 0) {
-      lines.push(`**Спикеры:** ${allSpeakers.join(', ')}`)
+    lines.push(`**Источник:** \`${meta.source}\`${meta.durStr ? ` (${meta.durStr})` : ''}`)
+    if (meta.speakers.length > 0) {
+      lines.push(`**Спикеры:** ${meta.speakers.join(', ')}`)
     }
     lines.push('')
     lines.push('---')
@@ -164,6 +175,8 @@
             id="transcriptFullMedia"
             src={`/audio/${encodeURIComponent(baseName(ui.currentTranscriptPath))}`}
             aria-label={`Смотреть ${baseName(ui.currentTranscriptPath)}`}
+            ontimeupdate={(e) => (playbackTime = e.currentTarget.currentTime)}
+            onseeked={(e) => (playbackTime = e.currentTarget.currentTime)}
           ></video>
         {:else}
           <SlimPlayer
@@ -171,6 +184,7 @@
             isVideo={false}
             fileName={baseName(ui.currentTranscriptPath)}
             mediaId="transcriptFullMedia"
+            ontime={(sec) => (playbackTime = sec)}
           />
         {/if}
       </div>
@@ -211,6 +225,16 @@
             </button>
           {/if}
 
+          <button
+            class="btn-secondary btn-sm"
+            disabled={!transcript.utterances.length}
+            onclick={() => void exportDocx(baseName(ui.currentTranscriptPath), transcript.utterances, transcriptMeta)}
+          >
+            DOCX
+          </button>
+          <button class="btn-secondary btn-sm" onclick={printTranscript} title="Печать или сохранение в PDF">
+            PDF
+          </button>
           <button class="btn-secondary btn-sm" onclick={() => void copyAll()} title="Скопировать весь текст расшифровки">
             Копировать текст
           </button>
@@ -295,6 +319,10 @@
       <TranscriptDoc
         utterances={transcript.utterances}
         markdown={transcript.markdown}
+        file={ui.currentTranscriptPath}
+        speakers={transcript.speakers}
+        currentTime={playbackTime}
+        meta={transcriptMeta}
         onseek={seekTo}
       />
     </div>

@@ -116,16 +116,41 @@ pub(super) fn apply(
             .collect();
         let mut assignment = HashMap::new();
         let mut assigned = vec![false; locals.len()];
+        let mut assigned_globals: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
         for (local, global) in linear_sum_assignment_max(&scores) {
-            assignment.insert(locals[local].0, global_ids[global]);
-            assigned[local] = true;
+            if scores[local][global] >= 0.20 {
+                let gid = global_ids[global];
+                assignment.insert(locals[local].0, gid);
+                assigned[local] = true;
+                assigned_globals.insert(gid);
+            }
         }
         for (row, (_, embedding)) in locals.iter().enumerate() {
-            if !assigned[row] && (max_speakers == 0 || globals.len() < max_speakers) {
-                let local = locals[row].0;
-                globals.insert(next_label, embedding.clone());
-                assignment.insert(local, next_label);
-                next_label += 1;
+            if !assigned[row] {
+                // Два локальных спикера в одном окне не могут быть одним человеком.
+                // Поэтому ищем совпадение только среди глобальных спикеров, не занятых в этом окне.
+                let best = global_ids
+                    .iter()
+                    .filter(|&&label| !assigned_globals.contains(&label))
+                    .map(|&label| (label, cosine_similarity(embedding, &globals[&label])))
+                    .max_by(|a, b| a.1.total_cmp(&b.1));
+                if let Some((label, sim)) = best {
+                    if sim >= 0.35 {
+                        assignment.insert(locals[row].0, label);
+                        assigned_globals.insert(label);
+                        continue;
+                    }
+                }
+                // Новый спикер создаётся только если нет свободных похожих спикеров (< 0.35)
+                if max_speakers == 0 || globals.len() < max_speakers {
+                    let local = locals[row].0;
+                    globals.insert(next_label, embedding.clone());
+                    global_ids.push(next_label);
+                    assignment.insert(local, next_label);
+                    assigned_globals.insert(next_label);
+                    next_label += 1;
+                }
             }
         }
         for (index, local, weight) in frame_weights {

@@ -478,11 +478,12 @@ pub(crate) fn diarize_channel(
     } else {
         None
     };
-    // Калибровка ERes2NetV2: кросс-спикерные пары ≤ 0.22, один голос ≥ 0.48 (от 1.5 с)
-    let mut core_labels = agglomerative(&core_vecs, 0.45, k);
-    // В моно короткие шумные куски часто образуют ложные «голоса»;
-    // в стерео каналы уже разделены, и там лишние кластеры не трогаем.
-    if k.is_none() && channel_idx.is_none() {
+    // Калибровка Complete Linkage для ERes2NetV2: кросс-спикерные пары ≤ 0.22 (dist ≥ 0.78),
+    // один голос ≥ 0.48 (dist ≤ 0.52). Порог 0.52 предотвращает расщепление одного человека.
+    let mut core_labels = agglomerative(&core_vecs, 0.52, k);
+    // Короткие шумные куски часто образуют ложные «голоса». Сливаем их с
+    // ближайшим похожим голосом (косинус ≥ 0.30) как в моно, так и в стерео.
+    if k.is_none() {
         let weights: Vec<f64> = core.iter().map(|&i| durs[i]).collect();
         merge_tiny_clusters(&core_vecs, &mut core_labels, &weights, min_speakers.max(1));
     }
@@ -883,15 +884,15 @@ pub(crate) fn reconcile_channels(infos: &mut Vec<SpeakerInfo>, utterances: &mut 
         map
     };
     let mut dsu = Dsu::new(n);
+    // Защита от транзитивного слияния разных распознанных профилей через промежуточные кластеры
+    let mut matched_root: HashMap<usize, &str> = HashMap::new();
+    for (idx, info) in infos.iter().enumerate() {
+        if info.matched {
+            matched_root.insert(idx, &info.name);
+        }
+    }
     for i in 0..n {
         for j in (i + 1)..n {
-            if infos[i].channel == infos[j].channel && infos[i].name != infos[j].name {
-                continue;
-            }
-            // Разные профили — это разные люди, даже если голоса похожи.
-            if infos[i].matched && infos[j].matched && infos[i].name != infos[j].name {
-                continue;
-            }
             let sim = match (&infos[i].embedding, &infos[j].embedding) {
                 (Some(a), Some(b)) => mr_ml::cosine_similarity(a, b),
                 _ => 0.0,
@@ -899,16 +900,40 @@ pub(crate) fn reconcile_channels(infos: &mut Vec<SpeakerInfo>, utterances: &mut 
             let (overlap, echo) = pair_evidence(&by_name, &infos[i].name, &infos[j].name);
             let short = infos[i].utterances_count <= 2 || infos[j].utterances_count <= 2;
             let same_name = infos[i].name == infos[j].name;
-            let should_merge = same_name
-                || (sim >= 0.55 && overlap >= 0.3)
-                || (sim >= 0.75 && !infos[i].matched && !infos[j].matched)
-                || ((infos[i].matched || infos[j].matched) && sim >= 0.50 && overlap >= 0.3)
-                || ((infos[i].matched ^ infos[j].matched) && sim >= 0.65)
-                || ((infos[i].matched ^ infos[j].matched) && echo && overlap >= 0.5)
-                || (echo && sim >= 0.45 && overlap >= 0.3)
-                || (echo && short && overlap >= 0.8);
+
+            let should_merge =
+                if infos[i].channel == infos[j].channel && infos[i].name != infos[j].name {
+                    // Внутри одного канала: если один распознан, а второй — безымянный хвост (например, "Я" и профиль пользователя),
+                    // либо оба безымянные ("Собеседник 2" и "3") — при уверенном сходстве (≥ 0.52) это один и тот же спикер.
+                    // Разные распознанные профили никогда не объединяем.
+                    !(infos[i].matched && infos[j].matched) && sim >= 0.52
+                } else {
+                    // Разные каналы (микрофон и система) или совпадение имени:
+                    same_name
+                        || (sim >= 0.55 && overlap >= 0.3)
+                        || (sim >= 0.58 && !infos[i].matched && !infos[j].matched)
+                        || ((infos[i].matched || infos[j].matched) && sim >= 0.50 && overlap >= 0.3)
+                        || ((infos[i].matched ^ infos[j].matched) && sim >= 0.55)
+                        || ((infos[i].matched ^ infos[j].matched) && echo && overlap >= 0.5)
+                        || (echo && sim >= 0.45 && overlap >= 0.3)
+                        || (echo && short && overlap >= 0.8)
+                };
+
             if should_merge {
+                let ri = dsu.find(i);
+                let rj = dsu.find(j);
+                if let (Some(&name_i), Some(&name_j)) =
+                    (matched_root.get(&ri), matched_root.get(&rj))
+                {
+                    if name_i != name_j {
+                        continue; // Разные профили уже в этих компонентах — слияние строго запрещено!
+                    }
+                }
                 dsu.union(i, j);
+                let nr = dsu.find(i);
+                if let Some(&name) = matched_root.get(&ri).or_else(|| matched_root.get(&rj)) {
+                    matched_root.insert(nr, name);
+                }
             }
         }
     }

@@ -7,8 +7,9 @@
     fileName: string
     mediaId?: string
     durationSec?: number
+    ontime?: (sec: number) => void
   }
-  let { src, isVideo, fileName, mediaId = '', durationSec = 0 }: Props = $props()
+  let { src, isVideo, fileName, mediaId = '', durationSec = 0, ontime }: Props = $props()
 
   let media: HTMLMediaElement | null = $state(null)
   let playing = $state(false)
@@ -24,8 +25,28 @@
       media.load()
       cur = 0
       mediaDur = 0
+      ontime?.(0)
     }
   })
+
+  $effect(() => {
+    if (!playing || !media) return
+    let frame = 0
+    const tick = () => {
+      if (!media) return
+      cur = media.currentTime
+      ontime?.(cur)
+      frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame)
+  })
+
+  function syncTime(): void {
+    if (!media) return
+    cur = media.currentTime
+    ontime?.(cur)
+  }
 
   function toggle(): void {
     if (!media) return
@@ -53,16 +74,14 @@
     <video bind:this={media} {src} id={mediaId || undefined} preload="auto" hidden
       aria-label={`Слушать ${fileName}`}
       onplay={() => (playing = true)} onpause={() => (playing = false)}
-      ontimeupdate={() => media && (cur = media.currentTime)}
-      onseeked={() => media && (cur = media.currentTime)}
+      onseeked={syncTime} ontimeupdate={syncTime}
       ondurationchange={() => media && isFinite(media.duration) && (mediaDur = media.duration || 0)}
       onloadedmetadata={() => media && isFinite(media.duration) && (mediaDur = media.duration || 0)}></video>
   {:else}
     <audio bind:this={media} {src} id={mediaId || undefined} preload="auto" hidden
       aria-label={`Слушать ${fileName}`}
       onplay={() => (playing = true)} onpause={() => (playing = false)}
-      ontimeupdate={() => media && (cur = media.currentTime)}
-      onseeked={() => media && (cur = media.currentTime)}
+      onseeked={syncTime} ontimeupdate={syncTime}
       ondurationchange={() => media && isFinite(media.duration) && (mediaDur = media.duration || 0)}
       onloadedmetadata={() => media && isFinite(media.duration) && (mediaDur = media.duration || 0)}></audio>
   {/if}

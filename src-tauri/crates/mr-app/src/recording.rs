@@ -2,11 +2,162 @@
 
 use mr_audio::ChannelMode;
 use serde_json::json;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::config::save_dir;
+
+struct WavCheckpoint {
+    stop: Arc<AtomicBool>,
+    worker: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl WavCheckpoint {
+    fn start(
+        out: &Path,
+        mic_path: PathBuf,
+        sys_path: Option<PathBuf>,
+        mix: bool,
+    ) -> Result<Arc<Self>, String> {
+        let spec = hound::WavSpec {
+            channels: if mix { 1 } else { 2 },
+            sample_rate: 16000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let writer = hound::WavWriter::create(out, spec).map_err(|e| e.to_string())?;
+        let checkpoint = Arc::new(Self {
+            stop: Arc::new(AtomicBool::new(false)),
+            worker: Mutex::new(None),
+        });
+        let stop = checkpoint.stop.clone();
+        let handle = std::thread::Builder::new()
+            .name("mr-wav-checkpoint".to_string())
+            .spawn(move || {
+                let mut writer = CheckpointWriter {
+                    writer,
+                    mic_path,
+                    sys_path,
+                    mic_offset: 0,
+                    sys_offset: 0,
+                    mic_pending: Vec::new(),
+                    sys_pending: Vec::new(),
+                    mix,
+                };
+                loop {
+                    for _ in 0..30 {
+                        if stop.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_secs(1));
+                    }
+                    if let Err(e) = writer.append_and_flush() {
+                        eprintln!("Ошибка чекпоинта WAV: {e}");
+                        break;
+                    }
+                    if stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                }
+            })
+            .map_err(|e| format!("не создан поток чекпоинтов WAV: {e}"))?;
+        *checkpoint.worker.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
+        Ok(checkpoint)
+    }
+
+    fn stop(&self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.worker.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for WavCheckpoint {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+struct CheckpointWriter {
+    writer: hound::WavWriter<std::io::BufWriter<std::fs::File>>,
+    mic_path: PathBuf,
+    sys_path: Option<PathBuf>,
+    mic_offset: u64,
+    sys_offset: u64,
+    mic_pending: Vec<f32>,
+    sys_pending: Vec<f32>,
+    mix: bool,
+}
+
+impl CheckpointWriter {
+    fn append_and_flush(&mut self) -> Result<(), String> {
+        self.mic_pending
+            .extend(read_new_samples(&self.mic_path, &mut self.mic_offset)?);
+        if let Some(path) = self.sys_path.as_ref() {
+            self.sys_pending
+                .extend(read_new_samples(path, &mut self.sys_offset)?);
+        }
+        let has_sys = self.sys_path.is_some();
+        let count = if has_sys {
+            self.mic_pending.len().min(self.sys_pending.len())
+        } else {
+            self.mic_pending.len()
+        };
+        for i in 0..count {
+            let mic = self.mic_pending[i];
+            if self.mix {
+                let sample = if has_sys {
+                    (mic + self.sys_pending[i]) * 0.5
+                } else {
+                    mic
+                };
+                self.writer
+                    .write_sample(pcm(sample))
+                    .map_err(|e| e.to_string())?;
+            } else {
+                self.writer
+                    .write_sample(pcm(mic))
+                    .map_err(|e| e.to_string())?;
+                self.writer
+                    .write_sample(pcm(self.sys_pending[i]))
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        self.mic_pending.drain(..count);
+        self.sys_pending.drain(..count);
+        // hound обновляет RIFF/data lengths и оставляет валидный WAV на этом месте.
+        self.writer.flush().map_err(|e| e.to_string())
+    }
+}
+
+fn read_new_samples(path: &Path, offset: &mut u64) -> Result<Vec<f32>, String> {
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.to_string()),
+    };
+    file.seek(SeekFrom::Start(*offset))
+        .map_err(|e| e.to_string())?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+    let complete = bytes.len() / 4 * 4;
+    *offset += complete as u64;
+    Ok(bytes[..complete]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|chunk| f32::from_le_bytes(*chunk))
+        .collect())
+}
+
+fn pcm(sample: f32) -> i16 {
+    (sample.clamp(-1.0, 1.0) * 32767.0) as i16
+}
 
 #[derive(Clone)]
 pub(crate) struct RecordingState {
@@ -16,6 +167,7 @@ pub(crate) struct RecordingState {
     pub(crate) mode: String,
     /// Живой захват в `Arc`, чтобы `Clone` для `/api/status` работал.
     pub(crate) capture: Option<std::sync::Arc<Mutex<mr_audio::capture::CaptureSession>>>,
+    checkpoint: Option<Arc<WavCheckpoint>>,
 }
 
 impl Default for RecordingState {
@@ -26,6 +178,7 @@ impl Default for RecordingState {
             current_file: None,
             mode: "split".to_string(),
             capture: None,
+            checkpoint: None,
         }
     }
 }
@@ -184,17 +337,29 @@ pub(crate) fn start_recording_inner(st: &mut RecordingState, mode: &str) -> serd
         }
     };
     let has_sys = session.system.is_some();
+    // Если системный канал не открылся, честно пишем моно, а не стерео с нулями.
+    let actual_mode = if has_sys { mode } else { "mix" };
+    let checkpoint = match WavCheckpoint::start(
+        &out,
+        request.mic_path.clone(),
+        has_sys.then(|| request.system_path.clone()),
+        actual_mode == "mix",
+    ) {
+        Ok(checkpoint) => checkpoint,
+        Err(e) => {
+            let mut session = session;
+            session.stop();
+            crate::media_registry::unmark_owned(&out);
+            return json!({"ok": false, "error": e});
+        }
+    };
     st.capture = Some(std::sync::Arc::new(Mutex::new(session)));
+    st.checkpoint = Some(checkpoint);
     st.is_recording = true;
     notify_recording_state(true);
     st.start_time = started;
     st.current_file = Some(out.to_string_lossy().to_string());
-    // Если системный канал не открылся, честно пишем моно, а не стерео с нулями.
-    st.mode = if has_sys {
-        mode.to_string()
-    } else {
-        "mix".to_string()
-    };
+    st.mode = actual_mode.to_string();
     json!({"ok": true, "file": out.to_string_lossy(), "filename": fname,
         "mic": mic_label, "mic_muted": muted,
         "sys": has_sys})
@@ -235,6 +400,9 @@ pub(crate) fn stop_recording_inner(st: &mut RecordingState) -> serde_json::Value
     let file = st.current_file.clone().unwrap_or_default();
     // Останавливаем захват и склеиваем сырые дорожки в стерео WAV 16 кГц.
     let out_path = PathBuf::from(&file);
+    if let Some(checkpoint) = st.checkpoint.take() {
+        checkpoint.stop();
+    }
     let mut peak: Option<f32> = None;
     if let Some(capture) = st.capture.take() {
         let finalize = || -> std::result::Result<f32, String> {
@@ -270,7 +438,11 @@ pub(crate) fn stop_recording_inner(st: &mut RecordingState) -> serde_json::Value
             let max_len = mic.len().max(sys.len());
             mic.resize(max_len, 0.0);
             sys.resize(max_len, 0.0);
-            let (l, r) = mr_audio::mix_channels(&mic, &sys, ChannelMode::parse(&st.mode));
+            let (l, r) = if st.mode == "mix" && sys_path.is_none() {
+                (mic.clone(), Vec::new())
+            } else {
+                mr_audio::mix_channels(&mic, &sys, ChannelMode::parse(&st.mode))
+            };
             if st.mode == "mix" {
                 mr_audio::write_mono_wav(&out_path, &l, 16000).map_err(|e| e.to_string())?;
             } else {
@@ -390,8 +562,8 @@ pub(crate) fn toggle_recording_with_notify(st: &mut RecordingState) -> &'static 
 
 #[cfg(unix)]
 pub(crate) mod shutdown {
-    //! Финализация активной записи по SIGINT/SIGTERM (P7): WAV собирается
-    //! при остановке, поэтому жёсткое завершение теряло запись целиком.
+    //! Финализация активной записи по SIGINT/SIGTERM (P7): чекпоинт останавливается,
+    //! затем из сырых дорожек собирается итоговый WAV и фиксируется имя записи.
 
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -420,5 +592,70 @@ pub(crate) mod shutdown {
             }
             std::thread::sleep(std::time::Duration::from_millis(200));
         });
+    }
+}
+
+#[cfg(test)]
+mod checkpoint_tests {
+    use super::*;
+
+    fn raw_bytes(samples: &[f32]) -> Vec<u8> {
+        samples
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect()
+    }
+
+    #[test]
+    fn checkpoint_flush_keeps_wav_readable() {
+        use std::io::Write as _;
+
+        let dir = std::env::temp_dir().join(format!("mr-checkpoint-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let mic_path = dir.join("mic.f32");
+        let sys_path = dir.join("sys.f32");
+        let wav_path = dir.join("recording.wav");
+        std::fs::write(&mic_path, raw_bytes(&[0.5, -0.5])).unwrap();
+        std::fs::write(&sys_path, raw_bytes(&[0.25, -0.25])).unwrap();
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate: 16000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut checkpoint = CheckpointWriter {
+            writer: hound::WavWriter::create(&wav_path, spec).unwrap(),
+            mic_path: mic_path.clone(),
+            sys_path: Some(sys_path.clone()),
+            mic_offset: 0,
+            sys_offset: 0,
+            mic_pending: Vec::new(),
+            sys_pending: Vec::new(),
+            mix: false,
+        };
+        checkpoint.append_and_flush().unwrap();
+        {
+            let mut reader = hound::WavReader::open(&wav_path).unwrap();
+            assert_eq!(reader.duration(), 2);
+            assert_eq!(reader.spec().channels, 2);
+            let samples = reader
+                .samples::<i16>()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert_eq!(samples, vec![16383, 8191, -16383, -8191]);
+        }
+
+        for (path, sample) in [(&mic_path, 0.75_f32), (&sys_path, 0.5_f32)] {
+            let mut file = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+            file.write_all(&sample.to_le_bytes()).unwrap();
+        }
+        checkpoint.append_and_flush().unwrap();
+        {
+            let mut reader = hound::WavReader::open(&wav_path).unwrap();
+            assert_eq!(reader.duration(), 3);
+            assert_eq!(reader.samples::<i16>().count(), 6);
+        }
+        drop(checkpoint);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
