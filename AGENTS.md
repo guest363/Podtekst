@@ -4,7 +4,8 @@
 (Linux PipeWire/PulseAudio - живой захват; macOS - CoreAudio: микрофон и BlackHole для системного звука; Windows - импорт файлов, живой захват в разработке).
 Стек: **Rust + Tauri v2 + ONNX Runtime** (zero-dependency бинарник ~20-30 МБ).
 Модели: **GigaAM-v3 e2e RNNT int8** (русский, SOTA) + **Whisper-turbo** (30+ языков) +
-**Silero VAD v6** + **ERes2NetV2 192-dim** (3D-Speaker) - всё локально, без облаков.
+**Silero VAD v6** + **PyAnnote Segmentation 3.0** (речь и перекрытия) +
+**ERes2NetV2 192-dim** (3D-Speaker) - всё локально, без облаков.
 
 ---
 
