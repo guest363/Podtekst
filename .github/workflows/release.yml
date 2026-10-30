@@ -21,7 +21,7 @@ jobs:
         include:
           - os: ubuntu-24.04
             args: "--features tauri-ui --bundles appimage"
-          - os: macos-14
+          - os: macos-15
             # pyke не поставляет x86_64 ONNX Runtime, поэтому macOS — arm64.
             args: "--features tauri-ui --target aarch64-apple-darwin --bundles dmg"
           - os: windows-latest
@@ -72,7 +72,7 @@ jobs:
       # секреты Apple Developer. Без них сборка остаётся неподписанной:
       # macOS покажет предупреждение Gatekeeper (см. README).
       - name: Configure macOS signing (optional)
-        if: matrix.os == 'macos-14'
+        if: startsWith(matrix.os, 'macos')
         shell: bash
         env:
           CERT: ${{ secrets.APPLE_CERTIFICATE }}
