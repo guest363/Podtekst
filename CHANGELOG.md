@@ -3,6 +3,22 @@
 Все заметные изменения проекта. Формат - [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии - [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [0.1.6] - 2026-10-30
+
+### Добавлено
+
+* Синхронная запись экрана рабочего стола (Linux): нативная интеграция с D-Bus
+  GNOME Shell Screencast (`org.gnome.Shell.Screencast`) с аппаратным H.264-кодированием.
+  Видеоряд записывается параллельно с раздельным захватом звука (микрофон + собеседники)
+  без нагрузки на процессор.
+* Автоматическая сборка мультимедиа-контейнера MP4: при остановке записи аудиодорожки
+  и видеоряд моментально склеиваются через встроенный конвейер ffmpeg (`-c:v copy -c:a aac -shortest`)
+  с сохранением исходного качества без пережатия.
+* Интегрированный видеоплеер в интерфейсе расшифровки: синхронный просмотр видеозаписи
+  со звуком, таймкодами реплик, спикерами и возможностью перехода по клику на реплику.
+* Переключатель режима записи экрана в контрольной панели («Включить запись экрана» /
+  «Запись экрана включена» / «Запись экрана идёт»).
+
 ## [0.1.5] - 2026-10-29
 
 ### Добавлено
@@ -180,6 +196,9 @@
 * Linux-бинарники собраны на Ubuntu 24.04 (glibc 2.38+), macOS - Apple Silicon
   и 13.4+: этого требует предсобранный ONNX Runtime.
 
+[0.1.6]: https://github.com/guest363/meeting-record/releases/tag/v0.1.6
+[0.1.5]: https://github.com/guest363/meeting-record/releases/tag/v0.1.5
+[0.1.4]: https://github.com/guest363/meeting-record/releases/tag/v0.1.4
 [0.1.3]: https://github.com/guest363/meeting-record/releases/tag/v0.1.3
 [0.1.1]: https://github.com/guest363/meeting-record/releases/tag/v0.1.1
 [0.1.0]: https://github.com/guest363/meeting-record/releases/tag/v0.1.0

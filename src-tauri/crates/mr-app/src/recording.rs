@@ -168,6 +168,7 @@ pub(crate) struct RecordingState {
     /// Живой захват в `Arc`, чтобы `Clone` для `/api/status` работал.
     pub(crate) capture: Option<std::sync::Arc<Mutex<mr_audio::capture::CaptureSession>>>,
     checkpoint: Option<Arc<WavCheckpoint>>,
+    pub(crate) screen_session: Option<Arc<Mutex<Option<crate::screen::ScreenCaptureSession>>>>,
 }
 
 impl Default for RecordingState {
@@ -179,6 +180,7 @@ impl Default for RecordingState {
             mode: "split".to_string(),
             capture: None,
             checkpoint: None,
+            screen_session: None,
         }
     }
 }
@@ -269,7 +271,11 @@ pub(crate) fn unique_media_path(dir: &Path, fname: &str) -> PathBuf {
     first
 }
 
-pub(crate) fn start_recording_inner(st: &mut RecordingState, mode: &str) -> serde_json::Value {
+pub(crate) fn start_recording_inner(
+    st: &mut RecordingState,
+    mode: &str,
+    record_screen: bool,
+) -> serde_json::Value {
     if st.is_recording {
         return json!({"ok": false, "error": "Запись уже идёт"});
     }
@@ -353,8 +359,29 @@ pub(crate) fn start_recording_inner(st: &mut RecordingState, mode: &str) -> serd
             return json!({"ok": false, "error": e});
         }
     };
+
+    let screen_session = if record_screen {
+        match crate::screen::ScreenCaptureSession::start(started) {
+            Ok(sess) => Some(std::sync::Arc::new(Mutex::new(Some(sess)))),
+            Err(e) => {
+                let mut session = session;
+                session.stop();
+                checkpoint.stop();
+                crate::media_registry::unmark_owned(&out);
+                let _ = std::fs::remove_file(&out);
+                return json!({
+                    "ok": false,
+                    "error": format!("Ошибка запуска записи экрана: {e}")
+                });
+            }
+        }
+    } else {
+        None
+    };
+
     st.capture = Some(std::sync::Arc::new(Mutex::new(session)));
     st.checkpoint = Some(checkpoint);
+    st.screen_session = screen_session;
     st.is_recording = true;
     notify_recording_state(true);
     st.start_time = started;
@@ -388,7 +415,10 @@ fn finalize_recording_name(file: &str, start: u64, end: u64) -> (String, String)
     (dest.to_string_lossy().to_string(), name)
 }
 
-pub(crate) fn stop_recording_inner(st: &mut RecordingState) -> serde_json::Value {
+pub(crate) fn stop_recording_inner(
+    st: &mut RecordingState,
+    defer_autotranscribe: bool,
+) -> serde_json::Value {
     if !st.is_recording {
         return json!({"ok": false, "error": "Запись не активна"});
     }
@@ -468,23 +498,68 @@ pub(crate) fn stop_recording_inner(st: &mut RecordingState) -> serde_json::Value
     }
     // Фейк-режим тестов: файл уже записан в start, остаётся только переименовать.
     let old_path = PathBuf::from(&file);
-    let (file, name) = finalize_recording_name(&file, started, ended);
+    let (mut file, mut name) = finalize_recording_name(&file, started, ended);
     if old_path != Path::new(&file) {
         crate::media_registry::path_renamed(&old_path, Path::new(&file));
     }
+
+    let screen_session = st.screen_session.take();
+    let mut is_video = false;
+    if let Some(arc) = screen_session {
+        if let Ok(mut g) = arc.lock() {
+            if let Some(session) = g.take() {
+                match session.stop() {
+                    Ok(video_tmp) => {
+                        let final_video = Path::new(&file).with_extension("mp4");
+                        match crate::screen::mux_screen_and_audio(
+                            &video_tmp,
+                            Path::new(&file),
+                            &final_video,
+                        ) {
+                            Ok(()) => {
+                                crate::media_registry::unmark_owned(Path::new(&file));
+                                crate::media_registry::mark_owned(&final_video);
+                                file = final_video.to_string_lossy().to_string();
+                                name = final_video
+                                    .file_name()
+                                    .map(|s| s.to_string_lossy().to_string())
+                                    .unwrap_or(name);
+                                is_video = true;
+                            }
+                            Err(e) => {
+                                eprintln!("[SCREEN] Ошибка склейки видео с аудио: {e}");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[SCREEN] Ошибка остановки захвата экрана: {e}");
+                    }
+                }
+            }
+        }
+    }
+
     st.current_file = Some(file.clone());
-    let mut resp = json!({"ok": true, "file": file, "filename": name, "elapsed_sec": elapsed});
+    let mut resp = json!({
+        "ok": true,
+        "file": file,
+        "filename": name,
+        "elapsed_sec": elapsed,
+        "is_video": is_video,
+    });
     if let Some(p) = peak {
         // shortcut: порог −46 дБFS; тише — почти наверняка мьют/не тот источник, чинить выбором дефолта в pactl
         resp["silent"] = json!(p < 0.005);
         resp["peak"] = json!(p);
     }
-    maybe_autotranscribe(&file);
+    if !defer_autotranscribe {
+        maybe_autotranscribe(&file);
+    }
     resp
 }
 
 /// Запускает расшифровку сразу после остановки записи (если включено в настройках).
-fn maybe_autotranscribe(file: &str) {
+pub(crate) fn maybe_autotranscribe(file: &str) {
     #[cfg(all(feature = "onnx", not(test)))]
     {
         if !crate::config::configured_auto_transcribe() || !Path::new(file).is_file() {
@@ -507,7 +582,7 @@ fn maybe_autotranscribe(file: &str) {
 /// Запуск записи с показом системного уведомления на рабочем столе.
 pub(crate) fn start_recording_with_notify(st: &mut RecordingState) -> serde_json::Value {
     let mode = crate::configured_record_mode();
-    let res = start_recording_inner(st, &mode);
+    let res = start_recording_inner(st, &mode, false);
     if res.get("ok").and_then(|x| x.as_bool()) == Some(true) {
         let sys = res.get("sys").and_then(|x| x.as_bool()).unwrap_or(false);
         let what = if sys {
@@ -528,7 +603,7 @@ pub(crate) fn start_recording_with_notify(st: &mut RecordingState) -> serde_json
 
 /// Остановка записи с показом системного уведомления на рабочем столе.
 pub(crate) fn stop_recording_with_notify(st: &mut RecordingState) -> serde_json::Value {
-    let res = stop_recording_inner(st);
+    let res = stop_recording_inner(st, false);
     if res.get("ok").and_then(|x| x.as_bool()) == Some(true) {
         let fname = res
             .get("filename")
@@ -586,7 +661,7 @@ pub(crate) mod shutdown {
                 eprintln!("\nЗавершение по сигналу: финализирую запись…");
                 let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
                 if st.is_recording {
-                    let _ = super::stop_recording_inner(&mut st);
+                    let _ = super::stop_recording_inner(&mut st, false);
                 }
                 std::process::exit(0);
             }

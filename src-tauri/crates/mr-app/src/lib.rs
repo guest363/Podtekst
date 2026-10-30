@@ -20,6 +20,7 @@ mod http;
 mod ipc;
 mod media_registry;
 mod recording;
+pub(crate) mod screen;
 #[cfg(feature = "tauri-ui")]
 mod tauri_shell;
 #[cfg(feature = "onnx")]
@@ -368,10 +369,10 @@ mod tests {
         let _ = std::fs::create_dir_all(&tmp);
         let cfg = serde_json::json!({"save_dir": tmp.join("Recordings")});
         std::fs::write(tmp.join("config.json"), serde_json::to_vec(&cfg).unwrap()).unwrap();
-        let r = recording::start_recording_inner(&mut st, "split");
+        let r = recording::start_recording_inner(&mut st, "split", false);
         assert_eq!(r.get("ok").and_then(|v| v.as_bool()), Some(true));
         assert!(st.is_recording);
-        let s = recording::stop_recording_inner(&mut st);
+        let s = recording::stop_recording_inner(&mut st, false);
         assert_eq!(s.get("ok").and_then(|v| v.as_bool()), Some(true));
         assert!(!st.is_recording);
         std::env::remove_var("MR_FAKE_CAPTURE");
@@ -1127,6 +1128,56 @@ mod live_api_tests {
                     {
                         assert_eq!(st, 501);
                     }
+                }
+
+                // Тест склейки экрана и аудиозаписи (/api/recording/attach_video).
+                let test_audio = rec.join("lecture_rec.wav");
+                mr_audio::write_stereo_wav(
+                    &test_audio,
+                    &vec![0.1; 16000],
+                    &vec![0.1; 16000],
+                    16000,
+                )
+                .unwrap();
+                let test_video_raw = rec.join("temp_src.webm");
+                let gen_v = std::process::Command::new("ffmpeg")
+                    .args([
+                        "-nostdin",
+                        "-v",
+                        "error",
+                        "-y",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        "testsrc=duration=1:size=64x64:rate=10",
+                        "-c:v",
+                        "vp9",
+                        "-f",
+                        "webm",
+                        &test_video_raw.to_string_lossy(),
+                    ])
+                    .status();
+                if gen_v.map(|s| s.success()).unwrap_or(false) {
+                    let v_bytes = std::fs::read(&test_video_raw).unwrap();
+                    let _ = std::fs::remove_file(&test_video_raw);
+                    let (st, v) = json(http(
+                        port,
+                        "POST",
+                        "/api/recording/attach_video",
+                        &[
+                            ("X-Audio-Path", &test_audio.to_string_lossy()),
+                            ("Content-Type", "video/webm"),
+                        ],
+                        &v_bytes,
+                    ));
+                    assert_eq!(st, 200, "attach_video error: {v}");
+                    assert_eq!(v.get("ok").and_then(|x| x.as_bool()), Some(true));
+                    assert_eq!(v.get("is_video").and_then(|x| x.as_bool()), Some(true));
+                    let attached_path = v.get("path").and_then(|x| x.as_str()).unwrap();
+                    assert!(
+                        std::path::Path::new(attached_path).exists(),
+                        "видео файл не создан"
+                    );
                 }
             }
         }

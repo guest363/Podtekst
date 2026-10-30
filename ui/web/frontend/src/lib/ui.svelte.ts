@@ -1,3 +1,5 @@
+import { isVideoPath } from './api'
+
 // Общее состояние модалок, шторок и текущей расшифровки.
 export const ui = $state({
   settingsOpen: false,
@@ -7,12 +9,13 @@ export const ui = $state({
   currentTranscriptIsVideo: false,
 })
 
-export function openTranscript(path: string, isVideo: boolean): void {
+export function openTranscript(path: string, isVideo?: boolean): void {
+  const vid = typeof isVideo === 'boolean' ? isVideo : isVideoPath(path)
   ui.currentTranscriptPath = path
-  ui.currentTranscriptIsVideo = isVideo
+  ui.currentTranscriptIsVideo = vid
   ui.transcriptOpen = true
   if (typeof window !== 'undefined') {
-    const hash = `#/transcript?path=${encodeURIComponent(path)}&video=${isVideo ? '1' : '0'}`
+    const hash = `#/transcript?path=${encodeURIComponent(path)}&video=${vid ? '1' : '0'}`
     if (window.location.hash !== hash) {
       window.location.hash = hash
     }
@@ -37,7 +40,7 @@ export function initRouting(): void {
       if (qIndex !== -1) {
         const params = new URLSearchParams(hash.slice(qIndex))
         const path = params.get('path')
-        const isVideo = params.get('video') === '1'
+        const isVideo = params.get('video') === '1' || (path ? isVideoPath(path) : false)
         if (path) {
           ui.currentTranscriptPath = path
           ui.currentTranscriptIsVideo = isVideo
