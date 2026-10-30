@@ -424,3 +424,259 @@ pub(super) fn handle_extract_audio(request: tiny_http::Request, body: serde_json
         ),
     }
 }
+
+/// POST /api/recording/attach_video:
+/// Принимает видеопоток экрана (WebM/MP4) и склеивает с аудиозаписью встречи через ffmpeg (-c:v copy).
+pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
+    const MAX_UPLOAD: u64 = 4 * 1024 * 1024 * 1024;
+    let audio_path_raw = header_value(&request, "X-Audio-Path").unwrap_or_default();
+    if audio_path_raw.trim().is_empty() {
+        json_response(
+            request,
+            json!({"ok": false, "error": "Не указан путь к аудиофайлу"}),
+            400,
+        );
+        return;
+    }
+    let audio_path = PathBuf::from(audio_path_raw.trim());
+    let audio_path = if audio_path.is_absolute() {
+        audio_path
+    } else {
+        save_dir().join(audio_path)
+    };
+    if !audio_path.is_file() || !inside_save_dir(&audio_path) {
+        json_response(
+            request,
+            json!({"ok": false, "error": "Аудиозапись не найдена в папке записей"}),
+            404,
+        );
+        return;
+    }
+
+    let ctype = header_value(&request, "Content-Type").unwrap_or_default();
+    let is_mp4 = ctype.contains("mp4");
+    let video_ext = if is_mp4 { "mp4" } else { "webm" };
+
+    let dir = audio_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(save_dir);
+    let stem = audio_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "record".to_string());
+    let temp_video = dir.join(format!(".{stem}.video_in.{video_ext}"));
+
+    let mut out = match std::fs::File::create(&temp_video) {
+        Ok(f) => f,
+        Err(e) => {
+            json_response(
+                request,
+                json!({"ok": false, "error": format!("Не удалось создать временный файл: {e}")}),
+                500,
+            );
+            return;
+        }
+    };
+    let mut reader = request.as_reader();
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut total: u64 = 0;
+    loop {
+        match std::io::Read::read(&mut reader, &mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                total += n as u64;
+                if total > MAX_UPLOAD {
+                    drop(out);
+                    let _ = std::fs::remove_file(&temp_video);
+                    json_response(
+                        request,
+                        json!({"ok": false, "error": "Видео больше 4 ГБ"}),
+                        413,
+                    );
+                    return;
+                }
+                if std::io::Write::write_all(&mut out, &buf[..n]).is_err() {
+                    drop(out);
+                    let _ = std::fs::remove_file(&temp_video);
+                    json_response(
+                        request,
+                        json!({"ok": false, "error": "Не удалось записать видео на диск"}),
+                        500,
+                    );
+                    return;
+                }
+            }
+            Err(e) => {
+                drop(out);
+                let _ = std::fs::remove_file(&temp_video);
+                json_response(
+                    request,
+                    json!({"ok": false, "error": format!("Ошибка чтения потока: {e}")}),
+                    500,
+                );
+                return;
+            }
+        }
+    }
+    drop(out);
+
+    if total < 250 {
+        let _ = std::fs::remove_file(&temp_video);
+        eprintln!("[ATTACH_VIDEO] Видеопоток слишком мал ({total} байт), отклонён как пустой");
+        json_response(
+            request,
+            json!({"ok": false, "error": "Видеопоток пуст или не содержит видеокадров"}),
+            400,
+        );
+        return;
+    }
+
+    eprintln!("[ATTACH_VIDEO] Получен видеопоток: {total} байт для аудио {audio_path:?}");
+
+    let final_video = crate::recording::unique_media_path(&dir, &format!("{stem}.{video_ext}"));
+    let ffmpeg_available = std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !ffmpeg_available {
+        let companion =
+            crate::recording::unique_media_path(&dir, &format!("{stem}.video.{video_ext}"));
+        let _ = std::fs::rename(&temp_video, &companion);
+        crate::media_registry::mark_owned(&companion);
+        crate::recording::maybe_autotranscribe(&audio_path.to_string_lossy());
+        json_response(
+            request,
+            json!({
+                "ok": true,
+                "path": companion.to_string_lossy(),
+                "filename": companion.file_name().map(|s| s.to_string_lossy()).unwrap_or_default(),
+                "is_video": true,
+                "warning": "ffmpeg_not_found",
+                "standalone_audio": audio_path.to_string_lossy()
+            }),
+            200,
+        );
+        return;
+    }
+
+    // 1-я попытка: быстрая склейка без перекодирования видео (-c:v copy)
+    let run_ffmpeg = |extra_args: &[&str]| -> std::io::Result<std::process::Output> {
+        let mut cmd = std::process::Command::new("ffmpeg");
+        cmd.arg("-y")
+            .arg("-i")
+            .arg(&temp_video)
+            .arg("-i")
+            .arg(&audio_path)
+            .arg("-map")
+            .arg("0:v:0")
+            .arg("-map")
+            .arg("1:a:0");
+        cmd.args(extra_args);
+        cmd.arg(&final_video);
+        cmd.output()
+    };
+
+    let copy_args = if is_mp4 {
+        vec!["-c:v", "copy", "-c:a", "aac", "-shortest"]
+    } else {
+        vec!["-c:v", "copy", "-c:a", "libopus", "-shortest"]
+    };
+
+    let mut success = false;
+    let mut last_err = String::new();
+
+    match run_ffmpeg(&copy_args) {
+        Ok(o) if o.status.success() && final_video.exists() => {
+            success = true;
+        }
+        Ok(o) => {
+            last_err = String::from_utf8_lossy(&o.stderr)
+                .chars()
+                .take(300)
+                .collect::<String>();
+            eprintln!("ffmpeg copy mux failed: {}", last_err.trim());
+        }
+        Err(e) => {
+            last_err = e.to_string();
+            eprintln!("ffmpeg execution error: {e}");
+        }
+    }
+
+    // 2-я попытка: перекодирование, если прямое копирование контейнера не сработало
+    if !success {
+        let transcode_args = if is_mp4 {
+            vec![
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-crf",
+                "23",
+                "-c:a",
+                "aac",
+                "-shortest",
+            ]
+        } else {
+            vec![
+                "-c:v",
+                "libvpx",
+                "-crf",
+                "30",
+                "-b:v",
+                "2M",
+                "-c:a",
+                "libopus",
+                "-shortest",
+            ]
+        };
+        match run_ffmpeg(&transcode_args) {
+            Ok(o) if o.status.success() && final_video.exists() => {
+                success = true;
+            }
+            Ok(o) => {
+                last_err = String::from_utf8_lossy(&o.stderr)
+                    .chars()
+                    .take(300)
+                    .collect::<String>();
+                eprintln!("ffmpeg transcode mux failed: {}", last_err.trim());
+            }
+            Err(e) => {
+                last_err = e.to_string();
+            }
+        }
+    }
+
+    let _ = std::fs::remove_file(&temp_video);
+
+    if success {
+        eprintln!("[ATTACH_VIDEO] Склейка успешна -> {final_video:?}");
+        let _ = std::fs::remove_file(&audio_path);
+        crate::media_registry::unmark_owned(&audio_path);
+        crate::media_registry::mark_owned(&final_video);
+        crate::recording::maybe_autotranscribe(&final_video.to_string_lossy());
+        json_response(
+            request,
+            json!({
+                "ok": true,
+                "path": final_video.to_string_lossy(),
+                "filename": final_video.file_name().map(|s| s.to_string_lossy()).unwrap_or_default(),
+                "is_video": true
+            }),
+            200,
+        );
+    } else {
+        eprintln!("[ATTACH_VIDEO] Ошибка склейки ffmpeg: {last_err}");
+        json_response(
+            request,
+            json!({
+                "ok": false,
+                "error": format!("ffmpeg: {}", last_err.trim()),
+                "audio_path": audio_path.to_string_lossy()
+            }),
+            500,
+        );
+    }
+}

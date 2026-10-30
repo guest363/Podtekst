@@ -78,6 +78,40 @@
 .mic-strip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mic-name { font-weight: 600; color: var(--text-primary); }
 
+.deck-screen-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  padding: 4px 11px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 160ms ease;
+  line-height: 1.4;
+  user-select: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.deck-screen-chip:hover:not(:disabled) {
+  background: #fff;
+  border-color: var(--border-card);
+  color: var(--text-primary);
+}
+.deck-screen-chip.active {
+  background: rgba(37, 99, 235, 0.09);
+  border-color: rgba(37, 99, 235, 0.35);
+  color: var(--accent-blue);
+}
+.deck-screen-chip:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+
 .btn-record-main {
   width: 100%; padding: 13px 24px; border-radius: var(--radius-pill);
   font-size: 15px; font-weight: 700; border: none; cursor: pointer;

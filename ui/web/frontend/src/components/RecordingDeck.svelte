@@ -5,8 +5,14 @@
   import { toast } from '../lib/toast.svelte.ts'
   import { emit } from '../lib/ui.svelte.ts'
   import { engine, syncEngineFromStatus } from '../lib/transcript.svelte.ts'
+  import {
+    screenRecorder,
+    isScreenCaptureSupported,
+    toggleScreenCapture,
+  } from '../lib/screenRecorder.svelte.ts'
 
   let isRecording = $state(false)
+  let screenSupported = $state(false)
   let timerText = $state('00:00:00')
   let micName = $state('Определение…')
   let micMuted = $state(false)
@@ -47,14 +53,22 @@
     lastToggleTime = now
     try {
       if (!isRecording) {
+        const wantScreen = screenRecorder.enabled && screenSupported
         const r = await fetch('/api/record/start', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mode: settings.recordMode }),
+          body: JSON.stringify({
+            mode: settings.recordMode,
+            screen: wantScreen,
+          }),
         })
         const d = await readJsonSafe(r)
         if (d.ok) {
           setRecordingState(true)
+          if (wantScreen) {
+            screenRecorder.active = true
+            toast('Запись экрана и звука началась')
+          }
           if (d.mic_muted) toast('Микрофон выключен в системе – будет тишина', 'error')
         } else if (d.error === 'Запись уже идёт') {
           setRecordingState(true)
@@ -62,13 +76,26 @@
           toast(d.error || 'Не удалось начать запись', 'error')
         }
       } else {
-        const r = await fetch('/api/record/stop', { method: 'POST' })
+        if (timerInterval) clearInterval(timerInterval)
+
+        const r = await fetch('/api/record/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ defer_autotranscribe: false }),
+        })
         const d = await readJsonSafe(r)
         setRecordingState(false)
+        screenRecorder.active = false
         emit('recordings-changed')
+
         if (d.ok) {
-          if (d.silent) toast('Записана тишина – микрофон ничего не записал. Проверьте звук и источник в системе', 'error')
-          else if (d.filename) toast(`Запись сохранена: ${d.filename}`)
+          if (d.is_video) {
+            toast(`Видеозапись сохранена: ${d.filename || baseName(d.file || '')}`)
+          } else if (d.silent) {
+            toast('Записана тишина – микрофон ничего не записал. Проверьте звук и источник в системе', 'error')
+          } else if (d.filename) {
+            toast(`Запись сохранена: ${d.filename}`)
+          }
         } else if (d.error && d.error !== 'Запись не активна') {
           toast(d.error || 'Не удалось остановить запись', 'error')
         }
@@ -86,12 +113,19 @@
       // Движок един на всё приложение: опрос — запасной канал правды о нём
       // (расшифровку могли запустить авто-режимом, CLI или IPC мимо UI).
       syncEngineFromStatus(!!d.transcribing, String(d.transcribing_file || ''))
+      if (typeof d.screen_recording === 'boolean') {
+        screenRecorder.active = d.screen_recording
+      }
+      if (typeof d.screen_supported === 'boolean') {
+        screenSupported = d.screen_supported && !isMobile
+      }
       // Запись могли включить/выключить извне (глобальный хоткей, IPC,
       // второй клик по ярлыку) — кнопка обязана следовать за реальностью.
       if (d.recording && !isRecording) {
         setRecordingState(true, d.elapsed || 0)
       } else if (!d.recording && isRecording) {
         setRecordingState(false)
+        screenRecorder.active = false
         emit('recordings-changed')
       }
       if (d.device) {
@@ -121,6 +155,7 @@
   }
 
   onMount(() => {
+    screenSupported = isScreenCaptureSupported()
     const statusTimer = setInterval(pollLevels, 400)
     void pollLevels()
     return () => {
@@ -141,7 +176,7 @@
         title={engine.running && engine.file ? engine.file : undefined}
       >
         {#if isRecording}
-          Идёт запись
+          {screenRecorder.active ? 'Идёт запись экрана и звука' : 'Идёт запись'}
         {:else if engine.running}
           Расшифровка {engine.pct}%{engine.file ? ` · ${baseName(engine.file)}` : ''}
         {:else if Object.keys(engine.downloading).length > 0}
@@ -152,6 +187,35 @@
           Готов к записи
         {/if}
       </span>
+
+      {#if !isMobile && screenSupported}
+        <button
+          type="button"
+          class="deck-screen-chip {screenRecorder.enabled ? 'active' : ''}"
+          disabled={isRecording}
+          onclick={() => {
+            toggleScreenCapture()
+          }}
+          title={screenRecorder.enabled
+            ? 'Запись экрана включена (нажмите, чтобы выключить)'
+            : 'Включить запись экрана (нажмите для включения)'}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+            <line x1="8" y1="21" x2="16" y2="21"></line>
+            <line x1="12" y1="17" x2="12" y2="21"></line>
+          </svg>
+          <span>
+            {#if isRecording && screenRecorder.active}
+              Запись экрана идёт
+            {:else if screenRecorder.enabled}
+              Запись экрана включена
+            {:else}
+              Включить запись экрана
+            {/if}
+          </span>
+        </button>
+      {/if}
     </div>
 
     {#if engine.running}
@@ -198,7 +262,10 @@
       </div>
     {/if}
 
-    <button class="btn-record-main {isRecording ? 'active' : 'idle'}" onclick={toggleRecord}>
+    <button
+      class="btn-record-main {isRecording ? 'active' : 'idle'}"
+      onclick={toggleRecord}
+    >
       <span>{isRecording ? 'Остановить запись' : 'Начать запись'}</span>
     </button>
     {#if !isMobile}

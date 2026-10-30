@@ -17,7 +17,8 @@ use serde_json::json;
 
 use self::export_dialog::handle_save_dialog;
 use self::files::{
-    handle_extract_audio, handle_recording_delete, handle_recording_rename, handle_upload,
+    handle_attach_video, handle_extract_audio, handle_recording_delete, handle_recording_rename,
+    handle_upload,
 };
 use self::media::{local_request_allowed, recordings_list, serve_audio_file, serve_media_snippet};
 use self::people::{
@@ -263,6 +264,8 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                             "recordings_dir": save_dir().to_string_lossy(),
                             "mic_level": mic_level,
                             "sys_level": sys_level,
+                            "screen_recording": st.screen_session.is_some(),
+                            "screen_supported": crate::screen::is_screen_capture_supported(),
                             "core": "rust",
                         }),
                         200,
@@ -321,6 +324,12 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                             400,
                         ),
                     }
+                }
+                (tiny_http::Method::Post, "/api/log") => {
+                    let mut s = String::new();
+                    let _ = request.as_reader().read_to_string(&mut s);
+                    eprintln!("[UI_LOG] {s}");
+                    json_response(request, json!({"ok": true}), 200);
                 }
                 (tiny_http::Method::Get, "/api/transcribe/auto") => {
                     json_response(
@@ -688,8 +697,12 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     } else {
                         let body = read_body_to_json(&mut request);
                         let mode = body.get("mode").and_then(|m| m.as_str()).unwrap_or("split");
+                        let screen = body
+                            .get("screen")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
                         let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-                        let res = start_recording_inner(&mut st, mode);
+                        let res = start_recording_inner(&mut st, mode, screen);
                         if res.get("ok").and_then(|x| x.as_bool()) == Some(true) {
                             save_record_mode(mode);
                         }
@@ -697,9 +710,17 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     }
                 }
                 (tiny_http::Method::Post, "/api/record/stop") => {
+                    let body = read_body_to_json(&mut request);
+                    let defer = body
+                        .get("defer_autotranscribe")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
                     let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-                    let res = stop_recording_inner(&mut st);
+                    let res = stop_recording_inner(&mut st, defer);
                     json_response(request, res, 200);
+                }
+                (tiny_http::Method::Post, "/api/recording/attach_video") => {
+                    handle_attach_video(request);
                 }
                 (tiny_http::Method::Get, "/api/transcript") => {
                     serve_transcript(request, &query);

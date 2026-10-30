@@ -388,11 +388,10 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
                         tauri::webview::NewWindowResponse::Deny
                     })
                     // Живой VU-метр до старта записи использует getUserMedia.
-                    .on_permission_request(|_, kind| match kind {
-                        tauri::webview::PermissionKind::Microphone => {
-                            tauri::webview::PermissionResponse::Allow
-                        }
-                        _ => tauri::webview::PermissionResponse::Default,
+                    // Захват экрана использует getDisplayMedia.
+                    .on_permission_request(|_, kind| {
+                        eprintln!("[PERMISSION_REQUEST] Разрешено: kind={kind:?}");
+                        tauri::webview::PermissionResponse::Allow
                     })
                     .build()
             {

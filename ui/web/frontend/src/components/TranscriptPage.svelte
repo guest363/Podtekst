@@ -11,6 +11,7 @@
   import TranscriptDoc from './TranscriptDoc.svelte'
 
   let speakersDrawerOpen = $state(false)
+  let videoExpanded = $state(false)
   let playbackTime = $state(0)
 
   // Расшифровывается ли именно эта запись (или движок занят другой).
@@ -21,6 +22,7 @@
   $effect(() => {
     if (ui.transcriptOpen && ui.currentTranscriptPath) {
       speakersDrawerOpen = false
+      videoExpanded = false
       playbackTime = 0
       void openTranscriptFile(ui.currentTranscriptPath)
     }
@@ -166,18 +168,41 @@
 
     <!-- Строка 2: Слева полная запись, справа чипы и кнопки -->
     <div class="transcript-header-sub">
-      <div class="transcript-sub-player">
+      <div class="transcript-sub-player {videoExpanded ? 'is-expanded' : ''}">
         {#if ui.currentTranscriptIsVideo}
-          <!-- svelte-ignore a11y_media_has_caption -->
-          <video
-            controls
-            preload="metadata"
-            id="transcriptFullMedia"
-            src={`/audio/${encodeURIComponent(baseName(ui.currentTranscriptPath))}`}
-            aria-label={`Смотреть ${baseName(ui.currentTranscriptPath)}`}
-            ontimeupdate={(e) => (playbackTime = e.currentTarget.currentTime)}
-            onseeked={(e) => (playbackTime = e.currentTarget.currentTime)}
-          ></video>
+          <div class="video-player-container">
+            <!-- svelte-ignore a11y_media_has_caption -->
+            <video
+              controls
+              preload="metadata"
+              id="transcriptFullMedia"
+              src={`/audio/${encodeURIComponent(baseName(ui.currentTranscriptPath))}`}
+              aria-label={`Смотреть ${baseName(ui.currentTranscriptPath)}`}
+              ontimeupdate={(e) => (playbackTime = e.currentTarget.currentTime)}
+              onseeked={(e) => (playbackTime = e.currentTarget.currentTime)}
+            ></video>
+            <button
+              type="button"
+              class="btn-video-expand"
+              onclick={() => (videoExpanded = !videoExpanded)}
+              title={videoExpanded ? 'Свернуть видео' : 'Развернуть видео для просмотра слайдов'}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                {#if videoExpanded}
+                  <polyline points="4 14 10 14 10 20"></polyline>
+                  <polyline points="20 10 14 10 14 4"></polyline>
+                  <line x1="14" y1="10" x2="21" y2="3"></line>
+                  <line x1="3" y1="21" x2="10" y2="14"></line>
+                {:else}
+                  <polyline points="15 3 21 3 21 9"></polyline>
+                  <polyline points="9 21 3 21 3 15"></polyline>
+                  <line x1="21" y1="3" x2="14" y2="10"></line>
+                  <line x1="3" y1="21" x2="10" y2="14"></line>
+                {/if}
+              </svg>
+              <span>{videoExpanded ? 'Компактно' : 'Слайды'}</span>
+            </button>
+          </div>
         {:else}
           <SlimPlayer
             src={`/audio/${encodeURIComponent(baseName(ui.currentTranscriptPath))}`}
