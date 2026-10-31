@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.92"
 description = "Нативный захват и декодирование аудио без FFmpeg: Linux — PipeWire/PulseAudio, Windows/macOS — импорт файлов"
 license = "MIT"
-repository = "https://github.com/guest363/meeting-record"
+repository = "https://github.com/guest363/podtekst"
 
 [dependencies]
 serde = { workspace = true }

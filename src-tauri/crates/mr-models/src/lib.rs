@@ -314,10 +314,10 @@ fn download_with_resume(
     };
     let req = if already > 0 {
         ureq::get(url)
-            .set("User-Agent", "MeetingRecorder/0.1")
+            .set("User-Agent", "Podtekst/0.1")
             .set("Range", &format!("bytes={already}-"))
     } else {
-        ureq::get(url).set("User-Agent", "MeetingRecorder/0.1")
+        ureq::get(url).set("User-Agent", "Podtekst/0.1")
     };
     let resp = req
         .timeout(std::time::Duration::from_secs(60))

@@ -113,7 +113,7 @@ fn gsettings(args: &[&str]) -> Result<String, String> {
 #[cfg(all(feature = "tauri-ui", target_os = "linux"))]
 fn setup_gnome_shortcut() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/meeting-recorder/";
+    let path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/podtekst/";
     let base = "org.gnome.settings-daemon.plugins.media-keys";
 
     // Сначала регистрируем путь в списке: GNOME иначе может сбросить ключи.
@@ -147,7 +147,7 @@ fn setup_gnome_shortcut() -> Result<(), String> {
     let schema = format!("org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:{path}");
     // gsettings ждёт GVariant-строку: кавычки вокруг всей команды обязательны.
     let command = format!("'{} --tray --toggle'", exe.display());
-    gsettings(&["set", &schema, "name", "Запись встреч – старт/стоп"])?;
+    gsettings(&["set", &schema, "name", "Подтекст – старт/стоп"])?;
     gsettings(&["set", &schema, "command", &command])?;
     // Комбинацию задаём только при первом создании: ручную настройку не затираем.
     let binding = gsettings(&["get", &schema, "binding"]).unwrap_or_default();
@@ -240,6 +240,7 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
             // и паки читают app_data_dir лениво через env.
             #[cfg(any(target_os = "android", target_os = "ios"))]
             if let Ok(dir) = app.path().app_data_dir() {
+                std::env::set_var("PODTEKST_DATA_DIR", &dir);
                 std::env::set_var("MEETING_RECORDER_DATA_DIR", &dir);
             }
 
@@ -255,7 +256,7 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
                 let icon_idle = tauri::include_image!("icons/32x32.png");
                 let icon_rec = tauri::include_image!("icons/recording-32x32.png");
                 if let Some(tray) = app.tray_by_id("main") {
-                    let _ = tray.set_tooltip(Some("Запись встреч"));
+                    let _ = tray.set_tooltip(Some("Подтекст"));
                     let _ = tray.set_icon_as_template(false);
                     tray.set_menu(Some(menu))?;
                 }
@@ -267,7 +268,7 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
                     if let Some(tray) = app.tray_by_id("main") {
                         let _ = tray.set_icon_as_template(false);
                         let _ = tray.set_icon(Some(icon_rec.clone()));
-                        let _ = tray.set_tooltip(Some("Запись встреч (идёт запись…)"));
+                        let _ = tray.set_tooltip(Some("Подтекст (идёт запись…)"));
                     }
                 }
                 crate::recording::set_recording_state_callback(Box::new(move |recording| {
@@ -278,9 +279,9 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
                         icon_idle.clone()
                     };
                     let tooltip = if recording {
-                        "Запись встреч (идёт запись…)"
+                        "Подтекст (идёт запись…)"
                     } else {
-                        "Запись встреч"
+                        "Подтекст"
                     };
                     let h = handle.clone();
                     let _ = handle.run_on_main_thread(move || {
@@ -375,7 +376,7 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
             });
             if let Err(e) =
                 tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::External(u))
-                    .title("Запись встреч")
+                    .title("Подтекст")
                     .inner_size(WINDOW_W, WINDOW_H)
                     .min_inner_size(WINDOW_MIN_W, WINDOW_MIN_H)
                     .visible(visible)

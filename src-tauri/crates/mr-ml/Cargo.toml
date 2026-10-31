@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.92"
 description = "Математика диаризации v2: мульти-прототипы, Венгерский алгоритм, Margin Gate (ONNX-рантайм за фичей onnx)"
 license = "MIT"
-repository = "https://github.com/guest363/meeting-record"
+repository = "https://github.com/guest363/podtekst"
 
 [dependencies]
 serde = { workspace = true }

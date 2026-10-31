@@ -529,7 +529,7 @@ impl PulseLib {
                 return Err(PulseError("не удалось создать mainloop PulseAudio".into()));
             }
             let api = (self.mainloop_get_api)(mainloop);
-            let name = CString::new("meeting-recorder").expect("имя клиента без нуля");
+            let name = CString::new("podtekst").expect("имя клиента без нуля");
             let ctx = (self.context_new)(api, name.as_ptr());
             if ctx.is_null() {
                 (self.mainloop_free)(mainloop);
@@ -602,7 +602,7 @@ impl PulseLib {
             rate,
             channels: 1,
         };
-        let app = CString::new("meeting-recorder").expect("имя приложения без нуля");
+        let app = CString::new("podtekst").expect("имя приложения без нуля");
         let dev = device.map(|d| CString::new(d).unwrap_or_default());
         let stream = CString::new(stream_name).expect("имя потока без нуля");
         let mut err: c_int = 0;

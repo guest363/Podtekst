@@ -1,4 +1,4 @@
-# Meeting Recorder (Запись встреч) - AGENTS.md
+# Подтекст (Podtekst) - AGENTS.md
 
 Нативное кроссплатформенное приложение для записи встреч и локальной ИИ-расшифровки
 (Linux PipeWire/PulseAudio - живой захват; macOS - CoreAudio: микрофон и BlackHole для системного звука; Windows - импорт файлов, живой захват в разработке).

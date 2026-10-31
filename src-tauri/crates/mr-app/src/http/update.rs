@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 
 use super::json_response;
 
-const REPO: &str = "guest363/meeting-record";
+const REPO: &str = "guest363/podtekst";
 const CACHE_TTL: Duration = Duration::from_secs(6 * 3600);
 
 type Cache = Mutex<Option<(Instant, Value)>>;
@@ -63,7 +63,7 @@ fn fetch_latest() -> Result<Value, String> {
         .get(&url)
         .set(
             "User-Agent",
-            concat!("MeetingRecorder/", env!("CARGO_PKG_VERSION")),
+            concat!("Podtekst/", env!("CARGO_PKG_VERSION")),
         )
         .set("Accept", "application/vnd.github+json")
         .call()
@@ -81,7 +81,7 @@ fn fetch_latest() -> Result<Value, String> {
     Ok(json!({
         "latest": tag.trim_start_matches(['v', 'V']),
         "tag": tag,
-        "url": release.get("html_url").and_then(|x| x.as_str()).unwrap_or("https://github.com/guest363/meeting-record/releases/latest"),
+        "url": release.get("html_url").and_then(|x| x.as_str()).unwrap_or("https://github.com/guest363/podtekst/releases/latest"),
         "name": release.get("name").and_then(|x| x.as_str()).unwrap_or(tag),
     }))
 }
