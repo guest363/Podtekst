@@ -26,7 +26,7 @@
   import SettingsModal from './components/SettingsModal.svelte'
   import DonateModal from './components/DonateModal.svelte'
   import Toasts from './components/Toasts.svelte'
-  import { isMobile } from './lib/api'
+  import { isMobile, remainingMb } from './lib/api'
 
   let introOpen = $state(false)
 
@@ -39,6 +39,7 @@
   const anyCoreDownloading = $derived(
     coreModels.some((m) => engine.downloading[m.id] !== undefined)
   )
+  const coreLeftMb = $derived(coreModels.reduce((s, m) => s + remainingMb(m), 0))
 
   function closeIntro(): void {
     introOpen = false
@@ -212,7 +213,7 @@
         <div class="intro-models-head">
           <span class="intro-models-title">Локальные модели ИИ</span>
           <span class="intro-models-sub">
-            Для локального распознавания русской речи и разделения спикеров скачайте базовые модели (~306 МБ).
+            Для локального распознавания русской речи и разделения спикеров скачайте базовые модели (~{coreLeftMb} МБ).
             Whisper (1.1 ГБ) можно установить позже в Настройках.
           </span>
         </div>
@@ -220,7 +221,7 @@
         {#if coreModels.length > 0}
           <div class="recordings-list">
             {#each coreModels as m (m.id)}
-              {@const sizeMb = Math.round((m.total_size_bytes || 0) / 1048576)}
+              {@const sizeMb = remainingMb(m)}
               {@const pct = engine.downloading[m.id]}
               {@const isQueued = downloadingCore.queued.includes(m.id) && pct === undefined}
               {@const badge = pct !== undefined
@@ -265,7 +266,7 @@
         {:else}
           <button class="btn-secondary" onclick={closeIntro}>Позже</button>
           <button class="btn-primary" onclick={() => void downloadAllCoreModels()}>
-            Скачать базовые модели (~306 МБ)
+            Скачать базовые модели (~{coreLeftMb} МБ)
           </button>
         {/if}
       </div>

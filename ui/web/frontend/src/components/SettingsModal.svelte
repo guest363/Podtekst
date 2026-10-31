@@ -13,7 +13,7 @@
     statusBadge,
     togglePack,
   } from '../lib/settings.svelte.ts'
-  import { isMobile, readJsonSafe } from '../lib/api'
+  import { isMobile, readJsonSafe, remainingMb } from '../lib/api'
   import type { ModelInfo } from '../lib/api'
   import { checkUpdate, update } from '../lib/update.svelte.ts'
   import People from './People.svelte'
@@ -210,7 +210,7 @@
               <div class="empty-note">Не удалось загрузить модели</div>
             {:else}
               {#each settings.models as m (m.id)}
-                {@const sizeMb = Math.round((m.total_size_bytes || 0) / 1048576)}
+                {@const sizeMb = remainingMb(m)}
                 {@const pct = engine.downloading[m.id]}
                 {@const badge = pct !== undefined
                   ? statusBadge('info', `Скачивание ${pct}%`)

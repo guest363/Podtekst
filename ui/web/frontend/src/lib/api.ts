@@ -25,8 +25,19 @@ export interface ModelInfo {
   is_installed: boolean
   has_update?: boolean
   total_size_bytes?: number
+  on_disk_bytes?: number
   license?: string
   description?: string
+}
+
+/**
+ * Сколько мегабайт осталось докачать: разница полного размера и занятого на диске.
+ * Файл с совпавшим размером, но битым содержимым считается скачанным
+ * (точную проверку делает только SHA-256 при скачивании).
+ */
+export function remainingMb(m: ModelInfo): number {
+  const left = Math.max(0, (m.total_size_bytes || 0) - (m.on_disk_bytes || 0))
+  return Math.round(left / 1048576)
 }
 
 export interface SpeakerSample {
