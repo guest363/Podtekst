@@ -168,8 +168,8 @@ cd meeting-record
 | **ERes2NetV2 3D-Speaker** | Отпечатки голоса | ERes2NetV2 17.9M, FP32 (68 МБ) | ~120 МБ | 192-мерные L2-векторы, точность на отрезках от 1.5 с | Apache-2.0 |
 
 <div align="center">
-  <img src="docs/screenshots/settings-models.png" alt="Управление локальными моделями" width="880" />
-  <p><em>Менеджер моделей: проверка SHA-256 и докачка при обрыве</em></p>
+  <img src="docs/screenshots/settings-models.png" alt="Раздел «Компоненты»: модели и ffmpeg" width="880" />
+  <p><em>Настройки → Компоненты: менеджер моделей с проверкой SHA-256 и докачкой при обрыве; там же ставится ffmpeg</em></p>
 </div>
 
 <details>

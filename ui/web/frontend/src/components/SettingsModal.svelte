@@ -99,7 +99,7 @@
         aria-selected={tab === 'models'}
         onclick={() => (tab = 'models')}
       >
-        Модели
+        Компоненты
       </button>
     </div>
 
@@ -204,8 +204,8 @@
           </div>
         </div>
       {:else}
-        <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Модели ИИ">
-          <div class="card-title">Модели ИИ</div>
+        <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Компоненты">
+          <div class="card-title">Модели и компоненты</div>
           <div class="help-text">
             Локальные модели для распознавания речи: GigaAM (русский язык), Whisper (30+ языков),
             Silero VAD (детектор речи) и ERes2NetV2 (разделение голосов). Для первой
