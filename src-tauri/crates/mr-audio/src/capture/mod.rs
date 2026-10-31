@@ -144,14 +144,10 @@ impl CaptureStream {
     ///
     /// Возвращает ошибку, если ОС не смогла стартовать поток — иначе пользователь
     /// узнал бы о пустой записи только на остановке.
-    // На платформах без живого бэкенда (android/ios) вызовов нет — это норма.
+    // На платформах без живого бэкенда через spawn (windows — WASAPI-заглушка,
+    // android/ios) вызовов нет — это норма.
     #[cfg_attr(
-        not(any(
-            target_os = "linux",
-            target_os = "windows",
-            target_os = "macos",
-            target_os = "android"
-        )),
+        not(any(target_os = "linux", target_os = "macos", target_os = "android")),
         allow(dead_code)
     )]
     pub(crate) fn spawn<F>(path: PathBuf, worker: F) -> Result<Self>
