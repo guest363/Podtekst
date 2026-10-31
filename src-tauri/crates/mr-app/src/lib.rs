@@ -1,4 +1,4 @@
-//! Meeting Recorder — нативное ядро.
+//! Подтекст (Podtekst) — нативное ядро.
 //!
 //! Архитектура:
 //! * CLI и IPC на порту `127.0.0.1:48291` (одиночный экземпляр)
@@ -33,9 +33,9 @@ use recording::start_recording_with_notify;
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "meeting-recorder",
+    name = "podtekst",
     version = env!("CARGO_PKG_VERSION"),
-    about = "Локальный рекордер встреч (Rust-ядро)"
+    about = "Подтекст: локальная запись и расшифровка встреч (Rust-ядро)"
 )]
 struct Cli {
     #[arg(long, default_value_t = DEFAULT_HTTP_PORT)]
@@ -166,7 +166,7 @@ pub fn run_cli() {
     if cli.autostart_on {
         let exe = std::env::current_exe()
             .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "meeting-recorder".to_string());
+            .unwrap_or_else(|_| "podtekst".to_string());
         match desktop::install_autostart(&exe) {
             Ok(()) => println!("Автозапуск включён."),
             Err(e) => eprintln!("Не удалось включить автозапуск: {e}"),
@@ -265,7 +265,7 @@ pub fn run_cli() {
     let _ = &_ipc_guard;
 
     // Файловый lock как второй рубеж single-instance
-    let lock_path = app_data_dir().join("meeting-recorder.lock");
+    let lock_path = app_data_dir().join("podtekst.lock");
     let _ = std::fs::create_dir_all(app_data_dir());
     let lock_file = std::fs::OpenOptions::new()
         .create(true)
@@ -291,7 +291,7 @@ pub fn run_cli() {
     }
 
     println!(
-        "Meeting Recorder (Rust-ядро v{}) — HTTP http://127.0.0.1:{}",
+        "Подтекст (Rust-ядро v{}) — HTTP http://127.0.0.1:{}",
         env!("CARGO_PKG_VERSION"),
         cli.port
     ); // Нативное окно Tauri (только CI-сборка с фичей `tauri-ui` и системным WebView)
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn cli_parses_toggle() {
-        let cli = Cli::try_parse_from(["meeting-recorder", "--toggle"]).unwrap();
+        let cli = Cli::try_parse_from(["podtekst", "--toggle"]).unwrap();
         assert!(cli.toggle);
     }
 

@@ -590,13 +590,13 @@ pub(crate) fn start_recording_with_notify(st: &mut RecordingState) -> serde_json
         } else {
             "🔴 Запись началась (микрофон)"
         };
-        crate::desktop::notify_icon("Запись встреч", what, "media-record");
+        crate::desktop::notify_icon("Подтекст", what, "media-record");
     } else {
         let err = res
             .get("error")
             .and_then(|x| x.as_str())
             .unwrap_or("Ошибка начала записи");
-        crate::desktop::notify_icon("Запись встреч", &format!("❌ {err}"), "dialog-error");
+        crate::desktop::notify_icon("Подтекст", &format!("❌ {err}"), "dialog-error");
     }
     res
 }
@@ -610,7 +610,7 @@ pub(crate) fn stop_recording_with_notify(st: &mut RecordingState) -> serde_json:
             .and_then(|x| x.as_str())
             .unwrap_or("Запись сохранена");
         crate::desktop::notify_icon(
-            "Запись встреч",
+            "Подтекст",
             &format!("⏹ Запись сохранена:\n{fname}"),
             "document-save",
         );
@@ -619,7 +619,7 @@ pub(crate) fn stop_recording_with_notify(st: &mut RecordingState) -> serde_json:
             .get("error")
             .and_then(|x| x.as_str())
             .unwrap_or("Ошибка остановки записи");
-        crate::desktop::notify_icon("Запись встреч", &format!("❌ {err}"), "dialog-error");
+        crate::desktop::notify_icon("Подтекст", &format!("❌ {err}"), "dialog-error");
     }
     res
 }

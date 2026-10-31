@@ -12,7 +12,7 @@ fn global_env() -> Arc<Environment> {
     ENV.get_or_init(|| {
         Arc::new(
             ort::environment::init()
-                .with_name("meeting-recorder")
+                .with_name("podtekst")
                 .build()
                 .expect("ort environment"),
         )
