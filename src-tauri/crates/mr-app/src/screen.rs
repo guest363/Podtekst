@@ -1,59 +1,30 @@
 //! Захват экрана на Linux (GNOME Shell Screencast D-Bus).
-//! Управляет записью экрана в отдельном процессе и склейкой с аудио через ffmpeg.
+//! Управление записью - нативный D-Bus-клиент (zbus), внешних интерпретаторов нет.
+//! Склейка видеофайла экрана с аудиозаписью встречи - через ffmpeg.
 
-use std::io::{BufRead, BufReader};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-const HELPER_SCRIPT: &str = r#"
-import sys, signal, time
+const DEST: &str = "org.gnome.Shell.Screencast";
+const PATH: &str = "/org/gnome/Shell/Screencast";
+const IFACE: &str = "org.gnome.Shell.Screencast";
 
-try:
-    import dbus
-    bus = dbus.SessionBus()
-    obj = bus.get_object('org.gnome.Shell.Screencast', '/org/gnome/Shell/Screencast')
-    iface = dbus.Interface(obj, 'org.gnome.Shell.Screencast')
-except Exception as e:
-    sys.stderr.write(f"INIT_ERR:{e}\n")
-    sys.stderr.flush()
-    sys.exit(2)
+fn session_connection() -> Result<zbus::blocking::Connection, String> {
+    zbus::blocking::Connection::session().map_err(|e| format!("Сессия D-Bus недоступна: {e}"))
+}
 
-def on_stop(*args):
-    try:
-        iface.StopScreencast()
-    except Exception:
-        pass
-    sys.exit(0)
-
-signal.signal(signal.SIGTERM, on_stop)
-signal.signal(signal.SIGINT, on_stop)
-
-template = sys.argv[1]
-try:
-    success, filename = iface.Screencast(template, {'draw-cursor': dbus.Boolean(True)})
-    if not success:
-        sys.stderr.write("SCREENCAST_FAILED\n")
-        sys.stderr.flush()
-        sys.exit(1)
-    sys.stdout.write(f"READY:{filename}\n")
-    sys.stdout.flush()
-except Exception as e:
-    sys.stderr.write(f"SCREENCAST_ERR:{e}\n")
-    sys.stderr.flush()
-    sys.exit(1)
-
-try:
-    # Ожидаем закрытия stdin от родительского процесса
-    sys.stdin.read()
-except Exception:
-    pass
-on_stop()
-"#;
+fn screencast_proxy(
+    conn: &zbus::blocking::Connection,
+) -> Result<zbus::blocking::Proxy<'_>, String> {
+    zbus::blocking::Proxy::new(conn, DEST, PATH, IFACE)
+        .map_err(|e| format!("Служба записи экрана недоступна: {e}"))
+}
 
 pub(crate) struct ScreenCaptureSession {
-    child: Child,
+    conn: zbus::blocking::Connection,
     video_path: PathBuf,
 }
 
@@ -65,23 +36,13 @@ pub(crate) fn is_screen_capture_supported() -> bool {
         if !cfg!(target_os = "linux") {
             return false;
         }
-        let check_script = r#"
-import sys
-try:
-    import dbus
-    bus = dbus.SessionBus()
-    obj = bus.get_object('org.gnome.Shell.Screencast', '/org/gnome/Shell/Screencast')
-    sys.exit(0)
-except Exception:
-    sys.exit(1)
-"#;
-        Command::new("python3")
-            .args(["-c", check_script])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
+        session_connection()
+            .and_then(|conn| {
+                let supported: bool = screencast_proxy(&conn)?
+                    .get_property("ScreencastSupported")
+                    .unwrap_or(false);
+                Ok(supported)
+            })
             .unwrap_or(false)
     })
 }
@@ -89,80 +50,34 @@ except Exception:
 impl ScreenCaptureSession {
     /// Запускает запись экрана. Временный файл пишется в системный temp.
     pub(crate) fn start(started_ts: u64) -> Result<Self, String> {
+        let conn = session_connection()?;
         let template = format!("/tmp/.mr_screen_{started_ts}_%d_%t");
-        let mut cmd = Command::new("python3");
-        cmd.args(["-c", HELPER_SCRIPT, &template])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("Не удалось запустить python3: {e}"))?;
-
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| "Не удалось открыть stdout процесса захвата".to_string())?;
-
-        let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
-            .map_err(|e| format!("Ошибка чтения ответа захвата: {e}"))?;
-
-        let line = line.trim();
-        if !line.starts_with("READY:") {
-            let mut err = String::new();
-            if let Some(mut stderr) = child.stderr.take() {
-                use std::io::Read;
-                let _ = stderr.read_to_string(&mut err);
-            }
-            let _ = child.kill();
-            return Err(format!(
-                "Служба записи экрана не запустилась: {} {}",
-                line,
-                err.trim()
-            ));
+        let options: HashMap<&str, zbus::zvariant::Value> =
+            HashMap::from([("draw-cursor", zbus::zvariant::Value::from(true))]);
+        let (success, filename): (bool, String) = {
+            let proxy = screencast_proxy(&conn)?;
+            proxy
+                .call("Screencast", &(&template, &options))
+                .map_err(|e| format!("Служба записи экрана не запустилась: {e}"))?
+        };
+        if !success {
+            return Err("GNOME Shell не начал запись экрана".to_string());
         }
-
-        let video_path = PathBuf::from(line.trim_start_matches("READY:").trim());
+        let video_path = PathBuf::from(filename);
         eprintln!("[SCREEN] Запись экрана запущена: {video_path:?}");
 
-        Ok(Self { child, video_path })
+        Ok(Self { conn, video_path })
     }
 
     /// Останавливает запись экрана и ожидает финализации видеофайла.
-    pub(crate) fn stop(mut self) -> Result<PathBuf, String> {
+    pub(crate) fn stop(self) -> Result<PathBuf, String> {
+        let proxy = screencast_proxy(&self.conn)?;
+        proxy
+            .call::<_, _, bool>("StopScreencast", &())
+            .map_err(|e| format!("Не удалось остановить запись экрана: {e}"))?;
         eprintln!("[SCREEN] Остановка записи экрана...");
-        // Закрываем stdin, чтобы скрипт завершил запись и вызвал StopScreencast
-        drop(self.child.stdin.take());
 
-        // Ждём завершения процесса до 7 секунд
-        let start_wait = std::time::Instant::now();
-        let mut exited = false;
-        while start_wait.elapsed() < Duration::from_secs(7) {
-            match self.child.try_wait() {
-                Ok(Some(status)) => {
-                    eprintln!("[SCREEN] Процесс захвата завершился со статусом {status:?}");
-                    exited = true;
-                    break;
-                }
-                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
-                Err(e) => {
-                    eprintln!("[SCREEN] Ошибка ожидания процесса захвата: {e}");
-                    break;
-                }
-            }
-        }
-
-        if !exited {
-            eprintln!("[SCREEN] Процесс захвата не завершился вовремя, отправляю kill");
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
-
-        // Ждем пока файл появится и закроется
+        // Файл закрывается службой сразу после ответа; подстраховка на случай лагов.
         let video_path = self.video_path.clone();
         for _ in 0..30 {
             if video_path.is_file() {
@@ -188,8 +103,10 @@ impl ScreenCaptureSession {
 
 impl Drop for ScreenCaptureSession {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        // P7: сессия без явного stop() не оставляет GNOME Shell писать видео.
+        if let Ok(proxy) = screencast_proxy(&self.conn) {
+            let _ = proxy.call::<_, _, bool>("StopScreencast", &());
+        }
     }
 }
 
