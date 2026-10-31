@@ -242,6 +242,8 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
             if let Ok(dir) = app.path().app_data_dir() {
                 std::env::set_var("MEETING_RECORDER_DATA_DIR", &dir);
             }
+            // Папка поиска ffmpeg должна учесть уже установленный env.
+            mr_audio::tools::set_extra_bin_dir(crate::config::app_data_dir().join("bin"));
 
             // Трей с меню — десктоп-эксклюзив (открыть окно / старт-стоп / выйти).
             #[cfg(not(any(target_os = "android", target_os = "ios")))]

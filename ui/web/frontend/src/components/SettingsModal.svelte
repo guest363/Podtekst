@@ -4,8 +4,11 @@
   import { downloadModel, engine, ensureStream } from '../lib/transcript.svelte.ts'
   import {
     createPack,
+    downloadFfmpeg,
     exportPack,
+    ffmpeg,
     hasSystemAudio,
+    loadFfmpeg,
     loadModels,
     setAutoTranscribe,
     setRecordMode,
@@ -21,6 +24,9 @@
   let tab = $state<'record' | 'people' | 'voices' | 'models'>('record')
 
   on('models-changed', () => void loadModels())
+  // Компонент живёт всё время приложения: одно чтение статуса на старте,
+  // дальше состояние обновляет опрос после нажатия «Скачать».
+  void loadFfmpeg()
 
   function onWindowKey(e: KeyboardEvent): void {
     if (ui.settingsOpen && !ui.donateOpen && e.key === 'Escape') {
@@ -206,6 +212,47 @@
             расшифровки скачайте Silero VAD и одну модель распознавания.
           </div>
           <div class="recordings-list" id="modelsListSettings">
+            {#if !isMobile && ffmpeg.known && (!ffmpeg.available || ffmpeg.downloading || ffmpeg.error)}
+              <div class="rec-item">
+                <div class="rec-info">
+                  <span class="rec-name">ffmpeg (обработка видео)</span>
+                  <span class="rec-meta">
+                    Нужен для записи экрана, импорта видео (MP4, MKV, MOV, WEBM) и экспорта MP3.
+                    Для записи звука и расшифровки не требуется.
+                  </span>
+                  {#if ffmpeg.error}
+                    <span class="rec-meta">
+                      Автоскачивание не удалось ({ffmpeg.error}). Установите вручную:
+                      <a href={ffmpeg.manualUrl} target="_blank" rel="noreferrer">gyan.dev/ffmpeg/builds</a>
+                      — положите ffmpeg.exe и ffprobe.exe в
+                      %APPDATA%\MeetingRecorder\bin или в PATH.
+                    </span>
+                  {/if}
+                  {#if ffmpeg.downloading}
+                    <div
+                      class="vu-track progress-track"
+                      role="progressbar"
+                      aria-valuenow={ffmpeg.pct}
+                      aria-label="Прогресс скачивания ffmpeg"
+                    >
+                      <div class="vu-bar" style={`width: ${ffmpeg.pct}%`}></div>
+                    </div>
+                  {/if}
+                </div>
+                <div class="rec-actions">
+                  {@html ffmpeg.downloading
+                    ? statusBadge('info', `Скачивание ${ffmpeg.pct}%`)
+                    : statusBadge('warn', 'Не установлен')}
+                  <button
+                    class="btn-secondary btn-sm"
+                    disabled={ffmpeg.downloading}
+                    onclick={() => void downloadFfmpeg()}
+                  >
+                    Скачать
+                  </button>
+                </div>
+              </div>
+            {/if}
             {#if settings.models.length === 0}
               <div class="empty-note">Не удалось загрузить модели</div>
             {:else}

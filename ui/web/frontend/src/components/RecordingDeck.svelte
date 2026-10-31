@@ -3,7 +3,7 @@
   import { baseName, isMobile, readJsonSafe } from '../lib/api'
   import { hasSystemAudio, settings } from '../lib/settings.svelte.ts'
   import { toast } from '../lib/toast.svelte.ts'
-  import { emit } from '../lib/ui.svelte.ts'
+  import { emit, ui } from '../lib/ui.svelte.ts'
   import { engine, syncEngineFromStatus } from '../lib/transcript.svelte.ts'
   import {
     screenRecorder,
@@ -214,6 +214,18 @@
               Включить запись экрана
             {/if}
           </span>
+        </button>
+      {:else if settings.platform === 'windows'}
+        <!-- Платформа умеет захват, но нет ffmpeg: подсказка вместо скрытого чипа -->
+        <button
+          type="button"
+          class="deck-screen-chip"
+          onclick={() => {
+            ui.settingsOpen = true
+          }}
+          title="ffmpeg нужен для записи экрана — установите его в Настройках → Модели ИИ"
+        >
+          <span>Запись экрана: нужен ffmpeg</span>
         </button>
       {/if}
     </div>

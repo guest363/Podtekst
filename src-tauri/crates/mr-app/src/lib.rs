@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 
 mod config;
 mod desktop;
+mod ffmpeg_dl;
 mod http;
 mod ipc;
 mod media_registry;
@@ -120,6 +121,10 @@ pub fn mobile_main() {
 /// Полный CLI-вход десктопа (флаги, IPC-команды, автозапуск, окно/браузер).
 pub fn run_cli() {
     let cli = Cli::parse();
+
+    // ffmpeg/ffprobe: сначала bin внутри данных приложения (кнопка «Скачать»),
+    // затем PATH. Повторно регистрируется в tauri-сетапе после установки env на мобильных.
+    mr_audio::tools::set_extra_bin_dir(crate::config::app_data_dir().join("bin"));
 
     // Локальная ONNX-расшифровка из CLI (потоковый вывод JSON-событий в stdout)
     #[cfg(feature = "onnx")]

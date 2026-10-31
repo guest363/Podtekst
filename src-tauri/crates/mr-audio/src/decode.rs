@@ -183,7 +183,7 @@ pub fn media_info(path: &Path) -> Option<(f64, usize)> {
     }
     // shortcut: ffprobe — внешний бинарник; без него длительность не-WAV
     // догрузит плеер из метаданных. upgrade: symphonia для MP3/M4A/OGG.
-    let out = std::process::Command::new("ffprobe")
+    let out = std::process::Command::new(crate::tools::ffprobe_path())
         .args([
             "-v",
             "error",
@@ -255,7 +255,7 @@ pub fn has_audio_track(path: &Path) -> bool {
     }
 
     // Для видео-контейнеров (MKV, WebM, MOV, AVI) или MP4 с кодеками вне symphonia — ffprobe:
-    if let Ok(out) = std::process::Command::new("ffprobe")
+    if let Ok(out) = std::process::Command::new(crate::tools::ffprobe_path())
         .args([
             "-v",
             "error",
@@ -276,7 +276,7 @@ pub fn has_audio_track(path: &Path) -> bool {
     }
 
     // Фолбэк на ffmpeg, если ffprobe не установлен в системе:
-    if let Ok(out) = std::process::Command::new("ffmpeg")
+    if let Ok(out) = std::process::Command::new(crate::tools::ffmpeg_path())
         .args([
             "-nostdin",
             "-v",
@@ -336,7 +336,7 @@ fn ffmpeg_extract_to_wav(path: &Path) -> Result<std::path::PathBuf> {
             .map(|d| d.as_nanos())
             .unwrap_or(0)
     ));
-    let out = std::process::Command::new("ffmpeg")
+    let out = std::process::Command::new(crate::tools::ffmpeg_path())
         .args([
             "-nostdin",
             "-v",

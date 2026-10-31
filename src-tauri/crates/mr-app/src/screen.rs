@@ -5,8 +5,13 @@
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+#[cfg(target_os = "linux")]
 use std::sync::OnceLock;
+#[cfg(windows)]
+use std::sync::Mutex;
 use std::time::Duration;
+#[cfg(windows)]
+use std::time::Instant;
 
 #[cfg(not(windows))]
 const HELPER_SCRIPT: &str = r#"
@@ -59,11 +64,23 @@ pub(crate) struct ScreenCaptureSession {
     video_path: PathBuf,
 }
 
+#[cfg(target_os = "linux")]
 static SUPPORTED_CACHE: OnceLock<bool> = OnceLock::new();
 
 /// Проверяет, доступна ли служба захвата экрана на текущей системе.
 pub(crate) fn is_screen_capture_supported() -> bool {
-    *SUPPORTED_CACHE.get_or_init(platform_support_probe)
+    #[cfg(windows)]
+    {
+        windows_encoder().is_some()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        *SUPPORTED_CACHE.get_or_init(platform_support_probe)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        false
+    }
 }
 
 /// Проба доступности захвата для конкретной ОС (python3 + служба GNOME).
@@ -89,12 +106,6 @@ except Exception:
         .unwrap_or(false)
 }
 
-/// Проба доступности захвата для конкретной ОС: нужен ffmpeg с кодировщиком H.264.
-#[cfg(windows)]
-fn platform_support_probe() -> bool {
-    windows_encoder().is_some()
-}
-
 /// Заглушка для прочих платформ (macOS и др.): захват экрана не реализован.
 #[cfg(not(any(target_os = "linux", windows)))]
 fn platform_support_probe() -> bool {
@@ -102,23 +113,45 @@ fn platform_support_probe() -> bool {
 }
 
 /// Кодировщик H.264 из установленного ffmpeg: libx264, иначе аппаратный h264_mf.
+///
+/// Успех кэшируется навсегда, неудача перепроверяется не чаще раза в 30 с:
+/// ffmpeg мог появиться после установки из интерфейса — чип записи экрана
+/// должен включиться без перезапуска приложения.
 #[cfg(windows)]
 fn windows_encoder() -> Option<&'static str> {
-    static ENCODER_CACHE: OnceLock<Option<&'static str>> = OnceLock::new();
-    *ENCODER_CACHE.get_or_init(|| {
-        let out = Command::new("ffmpeg")
-            .args(["-hide_banner", "-encoders"])
-            .output()
-            .ok()?;
-        let text = String::from_utf8_lossy(&out.stdout);
-        if text.contains("libx264") {
-            Some("libx264")
-        } else if text.contains("h264_mf") {
-            Some("h264_mf")
-        } else {
-            None
+    static ENCODER_CACHE: Mutex<(Option<&'static str>, Option<Instant>)> =
+        Mutex::new((None, None));
+    const RETRY_AFTER: Duration = Duration::from_secs(30);
+    let mut cache = ENCODER_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(encoder) = cache.0 {
+        return Some(encoder);
+    }
+    if let Some(t) = cache.1 {
+        if t.elapsed() < RETRY_AFTER {
+            return None;
         }
-    })
+    }
+    cache.1 = Some(Instant::now());
+    let found = probe_windows_encoder();
+    cache.0 = found;
+    found
+}
+
+/// Разовая проба `ffmpeg -encoders` (поиск через `<данные>/bin`, затем PATH).
+#[cfg(windows)]
+fn probe_windows_encoder() -> Option<&'static str> {
+    let out = Command::new(mr_audio::tools::ffmpeg_path())
+        .args(["-hide_banner", "-encoders"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    if text.contains("libx264") {
+        Some("libx264")
+    } else if text.contains("h264_mf") {
+        Some("h264_mf")
+    } else {
+        None
+    }
 }
 
 impl ScreenCaptureSession {
@@ -130,7 +163,7 @@ impl ScreenCaptureSession {
         };
         let video_path = std::env::temp_dir().join(format!(".mr_screen_{started_ts}.mp4"));
 
-        let mut cmd = Command::new("ffmpeg");
+        let mut cmd = Command::new(mr_audio::tools::ffmpeg_path());
         cmd.args([
             "-hide_banner",
             "-loglevel",
@@ -302,7 +335,7 @@ pub(crate) fn mux_screen_and_audio(
     eprintln!("[SCREEN] Склейка видео {video_path:?} и аудио {audio_path:?} -> {final_path:?}");
 
     // 1-я попытка: быстрое копирование видеопотока h264 + кодирование aac
-    let mut cmd = Command::new("ffmpeg");
+    let mut cmd = Command::new(mr_audio::tools::ffmpeg_path());
     cmd.arg("-y")
         .arg("-i")
         .arg(video_path)
@@ -330,7 +363,7 @@ pub(crate) fn mux_screen_and_audio(
 
     // 2-я попытка: перекодирование, если прямое копирование контейнера не сработало
     eprintln!("[SCREEN] Прямое копирование не сработало, запускаю перекодирование...");
-    let mut cmd = Command::new("ffmpeg");
+    let mut cmd = Command::new(mr_audio::tools::ffmpeg_path());
     cmd.arg("-y")
         .arg("-i")
         .arg(video_path)
@@ -399,7 +432,7 @@ mod windows_tests {
         let size = std::fs::metadata(&video).expect("файл видео существует").len();
         assert!(size > 1000, "видео слишком маленькое: {size} байт");
         // Файл должен быть валидным контейнером mp4, а не просто непустым
-        if let Ok(out) = Command::new("ffprobe")
+        if let Ok(out) = Command::new(mr_audio::tools::ffprobe_path())
             .args([
                 "-v",
                 "error",
