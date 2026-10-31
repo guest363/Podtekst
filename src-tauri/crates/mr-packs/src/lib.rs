@@ -119,7 +119,9 @@ pub fn packs_root_dir(app_data: &Path) -> PathBuf {
 
 /// Стандартная директория данных приложения (XDG / Application Support / %APPDATA%).
 pub fn default_app_data_dir() -> PathBuf {
-    if let Ok(v) = std::env::var("PODTEKST_DATA_DIR").or_else(|_| std::env::var("MEETING_RECORDER_DATA_DIR")) {
+    if let Ok(v) =
+        std::env::var("PODTEKST_DATA_DIR").or_else(|_| std::env::var("MEETING_RECORDER_DATA_DIR"))
+    {
         let p = PathBuf::from(v);
         let _ = fs::create_dir_all(&p);
         return p;
@@ -127,7 +129,9 @@ pub fn default_app_data_dir() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         if let Ok(home) = std::env::var("HOME") {
-            let base = PathBuf::from(home).join("Library").join("Application Support");
+            let base = PathBuf::from(home)
+                .join("Library")
+                .join("Application Support");
             let p = base.join("Podtekst");
             let old = base.join("MeetingRecorder");
             if !p.exists() && old.exists() {
