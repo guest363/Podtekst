@@ -5,10 +5,10 @@
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-#[cfg(target_os = "linux")]
-use std::sync::OnceLock;
 #[cfg(windows)]
 use std::sync::Mutex;
+#[cfg(target_os = "linux")]
+use std::sync::OnceLock;
 use std::time::Duration;
 #[cfg(windows)]
 use std::time::Instant;
@@ -119,8 +119,7 @@ fn platform_support_probe() -> bool {
 /// должен включиться без перезапуска приложения.
 #[cfg(windows)]
 fn windows_encoder() -> Option<&'static str> {
-    static ENCODER_CACHE: Mutex<(Option<&'static str>, Option<Instant>)> =
-        Mutex::new((None, None));
+    static ENCODER_CACHE: Mutex<(Option<&'static str>, Option<Instant>)> = Mutex::new((None, None));
     const RETRY_AFTER: Duration = Duration::from_secs(30);
     let mut cache = ENCODER_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(encoder) = cache.0 {
@@ -429,7 +428,9 @@ mod windows_tests {
         let session = ScreenCaptureSession::start(started).expect("старт записи экрана");
         std::thread::sleep(Duration::from_secs(2));
         let video = session.stop().expect("остановка записи экрана");
-        let size = std::fs::metadata(&video).expect("файл видео существует").len();
+        let size = std::fs::metadata(&video)
+            .expect("файл видео существует")
+            .len();
         assert!(size > 1000, "видео слишком маленькое: {size} байт");
         // Файл должен быть валидным контейнером mp4, а не просто непустым
         if let Ok(out) = Command::new(mr_audio::tools::ffprobe_path())
@@ -444,10 +445,7 @@ mod windows_tests {
             .arg(&video)
             .output()
         {
-            assert!(
-                out.status.success(),
-                "ffprobe не прочитал видео {video:?}"
-            );
+            assert!(out.status.success(), "ffprobe не прочитал видео {video:?}");
         }
         let _ = std::fs::remove_file(&video);
     }

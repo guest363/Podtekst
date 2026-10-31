@@ -17,12 +17,13 @@
 - `src/capture/linux.rs` и `src/capture/pulse.rs` - захват звука в Linux через PipeWire и PulseAudio с динамической загрузкой `libpulse.so.0`.
 - `src/capture/macos/` - нативный захват CoreAudio HAL через AudioUnit (микрофон и системный драйвер BlackHole).
 - `src/capture/android.rs` - захват аудиопотока в Android через `libaaudio.so`.
-- `src/capture/windows.rs` - захват системного звука через WASAPI Loopback.
+- `src/capture/windows.rs` - нативный захват WASAPI (shared mode): микрофон и loopback системного звука, без внешних утилит; через крейт `windows` (уже в графе через Tauri).
 
 ## 3. Состояние и известные ограничения
 
 - **Linux PipeWire monitor:** системный звук пишется через мониторный источник текущего устройства вывода (`.monitor`).
 - **macOS Loopback:** прямой захват звука приложений в macOS невозможен без виртуального аудиодрайвера (BlackHole 2ch). Если драйвер не установлен, второй канал честно отключается.
+- **Windows Loopback:** WASAPI loopback отдаёт пакеты только во время воспроизведения — дорожка системного звука добирается тишиной по таймеру, чтобы совпадать с микрофоном по времени.
 
 ## 4. Локальная верификация
 

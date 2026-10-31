@@ -127,13 +127,12 @@ fn try_install(url: &str, dest_bin: &Path) -> Result<(), String> {
     let mut buf = [0u8; 256 * 1024];
     let mut done = 0u64;
     loop {
-        let n = reader
-            .read(&mut buf)
-            .map_err(|e| format!("чтение: {e}"))?;
+        let n = reader.read(&mut buf).map_err(|e| format!("чтение: {e}"))?;
         if n == 0 {
             break;
         }
-        file.write_all(&buf[..n]).map_err(|e| format!("запись: {e}"))?;
+        file.write_all(&buf[..n])
+            .map_err(|e| format!("запись: {e}"))?;
         done += n as u64;
         set_progress(done, total);
     }
@@ -146,8 +145,8 @@ fn try_install(url: &str, dest_bin: &Path) -> Result<(), String> {
     let _ = std::fs::remove_dir_all(&tmp_dir);
     std::fs::create_dir_all(&tmp_dir).map_err(|e| format!("папка: {e}"))?;
     extract_zip(&tmp_zip, &tmp_dir)?;
-    let (ff, fp) = find_bins(&tmp_dir)
-        .ok_or_else(|| "в архиве нет ffmpeg.exe/ffprobe.exe".to_string())?;
+    let (ff, fp) =
+        find_bins(&tmp_dir).ok_or_else(|| "в архиве нет ffmpeg.exe/ffprobe.exe".to_string())?;
 
     std::fs::create_dir_all(dest_bin).map_err(|e| format!("bin: {e}"))?;
     std::fs::copy(&ff, dest_bin.join("ffmpeg.exe")).map_err(|e| format!("копия ffmpeg: {e}"))?;

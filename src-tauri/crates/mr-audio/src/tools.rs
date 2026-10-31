@@ -87,7 +87,11 @@ mod tests {
 
         let dir = std::env::temp_dir().join(format!("mr-tools-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let exe = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+        let exe = if cfg!(windows) {
+            "ffmpeg.exe"
+        } else {
+            "ffmpeg"
+        };
         std::fs::write(dir.join(exe), b"stub").unwrap();
         set_extra_bin_dir(dir.clone());
         assert_eq!(ffmpeg_path(), dir.join(exe));
