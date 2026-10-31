@@ -220,21 +220,18 @@
                     Нужен для записи экрана, импорта видео (MP4, MKV, MOV, WEBM) и экспорта MP3.
                     Для записи звука и расшифровки не требуется.
                   </span>
-                  {#if settings.platform === 'windows'}
-                    {#if ffmpeg.error}
-                      <span class="rec-meta">
-                        Автоскачивание не удалось ({ffmpeg.error}). Установите вручную:
+                  {#if ffmpeg.error}
+                    <span class="rec-meta">
+                      Автоскачивание не удалось ({ffmpeg.error}). Вручную:
+                      {#if settings.platform === 'windows'}
                         <a href={ffmpeg.manualUrl} target="_blank" rel="noreferrer">gyan.dev/ffmpeg/builds</a>
                         — положите ffmpeg.exe и ffprobe.exe в
                         %APPDATA%\MeetingRecorder\bin или в PATH.
-                      </span>
-                    {/if}
-                  {:else}
-                    <!-- Автоскачивание сделано только для Windows: на других ОС — пакетный менеджер -->
-                    <span class="rec-meta">
-                      {settings.platform === 'darwin'
-                        ? 'Установите ffmpeg через Homebrew: brew install ffmpeg'
-                        : 'Установите ffmpeg из репозитория дистрибутива: sudo apt install ffmpeg (или dnf/pacman/zypper)'}
+                      {:else if settings.platform === 'darwin'}
+                        brew install ffmpeg
+                      {:else}
+                        sudo apt install ffmpeg (или dnf/pacman/zypper)
+                      {/if}
                     </span>
                   {/if}
                   {#if ffmpeg.downloading}
@@ -252,15 +249,13 @@
                   {@html ffmpeg.downloading
                     ? statusBadge('info', `Скачивание ${ffmpeg.pct}%`)
                     : statusBadge('warn', 'Не установлен')}
-                  {#if settings.platform === 'windows'}
-                    <button
-                      class="btn-secondary btn-sm"
-                      disabled={ffmpeg.downloading}
-                      onclick={() => void downloadFfmpeg()}
-                    >
-                      Скачать
-                    </button>
-                  {/if}
+                  <button
+                    class="btn-secondary btn-sm"
+                    disabled={ffmpeg.downloading}
+                    onclick={() => void downloadFfmpeg()}
+                  >
+                    Скачать
+                  </button>
                 </div>
               </div>
             {/if}
