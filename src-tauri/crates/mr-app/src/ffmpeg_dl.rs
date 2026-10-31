@@ -28,8 +28,10 @@ struct Group {
 fn sources() -> Vec<Group> {
     const GYAN_WIN: &str = "https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip";
     const BTBN_WIN: &str = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
-    const JVS_AMD64: &str = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz";
-    const JVS_ARM64: &str = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz";
+    const JVS_AMD64: &str =
+        "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz";
+    const JVS_ARM64: &str =
+        "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz";
     const BTBN_LINUX: &str = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz";
     const EM_FFMPEG: &str = "https://evermeet.cx/ffmpeg/ffmpeg-9.0.2.zip";
     const EM_FFPROBE: &str = "https://evermeet.cx/ffmpeg/ffprobe-9.0.2.zip";
@@ -241,14 +243,20 @@ fn try_install(url: &str, wanted: &[&str], dest_bin: &Path) -> Result<Vec<String
             .unwrap_or(false);
         if !runs {
             let _ = std::fs::remove_file(&dest);
-            return Err(format!("{name} скопирован, но не запускается (битая сборка?)"));
+            return Err(format!(
+                "{name} скопирован, но не запускается (битая сборка?)"
+            ));
         }
         installed.push(name.to_string());
     }
 
     let _ = std::fs::remove_file(&tmp_zip);
     let _ = std::fs::remove_dir_all(&tmp_dir);
-    eprintln!("[FFMPEG] Установлено в {}: {}", dest_bin.display(), installed.join(", "));
+    eprintln!(
+        "[FFMPEG] Установлено в {}: {}",
+        dest_bin.display(),
+        installed.join(", ")
+    );
     Ok(installed)
 }
 
