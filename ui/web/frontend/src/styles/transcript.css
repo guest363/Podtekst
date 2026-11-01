@@ -179,8 +179,6 @@
 .btn-text-short { display: none; }
 .btn-text-full { display: inline; }
 .speakers-drawer-overlay { display: none; }
-.speakers-drawer-top { display: none; }
-.transcript-speakers-wrap { display: contents; }
 .transcript-progress {
   display: flex; flex-direction: column; gap: 6px;
   background: var(--bg-inset);
@@ -224,6 +222,9 @@
 }
 
 .transcript-speakers-wrap {
+  display: flex;
+  flex-direction: column;
+  width: 275px;
   overflow: hidden;
   opacity: 0;
   pointer-events: none;

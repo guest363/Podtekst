@@ -1,5 +1,5 @@
 /* ---------- Адаптив ---------- */
-@media (max-width: 940px) {
+@media (max-width: 720px) {
   body {
     padding: 6px 12px 24px;
   }
@@ -9,8 +9,8 @@
   .modal-overlay { padding: 12px 8px; }
   .modal-box { padding: 16px; }
   .modal-top { flex-wrap: wrap; }
-  .rec-item { grid-template-columns: 1fr; }
-  .rec-actions { grid-column: 1; grid-row: auto; width: 100%; }
+  .rec-item:not(.rec-card) { grid-template-columns: 1fr; }
+  .rec-item:not(.rec-card) .rec-actions { grid-column: 1; grid-row: auto; width: 100%; }
 }
 
 @media (max-width: 640px) {

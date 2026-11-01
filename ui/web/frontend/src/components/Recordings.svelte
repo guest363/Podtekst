@@ -183,16 +183,6 @@
               <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z" />
             </svg>
           </button>
-          <button
-            class="rec-delete-icon"
-            title={rec.owned ? 'Удалить запись' : 'Убрать из приложения'}
-            aria-label={rec.owned ? `Удалить запись ${rec.name}` : `Убрать запись ${rec.name} из приложения`}
-            onclick={() => (deleteTarget = rec)}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v6M14 11v6" />
-            </svg>
-          </button>
         </span>
       {/if}
       <span class="rec-meta">
@@ -228,6 +218,16 @@
       </button>
       <button class="btn-secondary btn-sm" onclick={() => openTranscript(rec.path, rec.is_video)}>
         Текст и спикеры
+      </button>
+      <button
+        class="rec-delete-icon"
+        title={rec.owned ? 'Удалить запись' : 'Убрать из приложения'}
+        aria-label={rec.owned ? `Удалить запись ${rec.name}` : `Убрать запись ${rec.name} из приложения`}
+        onclick={() => (deleteTarget = rec)}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v6M14 11v6" />
+        </svg>
       </button>
     </div>
   </div>
@@ -430,12 +430,11 @@
   }
   .rec-drawer-list { overflow-y: auto; flex: 1; min-height: 0; padding-right: 2px; }
   .rec-delete-icon {
-    margin-left: auto;
     flex-shrink: 0;
     border: none; background: transparent;
     color: var(--text-faint); cursor: pointer;
     padding: 6px; border-radius: var(--radius-sm);
-    min-width: 30px; min-height: 30px;
+    min-width: 28px; min-height: 28px;
     display: inline-flex; align-items: center; justify-content: center;
     opacity: 0.55;
     transition: opacity 140ms ease, color 140ms ease, background 140ms ease;
