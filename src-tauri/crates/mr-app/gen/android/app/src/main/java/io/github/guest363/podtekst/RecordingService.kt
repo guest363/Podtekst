@@ -1,4 +1,4 @@
-package io.github.guest363.meetingrecord
+package io.github.guest363.podtekst
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -23,9 +23,9 @@ import androidx.core.app.NotificationCompat
  */
 class RecordingService : Service() {
   companion object {
-    const val ACTION_RECORDING = "io.github.guest363.meetingrecord.RECORDING"
-    const val ACTION_PROCESSING = "io.github.guest363.meetingrecord.PROCESSING"
-    private const val CHANNEL_ID = "meeting_recorder_work"
+    const val ACTION_RECORDING = "io.github.guest363.podtekst.RECORDING"
+    const val ACTION_PROCESSING = "io.github.guest363.podtekst.PROCESSING"
+    private const val CHANNEL_ID = "podtekst_work"
     private const val NOTIFICATION_ID = 1001
 
     @JvmStatic
@@ -38,7 +38,7 @@ class RecordingService : Service() {
     fun stop(context: Context) {
       runCatching {
         context.stopService(Intent(context, RecordingService::class.java))
-      }.onFailure { Log.w("MeetingRecorder", "stop foreground service: $it") }
+      }.onFailure { Log.w("Podtekst", "stop foreground service: $it") }
     }
 
     private fun start(context: Context, processing: Boolean) {
@@ -54,7 +54,7 @@ class RecordingService : Service() {
       }.onFailure {
         // Из фона Android запрещает старт FGS. Не роняем приложение: запись
         // в таком состоянии всё равно не получит микрофон, но UI покажет статус.
-        Log.e("MeetingRecorder", "start foreground service: $it")
+        Log.e("Podtekst", "start foreground service: $it")
       }
     }
   }
@@ -67,7 +67,7 @@ class RecordingService : Service() {
     super.onCreate()
     createChannel()
     val pm = getSystemService(POWER_SERVICE) as PowerManager
-    wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MeetingRecorder:work").apply {
+    wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Podtekst:work").apply {
       setReferenceCounted(false)
       acquire()
     }

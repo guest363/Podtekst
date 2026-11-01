@@ -1,4 +1,4 @@
-package io.github.guest363.meetingrecord
+package io.github.guest363.podtekst
 
 import android.Manifest
 import android.content.pm.ActivityInfo
