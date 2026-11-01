@@ -19,10 +19,8 @@
   let micRms = $state(0)
   let sysRms = $state(0)
 
-  // Шкала для полоски (RMS в квадрате — ближе к восприятию) и честные −60…0 дБFS для обоих каналов.
-  let micLevel = $derived(Math.min(100, Math.round(Math.sqrt(micRms) * 100)))
+  // Честные −60…0 дБFS для обоих каналов звука.
   let micDb = $derived(micRms > 0.001 ? Math.max(-60, Math.round(20 * Math.log10(micRms))) : -60)
-  let sysLevel = $derived(Math.min(100, Math.round(Math.sqrt(sysRms) * 100)))
   let sysDb = $derived(sysRms > 0.001 ? Math.max(-60, Math.round(20 * Math.log10(sysRms))) : -60)
 
   const hotkeyLabel = /Mac/i.test(navigator.userAgent) ? 'Cmd+Shift+R' : 'Ctrl+Shift+R'
@@ -249,7 +247,7 @@
     {#if engine.running}
       <div class="deck-transcribe" aria-label="Ход расшифровки">
         <div
-          class="vu-track progress-track"
+          class="progress-track"
           role="progressbar"
           aria-valuenow={engine.pct}
           aria-valuemin="0"
