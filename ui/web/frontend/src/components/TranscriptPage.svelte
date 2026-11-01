@@ -42,6 +42,14 @@
     }
   })
 
+  // Анализ спикеров: индикатор неразмеченных голосов для кнопки тумблера
+  let hasUnmatchedSpeakers = $derived(
+    Boolean(transcript.speakers?.length && transcript.speakers.some((s) => !s.matched)),
+  )
+  let allSpeakersMatched = $derived(
+    Boolean(transcript.speakers?.length && transcript.speakers.every((s) => s.matched)),
+  )
+
 
 
   function pluralUtterances(n: number): string {
@@ -242,7 +250,11 @@
           <button
             class="btn-secondary btn-sm btn-speakers-toggle {speakersOpen ? 'active' : ''}"
             aria-label="Спикеры встречи"
-            title={speakersOpen ? 'Скрыть панель спикеров' : 'Показать панель спикеров'}
+            title={speakersOpen
+              ? 'Скрыть панель спикеров'
+              : (hasUnmatchedSpeakers
+                ? 'Показать спикеров (есть нераспознанные голоса)'
+                : 'Показать панель спикеров')}
             onclick={toggleSpeakers}
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -252,6 +264,11 @@
               <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
             </svg>
             <span>Спикеры{#if transcript.speakers.length > 0}&nbsp;· {transcript.speakers.length}{/if}</span>
+            {#if hasUnmatchedSpeakers}
+              <span class="spk-notify-dot warn" aria-hidden="true" title="Есть нераспознанные спикеры"></span>
+            {:else if allSpeakersMatched}
+              <span class="spk-notify-dot ok" aria-hidden="true" title="Все спикеры распознаны"></span>
+            {/if}
           </button>
 
           <button

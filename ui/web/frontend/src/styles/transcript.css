@@ -259,6 +259,20 @@
   border-color: rgba(37, 99, 235, 0.35);
   color: var(--accent-blue);
 }
+.spk-notify-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+  margin-left: 1px;
+}
+.spk-notify-dot.warn {
+  background: var(--accent-amber, #d97706);
+}
+.spk-notify-dot.ok {
+  background: var(--accent-ok, #0e7a55);
+}
 
 /* Колонки: абсолютно открытые, никаких внешних 1px рамок и белых карточек-коробок */
 .transcript-speakers, .transcript-doc {

@@ -287,16 +287,18 @@
       </button>
     </div>
   </div>
-  <div class="help-text">
-    {#if isMobile}
-      Поддерживаются аудиофайлы: <b>MP3, WAV, M4A, OGG, FLAC</b>. Видео на телефоне не импортируется.
-    {:else}
-      Поддерживаются аудио и видео: <b>MP3, WAV, MP4, MKV, MOV, WEBM</b>. Файл можно перетащить сюда.
-    {/if}
-  </div>
   <div class="recordings-list">
     {#if items.length === 0}
-      <div class="empty-note">Записей пока нет</div>
+      <div class="empty-note">
+        Записей пока нет
+        <span class="empty-sub">
+          {#if isMobile}
+            Поддерживаются аудиофайлы: MP3, WAV, M4A, OGG, FLAC.
+          {:else}
+            Перетащите файл записи сюда или нажмите «Выбрать файл» (MP3, WAV, MP4, MKV, MOV).
+          {/if}
+        </span>
+      </div>
     {:else}
       {#each visible as rec (rec.path)}
         {@render recRow(rec)}

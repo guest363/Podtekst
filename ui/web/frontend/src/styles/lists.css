@@ -171,6 +171,14 @@ body:has(.bottom-player-bar) {
   padding-bottom: 72px;
 }
 
+.empty-sub {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
 @media (max-width: 600px) {
   .rec-item.rec-card {
     grid-template-columns: 85px minmax(0, 1fr);
