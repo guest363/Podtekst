@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Meeting Recorder — Social Preview (Minimal Open Style)</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@700;800&family=Inter:wght@400;500;600;700&display=swap');
+
+    :root {
+      /* Палитра из tokens.css приложения: чистый белый, мягкий инсет, без кричащих цветов */
+      --bg-canvas: #ffffff;
+      --bg-block: #f8fafc;
+      --border-subtle: #edf2f7;
+      --border-divider: #f1f5f9;
+      
+      --text-primary: #0f1e33;
+      --text-secondary: #334155;
+      --text-muted: #64748b;
+      --text-faint: #94a3b8;
+      
+      --accent-green: #0e7a55;
+      --accent-blue: #2456c6;
+
+      --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-display: 'Plus Jakarta Sans', var(--font-sans);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      width: 1280px;
+      height: 640px;
+      overflow: hidden;
+      background-color: var(--bg-canvas);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .canvas {
+      width: 1280px;
+      height: 640px;
+      padding: 48px 56px;
+      display: grid;
+      grid-template-columns: 510px 1fr;
+      gap: 48px;
+      background-color: var(--bg-canvas);
+      align-items: center;
+    }
+
+    /* Левая колонка — Открытый редакционный стиль */
+    .left-panel {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      height: 500px;
+    }
+
+    /* Шапка: логотип + название, без цветных чипов */
+    .app-brand-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .app-logo-img {
+      width: 56px;
+      height: 56px;
+      border-radius: 13px;
+      flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(15, 30, 51, 0.06);
+    }
+
+    .app-brand-text {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .brand-title-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .app-brand-title {
+      font-family: var(--font-display);
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+      line-height: 1;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-green);
+      display: inline-block;
+    }
+
+    /* Спокойная текстовая строка вместо цветных плашек */
+    .brand-subtitle-line {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      color: var(--text-muted);
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+
+    .main-title {
+      font-family: var(--font-display);
+      font-size: 38px;
+      font-weight: 800;
+      line-height: 1.16;
+      letter-spacing: -0.03em;
+      color: var(--text-primary);
+      margin-bottom: 14px;
+    }
+
+    .main-desc {
+      font-size: 15.5px;
+      line-height: 1.5;
+      color: var(--text-muted);
+      font-weight: 400;
+      max-width: 480px;
+    }
+
+    /* Футер: чистая текстовая строка без кнопок и рамок */
+    .footer-section {
+      padding-top: 18px;
+      border-top: 1px solid var(--border-divider);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .platform-text-line {
+      font-size: 13px;
+      color: var(--text-secondary);
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .platform-text-line strong {
+      color: var(--text-primary);
+      font-weight: 700;
+    }
+    .platform-meta {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      color: var(--text-faint);
+    }
+
+    /* Правая колонка — Открытые блоки без тяжелых рамок и обводок */
+    .bento-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 240px 240px;
+      gap: 16px;
+      height: 496px;
+    }
+
+    .bento-block {
+      background: var(--bg-block);
+      border-radius: 12px;
+      padding: 20px 22px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .block-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      font-weight: 600;
+      color: var(--text-faint);
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }
+
+    .block-title {
+      font-family: var(--font-display);
+      font-size: 17.5px;
+      font-weight: 800;
+      color: var(--text-primary);
+      line-height: 1.22;
+      letter-spacing: -0.015em;
+      margin-bottom: 6px;
+    }
+
+    .block-desc {
+      font-size: 13px;
+      line-height: 1.42;
+      color: var(--text-muted);
+    }
+
+    .block-footer {
+      margin-top: auto;
+      padding-top: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    /* Минималистичные полосы уровней (спокойные серые/синие) */
+    .meter-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+    }
+    .meter-label {
+      color: var(--text-secondary);
+      width: 85px;
+      font-weight: 600;
+    }
+    .meter-bar {
+      flex: 1;
+      height: 5px;
+      background: #e2e8f0;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .meter-db {
+      color: var(--text-muted);
+      width: 44px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Строка плеера без рамок */
+    .player-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    .player-line strong {
+      color: var(--accent-blue);
+      font-weight: 600;
+    }
+    .player-subbar {
+      height: 4px;
+      background: #e2e8f0;
+      border-radius: 999px;
+      position: relative;
+      margin-top: 2px;
+    }
+
+    /* Голосовой профиль спикера */
+    .speaker-line {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: 12.5px;
+    }
+    .speaker-name {
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .speaker-meta {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--accent-green);
+      font-weight: 600;
+    }
+    .speaker-sub {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-faint);
+    }
+
+    /* Список форматов через деликатные точки */
+    .formats-text {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .formats-text span {
+      color: var(--text-faint);
+      margin: 0 3px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="canvas">
+    
+    <!-- ЛЕВАЯ КОЛОНКА -->
+    <div class="left-panel">
+      <div>
+        <!-- Шапка -->
+        <div class="app-brand-header">
+          <img class="app-logo-img" src="../icon.png" alt="Подтекст" />
+          <div class="app-brand-text">
+            <div class="brand-title-row">
+              <span class="app-brand-title">Подтекст</span>
+              <span class="status-dot"></span>
+            </div>
+            <div class="brand-subtitle-line">podtekst • 0 байт в сеть • 100% локально на CPU</div>
+          </div>
+        </div>
+
+        <h1 class="main-title">
+          Локальная запись созвонов<br>и видео экрана со звуком.
+        </h1>
+
+        <p class="main-desc">
+          Стереосплит двух каналов, распознавание русской речи на SOTA-модели, промотка видео кликом по тексту и узнавание спикеров без облака.
+        </p>
+      </div>
+
+      <div class="footer-section">
+        <div class="platform-text-line">
+          <strong>Linux First (PipeWire)</strong> • macOS • Windows • Android
+        </div>
+        <div class="platform-meta">
+          Rust + Tauri v2 • Один бинарник ~25 МБ • GigaAM-v3
+        </div>
+      </div>
+    </div>
+
+    <!-- ПРАВАЯ КОЛОНКА (Мягкие блоки без обводок) -->
+    <div class="bento-grid">
+      
+      <!-- Блок 1: Аудио -->
+      <div class="bento-block">
+        <div>
+          <div class="block-header">
+            <span>01 / АУДИО</span>
+            <span>СТЕРЕО</span>
+          </div>
+          <div class="block-title">2 канала: Микрофон + Звонок</div>
+          <div class="block-desc">Канал L — микрофон, Канал R — система. Голоса не накладываются друг на друга.</div>
+        </div>
+
+        <div class="block-footer">
+          <div class="meter-line">
+            <span class="meter-label">Микрофон L</span>
+            <div class="meter-bar">
+              <div style="width: 72%; height: 100%; background: #0e7a55; border-radius: 999px;"></div>
+            </div>
+            <span class="meter-db">-12 dB</span>
+          </div>
+          <div class="meter-line">
+            <span class="meter-label">Звонок R</span>
+            <div class="meter-bar">
+              <div style="width: 56%; height: 100%; background: #2456c6; border-radius: 999px;"></div>
+            </div>
+            <span class="meter-db">-18 dB</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Блок 2: Видео + Текст -->
+      <div class="bento-block">
+        <div>
+          <div class="block-header">
+            <span>02 / ВИДЕО + ТЕКСТ</span>
+            <span>ИНТЕРАКТИВ</span>
+          </div>
+          <div class="block-title">Клик по реплике → Видео</div>
+          <div class="block-desc">Стенограмма как оглавление: клик по фразе перематывает видеозапись к моменту речи.</div>
+        </div>
+
+        <div class="block-footer">
+          <div class="player-line">
+            <span><strong>[14:32]</strong> Спикер 1: Схема БД</span>
+            <span style="font-size: 11px; color: #2456c6;">ПЕРЕХОД</span>
+          </div>
+          <div class="player-subbar">
+            <div style="width: 58%; height: 100%; background: #2456c6; border-radius: 999px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Блок 3: Биометрия -->
+      <div class="bento-block">
+        <div>
+          <div class="block-header">
+            <span>03 / БИОМЕТРИЯ</span>
+            <span>3D-SPEAKER</span>
+          </div>
+          <div class="block-title">Узнавание спикеров</div>
+          <div class="block-desc">Локальная база голосов: программа помнит постоянных коллег и узнает их на звонках.</div>
+        </div>
+
+        <div class="block-footer">
+          <div class="speaker-line">
+            <span class="speaker-name">Алексей К. (Коллега)</span>
+            <span class="speaker-meta">Узнан 99%</span>
+          </div>
+          <div class="speaker-sub">192-dim вектор ERes2NetV2 • Офлайн</div>
+        </div>
+      </div>
+
+      <!-- Блок 4: Экспорт -->
+      <div class="bento-block">
+        <div>
+          <div class="block-header">
+            <span>04 / ЭКСПОРТ</span>
+            <span>ОТКРЫТЫЕ ФОРМАТЫ</span>
+          </div>
+          <div class="block-title">Markdown и Печать</div>
+          <div class="block-desc">Готовый структурированный протокол со спикерами, таймкодами и печатью в PDF.</div>
+        </div>
+
+        <div class="block-footer">
+          <div class="formats-text">
+            .md <span>•</span> .transcript.json <span>•</span> .txt <span>•</span> PDF
+          </div>
+          <div style="font-size: 11.5px; color: var(--text-faint);">Для Obsidian, Notion и базы знаний</div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+</body>
+</html>

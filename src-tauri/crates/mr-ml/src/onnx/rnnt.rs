@@ -14,7 +14,6 @@ use super::session::{NamedTensors, OrtSession, ShapeDataI64};
 
 pub const BLANK_ID: i64 = 1024;
 
-/// Состояние LSTM-декодера: (выход dec, hidden h, cell c), каждый [1,1,320].
 pub type DecoderState = (Vec<f32>, Vec<f32>, Vec<f32>);
 
 pub struct GigaAM {
@@ -71,7 +70,6 @@ impl GigaAM {
         enc_in.insert("enc".to_string(), (vec![1i64, 768, 1], enc_frame.to_vec()));
         let mut dec_in = HashMap::new();
         dec_in.insert("dec".to_string(), (vec![1i64, 320, 1], dec_vec.to_vec()));
-        // joint принимает оба входа одним прогоном
         enc_in.extend(dec_in);
         let out = self.joint.run_f32(enc_in)?;
         out.into_values()
@@ -97,7 +95,6 @@ impl GigaAM {
         Ok((get("dec")?, get("h")?, get("c")?))
     }
 
-    /// Распознаёт один VAD-сегмент (16 кГц моно), возвращает текст.
     /// Фичи: 64-dim HTK mel (см. `features::nemo_mel`), упаковка [1, 64, T] (NeMo channel-first).
     pub fn transcribe_segment(&mut self, samples: &[f32]) -> Result<String, String> {
         self.transcribe_segment_penalized(samples, 0.0)
@@ -194,7 +191,6 @@ fn argmax(v: &[f32]) -> usize {
     best
 }
 
-/// Склейка sentencepiece-кусков: `▁` → пробел.
 fn decode_pieces(ids: &[i64], vocab: &[String]) -> String {
     let mut s = String::new();
     for &id in ids {

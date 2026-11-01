@@ -19,7 +19,6 @@ pub const AAUDIO_DIRECTION_INPUT: i32 = 1;
 pub const AAUDIO_FORMAT_PCM_I16: i32 = 1;
 pub const AAUDIO_FORMAT_PCM_FLOAT: i32 = 2;
 
-/// Минимальный FFI к AAudio (`libaaudio.so`).
 struct AAudioLib {
     handle: *mut c_void,
     create_builder: unsafe extern "C" fn(*mut *mut c_void) -> i32,
@@ -151,7 +150,6 @@ fn aaudio_lib() -> Result<&'static AAudioLib> {
     })
 }
 
-/// Каталог устройств Android: встроенный микрофон.
 pub fn devices() -> DeviceCatalog {
     DeviceCatalog {
         platform: "android".to_string(),
@@ -167,7 +165,6 @@ pub fn devices() -> DeviceCatalog {
     }
 }
 
-/// Запустить поток захвата микрофона через AAudio.
 pub fn start_stream(
     kind: StreamKind,
     _device: Option<&str>,
@@ -283,7 +280,7 @@ fn spawn_stream(
         let source_rate = (actual_rate.max(1)) as u32;
         let target_rate = rate;
         let frames_per_read = 1024usize;
-        let timeout_ns = 100_000_000i64; // 100 мс
+        let timeout_ns = 100_000_000i64;
 
         let mut i16_buf = if actual_format == AAUDIO_FORMAT_PCM_I16 {
             vec![0i16; frames_per_read * channels]

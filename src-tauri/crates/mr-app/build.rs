@@ -85,7 +85,7 @@ fn embed_macos_info_plist() {
     }
     println!("cargo:rerun-if-changed={}", plist.display());
     println!(
-        "cargo:rustc-link-arg-bin=meeting-recorder=-Wl,-sectcreate,__TEXT,__info_plist,{}",
+        "cargo:rustc-link-arg-bin=podtekst=-Wl,-sectcreate,__TEXT,__info_plist,{}",
         plist.display()
     );
 }

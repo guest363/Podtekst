@@ -1,9 +1,3 @@
-//! Реестр и обновление ИИ-моделей (порт `services/model_manager.py`).
-//!
-//! * Декларативный `models-manifest.json` с версиями, размерами и SHA-256
-//! * Скачивание с докачкой (HTTP Range → `.part`), зеркалами и верификацией SHA-256
-//! * Атомарная активация и `state.json`
-
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -107,7 +101,6 @@ pub struct ModelStatus {
     pub embedding_space: Option<String>,
 }
 
-/// Каталог моделей `<app_data>/models` (создаётся при необходимости).
 pub fn models_dir(app_data: &Path) -> PathBuf {
     let d = app_data.join("models");
     let _ = fs::create_dir_all(&d);
@@ -142,7 +135,6 @@ pub fn save_state(app_data: &Path, state: &ModelsState) -> Result<()> {
     Ok(())
 }
 
-/// Статус каждой модели манифеста: установлена ли, есть ли обновление.
 pub fn get_models_status(app_data: &Path, manifest: &ModelsManifest) -> Vec<ModelStatus> {
     let state = load_state(app_data);
     let root = models_dir(app_data);
@@ -183,7 +175,6 @@ pub fn get_models_status(app_data: &Path, manifest: &ModelsManifest) -> Vec<Mode
         .collect()
 }
 
-/// SHA-256 файла (hex, нижний регистр).
 pub fn sha256_of_file(path: &Path) -> Result<String> {
     let mut f = fs::File::open(path)?;
     let mut hasher = Sha256::new();
@@ -211,7 +202,6 @@ pub struct ProgressEvent {
     pub message: String,
 }
 
-/// Скачивание модели с докачкой, зеркалами и проверкой SHA-256.
 pub fn download_or_update_model(
     app_data: &Path,
     manifest: &ModelsManifest,
@@ -229,7 +219,6 @@ pub fn download_or_update_model(
     for f in &spec.files {
         let target = dir.join(&f.filename);
         let part = dir.join(format!("{}.part", f.filename));
-        // Пропуск, если файл уже валиден
         if target.exists() {
             if !is_placeholder_sha(&f.sha256) {
                 if sha256_of_file(&target)
@@ -314,10 +303,10 @@ fn download_with_resume(
     };
     let req = if already > 0 {
         ureq::get(url)
-            .set("User-Agent", "MeetingRecorder/0.1")
+            .set("User-Agent", "Podtekst/0.1")
             .set("Range", &format!("bytes={already}-"))
     } else {
-        ureq::get(url).set("User-Agent", "MeetingRecorder/0.1")
+        ureq::get(url).set("User-Agent", "Podtekst/0.1")
     };
     let resp = req
         .timeout(std::time::Duration::from_secs(60))
@@ -444,7 +433,6 @@ mod tests {
         );
         save_state(&tmp, &st).unwrap();
         assert_eq!(load_state(&tmp).installed.len(), 1);
-        // После атомарной записи не остаётся временных файлов.
         assert!(!models_dir(&tmp).join("state.json.tmp").exists());
         let _ = std::fs::remove_dir_all(&tmp);
     }

@@ -1,5 +1,3 @@
-//! Экспорт и импорт пакетов: `.voicepack.zip` и `.voicepack.json`.
-
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -11,7 +9,6 @@ use super::{
     write_json_atomic, PackManifest, PacksError, Result,
 };
 
-/// Экспорт пакета в `.voicepack.zip` (или `.voicepack.json` при расширении .json).
 pub fn export_pack(
     app_data: &Path,
     pack_id: &str,
@@ -78,7 +75,6 @@ pub fn export_pack(
     Ok(out_path.to_path_buf())
 }
 
-/// Импорт пакета из `.voicepack.zip` / `.zip` / `.json`.
 pub fn import_pack(
     app_data: &Path,
     source: &Path,
@@ -188,7 +184,6 @@ fn import_zip(app_data: &Path, source: &Path, merge_into_default: bool) -> Resul
     for (fname, blob) in snippet_blobs {
         fs::write(target.join("snippets").join(fname), blob)?;
     }
-    // Гарантируем манифест и синхронизируем id с именем директории.
     let mut m = super::manifest::read_manifest(&target)?;
     m.id = pid.clone();
     m.enabled = true;
@@ -250,7 +245,6 @@ fn import_json(
     pack_info_of(app_data, &pid)
 }
 
-/// Уникальный id пакета из подсказки (slug + числовой суффикс при коллизии).
 fn unique_pid(app_data: &Path, hint: &str) -> String {
     let mut pid = slugify(hint);
     if pid == "default" {
@@ -373,7 +367,6 @@ mod tests {
         let (_g, app) = tmp_app("vp");
         let target = crate::packs_root_dir(&app).join("default");
         std::fs::create_dir_all(&target).unwrap();
-        // Повреждение: массив вместо объекта v2 — раньше паниковало.
         std::fs::write(target.join("voiceprints.json"), r#"[1,2]"#).unwrap();
         let new_vp = json!({"version": 2, "profiles": [{"name": "Голос"}]});
         merge_voiceprints(&target, &new_vp).unwrap();

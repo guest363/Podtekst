@@ -1,6 +1,5 @@
 import { isVideoPath } from './api'
 
-// Общее состояние модалок, шторок и текущей расшифровки.
 export const ui = $state({
   settingsOpen: false,
   donateOpen: false,

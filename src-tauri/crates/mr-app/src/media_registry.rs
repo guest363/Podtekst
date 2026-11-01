@@ -1,5 +1,3 @@
-//! Реестр медиафайлов: какие создал сам рекордер и какие убраны из списка.
-//!
 //! Свои записи можно удалять вместе с расшифровкой. Всё, что попало в папку
 //! записей извне (положили вручную, принесли из другого приложения), при
 //! удалении из UI только скрывается: исходный файл на диске остаётся.
@@ -158,7 +156,6 @@ pub(crate) fn load_registry() -> Registry {
     load()
 }
 
-/// Запомнить файл, созданный рекордером.
 pub(crate) fn mark_owned(path: &Path) {
     let key = normalize(path);
     update(|reg| {
@@ -184,7 +181,6 @@ pub(crate) fn mark_imported(path: &Path) {
     });
 }
 
-/// Убрать внешний файл из списка, не трогая сам файл.
 pub(crate) fn hide(path: &Path) {
     let key = normalize(path);
     update(|reg| {
@@ -194,7 +190,6 @@ pub(crate) fn hide(path: &Path) {
     });
 }
 
-/// Переименование: путь переезжает и в списке своих, и в списке скрытых.
 pub(crate) fn path_renamed(old: &Path, new: &Path) {
     let from = normalize(old);
     let to = normalize(new);

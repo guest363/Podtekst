@@ -77,7 +77,7 @@ pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
     };
 
     let mut chans: Vec<Vec<f32>> = (0..n_ch).map(|_| Vec::new()).collect();
-    // Буферы вне цикла: аллокация на каждый пакет стоила тысячи malloc на файл.
+    // Буферы вне цикла: аллокация на каждый пакет — это тысячи malloc на файл.
     let mut opus_pcm = vec![0.0f32; 0usize];
     let mut pcm_buf: Option<symphonia::core::audio::SampleBuffer<f32>> = None;
     loop {
@@ -141,7 +141,6 @@ pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
         .collect())
 }
 
-/// Декодирует аудиодорожку в моно 16 кГц (усреднение каналов).
 pub fn decode_to_mono_16k(path: &Path) -> Result<Vec<f32>> {
     let chans = decode_to_channels_16k(path)?;
     let n = chans.iter().map(|c| c.len()).max().unwrap_or(0);
@@ -154,7 +153,6 @@ pub fn decode_to_mono_16k(path: &Path) -> Result<Vec<f32>> {
     Ok(mono)
 }
 
-/// Видео-контейнеры: определение расширения для автоматического извлечения аудиодорожки.
 pub fn is_video_path(path: &Path) -> bool {
     let ext = path
         .extension()
@@ -212,7 +210,6 @@ pub fn media_info(path: &Path) -> Option<(f64, usize)> {
     Some((duration?, channels))
 }
 
-/// Проверяет наличие аудиодорожки в медиафайле без полного декодирования.
 pub fn has_audio_track(path: &Path) -> bool {
     if !path.exists() {
         return false;
@@ -306,7 +303,6 @@ pub fn has_audio_track(path: &Path) -> bool {
     false
 }
 
-/// Длительность медиа без полного декодирования (см. [`media_info`]).
 pub fn media_duration_sec(path: &Path) -> Option<f64> {
     media_info(path).map(|(d, _)| d)
 }

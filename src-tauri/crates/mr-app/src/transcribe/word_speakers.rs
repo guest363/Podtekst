@@ -1,5 +1,3 @@
-//! Пословная атрибуция спикеров по размеченным фрагментам диаризации.
-
 use std::collections::BTreeMap;
 
 use super::Utterance;
@@ -121,7 +119,6 @@ impl DiarIntervalTree {
         Self { segments, root }
     }
 
-    /// Спикер с наибольшей точной площадью пересечения и взвешенный силуэт.
     pub(crate) fn assign_dominant_speaker(&self, start: f64, end: f64) -> Option<(String, f64)> {
         let root = self.root.as_ref()?;
         let mut scores: BTreeMap<&str, (f64, f64)> = BTreeMap::new();
@@ -143,7 +140,6 @@ impl DiarIntervalTree {
     }
 }
 
-/// Делит ASR-реплику строго на стыках слов с разными доминирующими спикерами.
 pub(crate) fn split_utterance_by_word_speakers(
     utterance: &Utterance,
     tree: &DiarIntervalTree,

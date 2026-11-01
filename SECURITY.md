@@ -9,7 +9,7 @@
 
 Пожалуйста, сообщайте **приватно** через GitHub Security Advisories:
 
-https://github.com/guest363/meeting-record/security/advisories/new
+https://github.com/guest363/podtekst/security/advisories/new
 
 Не открывайте публичный issue с деталями уязвимости. Мы отвечаем в течение
 14 дней; по согласованию сообщим статус исправления и упомянем автора

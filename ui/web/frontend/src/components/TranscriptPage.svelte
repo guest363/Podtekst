@@ -29,11 +29,9 @@
   let videoExpanded = $state(false)
   let playbackTime = $state(0)
 
-  // Расшифровывается ли именно эта запись (или движок занят другой).
   let thisRunning = $derived(engine.running && engine.file === ui.currentTranscriptPath)
   let otherRunning = $derived(engine.running && engine.file !== ui.currentTranscriptPath)
 
-  // Загрузка транскрипта при переходе на страницу.
   $effect(() => {
     if (ui.transcriptOpen && ui.currentTranscriptPath) {
       videoExpanded = false
@@ -49,9 +47,6 @@
   let allSpeakersMatched = $derived(
     Boolean(transcript.speakers?.length && transcript.speakers.every((s) => s.matched)),
   )
-
-
-
   function pluralUtterances(n: number): string {
     const rem10 = n % 10
     const rem100 = n % 100
@@ -172,7 +167,6 @@
 
 <div class="page transcript-page">
   <header class="transcript-page-header">
-    <!-- Строка 1: Заголовок и кнопка закрытия на одной линии -->
     <div class="transcript-header-top">
       <h1 class="transcript-page-title" title={ui.currentTranscriptPath}>
         {baseName(ui.currentTranscriptPath)}
@@ -187,7 +181,6 @@
       </button>
     </div>
 
-    <!-- Строка 2: Слева полная запись, справа чипы и кнопки -->
     <div class="transcript-header-sub">
       <div class="transcript-sub-player {videoExpanded ? 'is-expanded' : ''}">
         {#if ui.currentTranscriptIsVideo}

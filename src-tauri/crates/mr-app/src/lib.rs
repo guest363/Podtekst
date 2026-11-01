@@ -1,14 +1,3 @@
-//! Meeting Recorder — нативное ядро.
-//!
-//! Архитектура:
-//! * CLI и IPC на порту `127.0.0.1:48291` (одиночный экземпляр)
-//! * Встроенный HTTP REST API для Web UI (`ui/web/frontend`)
-//! * Локальный ONNX-конвейер расшифровки (Silero VAD, GigaAM, Whisper, ERes2NetV2)
-//! * База голосовых отпечатков в формате Voice Packs (`packs/`)
-//!
-//! Структура: [`config`] — настройки, [`ipc`] — одиночный экземпляр,
-//! [`recording`] — запись, [`http`] — REST API, [`transcribe`] — ONNX-пайплайн.
-
 use clap::Parser;
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -33,9 +22,9 @@ use recording::start_recording_with_notify;
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "meeting-recorder",
+    name = "podtekst",
     version = env!("CARGO_PKG_VERSION"),
-    about = "Локальный рекордер встреч (Rust-ядро)"
+    about = "Подтекст: локальная запись и расшифровка встреч (Rust-ядро)"
 )]
 struct Cli {
     #[arg(long, default_value_t = DEFAULT_HTTP_PORT)]
@@ -66,12 +55,10 @@ struct Cli {
     autostart_on: bool,
     #[arg(long)]
     autostart_off: bool,
-    /// Расшифровать аудиофайл локальным ONNX-конвейером и выйти
     #[arg(long, value_name = "FILE")]
     transcribe: Option<PathBuf>,
     #[arg(long, default_value = "auto")]
     engine: String,
-    /// Язык Whisper («ru», «en»…); auto – определить автоматически
     #[arg(long, default_value = "auto")]
     language: String,
     #[arg(long, default_value = "Я")]
@@ -103,9 +90,6 @@ fn opener_url(url: &str) {
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android")))]
     let _ = std::process::Command::new("xdg-open").arg(url).spawn();
 }
-/// Мобильная точка входа (Android/iOS): то же HTTP-ядро + окно WebView
-/// Tauri, но без CLI/IPC/трея — их на мобильных платформах нет.
-/// JNI-обёртку генерирует `tauri::mobile_entry_point`.
 #[cfg(feature = "tauri-ui")]
 #[cfg_attr(
     any(target_os = "android", target_os = "ios"),
@@ -117,11 +101,9 @@ pub fn mobile_main() {
     tauri_shell::run_tauri_window(state, DEFAULT_HTTP_PORT, true);
 }
 
-/// Полный CLI-вход десктопа (флаги, IPC-команды, автозапуск, окно/браузер).
 pub fn run_cli() {
     let cli = Cli::parse();
 
-    // Локальная ONNX-расшифровка из CLI (потоковый вывод JSON-событий в stdout)
     #[cfg(feature = "onnx")]
     if let Some(ref audio) = cli.transcribe {
         let opts = transcribe::TranscribeOptions {
@@ -162,11 +144,10 @@ pub fn run_cli() {
         std::process::exit(2);
     }
 
-    // Управление автозапуском (кроссплатформенно, без Tauri)
     if cli.autostart_on {
         let exe = std::env::current_exe()
             .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "meeting-recorder".to_string());
+            .unwrap_or_else(|_| "podtekst".to_string());
         match desktop::install_autostart(&exe) {
             Ok(()) => println!("Автозапуск включён."),
             Err(e) => eprintln!("Не удалось включить автозапуск: {e}"),
@@ -187,13 +168,11 @@ pub fn run_cli() {
     recording::shutdown::install(state.clone());
     let mut start_on_launch = false;
 
-    // IPC-команды второму экземпляру
     if cli.toggle {
         if let Some(resp) = send_ipc("TOGGLE") {
             println!("{resp}");
             return;
         }
-        // Приложение ещё не запущено: стартуем и сразу начинаем запись.
         start_on_launch = true;
     }
     if cli.start {
@@ -241,7 +220,6 @@ pub fn run_cli() {
         return;
     }
 
-    // Одиночный экземпляр: пробуем занять IPC-порт, иначе выходим
     let ipc_listener = TcpListener::bind(format!("127.0.0.1:{IPC_PORT}"));
     let _ipc_guard = match ipc_listener {
         Ok(l) => {
@@ -265,7 +243,7 @@ pub fn run_cli() {
     let _ = &_ipc_guard;
 
     // Файловый lock как второй рубеж single-instance
-    let lock_path = app_data_dir().join("meeting-recorder.lock");
+    let lock_path = app_data_dir().join("podtekst.lock");
     let _ = std::fs::create_dir_all(app_data_dir());
     let lock_file = std::fs::OpenOptions::new()
         .create(true)
@@ -291,13 +269,12 @@ pub fn run_cli() {
     }
 
     println!(
-        "Meeting Recorder (Rust-ядро v{}) — HTTP http://127.0.0.1:{}",
+        "Подтекст (Rust-ядро v{}) — HTTP http://127.0.0.1:{}",
         env!("CARGO_PKG_VERSION"),
         cli.port
-    ); // Нативное окно Tauri (только CI-сборка с фичей `tauri-ui` и системным WebView)
+    );
     #[cfg(feature = "tauri-ui")]
     if !cli.web && !cli.browser && !cli.no_browser {
-        // В трей — без окна; show — с окном; обычный запуск — с окном.
         let visible = cli.show || !cli.tray;
         tauri_shell::run_tauri_window(state.clone(), cli.port, visible);
     }
@@ -327,7 +304,7 @@ mod tests {
 
     #[test]
     fn cli_parses_toggle() {
-        let cli = Cli::try_parse_from(["meeting-recorder", "--toggle"]).unwrap();
+        let cli = Cli::try_parse_from(["podtekst", "--toggle"]).unwrap();
         assert!(cli.toggle);
     }
 
@@ -361,10 +338,8 @@ mod tests {
     fn recording_start_stop_roundtrip() {
         let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut st = RecordingState::default();
-        // Подменяем save_dir через временную папку окружением MEETING_RECORDER_DATA_DIR
         let tmp = std::env::temp_dir().join(format!("mr-app-{}", std::process::id()));
         std::env::set_var("MEETING_RECORDER_DATA_DIR", &tmp);
-        // Фейк-захват: живой pw-record в юнит-тесте не нужен
         std::env::set_var("MR_FAKE_CAPTURE", "1");
         let _ = std::fs::create_dir_all(&tmp);
         let cfg = serde_json::json!({"save_dir": tmp.join("Recordings")});
@@ -417,8 +392,6 @@ mod tests {
     }
 }
 
-/// Живой прогон HTTP API на эфемерном порту: регрессия бага `POST /api/upload → 404`
-/// и проверка восстановленных после переезда на Rust эндпоинтов.
 #[cfg(test)]
 mod live_api_tests {
     use super::*;
@@ -435,7 +408,6 @@ mod live_api_tests {
             .port()
     }
 
-    /// Минимальный HTTP/1.0-клиент на std: (статус, заголовки, тело).
     fn http(
         port: u16,
         method: &str,
@@ -499,8 +471,7 @@ mod live_api_tests {
 
     #[test]
     fn static_fallback_outside_repo() {
-        // Регрессия «Not Found» в нативном окне: запуск не из корня репо обязан
-        // отдать вшитую статику, а не 404.
+        // Запуск не из корня репо обязан отдавать вшитую статику, а не 404.
         let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prev = std::env::current_dir().unwrap();
         std::env::set_current_dir(std::env::temp_dir()).unwrap();
@@ -565,12 +536,10 @@ mod live_api_tests {
         assert_eq!(st, 200);
         assert!(String::from_utf8_lossy(&css).contains("--bg-canvas"));
 
-        // Регрессия: загрузка файла (было 404 + SyntaxError в WebView).
         // Настоящий WAV через mr-audio + имя с кириллицей и пробелом.
         let wav_src = rec.join("src.wav");
         mr_audio::write_stereo_wav(&wav_src, &vec![0.1; 16000], &vec![0.1; 16000], 16000).unwrap();
         let wav_bytes = std::fs::read(&wav_src).unwrap();
-        // WAV, а не MP3: длительность WAV читается нативно, без внешнего ffprobe.
         let fname_enc = "%D1%82%D0%B5%D1%81%D1%82%20%D0%B7%D0%B2%D1%83%D0%BA.wav";
         let (st, v) = json(http(
             port,
@@ -584,7 +553,6 @@ mod live_api_tests {
         let saved_name = "тест звук.wav";
         assert!(rec.join(saved_name).exists(), "файл не сохранён на диск");
 
-        // Список записей: поля метаданных (name/path/size_mb/mtime/date/…).
         let (st, v) = json(http(port, "GET", "/api/recordings", &[], &[]));
         assert_eq!(st, 200);
         let items = v
@@ -659,7 +627,6 @@ mod live_api_tests {
         );
         assert_eq!(part.len(), 10);
 
-        // Суффиксный Range: последние N байт (нужно плееру для чтения moov в конце MP4).
         let (st, hs, tail) = http(port, "GET", &audio_target, &[("Range", "bytes=-10")], &[]);
         assert_eq!(st, 206, "Суффиксный Range не вернул 206");
         assert_eq!(tail.len(), 10);
@@ -671,7 +638,6 @@ mod live_api_tests {
             "неверный Content-Range для суффикса: {hs:?}"
         );
 
-        // Неудовлетворимый Range: 416 Range Not Satisfiable
         let (st, hs, _) = http(
             port,
             "GET",
@@ -705,7 +671,6 @@ mod live_api_tests {
             "фрагмент должен быть моно"
         );
 
-        // Переименование записи: расширение сохраняется, старый файл исчезает.
         let rename_body = json!({"path": item.get("path").and_then(|x| x.as_str()).unwrap_or(""), "name": "Совещание с командой"});
         let (st, v) = json(http(
             port,
@@ -722,7 +687,6 @@ mod live_api_tests {
         assert!(rec.join("Совещание с командой.wav").exists());
         assert!(!rec.join(saved_name).exists());
 
-        // Режим записи хранится в config.json.
         let (st, v) = json(http(
             port,
             "POST",
@@ -737,7 +701,6 @@ mod live_api_tests {
         let (_, v) = json(http(port, "GET", "/api/record/mode", &[], &[]));
         assert_eq!(v.get("mode").and_then(|x| x.as_str()), Some("mix"));
 
-        // Авто-расшифровка: по умолчанию включена, настройка сохраняется.
         let (_, v) = json(http(port, "GET", "/api/transcribe/auto", &[], &[]));
         assert_eq!(v.get("enabled").and_then(|x| x.as_bool()), Some(true));
         let (st, v) = json(http(
@@ -769,7 +732,6 @@ mod live_api_tests {
         let (st, _, _) = http(port, "GET", "/api/status", &[("Origin", &origin)], &[]);
         assert_eq!(st, 200);
 
-        // Гости.
         let (st, v) = json(http(
             port,
             "POST",
@@ -793,7 +755,6 @@ mod live_api_tests {
                 .any(|p| p.get("name").and_then(|n| n.as_str()) == Some("Тестовый Гость")))
             .unwrap_or(false));
 
-        // Участника можно переименовать и убрать (не только гостя).
         let upd = json!({"old_name":"Тестовый Гость", "name":"Гость Обновлён", "role":"Партнёр"});
         let (st, v) = json(http(
             port,
@@ -837,7 +798,6 @@ mod live_api_tests {
                 .any(|p| p.get("name").and_then(|n| n.as_str()) == Some("Гость Обновлён")))
             .unwrap_or(false));
 
-        // Голосовые отпечатки: save → видны в people/voiceprints → delete.
         let emb: Vec<f64> = (0..mr_ml::EMBEDDING_DIM)
             .map(|i| (i as f64) / mr_ml::EMBEDDING_DIM as f64)
             .collect();
@@ -929,7 +889,6 @@ mod live_api_tests {
             Some(false)
         );
 
-        // Пакеты и поддержка.
         let (st, v) = json(http(
             port,
             "POST",
@@ -1014,7 +973,6 @@ mod live_api_tests {
                 .any(|r| r.get("name").and_then(|n| n.as_str()) == Some("важное-внешнее.wav")))
             .unwrap_or(false));
 
-        // Свою запись удаляем с диска вместе с расшифровкой.
         let owned = rec.join("own.wav");
         std::fs::write(&owned, b"own file").unwrap();
         crate::media_registry::mark_owned(&owned);
@@ -1130,7 +1088,6 @@ mod live_api_tests {
                     }
                 }
 
-                // Тест склейки экрана и аудиозаписи (/api/recording/attach_video).
                 let test_audio = rec.join("lecture_rec.wav");
                 mr_audio::write_stereo_wav(
                     &test_audio,

@@ -32,8 +32,6 @@
       isPlaying = true
     }
   }
-
-  // В карточке показываем последние 5 записей. Остальные скрыты за дровером.
   // На телефоне видео не импортируется (нет ffmpeg) и не показывается.
   const VISIBLE = 5
   const items = $derived(isMobile ? recordings.items.filter((r) => !r.is_video) : recordings.items)
@@ -138,7 +136,6 @@
       savingName = false
     }
   }
-
 
 </script>
 

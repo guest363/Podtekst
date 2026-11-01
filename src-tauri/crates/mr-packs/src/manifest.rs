@@ -1,5 +1,3 @@
-//! Манифесты пакетов: чтение, список, включение/выключение, создание и удаление.
-
 use std::fs;
 use std::path::Path;
 
@@ -39,7 +37,6 @@ pub(crate) fn read_manifest(pack_dir: &Path) -> Result<PackManifest> {
     }
 }
 
-/// Количество элементов JSON-массива (или массива в поле `key` объекта).
 pub(crate) fn count_json_array(path: &Path, key: Option<&str>) -> usize {
     let Ok(text) = fs::read_to_string(path) else {
         return 0;
@@ -58,7 +55,6 @@ pub(crate) fn count_json_array(path: &Path, key: Option<&str>) -> usize {
     }
 }
 
-/// Гарантирует наличие пакета `default`.
 pub fn ensure_default_pack(app_data: &Path) -> Result<std::path::PathBuf> {
     let dir = packs_root_dir(app_data).join("default");
     fs::create_dir_all(dir.join("snippets"))?;
@@ -76,7 +72,6 @@ pub fn ensure_default_pack(app_data: &Path) -> Result<std::path::PathBuf> {
     Ok(dir)
 }
 
-/// Все пакеты со счётчиками (для UI-карточек).
 pub fn list_packs(app_data: &Path) -> Result<Vec<PackInfo>> {
     ensure_default_pack(app_data)?;
     let root = packs_root_dir(app_data);
@@ -148,7 +143,6 @@ pub fn set_pack_enabled(app_data: &Path, pack_id: &str, enabled: bool) -> Result
     Ok(true)
 }
 
-/// Создать пакет с уникальным slug-id из названия.
 pub fn create_pack(app_data: &Path, name: &str, description: &str) -> Result<PackInfo> {
     let clean = name.trim();
     if clean.is_empty() {
@@ -194,7 +188,6 @@ pub fn create_pack(app_data: &Path, name: &str, description: &str) -> Result<Pac
     })
 }
 
-/// Удалить пакет (кроме `default`).
 pub fn delete_pack(app_data: &Path, pack_id: &str) -> Result<bool> {
     let pack_id = validate_pack_id(pack_id)?;
     if pack_id == "default" {
@@ -208,7 +201,6 @@ pub fn delete_pack(app_data: &Path, pack_id: &str) -> Result<bool> {
     Ok(!dir.exists())
 }
 
-/// Полная карточка пакета по id.
 pub fn pack_info_of(app_data: &Path, pack_id: &str) -> Result<PackInfo> {
     let pack_id = validate_pack_id(pack_id)?;
     let infos = list_packs(app_data)?;
@@ -266,7 +258,6 @@ mod tests {
         std::fs::write(dir.join("manifest.json"), "{ битый json").unwrap();
         let err = set_pack_enabled(&app, &pack.id, false).unwrap_err();
         assert!(err.to_string().contains("JSON"), "{err}");
-        // Битый манифест не перезаписан тихо.
         assert_eq!(
             std::fs::read_to_string(dir.join("manifest.json")).unwrap(),
             "{ битый json"

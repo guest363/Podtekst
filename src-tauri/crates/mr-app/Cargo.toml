@@ -3,12 +3,12 @@ name = "mr-app"
 version = "0.1.6"
 edition = "2021"
 rust-version = "1.92"
-description = "Meeting Recorder — нативное ядро (CLI + HTTP REST + трей; Tauri WebView за фичей)"
+description = "Подтекст (Podtekst) — нативное ядро (CLI + HTTP REST + трей; Tauri WebView за фичей)"
 license = "MIT"
-repository = "https://github.com/guest363/meeting-record"
+repository = "https://github.com/guest363/podtekst"
 
 [[bin]]
-name = "meeting-recorder"
+name = "podtekst"
 path = "src/main.rs"
 
 # Мобильные сборки Tauri (Android/iOS) подключают ядро как cdylib/staticlib
@@ -32,6 +32,8 @@ mr-ml = { path = "../mr-ml" }
 mr-models = { path = "../mr-models" }
 mr-audio = { path = "../mr-audio" }
 ureq.workspace = true
+# Нативный D-Bus (GNOME Shell Screencast) вместо внешнего интерпретатора python3-dbus.
+zbus = "5"
 
 # SIGINT/SIGTERM-финализация записи (unix).
 [target.'cfg(unix)'.dependencies]
@@ -39,7 +41,7 @@ libc.workspace = true
 
 # Доступная оперативная память для предохранителя длинных записей.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_SystemInformation"] }
+windows-sys = { version = "0.61", features = ["Win32_System_SystemInformation"] }
 
 
 

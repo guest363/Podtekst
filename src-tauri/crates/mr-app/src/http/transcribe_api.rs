@@ -1,5 +1,3 @@
-//! Расшифровка: SSE-стрим событий, запуск воркера, скачивание моделей.
-
 use std::path::{Path, PathBuf};
 
 use serde_json::json;
@@ -63,9 +61,8 @@ pub(super) fn serve_transcript(request: tiny_http::Request, query: &str) {
 /// SSE-стрим событий транскрибации/моделей (совместим с EventSource в Web UI).
 ///
 /// Возобновление по стандартному заголовку `Last-Event-ID` (браузер шлёт его сам
-/// после обрыва связи): клиент продолжает с места разрыва. Новое подключение без
-/// курсора получает только новые события — проигрывание всей истории повторяло
-/// пользователю устаревшие ошибки и чужие «модель готова».
+/// после обрыва связи): клиент продолжает с места разрыва; без курсора клиент
+/// получает только новые события.
 pub(super) fn serve_transcribe_stream(request: tiny_http::Request) {
     #[cfg(not(feature = "onnx"))]
     {
@@ -135,7 +132,6 @@ pub(super) fn handle_transcribe_start(request: tiny_http::Request, body: serde_j
         .and_then(|v| v.as_str())
         .unwrap_or("auto")
         .to_string();
-    // Язык нужен только Whisper; «auto» (по умолчанию) — авторегулирование модели.
     let language = body
         .get("language")
         .and_then(|v| v.as_str())

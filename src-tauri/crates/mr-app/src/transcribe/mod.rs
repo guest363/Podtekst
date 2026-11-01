@@ -1,12 +1,3 @@
-//! Сквозной нативный ONNX-пайплайн транскрибации:
-//! VAD (Silero) → ASR (GigaAM-v3 RNNT / Whisper-turbo) → диаризация
-//! (PyAnnote-маски + ERes2NetV2 + кластеризация + Венгерский алгоритм)
-//! → сопоставление с Voice Packs → `.md` / `.txt` / `.transcript.json`.
-//!
-//! * [`events`] — SSE-шина и фоновый воркер
-//! * [`diarize`] — кластеризация, профили спикеров
-//! * [`report`] — выходные форматы и статистика
-
 pub mod diarize;
 pub mod events;
 pub mod memory;
@@ -32,8 +23,6 @@ pub use events::{
     start_model_download, take_new_events, transcribing_file,
 };
 
-// ---------- Модели ----------
-
 fn models_root() -> PathBuf {
     packs::default_app_data_dir().join("models")
 }
@@ -47,7 +36,6 @@ fn find_model_file(model_id: &str, needle: &str) -> Option<PathBuf> {
     })
 }
 
-/// Загруженный набор ONNX-моделей пайплайна.
 pub struct ModelSet {
     vad: SileroVad,
     gigaam: Option<GigaAM>,
@@ -75,7 +63,6 @@ fn return_cached_models(models: ModelSet) {
 }
 
 impl ModelSet {
-    /// Загрузка VAD + выбранного ASR + моделей диаризации из `<app_data>/models`.
     pub fn load() -> Result<Self, String> {
         let vad_path = find_model_file("vad-silero-v6", ".onnx")
             .ok_or_else(|| "Модель Silero VAD не скачана. Откройте «Настройки» → «Модели ИИ» и нажмите «Скачать».".to_string())?;
@@ -103,9 +90,6 @@ impl ModelSet {
     }
 }
 
-// ---------- Структуры результата ----------
-
-/// Одна распознанная реплика.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct Utterance {
     pub start: f64,
@@ -115,12 +99,10 @@ pub struct Utterance {
     pub text: String,
     #[serde(default)]
     pub diarized: bool,
-    /// Силуэт назначения голоса: -1..1, больше — увереннее.
     #[serde(default)]
     pub silhouette: f64,
 }
 
-/// Итог диаризации по одному спикеру.
 #[derive(Debug, Clone)]
 pub struct SpeakerInfo {
     pub id: String,
@@ -129,7 +111,6 @@ pub struct SpeakerInfo {
     pub matched: bool,
     pub matched_name: Option<String>,
     pub similarity: f64,
-    /// Взвешенный по длительности силуэт фрагментов спикера.
     pub silhouette: f64,
     pub candidates: Vec<(String, f64)>,
     pub embedding: Option<Vec<f64>>,
@@ -138,7 +119,6 @@ pub struct SpeakerInfo {
     pub total_speech_sec: f64,
 }
 
-/// Образец речи спикера для прослушивания в UI.
 #[derive(Debug, Clone)]
 pub struct Sample {
     pub start: f64,
@@ -146,11 +126,9 @@ pub struct Sample {
     pub dur: f64,
     pub text: String,
     pub full_text: String,
-    /// Канал исходной записи: фрагмент проигрывается изолированно.
     pub channel: Option<i32>,
 }
 
-/// Параметры запуска транскрибации.
 pub struct TranscribeOptions {
     pub speaker_left: String,
     pub speaker_right: String,
@@ -175,7 +153,6 @@ impl Default for TranscribeOptions {
     }
 }
 
-/// Сводка выполненной расшифровки (для CLI-вывода).
 pub struct TranscribeReport {
     pub md_path: PathBuf,
     pub txt_path: PathBuf,
@@ -189,7 +166,6 @@ pub struct TranscribeReport {
     pub duration_sec: f64,
 }
 
-/// Параметры окон ASR над VAD-сегментами.
 const MAX_SEGMENT_SEC: f32 = 20.0;
 const SEGMENT_GAP_SEC: f32 = 0.5;
 const SEGMENT_PAD_SEC: f64 = 0.25;
@@ -235,7 +211,6 @@ fn looks_like_asr_loop(text: &str) -> bool {
         || (words.len() >= 20 && unique_ratio < 0.22)
 }
 
-/// Полный проход: файл → реплики с именами спикеров → md/txt/transcript.json.
 pub fn transcribe_file(
     audio_path: &Path,
     opts: &TranscribeOptions,
@@ -247,8 +222,9 @@ pub fn transcribe_file(
     if !mr_audio::has_audio_track(audio_path) {
         return Err("Файл не содержит аудиодорожки".to_string());
     }
-    // Видео: сначала извлекаем аудиодорожку (symphonia не берёт MKV/WebM/MOV/AVI),
-    // затем сводим в моно — каналов «микрофон/система» у видеофайла нет.
+    // Видео: сначала извлекаем аудиодорожку (symphonia не берёт MKV/WebM/MOV/AVI).
+    // Импортные видео не несут семантики «микрофон/система» — сводим их в моно.
+    // Свои записи экрана хранят стерео-сплит и расшифровываются как аудио-записи.
     let video = is_video_path(audio_path);
     if video {
         on_event(1, "Извлекаю звук из видео…");
@@ -257,7 +233,7 @@ pub fn transcribe_file(
     if channels.is_empty() || channels.iter().all(|c| c.is_empty()) {
         return Err("Файл не содержит аудиодорожки".to_string());
     }
-    let channels = if video {
+    let channels = if video && !crate::media_registry::load_registry().is_owned(audio_path) {
         let n = channels.iter().map(|c| c.len()).max().unwrap_or(0);
         let mut mono = vec![0.0f32; n];
         for ch in &channels {
@@ -284,7 +260,6 @@ pub fn transcribe_file(
     events::emit_stage(6, &format!("Модели готовы: {engine_name}"));
     let use_gigaam = engine_name.starts_with("GigaAM");
 
-    // Каналы: стерео — раздельные каналы записи (микрофон / система), моно — общий поток.
     let (chan_list, speaker_method) = if is_stereo {
         (
             vec![
@@ -306,7 +281,6 @@ pub fn transcribe_file(
         .filter(|(i, _)| chan_list.iter().any(|(ch, _)| ch == i))
         .collect();
 
-    // VAD + группировка
     let mut channel_grouped: HashMap<usize, Vec<(f64, f64)>> = HashMap::new();
     let channel_count = chan_list.len().max(1) as f64;
     for (ch_i, (ch, label)) in chan_list.iter().enumerate() {
@@ -402,7 +376,6 @@ pub fn transcribe_file(
         channel_utts.insert(*ch, utts);
     }
 
-    // Диаризация
     let profiles = diarize::load_profiles();
     // Заимствуем модели на время диаризации; вернём в кэш перед выходом.
     let mut embed_ext = models.embed.take();
@@ -490,8 +463,7 @@ pub fn transcribe_file(
         .iter()
         .map(|u| u.text.split_whitespace().count())
         .sum::<usize>();
-    // Уникальное покрытие таймлайна: сумма по каналам давала «232 с» в
-    // трёхминутной встрече из-за одновременной речи микрофона и системы.
+    // Уникальное покрытие таймлайна: сумма по каналам завышает длительность из-за одновременной речи микрофона и системы.
     let mut spans: Vec<(f64, f64)> = merged
         .iter()
         .map(|u| (u.start.max(0.0), u.end.max(u.start)))

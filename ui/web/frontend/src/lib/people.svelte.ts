@@ -1,4 +1,3 @@
-// Участники встречи и гости + справочник имён для сопоставления спикеров.
 import { readJsonSafe } from './api'
 import type { Person } from './api'
 
@@ -17,7 +16,6 @@ export async function loadPeople(): Promise<void> {
       String(v).toLowerCase().trim(),
     )
   } catch {
-    /* молча */
   }
 }
 
