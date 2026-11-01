@@ -122,14 +122,14 @@ export function fmtClockShort(sec: number): string {
 
 // Сбалансированная палитра спикеров (WCAG AA > 4.5:1 к белому фону).
 const SPEAKER_PALETTE = [
-  '#1e40af', // Deep Blue
-  '#0f766e', // Deep Teal
-  '#6b21a8', // Deep Violet
-  '#9a3412', // Terracotta
-  '#374151', // Charcoal Slate
-  '#047857', // Forest Emerald
-  '#92400e', // Amber Brown
-  '#9d174d', // Berry Wine
+  '#1e40af',
+  '#0f766e',
+  '#6b21a8',
+  '#9a3412',
+  '#374151',
+  '#047857',
+  '#92400e',
+  '#9d174d',
 ]
 
 function speakerIndex(name: string): number {
@@ -142,24 +142,20 @@ function speakerIndex(name: string): number {
   return (h >>> 0) % SPEAKER_PALETTE.length
 }
 
-/** Устойчивый цвет спикера: одинаковое имя — одинаковый цвет в тексте и карточках. */
 export function speakerColor(name: string): string {
   return SPEAKER_PALETTE[speakerIndex(name)]
 }
 
-/** Нейтральный фон карточки без цветового шума. */
 export function speakerTint(_name: string): string {
   return '#ffffff'
 }
 
 declare const __IS_MOBILE_BUILD__: boolean
 
-/** Запущено ли на мобильном устройстве (сборка Android/iOS или запуск через мобильный браузер). */
 export const isMobile: boolean =
   (typeof __IS_MOBILE_BUILD__ !== 'undefined' && __IS_MOBILE_BUILD__) ||
   (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent))
 
-/** Склонение слова «спикер» по правилам русского языка (1 спикер, 2 спикера, 5 спикеров). */
 export function pluralSpeakers(n: number): string {
   const mod10 = n % 10
   const mod100 = n % 100
@@ -167,4 +163,3 @@ export function pluralSpeakers(n: number): string {
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'спикера'
   return 'спикеров'
 }
-

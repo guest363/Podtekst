@@ -39,7 +39,6 @@
     if (currentTime <= 0 || !utterances.length) return -1
     // При одновременной речи и перекрытиях каналов выбираем реплику,
     // начавшуюся позже всех (наибольший start <= currentTime).
-    // Старый findIndex зависал на первой длинной реплике и отставал на 2-5 секунд.
     let bestIdx = -1
     let bestStart = -1
     for (let i = 0; i < utterances.length; i++) {

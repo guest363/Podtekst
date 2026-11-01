@@ -1,11 +1,3 @@
-//! Математика диаризации: L2-нормализация, косинусное сходство, Венгерский алгоритм.
-//!
-//! * L2-нормализация, косинусное сходство
-//! * Мульти-прототипный скоринг `S = 0.7·max + 0.3·mean_top2`
-//! * Взвешенные центроиды `w = min(dur,8)·quality`
-//! * Глобальное назначение через Венгерский алгоритм + Margin Gate
-//! * ONNX-инференс — за cargo-фичей `onnx` (крейт `ort`), по умолчанию чистый CPU-математический слой.
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
@@ -20,35 +12,24 @@ pub enum MlError {
 
 pub type Result<T> = std::result::Result<T, MlError>;
 
-/// Чистая математика кластеризации (без ML-зависимостей): complete linkage
-/// через nearest-neighbor chain + силуэт-оценка. Используется пайплайном диаризации.
 pub mod cluster;
 
-/// Идентификатор векторного пространства текущей embedding-модели
-/// (`diar-eres2netv2-emb`, см. `models-manifest.json`).
 pub const EMBEDDING_SPACE: &str = "eres2netv2-192-v1";
-/// Размерность векторов пространства [`EMBEDDING_SPACE`].
 pub const EMBEDDING_DIM: usize = 192;
 
 /// Порог сходства «это тот же голос» для ERes2NetV2. Калибровка на официальных
 /// примерах 3D-Speaker и реальных встречах: разные дикторы ≤ 0.22, один голос ≥ 0.48
 /// (фрагменты от 1.5 с); у самой модели в карточке порог 0.365.
 pub const DEFAULT_MATCH_THRESHOLD: f64 = 0.45;
-/// Минимальный отрыв лучшего кандидата от второго (Margin Gate).
 pub const DEFAULT_MIN_MARGIN: f64 = 0.06;
-/// Сходство, при котором совпадение принимается без Margin Gate.
 pub const HIGH_CONFIDENCE_THRESHOLD: f64 = 0.65;
-/// Косинусное сходство кластеров для слияния раздробленных кластеров одного человека.
 pub const SAME_SPEAKER_MERGE_SIM: f64 = 0.55;
-/// Максимум прототипов одного спикера в voiceprints v2.
 pub const MAX_PROTOTYPES: usize = 10;
 
 /// Нормализация меток времени в канонический формат RFC3339 (P1, P9).
 ///
-/// Ранние версии бэкенда сохраняли поле `updated_at` в `voiceprints.json v3`
-/// как Unix epoch seconds в виде целых чисел (например, 1745778899) или числовых строк.
-/// Десериализатор прозрачно нормализует числовые секунды в строку RFC3339 (например,
-/// "2026-10-22T00:00:00Z"), а уже существующие строковые даты пропускает без изменений.
+/// Десериализатор `updated_at`: принимает числовые epoch-секунды (нормализует в
+/// строку RFC3339) и готовые строки RFC3339 (пропускает как есть).
 fn normalize_timestamp_rfc3339(s: &str) -> String {
     let trimmed = s.trim();
     if trimmed.is_empty() {
@@ -172,7 +153,6 @@ pub struct ClusterMatch {
     pub candidates: Vec<MatchCandidate>,
 }
 
-/// L2-нормализация вектора (нулевой вектор возвращается как есть).
 pub fn l2_normalize(v: &[f64]) -> Vec<f64> {
     let norm = v.iter().map(|x| x * x).sum::<f64>().sqrt();
     if norm < 1e-12 {
@@ -181,7 +161,6 @@ pub fn l2_normalize(v: &[f64]) -> Vec<f64> {
     v.iter().map(|x| x / norm).collect()
 }
 
-/// Косинусное сходство двух векторов (0 при несовпадении размерностей).
 pub fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
     if a.is_empty() || b.is_empty() || a.len() != b.len() {
         return 0.0;
@@ -195,12 +174,10 @@ pub fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
     dot / (na * nb)
 }
 
-/// Интервальный зазор между границами (0 при пересечении).
 pub fn interval_gap(a_start: f64, a_end: f64, b_start: f64, b_end: f64) -> f64 {
     (a_start - b_end).max(b_start - a_end).max(0.0)
 }
 
-/// Взвешенный центроид кластера: `w = min(dur, 8) · quality`, результат нормализован.
 pub fn weighted_centroid(vecs: &[Vec<f64>], weights: &[f64]) -> Vec<f64> {
     if vecs.is_empty() {
         return vec![];
@@ -225,7 +202,6 @@ pub fn weighted_centroid(vecs: &[Vec<f64>], weights: &[f64]) -> Vec<f64> {
     l2_normalize(&mean)
 }
 
-/// Мульти-прототипный скоринг спикера.
 pub fn score_speaker_similarity(query: &[f64], profile: &SpeakerProfile) -> f64 {
     let q = l2_normalize(query);
     if q.is_empty() {
@@ -254,7 +230,6 @@ pub fn score_speaker_similarity(query: &[f64], profile: &SpeakerProfile) -> f64 
     (0.70 * best + 0.30 * top2_mean).max(c_sim)
 }
 
-/// Венгерский алгоритм (максимизация): возвращает пары (row, col).
 pub fn linear_sum_assignment_max(score: &[Vec<f64>]) -> Vec<(usize, usize)> {
     let n_rows = score.len();
     if n_rows == 0 {
@@ -264,7 +239,6 @@ pub fn linear_sum_assignment_max(score: &[Vec<f64>]) -> Vec<(usize, usize)> {
     if n_cols == 0 {
         return vec![];
     }
-    // Транспонируем, если строк больше, чем столбцов
     let (mat, n, m, transposed): (Vec<Vec<f64>>, usize, usize, bool) = if n_rows > n_cols {
         let mut t = vec![vec![0.0; n_rows]; n_cols];
         for r in 0..n_rows {
@@ -349,7 +323,6 @@ pub fn linear_sum_assignment_max(score: &[Vec<f64>]) -> Vec<(usize, usize)> {
     pairs
 }
 
-/// Глобальное сопоставление кластеров с профилями (Венгерский + Margin Gate).
 pub fn match_voiceprints_matrix(
     cluster_embeddings: &[Vec<f64>],
     profiles: &[SpeakerProfile],
@@ -408,7 +381,6 @@ pub fn match_voiceprints_matrix(
         results[r].name = Some(profiles[c].name.clone());
         results[r].similarity = (s * 1000.0).round() / 1000.0;
     }
-    // Слияние раздробленных кластеров одного человека
     let assigned: std::collections::HashMap<usize, usize> = results
         .iter()
         .enumerate()
@@ -542,16 +514,13 @@ mod tests {
 
     #[test]
     fn hungarian_finds_optimum() {
-        // Максимум суммы: очевидный оптимум — (0,0)+(1,1) = 2.0.
         let score = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
         let mut pairs = linear_sum_assignment_max(&score);
         pairs.sort();
         assert_eq!(pairs, vec![(0, 0), (1, 1)]);
-        // Прямоугольная матрица: строк больше столбцов — транспонирование внутри.
         let score = vec![vec![0.1], vec![0.9]];
         let pairs = linear_sum_assignment_max(&score);
         assert_eq!(pairs, vec![(1, 0)]);
-        // Пустые входы.
         assert!(linear_sum_assignment_max(&[]) == vec![]);
         assert!(linear_sum_assignment_max(&[vec![]]) == vec![]);
     }

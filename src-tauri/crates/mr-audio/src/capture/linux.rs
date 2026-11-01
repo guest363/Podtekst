@@ -16,7 +16,6 @@ use super::pulse;
 use super::stream::{s16le_to_f32, RawWriter};
 use super::{AudioError, CaptureStream, DeviceCatalog, DeviceInfo, Result, StreamKind};
 
-/// Каталог устройств: микрофоны и мониторы выходов.
 pub fn devices() -> DeviceCatalog {
     let mut catalog = DeviceCatalog {
         platform: "linux".to_string(),
@@ -55,7 +54,6 @@ pub fn devices() -> DeviceCatalog {
     if catalog.default_input.is_none() {
         catalog.default_input = catalog.inputs.first().map(|i| i.id.clone());
     }
-    // Системный звук: монитор выхода по умолчанию.
     if let Some(sink) = devices.default_sink.as_ref() {
         let monitor = format!("{sink}.monitor");
         if catalog.system.iter().any(|s| s.id == monitor) {
@@ -68,7 +66,6 @@ pub fn devices() -> DeviceCatalog {
     catalog
 }
 
-/// Каталог через `pactl` — резервный путь, если нет `libpulse`.
 fn cli_catalog() -> DeviceCatalog {
     let mut catalog = DeviceCatalog {
         platform: "linux".to_string(),
@@ -93,7 +90,6 @@ fn cli_catalog() -> DeviceCatalog {
     catalog
 }
 
-/// Запустить поток захвата: сначала системная библиотека, затем утилиты.
 pub fn start_stream(
     kind: StreamKind,
     device: Option<&str>,

@@ -1,6 +1,3 @@
-//! Диаризация: субсегментация, кластеризация канала
-//! и сопоставление спикеров с профилями Voice Packs.
-
 use std::collections::{HashMap, HashSet};
 
 use mr_ml::onnx::embed::EmbeddingExtractor;
@@ -98,7 +95,6 @@ pub(crate) fn merge_quiet_short(samples: &[f32], groups: Vec<(f32, f32)>) -> Vec
     out
 }
 
-/// Лучшие образцы речи спикера для карточки в UI.
 fn pick_samples(utterances: &[Utterance], max_samples: usize) -> Vec<Sample> {
     let mut scored: Vec<(f64, &Utterance)> = utterances
         .iter()
@@ -216,12 +212,8 @@ pub(crate) fn load_profiles() -> Vec<SpeakerProfile> {
     out
 }
 
-/// Минимальная длительность реплики для core-кластеризации, с.
-///
-/// Снижено с 1.4 до 0.6 с (P10): в реальных диалогах второй спикер нередко отвечает
-/// только короткими репликами («Ну да», «Хорошо», 0.6–1.0 с). При прежнем пороге 1.4 с
-/// в core-пуле оставался единственный доминирующий спикер, а второй участник полностью
-/// терялся, принудительно привязываясь к чужому центроиду.
+/// Порог 0.6 с (P10): в реальных диалогах второй спикер нередко отвечает
+/// только короткими репликами («Ну да», «Хорошо», 0.6–1.0 с).
 ///
 /// Замеры ERes2NetV2 (тест `onnx_real::eres2netv2_parity_with_official_reference`):
 /// на окнах 0.6 с сходство со своим голосом составляет 0.41–0.79, с чужим — 0.04–0.19
@@ -389,8 +381,6 @@ fn rms_quality(chunk: &[f32]) -> f64 {
     (rms / 0.05).clamp(0.3, 1.5)
 }
 
-/// Диаризация одного канала: чистые от перекрытий эмбеддинги → core-кластеризация
-/// → short/micro-привязка → ограниченное назначение → профили Voice Packs.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn diarize_channel(
     samples: &[f32],
@@ -434,7 +424,7 @@ pub(crate) fn diarize_channel(
             }
         }
         // Векторы голосов — самый долгий шаг после ASR: без счётчика
-        // прогресс замирал на 79% и расшифровка выглядела зависшей.
+        // прогресс выглядит зависшим.
         if i % 20 == 0 || i + 1 == n {
             on_event(
                 (80 + 8 * i / n.max(1)) as u8,
@@ -463,7 +453,6 @@ pub(crate) fn diarize_channel(
             total_speech_sec: durs.iter().sum(),
         }];
     }
-    // Core-кластеризация по длинным репликам
     let mut core: Vec<usize> = valid
         .iter()
         .copied()
@@ -487,7 +476,6 @@ pub(crate) fn diarize_channel(
         let weights: Vec<f64> = core.iter().map(|&i| durs[i]).collect();
         merge_tiny_clusters(&core_vecs, &mut core_labels, &weights, min_speakers.max(1));
     }
-    // Уважение min/max при авто-режиме
     if k.is_none() {
         let mut uniq: Vec<usize> = core_labels.clone();
         uniq.sort();
@@ -504,7 +492,6 @@ pub(crate) fn diarize_channel(
         .copied()
         .zip(core_labels.iter().copied())
         .collect();
-    // Short-привязка с темпоральным бонусом
     let recompute = |label_of: &HashMap<usize, usize>| -> HashMap<usize, Vec<f64>> {
         let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
         for &i in valid.iter() {
@@ -550,7 +537,6 @@ pub(crate) fn diarize_channel(
         label_of.insert(si, best.1);
         centroids = recompute(&label_of);
     }
-    // Микро-реплики — по зазору границ
     for i in 0..n {
         if label_of.contains_key(&i) {
             continue;
@@ -588,7 +574,6 @@ pub(crate) fn diarize_channel(
     for (&i, score) in valid.iter().zip(final_scores) {
         silhouettes[i] = score;
     }
-    // Глобальное сопоставление кластеров с профилями
     let mut raw_clusters: Vec<usize> = label_of.values().copied().collect();
     raw_clusters.sort();
     raw_clusters.dedup();
@@ -618,7 +603,6 @@ pub(crate) fn diarize_channel(
         mr_ml::DEFAULT_MATCH_THRESHOLD,
         mr_ml::DEFAULT_MIN_MARGIN,
     );
-    // Имена: совпавшие — из профилей, остальные — префикс по счёту
     let mut cluster_name: HashMap<usize, String> = HashMap::new();
     let mut unmatched = vec![];
     for (k, &c) in raw_clusters.iter().enumerate() {
@@ -783,7 +767,6 @@ pub(crate) fn diarize_channel(
     infos
 }
 
-/// Слова для сравнения текстов: пунктуация и регистр не важны.
 fn words_of(text: &str) -> HashSet<String> {
     text.split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
@@ -848,7 +831,6 @@ impl Dsu {
     }
 }
 
-/// Суммарное перекрытие реплик двух спикеров и признак «та же фраза».
 fn pair_evidence(by_name: &HashMap<&str, Vec<&Utterance>>, a: &str, b: &str) -> (f64, bool) {
     let mut overlap = 0.0;
     let mut echo = false;
@@ -1279,7 +1261,6 @@ pub(crate) fn split_at_pauses(samples: &[f32], utterances: &[Utterance]) -> Vec<
             if lo >= hi {
                 break;
             }
-            // Ищем первую тихую паузу в окне (минимум внутри впадины от ~140 мс).
             let mut quiet_start = None;
             let mut cut = None;
             for i in lo..hi {
@@ -1472,7 +1453,7 @@ pub(crate) fn split_long_by_speaker_change(
 
 /// Раскладка слов реплики по окнам между границами (доля окна от общей
 /// длительности ≈ доля слов). Правая граница среза — от длины массива,
-/// а не остатка, иначе при `lo > words.len()/2` срез паниковал.
+/// а не остатка: при `lo > words.len()/2` остаток даёт срез за границами массива.
 pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<String> {
     let total: f64 = bounds
         .windows(2)
@@ -1493,9 +1474,7 @@ pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<Strin
             let target = pos + raw_nw;
             let is_punct = |s: &str| s.ends_with(['.', '!', '?', ',', ';', ':']);
             if target > pos && target <= words.len() && is_punct(words[target - 1]) {
-                // Уже на знаке препинания
             } else if target > pos + 1 && is_punct(words[target - 2]) {
-                // Предыдущее слово оканчивалось знаком препинания (граница предложения)
                 snapped = (raw_nw - 1).clamp(1, max_nw);
             } else if target < words.len() && is_punct(words[target]) && raw_nw < max_nw {
                 snapped = (raw_nw + 1).clamp(1, max_nw);
@@ -1724,7 +1703,6 @@ mod tests {
         assert_eq!(merged[0].text, "да давай");
     }
 
-    /// Тихие короткие фрагменты склеиваются, громкая речь — нет.
     #[test]
     fn merge_quiet_short_keeps_loud_separate() {
         let mut samples = vec![0.005f32; 16 * 16000];
@@ -1743,7 +1721,6 @@ mod tests {
         assert_eq!(out, vec![(0.0, 5.0), (6.0, 7.0), (8.0, 9.0), (10.0, 13.0)]);
     }
 
-    /// Склейка не растягивает одну реплику больше лимита.
     #[test]
     fn merge_quiet_short_caps_merged_duration() {
         let samples = vec![0.005f32; 16 * 16000];
@@ -1755,8 +1732,6 @@ mod tests {
         assert!(out[0].1 - out[0].0 <= 12.0);
     }
 
-    /// Регрессия: раньше правая граница среза считалась от остатка
-    /// (`words.len() - lo`) и паниковала при lo > words.len()/2.
     #[test]
     fn split_words_no_panic_on_late_bounds() {
         let words: Vec<&str> = (0..12).map(|_| "w").collect();
@@ -1949,11 +1924,9 @@ mod tests {
     fn pauses_isolate_short_dialog_response() {
         let sr = 16000usize;
         let mut samples = vec![0.1f32; 6 * sr];
-        // Пауза 1: 3.00 - 3.22 с (220 мс)
         for x in samples[3 * sr..(3 * sr + (sr * 22 / 100))].iter_mut() {
             *x = 0.0;
         }
-        // Пауза 2: 3.70 - 3.92 с (220 мс) — короткая реплика 0.70 с (типично для «Ну да», «Да»)
         for x in samples[37 * sr / 10..(37 * sr / 10 + (sr * 22 / 100))].iter_mut() {
             *x = 0.0;
         }
@@ -2000,7 +1973,6 @@ mod tests {
             silhouette: 0.0,
         };
         let out = split_at_pauses(&samples, &[u]);
-        // Без пауз от ~140 мс и длине < 6 с реплика не дробится
         assert_eq!(out.len(), 1);
         assert_eq!(
             out[0].text,
@@ -2028,7 +2000,6 @@ mod tests {
         let out1 = split_at_pauses(&samples_closure, &[u1]);
         assert_eq!(out1.len(), 1, "90 мс пауза не должна дробить реплику");
 
-        // 2. Пауза 150 мс (реальная межрепликовая диалоговая пауза) — ДОЛЖНА резать
         let mut samples_turn = vec![0.1f32; 4 * sr];
         for x in samples_turn[2 * sr..(2 * sr + (sr * 15 / 100))].iter_mut() {
             *x = 0.0;
@@ -2055,7 +2026,6 @@ mod tests {
         let sr = 16000usize;
         let total_sec = 20.0f64;
         let mut samples = vec![0.1f32; (total_sec * sr as f64) as usize];
-        // Паузы 220 мс каждую секунду от 1.0 с до 19.0 с
         for sec in 1..20 {
             let start = sec * sr;
             let end = start + (sr * 22 / 100);

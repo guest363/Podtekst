@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-/// Измеритель уровня звука: RMS и пик в тысячных долях.
 #[derive(Debug, Default)]
 pub struct LevelMeter {
     rms_milli: AtomicU32,
@@ -19,12 +18,11 @@ pub struct LevelMeter {
 }
 
 impl LevelMeter {
-    /// Создать общий измеритель для потока захвата.
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
 
-    /// Уровень 0..1 с запасом ×3 (совпадает со старой шкалой `tail_level_01`).
+    /// Уровень 0..1 с запасом ×3.
     pub fn level_01(&self) -> f32 {
         let rms = self.rms_milli.load(Ordering::Relaxed) as f32 / 1000.0;
         (rms * 3.0).min(1.0)
@@ -35,7 +33,6 @@ impl LevelMeter {
         self.peak_milli.load(Ordering::Relaxed) as f32 / 1000.0
     }
 
-    /// Пересчитать уровень по очередному блоку сэмплов.
     pub fn update(&self, samples: &[f32]) {
         if samples.is_empty() {
             return;
@@ -56,7 +53,6 @@ impl LevelMeter {
     }
 }
 
-/// Потоковый писатель сырых сэмплов (моно f32 little-endian).
 pub struct RawWriter {
     inner: BufWriter<File>,
     /// Переиспользуемый байтовый буфер: запись идёт ~64 раза в секунду.
@@ -65,7 +61,6 @@ pub struct RawWriter {
 }
 
 impl RawWriter {
-    /// Создать (или обрезать) файл записи.
     pub fn create(path: &Path) -> std::io::Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -78,7 +73,6 @@ impl RawWriter {
         })
     }
 
-    /// Дописать блок сэмплов.
     pub fn write_samples(&mut self, samples: &[f32]) -> std::io::Result<()> {
         self.buf.clear();
         self.buf.reserve(samples.len() * 4);
@@ -88,18 +82,15 @@ impl RawWriter {
         self.inner.write_all(&self.buf)
     }
 
-    /// Сбросить буфер на диск.
     pub fn flush(&mut self) -> std::io::Result<()> {
         self.inner.flush()
     }
 
-    /// Путь к файлу.
     pub fn path(&self) -> &Path {
         &self.path
     }
 }
 
-/// Прочитать сырой файл моно f32.
 pub fn read_raw_f32(path: &Path) -> std::io::Result<Vec<f32>> {
     let mut bytes = Vec::new();
     File::open(path)?.read_to_end(&mut bytes)?;
@@ -107,7 +98,6 @@ pub fn read_raw_f32(path: &Path) -> std::io::Result<Vec<f32>> {
     Ok(chunks.iter().map(|c| f32::from_le_bytes(*c)).collect())
 }
 
-/// Перевести блок сэмплов s16le (little-endian) в f32.
 pub fn s16le_to_f32(bytes: &[u8]) -> Vec<f32> {
     let (chunks, _) = bytes.as_chunks::<2>();
     chunks
@@ -116,7 +106,6 @@ pub fn s16le_to_f32(bytes: &[u8]) -> Vec<f32> {
         .collect()
 }
 
-/// Линейный ресемплинг в целевую частоту (48→16 кГц и конверсия контейнеров).
 pub fn resample_to(samples: &[f32], from: u32, to: u32) -> Vec<f32> {
     if samples.is_empty() || from == to || from == 0 || to == 0 {
         return samples.to_vec();
@@ -143,7 +132,6 @@ pub struct StreamingResampler {
 }
 
 impl StreamingResampler {
-    /// `None`, если частоты совпадают (ресемплинг не нужен).
     pub fn new(from: u32, to: u32) -> Option<Self> {
         (from != to && from > 0 && to > 0).then(|| Self {
             step: from as f64 / to as f64,
@@ -204,7 +192,6 @@ mod tests {
     fn level_meter_tracks_rms() {
         let m = LevelMeter::new();
         m.update(&[0.5, -0.5]);
-        // RMS 0.5 → с запасом ×3 уровень обрезан в 1.0
         assert!(m.level_01() > 0.99);
         assert!((m.peak_01() - 0.5).abs() < 0.01);
     }

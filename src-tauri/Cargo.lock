@@ -2386,6 +2386,7 @@ dependencies = [
  "tiny_http",
  "ureq 2.12.1",
  "windows-sys 0.59.0",
+ "zbus",
 ]
 
 [[package]]

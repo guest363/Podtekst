@@ -1,23 +1,12 @@
-//! Оболочка Tauri v2 (компилируется только с фичей `tauri-ui`).
-//!
-//! Архитектура повторяет бывший pywebview-режим: нативное окно WebView открывает
 //! HTTP-ядро того же процесса (`http://127.0.0.1:<port>`), поэтому Web UI
 //! работает без изменений (относительные `/api/*`). Глобальная горячая клавиша
-//! `Ctrl+Shift+R` (`Cmd+Shift+R` на macOS) переключает запись через общее
-//! состояние `RecordingState`. Клик по трею показывает окно.
-//!
 //! Мобильные сборки (Android/iOS): окно + HTTP-ядро. Трей, меню, глобальные
 //! клавиши, автостарт, апдейтер и single-instance — десктоп-эксклюзивы Tauri,
 //! на мобильных таргетах этих API нет, поэтому они за cfg-гейтами.
-//!
-//! Требуется системный WebView (CI ставит зависимости):
-//! * Linux: `libwebkit2gtk-4.1-dev libgtk-3-dev ...`
-//! * macOS: WKWebView из коробки; Windows: WebView2 из коробки.
 
 #[cfg(feature = "tauri-ui")]
 use std::sync::{Arc, Mutex};
 
-// Десктоп-эксклюзив Tauri: меню есть только на desktop-таргетах.
 #[cfg(all(
     feature = "tauri-ui",
     not(any(target_os = "android", target_os = "ios"))
@@ -26,26 +15,23 @@ use tauri::menu::{Menu, MenuItem};
 #[cfg(feature = "tauri-ui")]
 use tauri::Manager;
 
-#[cfg(feature = "tauri-ui")]
-use crate::recording::RecordingState;
-// Переключение записи по хоткею/меню трея — десктоп-путь.
 #[cfg(all(
     feature = "tauri-ui",
     not(any(target_os = "android", target_os = "ios"))
 ))]
 use crate::recording::toggle_recording_with_notify;
+#[cfg(feature = "tauri-ui")]
+use crate::recording::RecordingState;
 
 /// Геометрия главного окна: ширина равна контенту (`.page` max-width 860px
 /// + отступы body 32px + запас на скроллбар).
 #[cfg(feature = "tauri-ui")]
 pub(crate) const WINDOW_W: f64 = 920.0;
-/// Высота главного окна.
 #[cfg(feature = "tauri-ui")]
 pub(crate) const WINDOW_H: f64 = 860.0;
 /// Минимальная ширина окна: ниже 480px ломается мобильная вёрстка.
 #[cfg(feature = "tauri-ui")]
 pub(crate) const WINDOW_MIN_W: f64 = 480.0;
-/// Минимальная высота окна.
 #[cfg(feature = "tauri-ui")]
 pub(crate) const WINDOW_MIN_H: f64 = 560.0;
 
@@ -58,7 +44,6 @@ fn toggle_recording(state: &Arc<Mutex<RecordingState>>) {
     toggle_recording_with_notify(&mut guard);
 }
 
-/// X11/macOS/Windows: глобальная комбинация через Tauri-плагин.
 #[cfg(all(
     feature = "tauri-ui",
     not(any(target_os = "android", target_os = "ios"))
@@ -178,10 +163,8 @@ fn setup_global_shortcut(app: &tauri::AppHandle<tauri::Wry>) {
     }
 }
 
-/// Запускает HTTP-ядро в фоне и открывает нативное окно Tauri. Не возвращается.
 #[cfg(feature = "tauri-ui")]
 pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visible: bool) -> ! {
-    // 1. HTTP-ядро (тот же REST, что и в headless-режиме)
     let st = state.clone();
     std::thread::spawn(move || {
         crate::run_http_server(st, http_port);
@@ -194,7 +177,6 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    // 2. Нативное окно поверх HTTP-ядра + плагины
     let url = format!("http://127.0.0.1:{http_port}");
     let builder = tauri::Builder::default().manage(state.clone());
     // Десктоп-плагины: на мобильных их API не существует.
@@ -244,7 +226,6 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
                 std::env::set_var("MEETING_RECORDER_DATA_DIR", &dir);
             }
 
-            // Трей с меню — десктоп-эксклюзив (открыть окно / старт-стоп / выйти).
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
                 let open = MenuItem::with_id(app, "open", "Открыть окно", true, None::<&str>)?;
@@ -308,7 +289,6 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
                     "quit" => app.exit(0),
                     _ => {}
                 });
-                // Клик по иконке трея возвращает окно (или переключает видимость).
                 if let Some(tray) = app.tray_by_id("main") {
                     tray.on_tray_icon_event(|tray, event| {
                         if matches!(
@@ -339,7 +319,6 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
                 setup_global_shortcut(app.handle());
             }
 
-            // IPC из ядра (--show/--hide/второй клик по иконке) управляет окном.
             let ipc_handle = app.handle().clone();
             crate::ipc::set_ui_ipc_callback(Box::new(move |cmd| {
                 let handle = ipc_handle.clone();
@@ -351,7 +330,6 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
                             if let Some(win) = h.get_webview_window("main") {
                                 if cmd == "SHOW" {
                                     let _ = win.show();
-                                    // unminimize — десктоп-API, на мобильных окна не сворачивают.
                                     #[cfg(not(any(target_os = "android", target_os = "ios")))]
                                     let _ = win.unminimize();
                                     let _ = win.set_focus();
@@ -388,8 +366,6 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
                         }
                         tauri::webview::NewWindowResponse::Deny
                     })
-                    // Живой VU-метр до старта записи использует getUserMedia.
-                    // Захват экрана использует getDisplayMedia.
                     .on_permission_request(|_, kind| {
                         eprintln!("[PERMISSION_REQUEST] Разрешено: kind={kind:?}");
                         tauri::webview::PermissionResponse::Allow

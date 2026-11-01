@@ -32,6 +32,8 @@ mr-ml = { path = "../mr-ml" }
 mr-models = { path = "../mr-models" }
 mr-audio = { path = "../mr-audio" }
 ureq.workspace = true
+# Нативный D-Bus (GNOME Shell Screencast) вместо внешнего интерпретатора python3-dbus.
+zbus = "5"
 
 # SIGINT/SIGTERM-финализация записи (unix).
 [target.'cfg(unix)'.dependencies]

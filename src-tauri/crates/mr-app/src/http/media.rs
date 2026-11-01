@@ -1,5 +1,3 @@
-//! Список записей, кэши метаданных и раздача медиа (Range-стриминг).
-
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -12,7 +10,6 @@ use crate::config::save_dir;
 use crate::recording::now_secs;
 
 const AUDIO_EXTS: &[&str] = &["mp3", "wav", "m4a", "ogg", "flac", "aac", "opus"];
-/// Видеорасширения (расшифровка = извлечение аудиодорожки).
 const VIDEO_EXTS: &[&str] = &["mp4", "mkv", "mov", "avi", "webm", "m4v"];
 
 pub(super) fn is_media_ext(ext: &str) -> bool {
@@ -156,7 +153,6 @@ pub(super) fn recordings_list() -> Vec<serde_json::Value> {
         } else {
             0
         };
-        // Дата изменения в локальном времени (`%Y-%m-%d %H:%M:%S`).
         let date = chrono::DateTime::from_timestamp(mtime as i64, 0)
             .map(|dt| {
                 chrono::DateTime::<chrono::Local>::from(dt)
@@ -248,9 +244,6 @@ pub(super) fn guess_media_type(p: &Path) -> String {
     .to_string()
 }
 
-/// Разбор заголовка Range (RFC 7233).
-/// Поддерживает `bytes=S-E`, `bytes=S-` и суффикс `bytes=-N` (последние N байт).
-/// Возвращает `Some((start, end))` включительно или `None`, если заголовок невалиден.
 pub(super) fn parse_byte_range(range_header: &str, file_size: u64) -> Option<(u64, u64)> {
     if file_size == 0 {
         return None;
@@ -286,7 +279,6 @@ pub(super) fn parse_byte_range(range_header: &str, file_size: u64) -> Option<(u6
     }
 }
 
-/// Раздача медиа из папки записей с поддержкой Range (для перемотки и `#t=` фрагментов).
 pub(super) fn serve_audio_file(request: tiny_http::Request, url_path: &str) {
     let enc = url_path.strip_prefix("/audio/").unwrap_or("");
     let safe = safe_file_name(enc);
@@ -349,7 +341,6 @@ pub(super) fn serve_audio_file(request: tiny_http::Request, url_path: &str) {
             let _ = request.respond(resp);
             return;
         } else {
-            // Неудовлетворимый диапазон (RFC 7233 4.4): 416 Range Not Satisfiable
             let resp = tiny_http::Response::empty(416)
                 .with_header(hdr(&format!("Content-Range: bytes */{size}")))
                 .with_header(hdr("Accept-Ranges: bytes"));
@@ -384,7 +375,6 @@ pub(super) fn serve_audio_file(request: tiny_http::Request, url_path: &str) {
     }
 }
 
-/// Разобранный заголовок WAV: где PCM-данные и их формат.
 struct WavInfo {
     audio_format: u16,
     channels: u16,
@@ -394,7 +384,6 @@ struct WavInfo {
     data_len: u64,
 }
 
-/// Разбор RIFF-заголовка (первый килобайт файла): fmt + data чанки.
 fn parse_wav_header(head: &[u8]) -> Option<WavInfo> {
     if head.len() < 12 || &head[0..4] != b"RIFF" || &head[8..12] != b"WAVE" {
         return None;
@@ -436,7 +425,6 @@ fn parse_wav_header(head: &[u8]) -> Option<WavInfo> {
     })
 }
 
-/// Канонический 44-байтовый WAV-заголовок (PCM=1 или IEEE float=3).
 fn wav_header_bytes(info: &WavInfo, data_bytes: u32) -> Vec<u8> {
     let block = u32::from(info.channels) * u32::from(info.bits) / 8;
     let byte_rate = info.rate * block;
@@ -460,7 +448,6 @@ fn wav_header_bytes(info: &WavInfo, data_bytes: u32) -> Vec<u8> {
 /// Верхний потолок фрагмента: локальный UI, но память ответа ограничиваем.
 const MAX_SNIPPET_SEC: f64 = 300.0;
 
-/// GET /api/media/snippet?file=NAME&start=SEC&end=SEC: фрагмент записи как
 /// маленький WAV, нарезанный байтовым срезом PCM — без декодирования, поэтому
 /// мгновенно даже на часовом файле. Клиентский `#t=`-seek по гигабайтному WAV
 /// вешал WebView (он буферизовал весь файл), фрагмент решает это в корне.
@@ -594,7 +581,6 @@ fn mono_channel_snippet(info: &WavInfo, pcm: &[u8], channel: usize) -> Option<Ve
     Some(body)
 }
 
-/// Папка записей канонически (для проверок принадлежности путей).
 fn save_dir_canon() -> PathBuf {
     save_dir().canonicalize().unwrap_or_else(|_| save_dir())
 }
@@ -628,7 +614,7 @@ mod tests {
             rate: 16000,
             bits: 16,
             data_offset: 44,
-            data_len: 64000, // 1 секунда
+            data_len: 64000,
         }
     }
 
@@ -652,7 +638,6 @@ mod tests {
     #[test]
     fn snippet_channel_is_isolated_and_mono() {
         let info = info();
-        // Два стерео-сэмпла: L=100, R=200, L=300, R=400 (i16 LE).
         let pcm: Vec<u8> = [100i16, 200, 300, 400]
             .iter()
             .flat_map(|x| x.to_le_bytes())
@@ -668,19 +653,15 @@ mod tests {
 
     #[test]
     fn parse_byte_range_rfc7233() {
-        // Обычные диапазоны start-end
         assert_eq!(parse_byte_range("bytes=0-9", 100), Some((0, 9)));
         assert_eq!(parse_byte_range("bytes=10-20", 100), Some((10, 20)));
         assert_eq!(parse_byte_range("bytes=50-200", 100), Some((50, 99)));
 
-        // Открытый диапазон start-
         assert_eq!(parse_byte_range("bytes=50-", 100), Some((50, 99)));
 
-        // Суффиксный диапазон -N (последние N байт)
         assert_eq!(parse_byte_range("bytes=-20", 100), Some((80, 99)));
         assert_eq!(parse_byte_range("bytes=-150", 100), Some((0, 99)));
 
-        // Невалидные и выходящие за пределы
         assert_eq!(parse_byte_range("bytes=-0", 100), None);
         assert_eq!(parse_byte_range("bytes=100-", 100), None);
         assert_eq!(parse_byte_range("bytes=150-200", 100), None);

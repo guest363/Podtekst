@@ -1,17 +1,3 @@
-//! Единый слой захвата звука для всех ОС.
-//!
-//! Каждая платформа реализует один и тот же контракт:
-//! * Linux — PipeWire/PulseAudio через `libpulse` (загружается в рантайме),
-//!   без внешних утилит `pw-record`/`pactl`; резервный путь — CLI-утилиты,
-//!   если системной библиотеки нет.
-//! * Windows — WASAPI (пока заглушка: импорт готовых файлов работает,
-//!   живой захват возвращает понятную ошибку).
-//! * macOS — CoreAudio HAL: микрофон и виртуальный loopback (BlackHole)
-//!   для системного звука.
-//!
-//! Общий результат: моно f32 16 кГц в промежуточном файле + измеритель
-//! уровня. Сборка в стерео WAV делается при остановке записи.
-
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -45,8 +31,6 @@ type ForegroundHandler = Box<dyn Fn(bool, bool) + Send + Sync>;
 static FOREGROUND_HANDLER: std::sync::OnceLock<std::sync::Mutex<Option<ForegroundHandler>>> =
     std::sync::OnceLock::new();
 
-/// Android-оболочка регистрирует здесь JNI-мост к foreground service.
-/// `processing=false` — микрофон, `true` — расшифровка; второй аргумент — start/stop.
 pub fn set_foreground_handler(handler: ForegroundHandler) {
     let slot = FOREGROUND_HANDLER.get_or_init(|| std::sync::Mutex::new(None));
     if let Ok(mut guard) = slot.lock() {
@@ -65,7 +49,6 @@ pub(crate) fn foreground_service(processing: bool, start: bool) {
     }
 }
 
-/// Android: foreground service для расшифровки в фоне. На других ОС — no-op.
 pub fn foreground_processing_start() {
     foreground_service(true, true);
 }
@@ -76,65 +59,43 @@ pub fn foreground_processing_stop() {
 
 pub use stream::{read_raw_f32, resample_to};
 
-/// Устройство звука, доступное для захвата.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceInfo {
-    /// Идентификатор устройства: его нужно передать обратно в `start_capture`.
     pub id: String,
-    /// Человекочитаемое имя (как в настройках системы).
     pub name: String,
-    /// Устройство заглушено в системе.
     pub muted: bool,
-    /// Это системный звук (монитор выхода / loopback / tap), а не микрофон.
     pub system: bool,
 }
 
-/// Каталог устройств текущей системы.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DeviceCatalog {
-    /// Короткое имя платформы: `linux`, `win32`, `darwin`.
     pub platform: String,
-    /// Микрофоны.
     pub inputs: Vec<DeviceInfo>,
-    /// Источники системного звука.
     pub system: Vec<DeviceInfo>,
-    /// Микрофон по умолчанию.
     pub default_input: Option<String>,
-    /// Источник системного звука по умолчанию.
     pub default_system: Option<String>,
 }
 
-/// Что захватываем.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamKind {
-    /// Микрофон.
     Microphone,
-    /// Системный звук (что слышно из колонок).
     System,
 }
 
-/// Запрос на запись звука.
 #[derive(Debug, Clone)]
 pub struct CaptureRequest {
     /// Частота записи, Гц (16 000 — требование моделей распознавания).
     pub rate: u32,
-    /// Микрофон: `None` — устройство по умолчанию.
     pub mic: Option<String>,
-    /// Системный звук: `None` — не записывать.
     pub system: Option<String>,
-    /// Куда писать сырой микрофон.
     pub mic_path: PathBuf,
-    /// Куда писать сырой системный звук.
     pub system_path: PathBuf,
 }
 
-/// Один живой поток записи.
 pub struct CaptureStream {
-    /// Файл с сырыми сэмплами (моно f32 little-endian).
     pub path: PathBuf,
     level: Arc<LevelMeter>,
     stop: Arc<AtomicBool>,
-    /// Сигнал завершения рабочего потока (для ожидания с таймаутом).
     done: Option<std::sync::mpsc::Receiver<()>>,
     worker: Option<JoinHandle<()>>,
 }
@@ -180,17 +141,14 @@ impl CaptureStream {
         })
     }
 
-    /// Текущий уровень 0..1 (с запасом ×3).
     pub fn level(&self) -> f32 {
         self.level.level_01()
     }
 
-    /// Текущий пик 0..1.
     pub fn peak(&self) -> f32 {
         self.level.peak_01()
     }
 
-    /// Установить флаг остановки без ожидания потока.
     pub fn signal_stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
     }
@@ -220,32 +178,25 @@ impl Drop for CaptureStream {
     }
 }
 
-/// Результат запуска записи: микрофон и/или системный звук.
 #[derive(Default)]
 pub struct CaptureSession {
-    /// Поток микрофона.
     pub mic: Option<CaptureStream>,
-    /// Поток системного звука.
     pub system: Option<CaptureStream>,
 }
 
 impl CaptureSession {
-    /// Уровень микрофона 0..1.
     pub fn mic_level(&self) -> f32 {
         self.mic.as_ref().map(|s| s.level()).unwrap_or(0.0)
     }
 
-    /// Уровень системного звука 0..1.
     pub fn system_level(&self) -> f32 {
         self.system.as_ref().map(|s| s.level()).unwrap_or(0.0)
     }
 
-    /// Пик микрофона 0..1 — детектор тишины.
     pub fn mic_peak(&self) -> f32 {
         self.mic.as_ref().map(|s| s.peak()).unwrap_or(0.0)
     }
 
-    /// Остановить все потоки.
     pub fn stop(&mut self) {
         if let Some(s) = self.mic.as_ref() {
             s.signal_stop();
@@ -268,7 +219,6 @@ impl Drop for CaptureSession {
     }
 }
 
-/// Каталог устройств текущей ОС.
 pub fn devices() -> DeviceCatalog {
     #[cfg(target_os = "linux")]
     {
@@ -327,7 +277,6 @@ pub fn start_capture(req: &CaptureRequest) -> Result<CaptureSession> {
     Ok(session)
 }
 
-/// Запустить один поток на текущей платформе.
 fn start_stream(
     kind: StreamKind,
     device: Option<&str>,
