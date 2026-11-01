@@ -428,18 +428,5 @@
     font-size: 12px;
   }
   .rec-drawer-list { overflow-y: auto; flex: 1; min-height: 0; padding-right: 2px; }
-  .rec-delete-icon {
-    flex-shrink: 0;
-    border: none; background: transparent;
-    color: var(--text-faint); cursor: pointer;
-    padding: 6px; border-radius: var(--radius-sm);
-    min-width: 28px; min-height: 28px;
-    display: inline-flex; align-items: center; justify-content: center;
-    opacity: 0.55;
-    transition: opacity 140ms ease, color 140ms ease, background 140ms ease;
-  }
-  .rec-delete-icon:hover {
-    opacity: 1; color: var(--accent-rec); background: var(--bg-inset);
-  }
   .delete-box { max-width: 440px; }
 </style>
