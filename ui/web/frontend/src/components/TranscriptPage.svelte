@@ -10,7 +10,22 @@
   import SpeakersPane from './SpeakersPane.svelte'
   import TranscriptDoc from './TranscriptDoc.svelte'
 
-  let speakersDrawerOpen = $state(false)
+  // Сайдбар спикеров: на десктопе док-панель слева, на телефоне drawer. По умолчанию открыт.
+  let speakersOpen = $state(
+    typeof localStorage !== 'undefined'
+      ? localStorage.getItem('mr_speakers_open') !== 'false'
+      : true,
+  )
+
+  function toggleSpeakers(): void {
+    speakersOpen = !speakersOpen
+    try {
+      localStorage.setItem('mr_speakers_open', String(speakersOpen))
+    } catch {
+      /* ignore */
+    }
+  }
+
   let videoExpanded = $state(false)
   let playbackTime = $state(0)
 
@@ -21,7 +36,6 @@
   // Загрузка транскрипта при переходе на страницу.
   $effect(() => {
     if (ui.transcriptOpen && ui.currentTranscriptPath) {
-      speakersDrawerOpen = false
       videoExpanded = false
       playbackTime = 0
       void openTranscriptFile(ui.currentTranscriptPath)
@@ -127,7 +141,6 @@
   }
 
   function goBack(): void {
-    speakersDrawerOpen = false
     document
       .querySelectorAll('.transcript-page audio, .transcript-page video')
       .forEach((m) => (m as HTMLMediaElement).pause())
@@ -137,8 +150,8 @@
   function onWindowKey(e: KeyboardEvent): void {
     if (!ui.transcriptOpen) return
     if (e.key === 'Escape') {
-      if (speakersDrawerOpen) {
-        speakersDrawerOpen = false
+      if (isMobile && speakersOpen) {
+        speakersOpen = false
         e.stopPropagation()
       } else {
         goBack()
@@ -227,11 +240,18 @@
 
         <div class="transcript-btns">
           <button
-            class="btn-secondary btn-sm mobile-speakers-btn"
+            class="btn-secondary btn-sm btn-speakers-toggle {speakersOpen ? 'active' : ''}"
             aria-label="Спикеры встречи"
-            onclick={() => (speakersDrawerOpen = true)}
+            title={speakersOpen ? 'Скрыть панель спикеров' : 'Показать панель спикеров'}
+            onclick={toggleSpeakers}
           >
-            Спикеры{#if transcript.speakers.length > 0}&nbsp;· {transcript.speakers.length}{/if}
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+              <circle cx="9" cy="7" r="4"></circle>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+            </svg>
+            <span>Спикеры{#if transcript.speakers.length > 0}&nbsp;· {transcript.speakers.length}{/if}</span>
           </button>
 
           <button
@@ -317,23 +337,24 @@
       </div>
     </div>
   {:else}
-    <div class="transcript-grid">
-      {#if speakersDrawerOpen}
+    <div class="transcript-grid {speakersOpen ? 'sidebar-open' : ''}">
+      {#if isMobile && speakersOpen}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <div
           class="speakers-drawer-overlay"
           role="presentation"
-          onclick={() => (speakersDrawerOpen = false)}
+          onclick={() => (speakersOpen = false)}
         ></div>
       {/if}
 
-      <div class="transcript-speakers-wrap {speakersDrawerOpen ? 'drawer-open' : ''}">
+      <div class="transcript-speakers-wrap {speakersOpen ? 'open' : ''}">
         <div class="speakers-drawer-top">
-          <span class="card-title">Спикеры · {transcript.speakers.length}</span>
+          <span class="card-title">Спикеры{#if transcript.speakers.length > 0}&nbsp;· {transcript.speakers.length}{/if}</span>
           <button
             class="btn-close-page"
-            aria-label="Закрыть панель спикеров"
-            onclick={() => (speakersDrawerOpen = false)}
+            aria-label="Скрыть панель спикеров"
+            title="Скрыть панель спикеров"
+            onclick={() => (speakersOpen = false)}
           >
             ✕
           </button>

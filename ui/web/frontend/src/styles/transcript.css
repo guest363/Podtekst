@@ -1,6 +1,6 @@
 /* ---------- Страница расшифровки (минималистичный открытый стиль без рамок) ---------- */
 .transcript-page {
-  max-width: 1240px;
+  max-width: 920px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -208,13 +208,56 @@
 }
 .transcript-empty-title { font-size: 15px; font-weight: 800; }
 
-/* Двухколоночный открытый грид (без рамок вокруг колонок) */
+/* Двухколоночный открытый грид со сворачиваемым сайдбаром спикеров слева */
 .transcript-grid {
   display: grid;
-  grid-template-columns: 290px minmax(0, 1fr);
-  gap: 32px;
+  grid-template-columns: 0px minmax(0, 1fr);
+  gap: 0px;
   align-items: start;
   min-height: 0;
+  transition: grid-template-columns 220ms cubic-bezier(0.16, 1, 0.3, 1), gap 220ms ease;
+}
+
+.transcript-grid.sidebar-open {
+  grid-template-columns: 275px minmax(0, 1fr);
+  gap: 20px;
+}
+
+.transcript-speakers-wrap {
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+  min-width: 0;
+}
+
+.transcript-grid.sidebar-open .transcript-speakers-wrap {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.speakers-drawer-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 8px;
+}
+.transcript-speakers-wrap .transcript-speakers .pane-title {
+  display: none;
+}
+
+.btn-speakers-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 160ms ease;
+}
+.btn-speakers-toggle.active {
+  background: rgba(37, 99, 235, 0.09);
+  border-color: rgba(37, 99, 235, 0.35);
+  color: var(--accent-blue);
 }
 
 /* Колонки: абсолютно открытые, никаких внешних 1px рамок и белых карточек-коробок */
@@ -536,7 +579,7 @@
 .speaker-menu-item:disabled { color: var(--text-faint); cursor: default; }
 .speaker-menu-add { color: var(--accent-blue); font-weight: 700; }
 
-@media (max-width: 940px) {
+@media (max-width: 720px) {
   .transcript-page {
     gap: 12px;
   }
@@ -592,12 +635,13 @@
   .transcript-speakers-wrap {
     display: none;
   }
+  .transcript-speakers-wrap.open,
   .transcript-speakers-wrap.drawer-open {
     display: flex;
     flex-direction: column;
     position: fixed;
     top: 0; right: 0; bottom: 0;
-    width: clamp(340px, 66.67vw, 560px);
+    width: clamp(320px, 80vw, 440px);
     max-width: 100vw;
     height: 100dvh;
     z-index: 61;
@@ -609,6 +653,8 @@
     gap: 12px;
     animation: drawer-in 240ms var(--ease-spring);
     overflow: hidden;
+    opacity: 1;
+    pointer-events: auto;
   }
   .speakers-drawer-overlay {
     display: block;
