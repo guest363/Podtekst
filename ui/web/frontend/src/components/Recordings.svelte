@@ -295,6 +295,8 @@
           {/if}
         </span>
       </div>
+    {:else if visible.length === 0 && search.trim() !== ''}
+      <div class="empty-note">Ничего не найдено</div>
     {:else}
       {#each visible as rec (rec.path)}
         {@render recRow(rec)}
@@ -378,7 +380,11 @@
         <button class="btn-secondary" disabled={deleting} onclick={() => (deleteTarget = null)}>
           Отмена
         </button>
-        <button class="btn-primary" disabled={deleting} onclick={() => void confirmDelete()}>
+        <button
+          class={deleteTarget.owned ? 'btn-danger' : 'btn-primary'}
+          disabled={deleting}
+          onclick={() => void confirmDelete()}
+        >
           {deleting ? 'Удаляю…' : deleteTarget.owned ? 'Удалить' : 'Убрать из приложения'}
         </button>
       </div>
@@ -429,4 +435,10 @@
   }
   .rec-drawer-list { overflow-y: auto; flex: 1; min-height: 0; padding-right: 2px; }
   .delete-box { max-width: 440px; }
+  /* Деструктивное подтверждение: красный — только здесь, запись его не занимает смысл */
+  .btn-danger {
+    background: var(--accent-rec);
+    border: 1px solid var(--accent-rec-hover);
+  }
+  .btn-danger:hover { background: var(--accent-rec-hover); }
 </style>

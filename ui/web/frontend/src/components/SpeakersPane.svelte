@@ -172,6 +172,7 @@
         }
         await loadPeople()
         emit('transcript-reload')
+        emit('voiceprints-changed')
       } else {
         toast('Не удалось сохранить: ' + (d.error || 'неизвестная ошибка'), 'error')
       }
@@ -195,6 +196,7 @@
         toast(`Голос «${name}» удалён из базы`)
         await loadPeople()
         emit('transcript-reload')
+        emit('voiceprints-changed')
       } else {
         toast('Этот голос уже удалён из базы', 'error')
       }
@@ -243,7 +245,7 @@
       <div class="empty-note">Спикеры появятся после расшифровки</div>
     {:else}
       {#each mergedSpeakers as spk, si (spk.key)}
-        {@const samples = spk.samples}
+        {@const samples = [...spk.samples].sort((a, b) => a.start - b.start)}
         {@const matchedName = spk.matched_name || ''}
         {@const displayName = spk.matched_name || spk.name || 'Спикер'}
         <div

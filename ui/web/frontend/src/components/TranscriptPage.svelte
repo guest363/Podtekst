@@ -220,10 +220,14 @@
         <button
           class="btn-primary btn-sm btn-transcribe-header"
           disabled={engine.running}
-          title={otherRunning ? `Уже расшифровывается «${baseName(engine.file)}»` : ''}
+          title={otherRunning
+            ? `Уже расшифровывается «${baseName(engine.file)}»`
+            : transcript.hasText
+              ? 'Текст будет распознан заново и заменит текущий'
+              : ''}
           onclick={() => void startTranscription(ui.currentTranscriptPath)}
         >
-          <span class="btn-text-full">Запустить расшифровку</span>
+          <span class="btn-text-full">{transcript.hasText ? 'Повторить расшифровку' : 'Запустить расшифровку'}</span>
           <span class="btn-text-short">Расшифровать</span>
         </button>
 
@@ -236,6 +240,7 @@
         <button
           class="btn-secondary btn-sm"
           disabled={!transcript.utterances.length}
+          title={transcript.utterances.length ? '' : 'Экспорт появится после расшифровки'}
           onclick={() => void exportDocx(baseName(ui.currentTranscriptPath), transcript.utterances, transcriptMeta)}
         >
           DOCX

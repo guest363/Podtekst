@@ -252,13 +252,13 @@ pub fn transcribe_file(
         .unwrap_or(0.0);
     events::emit_stage(2, "Загружаю модели…");
     let mut models = take_cached_models()?;
-    let engine_name = if models.gigaam.is_some() && opts.engine != "whisper" {
-        "GigaAM-v3 (e2e_rnnt, onnx-int8)"
+    let use_gigaam = models.gigaam.is_some() && opts.engine != "whisper";
+    let engine_name = if use_gigaam {
+        "GigaAM-v3 (русский язык)"
     } else {
-        "Whisper large-v3-turbo (onnx, merged-decoder)"
+        "Whisper large-v3-turbo (30+ языков)"
     };
     events::emit_stage(6, &format!("Модели готовы: {engine_name}"));
-    let use_gigaam = engine_name.starts_with("GigaAM");
 
     let (chan_list, speaker_method) = if is_stereo {
         (

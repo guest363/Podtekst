@@ -85,6 +85,9 @@
     on('recordings-changed', () => void loadRecordings())
     on('support-changed', () => void loadSupportInfo())
     on('models-changed', () => void loadModels())
+    // Привязка/удаление голоса меняет содержимое пакетов — счётчики в «Голосах»
+    // должны перечитаться, а не ждать следующего запуска приложения.
+    on('voiceprints-changed', () => void loadVoicePacks())
     on('transcript-reload', () => {
       if (ui.currentTranscriptPath) void openTranscriptFile(ui.currentTranscriptPath)
     })

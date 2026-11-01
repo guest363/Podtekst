@@ -20,7 +20,7 @@
       ],
       "embedding_space": null,
       "license": "MIT",
-      "description": "Стриминговый детектор речи Silero v6.2.3, окно 32 мс, контекст 64 сэмпла, состояние [2,1,128]. Повышенная чувствительность к тихому и приглушённому голосу."
+      "description": "Стриминговый детектор речи Silero v6.2.3: находит речь в реальном времени. Повышенная чувствительность к тихому и приглушённому голосу."
     },
     {
       "id": "asr-gigaam-v3-rnnt-int8",
@@ -58,7 +58,7 @@
       ],
       "embedding_space": null,
       "license": "MIT",
-      "description": "Conformer-трансдьюсер 242М, жадный RNNT-декодинг. Проверен живым прогоном на русской речи."
+      "description": "Офлайн-распознавание русской речи на процессоре. Проверен живым прогоном на русской речи."
     },
     {
       "id": "asr-whisper-large-v3-turbo-q",
@@ -96,7 +96,7 @@
       ],
       "embedding_space": null,
       "license": "MIT",
-      "description": "Merged-decoder с KV-кэшем, greedy-декодинг. Проверен живым прогоном на русской речи."
+      "description": "Мультиязычное распознавание — запасной движок, когда GigaAM не подходит. Проверен живым прогоном на русской речи."
     },
     {
       "id": "diar-pyannote-segmentation-3",
@@ -131,7 +131,7 @@
       "embedding_space": "eres2netv2-192-v1",
       "embedding_dim": 192,
       "license": "Apache-2.0",
-      "description": "3D-Speaker ERes2NetV2 (speech_eres2netv2_sv_zh-cn_16k-common): fbank [B,T,80] (kaldi-hann + CMN) → 192-dim. Проверен: косинус 1.0 с официальным чекпоинтом ModelScope; кросс-спикерные пары ≤ 0.22, свой голос ≥ 0.48 на фрагментах от 1.5 с."
+      "description": "Вектор голоса ERes2NetV2 (192-мера): отличает голоса разных людей при одновременной речи. Проверен сверкой с официальным чекпоинтом ModelScope."
     }
   ]
 }
