@@ -46,7 +46,15 @@
 /* Колонка информации */
 .rec-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .rec-name-row { display: flex; align-items: center; gap: 6px; min-width: 0; width: 100%; }
-.rec-name { font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; font-size: 13px; }
+.rec-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 .rec-tag-video {
   font-size: 11px;
   font-weight: 500;
@@ -177,6 +185,22 @@ body:has(.bottom-player-bar) {
   color: var(--text-muted);
   margin-top: 4px;
   line-height: 1.4;
+}
+
+/* В сайд-дровере «Все записи» ширина компактнее — выстраиваем дату слева на 2 строки, а действия под заголовком */
+.rec-drawer-list .rec-item.rec-card {
+  grid-template-columns: 85px minmax(0, 1fr);
+  row-gap: 8px;
+  column-gap: 14px;
+  padding: 10px 0;
+}
+.rec-drawer-list .rec-card .rec-date-col {
+  grid-row: 1 / span 2;
+}
+.rec-drawer-list .rec-card .rec-actions {
+  grid-column: 2;
+  justify-content: flex-start;
+  padding-top: 2px;
 }
 
 @media (max-width: 600px) {

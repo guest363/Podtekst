@@ -56,6 +56,9 @@ body:has(.app-drawer-overlay) {
   flex-direction: column;
   animation: drawer-in 240ms var(--ease-spring);
 }
+.app-drawer.rec-drawer {
+  width: clamp(520px, 56vw, 780px);
+}
 
 @keyframes drawer-in {
   from {
