@@ -17,12 +17,21 @@
   let micName = $state('Определение…')
   let micMuted = $state(false)
   let micRms = $state(0)
-  let sysLevel = $state(0)
-  // Шкала для полоски (RMS в квадрате — ближе к восприятию) и честные −60…0 дБFS.
+  let sysRms = $state(0)
+
+  // Шкала для полоски (RMS в квадрате — ближе к восприятию) и честные −60…0 дБFS для обоих каналов.
   let micLevel = $derived(Math.min(100, Math.round(Math.sqrt(micRms) * 100)))
   let micDb = $derived(micRms > 0.001 ? Math.max(-60, Math.round(20 * Math.log10(micRms))) : -60)
+  let sysLevel = $derived(Math.min(100, Math.round(Math.sqrt(sysRms) * 100)))
+  let sysDb = $derived(sysRms > 0.001 ? Math.max(-60, Math.round(20 * Math.log10(sysRms))) : -60)
 
   const hotkeyLabel = /Mac/i.test(navigator.userAgent) ? 'Cmd+Shift+R' : 'Ctrl+Shift+R'
+
+  const WAVE_BARS_COUNT = 44
+  const waveDelays = Array.from({ length: WAVE_BARS_COUNT }, (_, i) => {
+    const distFromCenter = Math.abs(i - (WAVE_BARS_COUNT - 1) / 2)
+    return (distFromCenter * 0.04).toFixed(2)
+  })
 
   let startTime = 0
   let timerInterval: ReturnType<typeof setInterval> | null = null
@@ -109,7 +118,10 @@
     try {
       const r = await fetch('/api/status')
       const d = await readJsonSafe(r)
-      sysLevel = Math.min(100, Math.round((d.sys_level || 0) * 100))
+      // tail_level_01 уже RMS с запасом ×3; приводим к 0…1.
+      micRms = Math.min(1, (d.mic_level || 0) / 3)
+      sysRms = Math.min(1, (d.sys_level || 0) / 3)
+
       // Движок един на всё приложение: опрос — запасной канал правды о нём
       // (расшифровку могли запустить авто-режимом, CLI или IPC мимо UI).
       syncEngineFromStatus(!!d.transcribing, String(d.transcribing_file || ''))
@@ -134,11 +146,6 @@
       } else {
         micName = 'Недоступен'
       }
-      // Уровень микрофона — из нативного захвата ядра (/api/status), а не из
-      // getUserMedia: браузерный запрос пугает и переводит Bluetooth-гарнитуры
-      // в телефонный профиль. До старта записи метр честно показывает ноль.
-      // tail_level_01 уже RMS с запасом ×3; приводим к 0…1.
-      micRms = Math.min(1, (d.mic_level || 0) / 3)
     } catch {
       /* молча */
     }
@@ -169,53 +176,74 @@
 
 <section class="studio-deck" aria-label="Запись">
   <div class="deck-shell">
-    <div class="deck-status-bar">
+    <div class="deck-top">
       <span
-        class="status-pill {isRecording ? 'recording' : ''}"
+        class="deck-status {isRecording ? 'recording' : ''}"
         role="status"
         title={engine.running && engine.file ? engine.file : undefined}
       >
-        {#if isRecording}
-          {screenRecorder.active ? 'Идёт запись экрана и звука' : 'Идёт запись'}
-        {:else if engine.running}
-          Расшифровка {engine.pct}%{engine.file ? ` · ${baseName(engine.file)}` : ''}
-        {:else if Object.keys(engine.downloading).length > 0}
-          {@const activeId = Object.keys(engine.downloading)[0]}
-          {@const activePct = engine.downloading[activeId]}
-          Скачивание ИИ: {activePct}%
-        {:else}
-          Готов к записи
-        {/if}
+        <span class="status-dot {isRecording ? 'active' : ''}" aria-hidden="true"></span>
+        <span>
+          {#if isRecording}
+            {screenRecorder.active ? 'Идёт запись экрана и звука' : 'Идёт запись встречи'}
+          {:else if engine.running}
+            Расшифровка {engine.pct}%{engine.file ? ` · ${baseName(engine.file)}` : ''}
+          {:else if Object.keys(engine.downloading).length > 0}
+            {@const activeId = Object.keys(engine.downloading)[0]}
+            {@const activePct = engine.downloading[activeId]}
+            Скачивание ИИ: {activePct}%
+          {:else}
+            Готов к записи
+          {/if}
+        </span>
       </span>
 
-      {#if !isMobile && screenSupported}
-        <button
-          type="button"
-          class="deck-screen-chip {screenRecorder.enabled ? 'active' : ''}"
-          disabled={isRecording}
-          onclick={() => {
-            toggleScreenCapture()
-          }}
-          title={screenRecorder.enabled
-            ? 'Запись экрана включена (нажмите, чтобы выключить)'
-            : 'Включить запись экрана (нажмите для включения)'}
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-            <line x1="8" y1="21" x2="16" y2="21"></line>
-            <line x1="12" y1="17" x2="12" y2="21"></line>
-          </svg>
-          <span>
-            {#if isRecording && screenRecorder.active}
-              Запись экрана идёт
-            {:else if screenRecorder.enabled}
-              Запись экрана включена
-            {:else}
-              Включить запись экрана
-            {/if}
-          </span>
-        </button>
-      {/if}
+      <div class="deck-chips">
+        {#if !isMobile && screenSupported}
+          <button
+            type="button"
+            class="clean-chip {screenRecorder.enabled ? 'active' : ''}"
+            disabled={isRecording}
+            onclick={() => {
+              toggleScreenCapture()
+            }}
+            title={isRecording
+              ? (screenRecorder.active ? 'Запись экрана активна' : 'Запись экрана не активна')
+              : (screenRecorder.enabled
+                ? 'Запись экрана включена (нажмите, чтобы выключить)'
+                : 'Включить запись экрана')}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
+            <span>
+              {#if isRecording && screenRecorder.active}
+                Экран включен
+              {:else if screenRecorder.enabled}
+                Экран включен
+              {:else}
+                ＋ Экран
+              {/if}
+            </span>
+          </button>
+        {/if}
+
+        {#if !isMobile}
+          <div
+            class="clean-chip static {micMuted ? 'warn' : ''}"
+            title={micMuted ? 'Микрофон выключен в системе' : `Микрофон: ${micName}`}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="22"/>
+            </svg>
+            <span class="mic-name-text">{micMuted ? 'Микрофон заглушен' : micName}</span>
+          </div>
+        {/if}
+      </div>
     </div>
 
     {#if engine.running}
@@ -234,44 +262,48 @@
       </div>
     {/if}
 
-    <div class="timer-readout {isRecording ? 'recording' : ''}" aria-label="Время записи">
-      {timerText}
+    <div class="deck-wave" aria-hidden="true">
+      {#each waveDelays as delay}
+        <div
+          class="w-bar {isRecording ? 'active' : ''}"
+          style={`animation-delay: ${delay}s;`}
+        ></div>
+      {/each}
     </div>
 
-    <div class="vu-meter-box" aria-hidden="true">
-      <div class="vu-row">
-        <span class="vu-label">Вы</span>
-        <div class="vu-track"><div class="vu-bar" style={`width: ${micLevel}%`}></div></div>
-        <span class="vu-db">{micRms > 0.001 ? `${micDb}\u00A0дБ` : '–\u00A0дБ'}</span>
-      </div>
-      {#if hasSystemAudio()}
-        <div class="vu-row">
-          <span class="vu-label">Собеседники</span>
-          <div class="vu-track"><div class="vu-bar" style={`width: ${sysLevel}%`}></div></div>
-          <span class="vu-db">{sysLevel > 0 ? `${sysLevel}%` : '–'}</span>
-        </div>
-      {/if}
-    </div>
-
-    {#if !isMobile}
-      <div class="mic-strip">
-        <span>Микрофон: <span class="mic-name">{micName}</span></span>
-        {#if micMuted}
-          <span class="status-badge warn">Выключен в системе</span>
+    <div class="deck-bottom">
+      <div class="deck-timer-box">
+        <span class="deck-timer {isRecording ? 'recording' : ''}" aria-label="Время записи">
+          {timerText}
+        </span>
+        {#if !isMobile}
+          <span class="deck-hotkey" title="Глобальный хоткей">{hotkeyLabel}</span>
         {/if}
       </div>
-    {/if}
 
-    <button
-      class="btn-record-main {isRecording ? 'active' : 'idle'}"
-      onclick={toggleRecord}
-    >
-      <span>{isRecording ? 'Остановить запись' : 'Начать запись'}</span>
-    </button>
-    {#if !isMobile}
-      <div class="hotkey-hint">
-        Из любого окна: <kbd>{hotkeyLabel}</kbd>
+      <div class="deck-bottom-right">
+        <div class="deck-levels" aria-label="Уровни звука">
+          {#if isRecording}
+            <span>Вы: {micRms > 0.001 ? `${micDb}\u00A0дБ` : '–\u00A0дБ'}</span>
+            {#if hasSystemAudio()}
+              <span class="sep">·</span>
+              <span>Собеседники: {sysRms > 0.001 ? `${sysDb}\u00A0дБ` : '–\u00A0дБ'}</span>
+            {/if}
+          {:else}
+            <span class="levels-idle">
+              {hasSystemAudio() ? 'Микрофон + система' : 'Микрофон'}
+            </span>
+          {/if}
+        </div>
+
+        <button
+          class="btn-action-round {isRecording ? 'recording' : ''}"
+          onclick={toggleRecord}
+          type="button"
+        >
+          <span>{isRecording ? '■ Остановить' : '● Начать запись'}</span>
+        </button>
       </div>
-    {/if}
+    </div>
   </div>
 </section>

@@ -1,131 +1,279 @@
-/* ---------- Deck ---------- */
+/* ---------- Deck (Синтез А: Панорамная звуковая волна) ---------- */
 .studio-deck {
   background: var(--deck-bg);
   border: 1px solid var(--deck-border);
   border-radius: var(--radius-card);
-  padding: 18px 20px;
+  padding: 16px 20px;
   color: var(--text-primary);
   box-shadow: var(--shadow-deck);
 }
+
 .deck-shell {
-  display: flex; flex-direction: column; gap: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
-.deck-status-bar {
-  display: flex; justify-content: space-between; align-items: center; gap: 8px;
-  font-size: 12px; font-weight: 600;
+
+/* Верхняя строка: статус слева, чипы справа */
+.deck-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  min-height: 28px;
+}
+
+.deck-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--text-muted);
-}
-.status-pill { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
-/* Имя расшифровываемого файла в пилюле может быть длинным — режем без поломки строки. */
-.status-pill[title] { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.status-pill::before {
-  content: ""; width: 8px; height: 8px; border-radius: 50%; background: #c3cedb;
-}
-.status-pill.recording { color: #dc2626; animation: pulse 1.4s infinite ease-in-out; }
-.status-pill.recording::before { background: #ef4444; }
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
-
-.timer-readout {
-  font-family: var(--font-mono);
-  font-size: clamp(36px, 4.5vw, 48px);
-  font-weight: 700; text-align: center; letter-spacing: 0.02em; line-height: 1.1;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-primary);
-}
-.timer-readout.recording { color: var(--accent-rec); }
-
-.deck-transcribe { display: flex; flex-direction: column; gap: 4px; }
-.deck-transcribe .progress-track { height: 10px; }
-.deck-transcribe-msg {
-  font-size: 11.5px; color: var(--text-muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-
-.vu-meter-box {
-  background: var(--bg-inset);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-inner);
-  padding: 10px 14px;
-  display: flex; flex-direction: column; gap: 8px;
-}
-.vu-row { display: flex; align-items: center; gap: 10px; min-height: 18px; }
-.vu-label { font-size: 11.5px; font-weight: 600; color: var(--text-muted); width: 96px; flex-shrink: 0; }
-.vu-db { font-family: var(--font-mono); font-size: 11px; line-height: 1; color: var(--text-muted); width: 48px; min-width: 48px; text-align: right; flex-shrink: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.vu-track {
-  flex: 1; height: 8px; min-width: 0;
-  background: #e2e8f0; border-radius: var(--radius-pill); overflow: hidden; position: relative;
-  container-type: inline-size;
-}
-.vu-bar {
-  height: 100%; width: 0%;
-  background: linear-gradient(90deg, #10b981 0%, #10b981 70%, #f59e0b 85%, #ef4444 100%);
-  background-size: 100cqw 100%;
-  background-repeat: no-repeat;
-  border-radius: var(--radius-pill);
-  transition: width 60ms linear;
-}
-.progress-track { flex: none; height: 8px; background: #e2e8f0; box-shadow: none; }
-.progress-track .vu-bar { background: var(--accent-blue); transition: width 300ms ease-out; }
-
-.mic-strip {
-  display: flex; justify-content: flex-start; align-items: center; gap: 8px;
-  font-size: 12.5px; color: var(--text-muted);
-  background: var(--bg-inset);
-  border: 1px solid var(--border-soft);
-  padding: 7px 12px; border-radius: var(--radius-inner);
   min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
-.mic-strip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mic-name { font-weight: 600; color: var(--text-primary); }
+.deck-status.recording {
+  color: var(--accent-rec);
+}
 
-.deck-screen-chip {
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #94a3b8;
+  flex-shrink: 0;
+}
+.status-dot.active {
+  background: var(--accent-rec);
+  animation: pulse-dot 1.2s infinite ease-in-out;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(1.25); }
+}
+
+.deck-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Строгие системные чипы (без эмодзи и слоп-иконок) */
+.clean-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   background: var(--bg-inset);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-pill);
-  padding: 4px 11px;
+  padding: 4px 10px;
   font-size: 11.5px;
   font-weight: 600;
   color: var(--text-muted);
   cursor: pointer;
-  transition: all 160ms ease;
-  line-height: 1.4;
   user-select: none;
+  transition: all 140ms ease;
+  line-height: 1.3;
   white-space: nowrap;
-  flex-shrink: 0;
 }
-.deck-screen-chip:hover:not(:disabled) {
+.clean-chip:hover:not(:disabled) {
   background: #fff;
   border-color: var(--border-card);
   color: var(--text-primary);
 }
-.deck-screen-chip.active {
+.clean-chip.active {
   background: rgba(37, 99, 235, 0.09);
   border-color: rgba(37, 99, 235, 0.35);
   color: var(--accent-blue);
 }
-.deck-screen-chip:disabled {
-  opacity: 0.55;
+.clean-chip:disabled {
+  opacity: 0.6;
   cursor: not-allowed;
 }
-
-
-.btn-record-main {
-  width: 100%; padding: 13px 24px; border-radius: var(--radius-pill);
-  font-size: 15px; font-weight: 700; border: none; cursor: pointer;
-  display: flex; align-items: center; justify-content: center; gap: 10px;
-  transition: transform 180ms var(--ease-spring), background 180ms var(--ease-spring);
+.clean-chip.static {
+  cursor: default;
 }
-.btn-record-main.idle { background: var(--accent-rec); color: #fff; }
-.btn-record-main.idle:hover { background: var(--accent-rec-hover); transform: translateY(-1px); }
-.btn-record-main.active { background: #334155; color: #fff; border: 1px solid #475569; }
-.btn-record-main.active:hover { background: #1e293b; }
-.btn-record-main.active:active { transform: scale(0.98); }
-.hotkey-hint { text-align: center; font-size: 11.5px; color: var(--text-faint); margin-top: -4px; }
-.hotkey-hint kbd {
-  font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted);
-  background: #f1f5f9; border: 1px solid var(--border-card); border-radius: 4px;
-  padding: 1px 5px;
+.clean-chip.static:hover {
+  background: var(--bg-inset);
+  border-color: var(--border-soft);
+  color: var(--text-muted);
+}
+.clean-chip.warn {
+  border-color: #f59e0b;
+  color: #b45309;
+  background: #fffbeb;
+}
+.mic-name-text {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Прогресс расшифровки */
+.deck-transcribe {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.progress-track {
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+.progress-track .vu-bar {
+  background: var(--accent-blue);
+  height: 100%;
+  border-radius: var(--radius-pill);
+  transition: width 300ms ease-out;
+}
+.deck-transcribe-msg {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Живая панорамная звуковая волна */
+.deck-wave {
+  height: 44px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-inner);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 0 14px;
+  overflow: hidden;
+}
+.w-bar {
+  width: 3px;
+  height: 6px;
+  background: #cbd5e1;
+  border-radius: 999px;
+  transition: height 120ms ease, background 120ms ease;
+  flex-shrink: 0;
+}
+.w-bar.active {
+  background: var(--accent-blue);
+  animation: wave-bounce 1s infinite ease-in-out;
+}
+@keyframes wave-bounce {
+  0%, 100% { height: 6px; }
+  50% { height: 32px; }
+}
+
+/* Нижняя строка: таймер + уровни (в дБ) + кнопка записи */
+.deck-bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.deck-timer-box {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.deck-timer {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.deck-timer.recording {
+  color: var(--accent-rec);
+}
+.deck-hotkey {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.deck-bottom-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.deck-levels {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.deck-levels .sep {
+  color: var(--text-faint);
+}
+.levels-idle {
+  color: var(--text-faint);
+}
+
+.btn-action-round {
+  height: 40px;
+  padding: 0 22px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-rec);
+  color: #fff;
+  border: none;
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 3px 12px rgba(220, 38, 38, 0.25);
+  transition: all 160ms ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.btn-action-round:hover {
+  background: var(--accent-rec-hover);
+  transform: translateY(-1px);
+}
+.btn-action-round:active {
+  transform: scale(0.98);
+}
+.btn-action-round.recording {
+  background: #0f172a;
+  box-shadow: 0 3px 12px rgba(15, 23, 42, 0.2);
+}
+.btn-action-round.recording:hover {
+  background: #1e293b;
+}
+
+@media (max-width: 620px) {
+  .deck-top {
+    flex-wrap: wrap;
+  }
+  .deck-bottom {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .deck-bottom-right {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .deck-levels {
+    justify-content: center;
+  }
+  .btn-action-round {
+    width: 100%;
+    justify-content: center;
+  }
 }
