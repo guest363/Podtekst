@@ -63,42 +63,38 @@
   transform: scale(0.95);
 }
 
-/* Строка 2: Слева плеер, справа чипы и кнопки */
-.transcript-header-sub {
+/* Строка 2: Тулбар действий (чипы слева, кнопки справа) */
+.transcript-sub-actions {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 16px;
+  justify-content: space-between;
+  gap: 12px;
   flex-wrap: wrap;
+  width: 100%;
 }
 
+/* Строка 3: Медиаплеер под тулбаром действий */
 .transcript-sub-player {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex: 1 1 280px;
-  max-width: 440px;
+  width: 100%;
   min-width: 0;
   transition: all 200ms ease;
 }
-.transcript-sub-player.is-expanded {
-  flex: 1 1 100%;
-  max-width: 100%;
-  order: 10;
-  margin-top: 10px;
-}
 .transcript-sub-player .slim-player {
-  flex: 1 1 auto;
+  flex: 1 1 100%;
+  width: 100%;
 }
 .video-player-container {
   display: flex;
   flex-direction: column;
   gap: 6px;
   width: 100%;
+  max-width: 440px;
+  transition: max-width 220ms ease;
 }
 .transcript-sub-player.is-expanded .video-player-container {
-  max-width: 960px;
-  margin: 0 auto;
+  max-width: 100%;
 }
 .transcript-sub-player video {
   flex: 1;
@@ -135,15 +131,6 @@
   background: #fff;
   border-color: var(--border-card);
   color: var(--text-primary);
-}
-
-.transcript-sub-actions {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  flex: 1 1 auto;
 }
 
 .transcript-chips {
