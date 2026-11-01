@@ -1,5 +1,3 @@
-//! Захват микрофона через HALOutput AudioUnit и запись в сырой f32-файл.
-
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::path::Path;
@@ -302,7 +300,6 @@ impl CoreAudioCapture {
     }
 }
 
-/// Запустить захват: микрофон или виртуальный loopback (системный звук).
 pub fn start_stream(
     kind: StreamKind,
     device: Option<&str>,

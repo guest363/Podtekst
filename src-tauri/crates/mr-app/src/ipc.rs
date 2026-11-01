@@ -1,5 +1,3 @@
-//! IPC одиночного экземпляра: TCP `127.0.0.1:48291` + мост в Tauri-окно.
-
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
@@ -9,13 +7,9 @@ use crate::recording::{
     RecordingState,
 };
 
-/// Порт локального IPC для взаимодействия одиночного экземпляра.
 pub(crate) const IPC_PORT: u16 = 48291;
 
-// ---------- IPC (одиночный экземпляр) ----------
-
 /// Ответы, которыми отвечает только наш инстанс. Порт 48291 может занять
-/// посторонний сервис (было с ZCode AppImage): пустой или чужой ответ —
 /// значит нашего приложения на порту нет.
 const IPC_REPLIES: &[&str] = &["STOPPED", "STARTED", "OK", "UNKNOWN"];
 

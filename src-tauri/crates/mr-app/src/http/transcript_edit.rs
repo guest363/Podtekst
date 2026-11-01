@@ -1,5 +1,3 @@
-//! Точечные правки протокола с атомарной регенерацией всех артефактов.
-
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
@@ -9,7 +7,6 @@ use super::media::inside_save_dir;
 use crate::config::save_dir;
 use crate::transcribe::{report, Utterance};
 
-/// POST /api/transcript/edit: текст реплики, её спикер или глобальное имя спикера.
 pub(super) fn handle_transcript_edit(request: tiny_http::Request, body: Value) {
     match edit_transcript(&body) {
         Ok(result) => json_response(request, result, 200),

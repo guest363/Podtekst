@@ -1,7 +1,3 @@
-//! Захват экрана на Linux (GNOME Shell Screencast D-Bus).
-//! Управление записью - нативный D-Bus-клиент (zbus), внешних интерпретаторов нет.
-//! Склейка видеофайла экрана с аудиозаписью встречи - через ffmpeg.
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -30,7 +26,6 @@ pub(crate) struct ScreenCaptureSession {
 
 static SUPPORTED_CACHE: OnceLock<bool> = OnceLock::new();
 
-/// Проверяет, доступна ли служба захвата экрана на текущей системе.
 pub(crate) fn is_screen_capture_supported() -> bool {
     *SUPPORTED_CACHE.get_or_init(|| {
         if !cfg!(target_os = "linux") {
@@ -48,7 +43,6 @@ pub(crate) fn is_screen_capture_supported() -> bool {
 }
 
 impl ScreenCaptureSession {
-    /// Запускает запись экрана. Временный файл пишется в системный temp.
     pub(crate) fn start(started_ts: u64) -> Result<Self, String> {
         let conn = session_connection()?;
         let template = format!("/tmp/.mr_screen_{started_ts}_%d_%t");
@@ -69,7 +63,6 @@ impl ScreenCaptureSession {
         Ok(Self { conn, video_path })
     }
 
-    /// Останавливает запись экрана и ожидает финализации видеофайла.
     pub(crate) fn stop(self) -> Result<PathBuf, String> {
         let proxy = screencast_proxy(&self.conn)?;
         proxy
@@ -110,7 +103,6 @@ impl Drop for ScreenCaptureSession {
     }
 }
 
-/// Склеивает видеофайл экрана и аудиозапись встречи через ffmpeg.
 pub(crate) fn mux_screen_and_audio(
     video_path: &Path,
     audio_path: &Path,
@@ -118,7 +110,6 @@ pub(crate) fn mux_screen_and_audio(
 ) -> Result<(), String> {
     eprintln!("[SCREEN] Склейка видео {video_path:?} и аудио {audio_path:?} -> {final_path:?}");
 
-    // 1-я попытка: быстрое копирование видеопотока h264 + кодирование aac
     let mut cmd = Command::new("ffmpeg");
     cmd.arg("-y")
         .arg("-i")
@@ -145,7 +136,6 @@ pub(crate) fn mux_screen_and_audio(
         }
     }
 
-    // 2-я попытка: перекодирование, если прямое копирование контейнера не сработало
     eprintln!("[SCREEN] Прямое копирование не сработало, запускаю перекодирование...");
     let mut cmd = Command::new("ffmpeg");
     cmd.arg("-y")

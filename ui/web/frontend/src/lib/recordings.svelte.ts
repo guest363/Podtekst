@@ -1,4 +1,3 @@
-// Записи: список, загрузка файлов, извлечение MP3.
 import { encPath, isMobile, readJsonSafe } from './api'
 import type { RecordingItem } from './api'
 import { toast } from './toast.svelte.ts'

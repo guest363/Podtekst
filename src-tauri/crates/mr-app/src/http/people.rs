@@ -1,5 +1,3 @@
-//! Участники, гости и голосовые отпечатки (Voice Packs + external_people.json).
-
 use std::path::{Path, PathBuf};
 
 use mr_packs as packs;
@@ -29,7 +27,6 @@ pub(super) fn save_external_people(list: &[serde_json::Value]) {
     );
 }
 
-/// Люди из активных голосовых пакетов (как отдаёт `/api/people`).
 pub(super) fn people_json_files() -> Vec<PathBuf> {
     packs::get_active_packs(&app_data_dir())
         .unwrap_or_default()
@@ -46,14 +43,10 @@ fn parse_profiles(v: &serde_json::Value) -> Vec<serde_json::Value> {
         .unwrap_or_else(|| v.as_array().cloned().unwrap_or_default())
 }
 
-/// Канонический объект voiceprints.json v3: пространство `eres2netv2-192-v1`.
 fn vp_v3(profiles: Vec<serde_json::Value>) -> serde_json::Value {
     json!({"version": 3, "embedding_space": mr_ml::EMBEDDING_SPACE, "profiles": profiles})
 }
 
-/// Разовая миграция при старте: профили старых пространств (pyannote-256-v1 и
-/// прочие размерности ≠ текущей) не пересчитать без исходных сэмплов — удаляем
-/// и начинаем собирать заново; оригинал сохраняется в `voiceprints.v2.bak`.
 /// Контакт в people.json не затрагивается, пропадает только голосовой вектор.
 pub(crate) fn migrate_voiceprints_v3() {
     let mut files = vec![app_data_dir().join("voiceprints.json")];
@@ -162,7 +155,6 @@ fn rename_voiceprint_names(old: &str, new: &str) -> bool {
     found
 }
 
-/// Обновляет имя/роль человека в пакетах и среди гостей.
 pub(super) fn update_people(old: &str, new_name: &str, role: Option<&str>) -> bool {
     let mut found = false;
     for file in people_json_files() {
@@ -270,7 +262,6 @@ fn voiceprint_usable(p: &serde_json::Value) -> bool {
     emb_ok || proto_ok
 }
 
-/// Все голосовые профили: активные пакеты Voice Packs (+ локальный файл при наличии).
 pub(super) fn load_all_voiceprints() -> Vec<serde_json::Value> {
     let mut out = vec![];
     let mut seen = std::collections::HashSet::new();
@@ -329,9 +320,6 @@ fn l2_normalize(v: &[f64]) -> Vec<f64> {
     v.iter().map(|x| x / n).collect()
 }
 
-/// Гарантирует, что человек с указанным именем присутствует либо в одном из
-/// активных голосовых пакетов, либо в `external_people.json`. Если человека нет
-/// нигде, он добавляется в `external_people.json` с указанной ролью (по умолчанию "Участник").
 pub(super) fn ensure_person_in_list(name: &str, role: Option<&str>) {
     let clean = name.trim();
     if clean.is_empty() {
@@ -362,8 +350,6 @@ pub(super) fn ensure_person_in_list(name: &str, role: Option<&str>) {
     }
 }
 
-/// Синхронизация профилей из `voiceprints.json`: если у человека есть сохранённый отпечаток,
-/// но он отсутствует в `people.json` и `external_people.json`, добавляем его в список участников.
 pub(crate) fn sync_voiceprint_people() {
     for vp in load_all_voiceprints() {
         if let Some(name) = vp.get("name").and_then(|x| x.as_str()) {
@@ -372,7 +358,6 @@ pub(crate) fn sync_voiceprint_people() {
     }
 }
 
-/// POST /api/voiceprints/save — сохраняет профиль голоса в основной пакет Voice Packs.
 pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_json::Value) {
     let name = body
         .get("name")
@@ -411,7 +396,6 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
         );
         return;
     }
-    // Если передан вектор голоса — сохраняем/обновляем в канонический default-пак
     if !emb.is_empty() {
         let norm = l2_normalize(&emb);
         if norm.iter().all(|x| x.abs() < 1e-12) {
@@ -528,7 +512,6 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
         );
     }
 
-    // Человек гарантированно добавляется в «Участники встречи»
     ensure_person_in_list(&name, Some("Участник"));
     if !audio_file.is_empty() {
         // Правим расшифровки только внутри папки записей (запись в произвольную
@@ -548,7 +531,6 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
     json_response(request, json!({"ok": true}), 200);
 }
 
-/// POST /api/voiceprints/delete
 pub(super) fn handle_voiceprint_delete(request: tiny_http::Request, body: serde_json::Value) {
     let name = body
         .get("name")
@@ -667,7 +649,6 @@ fn clear_matched_in_transcript(audio: &Path, name: &str) {
     }
 }
 
-/// Переименование спикера в .transcript.json + точечная правка .md/.txt (fallback без форматтеров).
 fn rename_speaker_in_files(audio: &Path, new_name: &str, old_name: Option<&str>) {
     let stem = audio
         .file_stem()

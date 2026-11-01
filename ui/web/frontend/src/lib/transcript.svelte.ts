@@ -1,4 +1,3 @@
-// Расшифровка: загрузка транскрипта, запуск движка (SSE), состояние прогресса.
 import { baseName, encPath, readJsonSafe } from './api'
 import type { ModelInfo, SpeakerInfo, TranscriptData, Utterance } from './api'
 import { toast } from './toast.svelte.ts'
@@ -6,7 +5,6 @@ import { emit, ui } from './ui.svelte.ts'
 import { settings } from './settings.svelte.ts'
 import { isVideoPath } from './api'
 
-// Контент транскрипта, открытого в модалке.
 export const transcript = $state({
   speakers: [] as SpeakerInfo[],
   utterances: [] as Utterance[],
@@ -68,15 +66,12 @@ export async function editTranscript(
   transcript.hasText = Boolean(transcript.markdown.trim() || transcript.utterances.length)
 }
 
-// Подсказка пустого состояния (модалка решает, показывать ли CTA).
 export function emptyHint(): string {
   if (ui.currentTranscriptIsVideo) {
     return 'Расшифровка ещё не выполнялась. Звук из видео извлекается автоматически. Сначала скачайте Silero VAD и GigaAM: «Настройки» → «Модели».'
   }
   return 'Расшифровка ещё не выполнялась. Сначала скачайте Silero VAD и GigaAM: «Настройки» → «Модели».'
 }
-
-// ---------- Общий SSE-стрим движка ----------
 
 let evtSource: EventSource | null = null
 let finishedAt = 0
@@ -88,8 +83,6 @@ function closeStreamIfIdle(): void {
   }
 }
 
-/** Один EventSource на приложение; повторное подключение браузер выполняет
- *  сам с Last-Event-ID, так что обрыв связи не теряет и не дублирует события. */
 export function ensureStream(): void {
   if (evtSource) return
   if (!engine.running && Object.keys(engine.downloading).length === 0) return

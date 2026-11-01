@@ -1,6 +1,3 @@
-//! Complete-linkage кластеризация эмбеддингов (косинусное расстояние).
-//! Цепочка ближайших соседей и плоская матрица: время O(n²), память O(n²).
-
 use std::collections::HashMap;
 
 use crate::cosine_similarity;
@@ -38,12 +35,6 @@ impl DistanceMatrix {
     }
 }
 
-/// Кластеризация векторов complete linkage через nearest-neighbor chain.
-///
-/// * `distance_threshold` — порог косинусного расстояния для слияния кластеров.
-/// * `n_clusters` — точное число кластеров (min==max speakers), иначе автовыбор по порогу.
-///
-/// Возвращает метку кластера для каждого вектора.
 pub fn agglomerative(
     embeddings: &[Vec<f64>],
     distance_threshold: f64,
