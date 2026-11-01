@@ -13,14 +13,11 @@ const BASE_BYTES: u64 = 1280 * 1024 * 1024;
 const SHARE: f64 = 0.8;
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
-/// Пиковый RSS: сэмплы 16 кГц f32 по каналам (пайплайн использует максимум
-/// два) плюс постоянная часть с моделями.
 pub(crate) fn peak_bytes(duration_sec: f64, channels: usize) -> u64 {
     let samples = duration_sec.max(0.0) * 16_000.0 * 4.0 * channels.clamp(1, 2) as f64;
     BASE_BYTES + samples as u64
 }
 
-/// Хватает ли памяти: нужно не больше [`SHARE`] от доступного.
 pub(crate) fn fits(need: u64, available: u64) -> bool {
     need as f64 <= available as f64 * SHARE
 }
@@ -49,7 +46,6 @@ fn check_peak(need: u64, available: Option<u64>) -> Result<(), String> {
     ))
 }
 
-/// Доступная память (без учёта свопа).
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub(crate) fn available_bytes() -> Option<u64> {
     parse_mem_available(&std::fs::read_to_string("/proc/meminfo").ok()?)
@@ -64,11 +60,10 @@ fn parse_mem_available(text: &str) -> Option<u64> {
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub(crate) fn available_bytes() -> Option<u64> {
-    // `_SC_AVPHYS_PAGES` на macOS считает только совсем свободные страницы и
-    // после работы любой программы показывает единицы гигабайт — из-за этого
-    // часовую запись ошибочно объявляли не помещающейся в память. Берём
-    // free + inactive + speculative из vm_statistics64: это то, что система
-    // реально может отдать без свопа.
+    // `_SC_AVPHYS_PAGES` на macOS считает только совсем свободные страницы:
+    // после работы любой программы он показывает единицы гигабайт, и часовая
+    // запись не проходит проверку. Берём free + inactive + speculative из
+    // vm_statistics64: это то, что система реально может отдать без свопа.
     // SAFETY: mach-вызовы заполняют структуру известного размера; указатели валидны.
     unsafe {
         #[allow(deprecated)]
@@ -151,7 +146,6 @@ mod tests {
         let err = check_peak(6 * gib, Some(4 * gib)).unwrap_err();
         assert!(err.contains("6.0 ГБ") && err.contains("4.0 ГБ"), "{err}");
         assert!(check_peak(gib, Some(8 * gib)).is_ok());
-        // Память неизвестна — не мешаем.
         assert!(check_peak(u64::MAX, None).is_ok());
     }
 }

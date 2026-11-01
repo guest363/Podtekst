@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Запись встреч: приложение записывает ваш голос с микрофона. Аудио остаётся на этом Mac.</string>
+    <string>Подтекст: приложение записывает ваш голос с микрофона. Аудио остаётся на этом Mac.</string>
 </dict>
 </plist>

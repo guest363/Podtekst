@@ -1,10 +1,13 @@
-//! Захват экрана: Linux (GNOME Shell Screencast D-Bus) и Windows (ffmpeg gdigrab).
-//! Управляет записью экрана в отдельном процессе и склейкой с аудио через ffmpeg.
+//! Запись экрана: Linux — GNOME Shell Screencast по нативному D-Bus (zbus),
+//! Windows — ffmpeg gdigrab. Склейка видео и аудио — через ffmpeg, путь
+//! к которому ищется единым механизмом `mr_audio::tools` (`<данные>/bin`, PATH).
 
 #[cfg(not(windows))]
-use std::io::{BufRead, BufReader};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
+#[cfg(windows)]
+use std::process::{Child, Stdio};
 #[cfg(windows)]
 use std::sync::Mutex;
 #[cfg(target_os = "linux")]
@@ -14,60 +17,42 @@ use std::time::Duration;
 use std::time::Instant;
 
 #[cfg(not(windows))]
-const HELPER_SCRIPT: &str = r#"
-import sys, signal, time
+const DEST: &str = "org.gnome.Shell.Screencast";
+#[cfg(not(windows))]
+const PATH: &str = "/org/gnome/Shell/Screencast";
+#[cfg(not(windows))]
+const IFACE: &str = "org.gnome.Shell.Screencast";
 
-try:
-    import dbus
-    bus = dbus.SessionBus()
-    obj = bus.get_object('org.gnome.Shell.Screencast', '/org/gnome/Shell/Screencast')
-    iface = dbus.Interface(obj, 'org.gnome.Shell.Screencast')
-except Exception as e:
-    sys.stderr.write(f"INIT_ERR:{e}\n")
-    sys.stderr.flush()
-    sys.exit(2)
-
-def on_stop(*args):
-    try:
-        iface.StopScreencast()
-    except Exception:
-        pass
-    sys.exit(0)
-
-signal.signal(signal.SIGTERM, on_stop)
-signal.signal(signal.SIGINT, on_stop)
-
-template = sys.argv[1]
-try:
-    success, filename = iface.Screencast(template, {'draw-cursor': dbus.Boolean(True)})
-    if not success:
-        sys.stderr.write("SCREENCAST_FAILED\n")
-        sys.stderr.flush()
-        sys.exit(1)
-    sys.stdout.write(f"READY:{filename}\n")
-    sys.stdout.flush()
-except Exception as e:
-    sys.stderr.write(f"SCREENCAST_ERR:{e}\n")
-    sys.stderr.flush()
-    sys.exit(1)
-
-try:
-    # Ожидаем закрытия stdin от родительского процесса
-    sys.stdin.read()
-except Exception:
-    pass
-on_stop()
-"#;
-
-pub(crate) struct ScreenCaptureSession {
-    child: Child,
-    video_path: PathBuf,
+#[cfg(not(windows))]
+fn session_connection() -> Result<zbus::blocking::Connection, String> {
+    zbus::blocking::Connection::session().map_err(|e| format!("Сессия D-Bus недоступна: {e}"))
 }
 
+#[cfg(not(windows))]
+fn screencast_proxy(
+    conn: &zbus::blocking::Connection,
+) -> Result<zbus::blocking::Proxy<'_>, String> {
+    zbus::blocking::Proxy::new(conn, DEST, PATH, IFACE)
+        .map_err(|e| format!("Служба записи экрана недоступна: {e}"))
+}
+
+pub(crate) struct ScreenCaptureSession {
+    #[cfg(not(windows))]
+    conn: zbus::blocking::Connection,
+    video_path: PathBuf,
+    #[cfg(windows)]
+    child: Child,
+}
+
+// Linux: служба появляется при входе в систему, пробу достаточно одного раза.
 #[cfg(target_os = "linux")]
 static SUPPORTED_CACHE: OnceLock<bool> = OnceLock::new();
 
-/// Проверяет, доступна ли служба захвата экрана на текущей системе.
+/// Проверяет, доступна ли запись экрана на текущей системе.
+///
+/// На Windows результат зависит от ffmpeg, который можно доустановить
+/// из интерфейса: успех кэшируется навсегда, неудача перепроверяется
+/// не чаще раза в 30 с — переключатель включается без перезапуска.
 pub(crate) fn is_screen_capture_supported() -> bool {
     #[cfg(windows)]
     {
@@ -75,7 +60,16 @@ pub(crate) fn is_screen_capture_supported() -> bool {
     }
     #[cfg(target_os = "linux")]
     {
-        *SUPPORTED_CACHE.get_or_init(platform_support_probe)
+        *SUPPORTED_CACHE.get_or_init(|| {
+            session_connection()
+                .and_then(|conn| {
+                    let supported: bool = screencast_proxy(&conn)?
+                        .get_property("ScreencastSupported")
+                        .unwrap_or(false);
+                    Ok(supported)
+                })
+                .unwrap_or(false)
+        })
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
@@ -83,40 +77,7 @@ pub(crate) fn is_screen_capture_supported() -> bool {
     }
 }
 
-/// Проба доступности захвата для конкретной ОС (python3 + служба GNOME).
-#[cfg(target_os = "linux")]
-fn platform_support_probe() -> bool {
-    let check_script = r#"
-import sys
-try:
-    import dbus
-    bus = dbus.SessionBus()
-    obj = bus.get_object('org.gnome.Shell.Screencast', '/org/gnome/Shell/Screencast')
-    sys.exit(0)
-except Exception:
-    sys.exit(1)
-"#;
-    Command::new("python3")
-        .args(["-c", check_script])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-/// Заглушка для прочих платформ (macOS и др.): захват экрана не реализован.
-#[cfg(not(any(target_os = "linux", windows)))]
-fn platform_support_probe() -> bool {
-    false
-}
-
 /// Кодировщик H.264 из установленного ffmpeg: libx264, иначе аппаратный h264_mf.
-///
-/// Успех кэшируется навсегда, неудача перепроверяется не чаще раза в 30 с:
-/// ffmpeg мог появиться после установки из интерфейса — чип записи экрана
-/// должен включиться без перезапуска приложения.
 #[cfg(windows)]
 fn windows_encoder() -> Option<&'static str> {
     static ENCODER_CACHE: Mutex<(Option<&'static str>, Option<Instant>)> = Mutex::new((None, None));
@@ -209,66 +170,38 @@ impl ScreenCaptureSession {
         Ok(Self { child, video_path })
     }
 
-    /// Запускает запись экрана (Linux/macOS): python3-хелпер GNOME Shell Screencast.
-    /// Временный файл пишется в системный temp.
+    /// Запускает запись экрана (Linux): служба GNOME Shell Screencast по D-Bus.
     #[cfg(not(windows))]
     pub(crate) fn start(started_ts: u64) -> Result<Self, String> {
+        let conn = session_connection()?;
         let template = format!("/tmp/.mr_screen_{started_ts}_%d_%t");
-        let mut cmd = Command::new("python3");
-        cmd.args(["-c", HELPER_SCRIPT, &template])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("Не удалось запустить python3: {e}"))?;
-
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| "Не удалось открыть stdout процесса захвата".to_string())?;
-
-        let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
-            .map_err(|e| format!("Ошибка чтения ответа захвата: {e}"))?;
-
-        let line = line.trim();
-        if !line.starts_with("READY:") {
-            let mut err = String::new();
-            if let Some(mut stderr) = child.stderr.take() {
-                use std::io::Read;
-                let _ = stderr.read_to_string(&mut err);
-            }
-            let _ = child.kill();
-            return Err(format!(
-                "Служба записи экрана не запустилась: {} {}",
-                line,
-                err.trim()
-            ));
+        let options: HashMap<&str, zbus::zvariant::Value> =
+            HashMap::from([("draw-cursor", zbus::zvariant::Value::from(true))]);
+        let (success, filename): (bool, String) = {
+            let proxy = screencast_proxy(&conn)?;
+            proxy
+                .call("Screencast", &(&template, &options))
+                .map_err(|e| format!("Служба записи экрана не запустилась: {e}"))?
+        };
+        if !success {
+            return Err("GNOME Shell не начал запись экрана".to_string());
         }
-
-        let video_path = PathBuf::from(line.trim_start_matches("READY:").trim());
+        let video_path = PathBuf::from(filename);
         eprintln!("[SCREEN] Запись экрана запущена: {video_path:?}");
 
-        Ok(Self { child, video_path })
+        Ok(Self { conn, video_path })
     }
 
-    /// Останавливает запись экрана и ожидает финализации видеофайла.
+    /// Останавливает запись экрана (Windows): клавиша 'q' в stdin ffmpeg.
+    #[cfg(windows)]
     pub(crate) fn stop(mut self) -> Result<PathBuf, String> {
         eprintln!("[SCREEN] Остановка записи экрана...");
-        // Сигнал остановки: EOF в stdin хелпера (Linux) или клавиша 'q' в ffmpeg (Windows)
-        #[cfg(windows)]
         {
             use std::io::Write;
             if let Some(mut si) = self.child.stdin.take() {
                 let _ = si.write_all(b"q");
             }
         }
-        #[cfg(not(windows))]
-        drop(self.child.stdin.take());
 
         // Ждём завершения процесса до 7 секунд
         let start_wait = std::time::Instant::now();
@@ -293,35 +226,56 @@ impl ScreenCaptureSession {
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
-
-        // Ждем пока файл появится и закроется
-        let video_path = self.video_path.clone();
-        for _ in 0..30 {
-            if video_path.is_file() {
-                let size = std::fs::metadata(&video_path).map(|m| m.len()).unwrap_or(0);
-                if size > 1000 {
-                    eprintln!("[SCREEN] Записано видео: {video_path:?} ({size} байт)");
-                    return Ok(video_path);
-                }
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-
-        if video_path.is_file() {
-            let size = std::fs::metadata(&video_path).map(|m| m.len()).unwrap_or(0);
-            if size > 0 {
-                return Ok(video_path);
-            }
-        }
-
-        Err(format!("Файл видео не найден или пуст: {video_path:?}"))
+        wait_finalized(&self.video_path)
     }
+
+    /// Останавливает запись экрана (Linux): StopScreencast по D-Bus.
+    #[cfg(not(windows))]
+    pub(crate) fn stop(self) -> Result<PathBuf, String> {
+        let proxy = screencast_proxy(&self.conn)?;
+        proxy
+            .call::<_, _, bool>("StopScreencast", &())
+            .map_err(|e| format!("Не удалось остановить запись экрана: {e}"))?;
+        eprintln!("[SCREEN] Остановка записи экрана...");
+        wait_finalized(&self.video_path)
+    }
+}
+
+/// Ждёт, пока служба/процесс закроет видеофайл (подстраховка на случай лагов).
+fn wait_finalized(video_path: &Path) -> Result<PathBuf, String> {
+    for _ in 0..30 {
+        if video_path.is_file() {
+            let size = std::fs::metadata(video_path).map(|m| m.len()).unwrap_or(0);
+            if size > 1000 {
+                eprintln!("[SCREEN] Записано видео: {video_path:?} ({size} байт)");
+                return Ok(video_path.to_path_buf());
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    if video_path.is_file() {
+        let size = std::fs::metadata(video_path).map(|m| m.len()).unwrap_or(0);
+        if size > 0 {
+            return Ok(video_path.to_path_buf());
+        }
+    }
+
+    Err(format!("Файл видео не найден или пуст: {video_path:?}"))
 }
 
 impl Drop for ScreenCaptureSession {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        // P7: сессия без явного stop() не оставляет службу писать видео.
+        #[cfg(windows)]
+        {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+        #[cfg(not(windows))]
+        if let Ok(proxy) = screencast_proxy(&self.conn) {
+            let _ = proxy.call::<_, _, bool>("StopScreencast", &());
+        }
     }
 }
 
@@ -333,7 +287,6 @@ pub(crate) fn mux_screen_and_audio(
 ) -> Result<(), String> {
     eprintln!("[SCREEN] Склейка видео {video_path:?} и аудио {audio_path:?} -> {final_path:?}");
 
-    // 1-я попытка: быстрое копирование видеопотока h264 + кодирование aac
     let mut cmd = Command::new(mr_audio::tools::ffmpeg_path());
     cmd.arg("-y")
         .arg("-i")
@@ -360,7 +313,6 @@ pub(crate) fn mux_screen_and_audio(
         }
     }
 
-    // 2-я попытка: перекодирование, если прямое копирование контейнера не сработало
     eprintln!("[SCREEN] Прямое копирование не сработало, запускаю перекодирование...");
     let mut cmd = Command::new(mr_audio::tools::ffmpeg_path());
     cmd.arg("-y")

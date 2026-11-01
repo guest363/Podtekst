@@ -110,7 +110,7 @@
     <header class="app-header">
       <div class="app-title">
         <span class="dot" aria-hidden="true"></span>
-        <span class="app-title-text">Запись встреч</span>
+        <span class="app-title-text">Подтекст</span>
       </div>
       <div class="header-right">
         <button
@@ -201,7 +201,7 @@
   >
     <div class="modal-box intro-box">
       <div class="modal-top">
-        <div class="modal-title">Добро пожаловать в Запись встреч</div>
+        <div class="modal-title">Добро пожаловать в Подтекст</div>
         <button class="icon-btn" aria-label="Закрыть справку" onclick={closeIntro}>✕</button>
       </div>
       <div class="help-text md-body">

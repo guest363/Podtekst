@@ -1,4 +1,3 @@
-// Поддержка проекта: способы доната (кнопка живёт в настройках).
 import { readJsonSafe } from './api'
 import { copyText, toast } from './toast.svelte.ts'
 
@@ -22,7 +21,6 @@ export async function loadSupportInfo(): Promise<void> {
       support.methods = d.donation.methods as DonateMethod[]
     }
   } catch {
-    /* молча */
   }
 }
 

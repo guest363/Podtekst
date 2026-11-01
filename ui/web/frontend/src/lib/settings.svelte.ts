@@ -1,4 +1,3 @@
-// Голосовые пакеты и модели ИИ: состояние и загрузка (живут только в Настройках).
 import { isMobile, readJsonSafe } from './api'
 import type { ModelInfo, Voicepack } from './api'
 import { toast } from './toast.svelte.ts'
@@ -19,7 +18,6 @@ export async function loadAutoTranscribe(): Promise<void> {
     const d = await readJsonSafe(await fetch('/api/transcribe/auto'))
     settings.autoTranscribe = d.enabled !== false
   } catch {
-    /* по умолчанию включено */
   }
 }
 
@@ -56,13 +54,11 @@ export async function loadRecordMode(): Promise<void> {
     const d = await readJsonSafe(await fetch('/api/record/mode'))
     if (d.mode === 'mix' || d.mode === 'split') settings.recordMode = d.mode
   } catch {
-    /* остаётся split */
   }
   // Без второго канала split недоступен: бэкенд пишет моно.
   if (!settings.systemAudio) settings.recordMode = 'mix'
 }
 
-/** Есть ли в системе источник звука собеседников (второй канал записи). */
 export function hasSystemAudio(): boolean {
   return settings.systemAudio && !isMobile
 }

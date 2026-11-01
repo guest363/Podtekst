@@ -1,7 +1,7 @@
 <script lang="ts">
   import SlimPlayer from './SlimPlayer.svelte'
-  import { deleteRecording, extractMp3, handleFileUpload, loadRecordings, recordings } from '../lib/recordings.svelte.ts'
-  import { fmtClock, isMobile, pluralSpeakers, readJsonSafe } from '../lib/api'
+  import { deleteRecording, handleFileUpload, loadRecordings, recordings } from '../lib/recordings.svelte.ts'
+  import { displayRecTitle, fmtClock, formatRecDate, isMobile, pluralSpeakers, readJsonSafe } from '../lib/api'
   import type { RecordingItem } from '../lib/api'
   import { on, openTranscript } from '../lib/ui.svelte.ts'
   import { toast } from '../lib/toast.svelte.ts'
@@ -19,7 +19,18 @@
   let deleteTarget = $state<RecordingItem | null>(null)
   let deleting = $state(false)
 
-  // В карточке показываем последние 5 записей. Остальные скрыты за дровером.
+  let activeRec = $state<RecordingItem | null>(null)
+  let isPlaying = $state(false)
+  let playerRef = $state<{ togglePlay: () => void } | null>(null)
+
+  function toggleRecPlay(rec: RecordingItem): void {
+    if (activeRec?.path === rec.path) {
+      playerRef?.togglePlay()
+    } else {
+      activeRec = rec
+      isPlaying = true
+    }
+  }
   // На телефоне видео не импортируется (нет ffmpeg) и не показывается.
   const VISIBLE = 5
   const items = $derived(isMobile ? recordings.items.filter((r) => !r.is_video) : recordings.items)
@@ -71,6 +82,10 @@
   async function confirmDelete(): Promise<void> {
     if (!deleteTarget || deleting) return
     deleting = true
+    if (activeRec?.path === deleteTarget.path) {
+      activeRec = null
+      isPlaying = false
+    }
     const ok = await deleteRecording(deleteTarget)
     deleting = false
     if (ok) deleteTarget = null
@@ -121,11 +136,18 @@
     }
   }
 
-
 </script>
 
 {#snippet recRow(rec: RecordingItem)}
-  <div class="rec-item">
+  {@const dt = formatRecDate(rec.date, rec.name)}
+  <div class="rec-item rec-card">
+    <div class="rec-date-col">
+      <span class="rec-date-day">{dt.day}</span>
+      {#if dt.time}
+        <span class="rec-date-time">{dt.time}</span>
+      {/if}
+    </div>
+
     <div class="rec-info">
       {#if renaming === rec.path}
         <div class="rename-row">
@@ -146,7 +168,10 @@
         </div>
       {:else}
         <span class="rec-name-row">
-          <span class="rec-name" title={rec.name}>{rec.name}</span>
+          <span class="rec-name" title={rec.name}>{displayRecTitle(rec.name)}</span>
+          {#if rec.is_video}
+            <span class="rec-tag-video">видео</span>
+          {/if}
           <button
             class="rec-rename"
             title="Переименовать запись"
@@ -157,43 +182,51 @@
               <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z" />
             </svg>
           </button>
-          <button
-            class="rec-delete-icon"
-            title={rec.owned ? 'Удалить запись' : 'Убрать из приложения'}
-            aria-label={rec.owned ? `Удалить запись ${rec.name}` : `Убрать запись ${rec.name} из приложения`}
-            onclick={() => (deleteTarget = rec)}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v6M14 11v6" />
-            </svg>
-          </button>
         </span>
       {/if}
       <span class="rec-meta">
-        {#if rec.duration_sec}{fmtClock(rec.duration_sec)} • {/if}{rec.size_mb} МБ • {rec.date || ''} •
+        {#if rec.duration_sec}{fmtClock(rec.duration_sec)} • {/if}
         {#if rec.has_transcript}
           <span class="rec-state-ok">
-            Текст{#if rec.speakers_count} • {rec.speakers_count} {pluralSpeakers(rec.speakers_count)}{/if}
+            {#if rec.speakers_count}{rec.speakers_count} {pluralSpeakers(rec.speakers_count)}{:else}Текст готов{/if}
           </span>
         {:else}
           {rec.is_video ? 'Видео' : 'Аудио'}
         {/if}
+        • {rec.size_mb} МБ
       </span>
     </div>
-    <SlimPlayer
-      src={`/audio/${encodeURIComponent(rec.name)}`}
-      isVideo={rec.is_video}
-      fileName={rec.name}
-      durationSec={rec.duration_sec || 0}
-    />
+
     <div class="rec-actions">
-      {#if rec.is_video && !isMobile}
-        <button class="btn-secondary btn-sm" title="Извлечь звук из видео в MP3" onclick={() => void extractMp3(rec.path)}>
-          MP3
-        </button>
-      {/if}
+      <button
+        class="slim-play"
+        onclick={() => toggleRecPlay(rec)}
+        aria-label={activeRec?.path === rec.path && isPlaying ? `Остановить ${rec.name}` : `Слушать ${rec.name}`}
+        title={activeRec?.path === rec.path && isPlaying ? 'Пауза' : 'Слушать'}
+      >
+        {#if activeRec?.path === rec.path && isPlaying}
+          <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true">
+            <rect x="2.4" y="2" width="2.8" height="8" rx="1" fill="currentColor" />
+            <rect x="6.8" y="2" width="2.8" height="8" rx="1" fill="currentColor" />
+          </svg>
+        {:else}
+          <svg class="play-glyph" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M3.6 2.1v7.8L10.2 6z" fill="currentColor" />
+          </svg>
+        {/if}
+      </button>
       <button class="btn-secondary btn-sm" onclick={() => openTranscript(rec.path, rec.is_video)}>
         Текст и спикеры
+      </button>
+      <button
+        class="rec-delete-icon"
+        title={rec.owned ? 'Удалить запись' : 'Убрать из приложения'}
+        aria-label={rec.owned ? `Удалить запись ${rec.name}` : `Убрать запись ${rec.name} из приложения`}
+        onclick={() => (deleteTarget = rec)}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v6M14 11v6" />
+        </svg>
       </button>
     </div>
   </div>
@@ -250,16 +283,18 @@
       </button>
     </div>
   </div>
-  <div class="help-text">
-    {#if isMobile}
-      Поддерживаются аудиофайлы: <b>MP3, WAV, M4A, OGG, FLAC</b>. Видео на телефоне не импортируется.
-    {:else}
-      Поддерживаются аудио и видео: <b>MP3, WAV, MP4, MKV, MOV, WEBM</b>. Файл можно перетащить сюда.
-    {/if}
-  </div>
   <div class="recordings-list">
     {#if items.length === 0}
-      <div class="empty-note">Записей пока нет</div>
+      <div class="empty-note">
+        Записей пока нет
+        <span class="empty-sub">
+          {#if isMobile}
+            Поддерживаются аудиофайлы: MP3, WAV, M4A, OGG, FLAC.
+          {:else}
+            Перетащите файл записи сюда или нажмите «Выбрать файл» (MP3, WAV, MP4, MKV, MOV).
+          {/if}
+        </span>
+      </div>
     {:else}
       {#each visible as rec (rec.path)}
         {@render recRow(rec)}
@@ -351,6 +386,41 @@
   </div>
 {/if}
 
+{#if activeRec}
+  {@const dt = formatRecDate(activeRec.date, activeRec.name)}
+  <div class="bottom-player-bar" role="region" aria-label="Плеер текущей записи">
+    <div class="bottom-player-info">
+      <span class="bottom-player-title" title={activeRec.name}>{displayRecTitle(activeRec.name)}</span>
+      <span class="bottom-player-date">{dt.full}</span>
+    </div>
+    <SlimPlayer
+      bind:this={playerRef}
+      bind:playing={isPlaying}
+      src={`/audio/${encodeURIComponent(activeRec.name)}`}
+      isVideo={activeRec.is_video}
+      fileName={activeRec.name}
+      durationSec={activeRec.duration_sec || 0}
+      autoplay={true}
+    />
+    <div class="bottom-player-actions">
+      <button class="btn-secondary btn-sm" onclick={() => openTranscript(activeRec!.path, activeRec!.is_video)}>
+        Текст и спикеры
+      </button>
+      <button
+        class="bottom-player-close"
+        title="Закрыть плеер"
+        aria-label="Закрыть плеер"
+        onclick={() => {
+          activeRec = null
+          isPlaying = false
+        }}
+      >
+        ✕
+      </button>
+    </div>
+  </div>
+{/if}
+
 <style>
   .card-search {
     width: 140px;
@@ -358,50 +428,5 @@
     font-size: 12px;
   }
   .rec-drawer-list { overflow-y: auto; flex: 1; min-height: 0; padding-right: 2px; }
-  .rec-drawer-list :global(.rec-item) {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 6px 12px;
-  }
-  .rec-drawer-list :global(.rec-item > .slim-player) {
-    grid-column: 1;
-  }
-  .rec-drawer-list :global(.rec-actions) {
-    grid-column: 2;
-    grid-row: 1 / span 2;
-    display: flex;
-    gap: 6px;
-    flex-wrap: nowrap;
-    align-items: center;
-    justify-content: flex-end;
-    width: auto;
-  }
-  @media (max-width: 480px) {
-    .rec-drawer-list :global(.rec-item) {
-      grid-template-columns: 1fr;
-    }
-    .rec-drawer-list :global(.rec-actions) {
-      grid-column: 1;
-      grid-row: auto;
-      width: 100%;
-      justify-content: flex-start;
-      flex-wrap: wrap;
-    }
-  }
-  .rec-delete-icon {
-    margin-left: auto;
-    flex-shrink: 0;
-    border: none; background: transparent;
-    color: var(--text-faint); cursor: pointer;
-    padding: 6px; border-radius: var(--radius-sm);
-    min-width: 30px; min-height: 30px;
-    display: inline-flex; align-items: center; justify-content: center;
-    opacity: 0.55;
-    transition: opacity 140ms ease, color 140ms ease, background 140ms ease;
-  }
-  .rec-delete-icon:hover {
-    opacity: 1; color: var(--accent-rec); background: var(--bg-inset);
-  }
   .delete-box { max-width: 440px; }
 </style>

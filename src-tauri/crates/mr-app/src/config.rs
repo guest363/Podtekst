@@ -1,5 +1,3 @@
-//! Конфигурация приложения: config.json, папка записей, статика UI.
-
 use mr_packs as packs;
 use serde_json::json;
 use std::path::PathBuf;
@@ -25,7 +23,6 @@ pub(crate) fn load_config() -> serde_json::Value {
         .unwrap_or_else(|| json!({}))
 }
 
-/// Атомарная модификация конфигурации под блокировкой (read-modify-write + atomic rename).
 pub(crate) fn update_config<F>(mutate: F)
 where
     F: FnOnce(&mut serde_json::Value),
@@ -44,7 +41,6 @@ where
     });
 }
 
-/// Режим записи из настроек; используется горячей клавишей и по умолчанию.
 pub(crate) fn configured_record_mode() -> String {
     match load_config().get("record_mode").and_then(|x| x.as_str()) {
         Some("mix") => "mix".to_string(),
@@ -57,7 +53,6 @@ pub(crate) fn save_record_mode(mode: &str) {
     update_config(|cfg| cfg["record_mode"] = json!(m));
 }
 
-/// Авто-расшифровка после остановки записи. По умолчанию включена.
 pub(crate) fn configured_auto_transcribe() -> bool {
     load_config()
         .get("auto_transcribe")
@@ -70,7 +65,6 @@ pub(crate) fn save_auto_transcribe(enabled: bool) {
 }
 
 pub(crate) fn save_dir() -> PathBuf {
-    // 1. config.json -> save_dir, иначе ~/Recordings
     if let Some(s) = load_config().get("save_dir").and_then(|x| x.as_str()) {
         let p = PathBuf::from(shellexpand(s));
         let _ = std::fs::create_dir_all(&p);

@@ -1,19 +1,3 @@
-//! Подключаемые голосовые пакеты Voice Packs.
-//!
-//! Структура пакета на диске:
-//! ```text
-//! <app_data>/packs/<pack_id>/
-//!   manifest.json
-//!   people.json
-//!   external_people.json (опционально)
-//!   voiceprints.json (схема v3)
-//!   snippets/*.wav
-//! ```
-//!
-//! Структура крейта:
-//! * [`manifest`] — чтение/запись манифестов, список и включение пакетов
-//! * [`transfer`] — экспорт/импорт `.voicepack` (zip/json)
-
 pub mod manifest;
 pub mod transfer;
 
@@ -81,7 +65,6 @@ pub struct PackInfo {
     pub snippets_count: usize,
 }
 
-/// Метка времени создания пакета: epoch-секунды строкой.
 fn now_epoch_secs() -> String {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -110,16 +93,16 @@ pub(crate) fn slugify(value: &str) -> String {
     }
 }
 
-/// Корень хранения пакетов `<app_data>/packs`.
 pub fn packs_root_dir(app_data: &Path) -> PathBuf {
     let root = app_data.join("packs");
     let _ = fs::create_dir_all(&root);
     root
 }
 
-/// Стандартная директория данных приложения (XDG / Application Support / %APPDATA%).
 pub fn default_app_data_dir() -> PathBuf {
-    if let Ok(v) = std::env::var("MEETING_RECORDER_DATA_DIR") {
+    if let Ok(v) =
+        std::env::var("PODTEKST_DATA_DIR").or_else(|_| std::env::var("MEETING_RECORDER_DATA_DIR"))
+    {
         let p = PathBuf::from(v);
         let _ = fs::create_dir_all(&p);
         return p;
@@ -127,10 +110,14 @@ pub fn default_app_data_dir() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         if let Ok(home) = std::env::var("HOME") {
-            let p = PathBuf::from(home)
+            let base = PathBuf::from(home)
                 .join("Library")
-                .join("Application Support")
-                .join("MeetingRecorder");
+                .join("Application Support");
+            let p = base.join("Podtekst");
+            let old = base.join("MeetingRecorder");
+            if !p.exists() && old.exists() {
+                let _ = fs::rename(&old, &p);
+            }
             let _ = fs::create_dir_all(&p);
             return p;
         }
@@ -138,7 +125,12 @@ pub fn default_app_data_dir() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         if let Ok(appdata) = std::env::var("APPDATA") {
-            let p = PathBuf::from(appdata).join("MeetingRecorder");
+            let base = PathBuf::from(appdata);
+            let p = base.join("Podtekst");
+            let old = base.join("MeetingRecorder");
+            if !p.exists() && old.exists() {
+                let _ = fs::rename(&old, &p);
+            }
             let _ = fs::create_dir_all(&p);
             return p;
         }
@@ -149,7 +141,11 @@ pub fn default_app_data_dir() -> PathBuf {
             let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
             PathBuf::from(home).join(".local").join("share")
         });
-    let p = base.join("meeting-recorder");
+    let p = base.join("podtekst");
+    let old = base.join("meeting-recorder");
+    if !p.exists() && old.exists() {
+        let _ = fs::rename(&old, &p);
+    }
     let _ = fs::create_dir_all(&p);
     p
 }

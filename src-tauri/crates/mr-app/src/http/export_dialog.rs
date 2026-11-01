@@ -1,5 +1,3 @@
-//! Нативный диалог сохранения файла для экспорта (DOCX, PDF и др.).
-
 use std::path::PathBuf;
 
 use serde_json::json;
@@ -7,13 +5,11 @@ use serde_json::json;
 use super::{json_response, query_param};
 use crate::config::save_dir;
 
-/// Открыть системный диалог "Сохранить как..." через доступный платформенный инструмент
 pub(crate) fn pick_save_path(default_name: &str, filter_pattern: &str) -> Option<PathBuf> {
     let initial_path = save_dir().join(default_name);
 
     #[cfg(target_os = "linux")]
     {
-        // 1. Проверяем zenity (стандартный диалог GTK на GNOME/Ubuntu/Debian)
         if let Ok(output) = std::process::Command::new("zenity")
             .arg("--file-selection")
             .arg("--save")
@@ -32,7 +28,6 @@ pub(crate) fn pick_save_path(default_name: &str, filter_pattern: &str) -> Option
             return None;
         }
 
-        // 2. Fallback на kdialog для KDE
         if let Ok(output) = std::process::Command::new("kdialog")
             .arg("--getsavefilename")
             .arg(initial_path.display().to_string())
@@ -97,7 +92,6 @@ pub(crate) fn pick_save_path(default_name: &str, filter_pattern: &str) -> Option
     None
 }
 
-/// Обработчик POST /api/export/save_dialog?name=...
 pub(super) fn handle_save_dialog(mut request: tiny_http::Request, query: &str) {
     let name = query_param(query, "name").unwrap_or_else(|| "document.docx".to_string());
 

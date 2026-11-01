@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Meeting Recorder — запуск нативного Rust-ядра.
+# Подтекст (Podtekst) — запуск нативного Rust-ядра.
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
@@ -9,7 +9,7 @@ export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 
 # Запуск с иконки идёт без терминала: ошибки не увидеть. Пишем их в лог
 # и показываем уведомление, иначе клик выглядит как «ничего не произошло».
-LOG="${XDG_STATE_HOME:-$HOME/.local/state}/meeting-recorder/run.log"
+LOG="${XDG_STATE_HOME:-$HOME/.local/state}/podtekst/run.log"
 if [ ! -t 1 ]; then
     mkdir -p "$(dirname "$LOG")"
     exec >>"$LOG" 2>&1
@@ -19,7 +19,7 @@ on_error() {
     local code=$?
     echo "Ошибка запуска, код $code. Лог: $LOG" >&2
     if command -v notify-send >/dev/null 2>&1; then
-        notify-send -a "Запись встреч" -i "$SCRIPT_DIR/icon.png" "Приложение не запустилось" \
+        notify-send -a "Подтекст" -i "$SCRIPT_DIR/icon.png" "Приложение не запустилось" \
             "Код $code. Подробности: $LOG" >/dev/null 2>&1 || true
     fi
 }
@@ -47,7 +47,7 @@ else
     SUFFIX=""
 fi
 
-BIN="$SCRIPT_DIR/src-tauri/target/release/meeting-recorder$SUFFIX"
+BIN="$SCRIPT_DIR/src-tauri/target/release/podtekst$SUFFIX"
 
 # Сборка нужна ТОЛЬКО если бинарник отсутствует, изменились исходники или передан явный флаг --build / --rebuild.
 # На обычный клик по иконке или вызов CLI запуск мгновенный без фоновых компиляций Cargo.
@@ -83,12 +83,12 @@ stop_progress() {
 
 if [ "$NEEDS_FRONT_BUILD" = 1 ] || [ "$NEEDS_RUST_BUILD" = 1 ]; then
     if command -v notify-send >/dev/null 2>&1; then
-        notify-send -a "Запись встреч" -i "$SCRIPT_DIR/icon.png" "Запись встреч" \
+        notify-send -a "Подтекст" -i "$SCRIPT_DIR/icon.png" "Подтекст" \
             "Идёт сборка обновления... Пожалуйста, подождите" 2>/dev/null || true
     fi
     if [ ! -t 1 ] && command -v zenity >/dev/null 2>&1 && [ -n "$DISPLAY$WAYLAND_DISPLAY" ]; then
-        (zenity --progress --pulsate --title="Запись встреч" \
-            --text="Сборка обновления Meeting Recorder...\nПожалуйста, подождите" \
+        (zenity --progress --pulsate --title="Подтекст" \
+            --text="Сборка обновления Подтекст...\nПожалуйста, подождите" \
             --no-cancel --icon="$SCRIPT_DIR/icon.png" --width=360 2>/dev/null) &
         ZENITY_PID=$!
     fi
@@ -131,23 +131,23 @@ if [ "$NEEDS_RUST_BUILD" = 1 ]; then
             exit 1
         fi
     else
-        echo "→ Сборка meeting-recorder (Rust)…"
+        echo "→ Сборка podtekst (Rust)…"
         if [ "$WANT_WEB" = 1 ]; then
             (cd "$SCRIPT_DIR/src-tauri" && CARGO_TARGET_DIR=target/web cargo build --release -p mr-app)
-            cp "$SCRIPT_DIR/src-tauri/target/web/release/meeting-recorder" "$BIN"
+            cp "$SCRIPT_DIR/src-tauri/target/web/release/podtekst" "$BIN"
         else
             # shellcheck disable=SC2086
             (cd "$SCRIPT_DIR/src-tauri" && cargo build --release -p mr-app $FEATS)
         fi
         mkdir -p "$SCRIPT_DIR/dist"
-        cp "$BIN" "$SCRIPT_DIR/dist/meeting-recorder-linux$SUFFIX"
+        cp "$BIN" "$SCRIPT_DIR/dist/podtekst-linux$SUFFIX"
     fi
 fi
 
 if [ "$NEEDS_FRONT_BUILD" = 1 ] || [ "$NEEDS_RUST_BUILD" = 1 ]; then
     stop_progress
     if command -v notify-send >/dev/null 2>&1; then
-        notify-send -a "Запись встреч" -i "$SCRIPT_DIR/icon.png" "Запись встреч" \
+        notify-send -a "Подтекст" -i "$SCRIPT_DIR/icon.png" "Подтекст" \
             "Приложение готово, запуск!" 2>/dev/null || true
     fi
 fi

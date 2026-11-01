@@ -1,5 +1,3 @@
-//! Проверка обновлений приложения по последнему GitHub Release.
-//!
 //! Сравниваем тег релиза с версией, вшитой при сборке (`CARGO_PKG_VERSION`).
 //! Ответ кэшируется в памяти на несколько часов: старт приложения не должен
 //! дёргать GitHub при каждом перезапуске. `force=1` обходит кэш для кнопки
@@ -12,7 +10,7 @@ use serde_json::{json, Value};
 
 use super::json_response;
 
-const REPO: &str = "guest363/meeting-record";
+const REPO: &str = "guest363/podtekst";
 const CACHE_TTL: Duration = Duration::from_secs(6 * 3600);
 
 type Cache = Mutex<Option<(Instant, Value)>>;
@@ -22,7 +20,6 @@ fn cache() -> &'static Cache {
     CACHE.get_or_init(|| Mutex::new(None))
 }
 
-/// Версия как набор чисел: `v0.2.1-beta` → `[0, 2, 1]`.
 fn parse_version(text: &str) -> Vec<u64> {
     text.trim()
         .trim_start_matches(['v', 'V'])
@@ -63,7 +60,7 @@ fn fetch_latest() -> Result<Value, String> {
         .get(&url)
         .set(
             "User-Agent",
-            concat!("MeetingRecorder/", env!("CARGO_PKG_VERSION")),
+            concat!("Podtekst/", env!("CARGO_PKG_VERSION")),
         )
         .set("Accept", "application/vnd.github+json")
         .call()
@@ -81,12 +78,11 @@ fn fetch_latest() -> Result<Value, String> {
     Ok(json!({
         "latest": tag.trim_start_matches(['v', 'V']),
         "tag": tag,
-        "url": release.get("html_url").and_then(|x| x.as_str()).unwrap_or("https://github.com/guest363/meeting-record/releases/latest"),
+        "url": release.get("html_url").and_then(|x| x.as_str()).unwrap_or("https://github.com/guest363/podtekst/releases/latest"),
         "name": release.get("name").and_then(|x| x.as_str()).unwrap_or(tag),
     }))
 }
 
-/// GET /api/update/check[?force=1] — есть ли на GitHub версия новее текущей.
 pub(super) fn handle_update_check(request: tiny_http::Request, force: bool) {
     let current = env!("CARGO_PKG_VERSION");
     let latest = {
@@ -143,12 +139,10 @@ pub(super) fn handle_update_apply(request: tiny_http::Request) {
     }
 }
 
-/// GET /api/update/progress — ход скачивания (UI опрашивает раз в секунду).
 pub(super) fn handle_update_progress(request: tiny_http::Request) {
     json_response(request, self_update::progress(), 200)
 }
 
-/// Передаёт handle окна штатному апдейтеру (вызывается из Tauri `setup`).
 #[cfg(all(
     feature = "tauri-ui",
     not(any(target_os = "android", target_os = "ios"))

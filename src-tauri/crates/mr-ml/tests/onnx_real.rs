@@ -1,10 +1,3 @@
-//! Сквозная проверка ONNX-инференса на настоящих файлах (фича `onnx`).
-//!
-//! Запуск:
-//! ```sh
-//! MR_MODELS_DIR=/tmp/opencode/models MR_TEST_WAV=/tmp/opencode/mic_test.wav \
-//!   cargo test -p mr-ml --features onnx --test onnx_real -- --nocapture
-//! ```
 //! Без файлов тесты вежливо пропускаются (CI без сети).
 
 #![cfg(feature = "onnx")]
@@ -79,13 +72,11 @@ fn pyannote_segmentation_matches_powerset_contract() {
     assert!(sliding.frames.len() > 589);
 }
 
-/// Минимальный WAV-ридер: 16-бит PCM моно → f32 [-1, 1].
 fn read_wav_mono16(path: &std::path::Path) -> Option<(Vec<f32>, u32)> {
     let bytes = std::fs::read(path).ok()?;
     if bytes.len() < 44 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
         return None;
     }
-    // Ищем чанки fmt + data (пропускаем прочие)
     let mut pos = 12;
     let (mut sr, mut ch, mut bits) = (0u32, 0u16, 0u16);
     let mut data: &[u8] = &[];
@@ -141,7 +132,6 @@ fn encoder_io_contract() {
         enc.input_names, enc.output_names
     );
     assert_eq!(enc.input_names.len(), 2);
-    // Прогон нулевых фич [1, 64, 300] → [1, Te, 768]
     let t = 300usize;
     let mut f32_in = std::collections::HashMap::new();
     f32_in.insert(
@@ -222,7 +212,6 @@ fn gigaam_transcribes_real_russian_speech() {
     let probs = vad.process_all(&wav).unwrap();
     let segs = mr_ml::onnx::vad::vad_segments_from_probs(&probs, 0.15, 0.25, 0.3);
     assert!(!segs.is_empty());
-    // Берём самый длинный сегмент до 12 с
     let (s, e) = segs
         .iter()
         .map(|(a, b)| (*a, *b))
@@ -307,7 +296,6 @@ fn embedding_is_deterministic_and_sane() {
     let cos = mr_ml::cosine_similarity(&e1, &e2);
     println!("emb: dim={} self-cos={cos:.4}", e1.len());
     assert!(cos > 0.999, "эмбеддинг недетерминирован: {cos}");
-    // Разные куски записи — всё равно валидные векторы
     let start = (16000 * 30).min(wav.len().saturating_sub(16000 * 5));
     let other = &wav[start..(start + 16000 * 5).min(wav.len())];
     if other.len() >= 6400 {
@@ -316,7 +304,6 @@ fn embedding_is_deterministic_and_sane() {
         println!("emb: cross-chunk cos={cross:.4}");
         assert!(cross.is_finite());
     }
-    // Тишина/короткий кусок отклоняется
     assert!(emb.embed(&wav[..1000]).expect("short").is_none());
 }
 
@@ -374,7 +361,6 @@ fn eres2netv2_parity_with_official_reference() {
     println!("eres2netv2: сходство с официальным эталоном = {parity:.4}");
     assert!(parity >= 0.98, "сходство с эталоном ниже 0.98: {parity}");
 
-    // 2) Разделимость: один диктор в двух дублях vs другой диктор
     let e1b = ext.embed(&s1b).expect("embed").expect("вектор");
     let e2a = ext.embed(&s2a).expect("embed").expect("вектор");
     let same = mr_ml::cosine_similarity(&e1a, &e1b);

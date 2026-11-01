@@ -131,16 +131,72 @@ export function fmtClockShort(sec: number): string {
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${(s % 60).toFixed(0).padStart(2, '0')}`
 }
 
+export interface FormattedRecDate {
+  day: string
+  time: string
+  full: string
+}
+
+export function formatRecDate(rawDate?: string, rawName?: string): FormattedRecDate {
+  if (rawDate) {
+    const parts = rawDate.trim().split(' ')
+    if (parts.length >= 2) {
+      const [dPart, tPart] = parts
+      const time = tPart.slice(0, 5)
+      const [y, m, d] = dPart.split('-').map(Number)
+      if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+        const itemDate = new Date(y, m - 1, d)
+        const now = new Date()
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+        const yesterday = new Date(today)
+        yesterday.setDate(yesterday.getDate() - 1)
+
+        let day = ''
+        if (itemDate.getTime() === today.getTime()) {
+          day = 'Сегодня'
+        } else if (itemDate.getTime() === yesterday.getTime()) {
+          day = 'Вчера'
+        } else {
+          const months = [
+            'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+            'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+          ]
+          const monthName = months[m - 1] || ''
+          const yearSuffix = y !== now.getFullYear() ? ` ${y}` : ''
+          day = `${d} ${monthName}${yearSuffix}`
+        }
+        return { day, time, full: `${day}, ${time}` }
+      }
+    }
+  }
+
+  const match = String(rawName).match(/(\d{2})[:\-](\d{2}).*__(\d{2})-(\d{2})-(\d{4})/)
+  if (match) {
+    const [, h, min, d, m, y] = match
+    return { day: `${d}.${m}.${y}`, time: `${h}:${min}`, full: `${d}.${m}.${y}, ${h}:${min}` }
+  }
+
+  return { day: 'Запись', time: '', full: 'Запись' }
+}
+
+export function displayRecTitle(rawName: string): string {
+  const stem = rawName.replace(/\.[^.]+$/, '')
+  if (/^\d{2}[:\-]\d{2}(?:-\d{2}[:\-]\d{2})?__\d{2}-\d{2}-\d{4}$/.test(stem)) {
+    return 'Запись встречи'
+  }
+  return stem
+}
+
 // Сбалансированная палитра спикеров (WCAG AA > 4.5:1 к белому фону).
 const SPEAKER_PALETTE = [
-  '#1e40af', // Deep Blue
-  '#0f766e', // Deep Teal
-  '#6b21a8', // Deep Violet
-  '#9a3412', // Terracotta
-  '#374151', // Charcoal Slate
-  '#047857', // Forest Emerald
-  '#92400e', // Amber Brown
-  '#9d174d', // Berry Wine
+  '#1e40af',
+  '#0f766e',
+  '#6b21a8',
+  '#9a3412',
+  '#374151',
+  '#047857',
+  '#92400e',
+  '#9d174d',
 ]
 
 function speakerIndex(name: string): number {
@@ -153,24 +209,20 @@ function speakerIndex(name: string): number {
   return (h >>> 0) % SPEAKER_PALETTE.length
 }
 
-/** Устойчивый цвет спикера: одинаковое имя — одинаковый цвет в тексте и карточках. */
 export function speakerColor(name: string): string {
   return SPEAKER_PALETTE[speakerIndex(name)]
 }
 
-/** Нейтральный фон карточки без цветового шума. */
 export function speakerTint(_name: string): string {
   return '#ffffff'
 }
 
 declare const __IS_MOBILE_BUILD__: boolean
 
-/** Запущено ли на мобильном устройстве (сборка Android/iOS или запуск через мобильный браузер). */
 export const isMobile: boolean =
   (typeof __IS_MOBILE_BUILD__ !== 'undefined' && __IS_MOBILE_BUILD__) ||
   (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent))
 
-/** Склонение слова «спикер» по правилам русского языка (1 спикер, 2 спикера, 5 спикеров). */
 export function pluralSpeakers(n: number): string {
   const mod10 = n % 10
   const mod100 = n % 100
@@ -178,4 +230,3 @@ export function pluralSpeakers(n: number): string {
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'спикера'
   return 'спикеров'
 }
-

@@ -10,26 +10,41 @@
   import SpeakersPane from './SpeakersPane.svelte'
   import TranscriptDoc from './TranscriptDoc.svelte'
 
-  let speakersDrawerOpen = $state(false)
+  let speakersOpen = $state(
+    typeof localStorage !== 'undefined'
+      ? localStorage.getItem('mr_speakers_open') !== 'false'
+      : true,
+  )
+
+  function toggleSpeakers(): void {
+    speakersOpen = !speakersOpen
+    try {
+      localStorage.setItem('mr_speakers_open', String(speakersOpen))
+    } catch {
+      /* ignore */
+    }
+  }
+
   let videoExpanded = $state(false)
   let playbackTime = $state(0)
 
-  // Расшифровывается ли именно эта запись (или движок занят другой).
   let thisRunning = $derived(engine.running && engine.file === ui.currentTranscriptPath)
   let otherRunning = $derived(engine.running && engine.file !== ui.currentTranscriptPath)
 
-  // Загрузка транскрипта при переходе на страницу.
   $effect(() => {
     if (ui.transcriptOpen && ui.currentTranscriptPath) {
-      speakersDrawerOpen = false
       videoExpanded = false
       playbackTime = 0
       void openTranscriptFile(ui.currentTranscriptPath)
     }
   })
 
-
-
+  let hasUnmatchedSpeakers = $derived(
+    Boolean(transcript.speakers?.length && transcript.speakers.some((s) => !s.matched)),
+  )
+  let allSpeakersMatched = $derived(
+    Boolean(transcript.speakers?.length && transcript.speakers.every((s) => s.matched)),
+  )
   function pluralUtterances(n: number): string {
     const rem10 = n % 10
     const rem100 = n % 100
@@ -127,7 +142,6 @@
   }
 
   function goBack(): void {
-    speakersDrawerOpen = false
     document
       .querySelectorAll('.transcript-page audio, .transcript-page video')
       .forEach((m) => (m as HTMLMediaElement).pause())
@@ -137,8 +151,8 @@
   function onWindowKey(e: KeyboardEvent): void {
     if (!ui.transcriptOpen) return
     if (e.key === 'Escape') {
-      if (speakersDrawerOpen) {
-        speakersDrawerOpen = false
+      if (isMobile && speakersOpen) {
+        speakersOpen = false
         e.stopPropagation()
       } else {
         goBack()
@@ -151,7 +165,6 @@
 
 <div class="page transcript-page">
   <header class="transcript-page-header">
-    <!-- Строка 1: Заголовок и кнопка закрытия на одной линии -->
     <div class="transcript-header-top">
       <h1 class="transcript-page-title" title={ui.currentTranscriptPath}>
         {baseName(ui.currentTranscriptPath)}
@@ -166,105 +179,120 @@
       </button>
     </div>
 
-    <!-- Строка 2: Слева полная запись, справа чипы и кнопки -->
-    <div class="transcript-header-sub">
-      <div class="transcript-sub-player {videoExpanded ? 'is-expanded' : ''}">
-        {#if ui.currentTranscriptIsVideo}
-          <div class="video-player-container">
-            <!-- svelte-ignore a11y_media_has_caption -->
-            <video
-              controls
-              preload="metadata"
-              id="transcriptFullMedia"
-              src={`/audio/${encodeURIComponent(baseName(ui.currentTranscriptPath))}`}
-              aria-label={`Смотреть ${baseName(ui.currentTranscriptPath)}`}
-              ontimeupdate={(e) => (playbackTime = e.currentTarget.currentTime)}
-              onseeked={(e) => (playbackTime = e.currentTarget.currentTime)}
-            ></video>
-            <button
-              type="button"
-              class="btn-video-expand"
-              onclick={() => (videoExpanded = !videoExpanded)}
-              title={videoExpanded ? 'Свернуть видео' : 'Развернуть видео для просмотра слайдов'}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                {#if videoExpanded}
-                  <polyline points="4 14 10 14 10 20"></polyline>
-                  <polyline points="20 10 14 10 14 4"></polyline>
-                  <line x1="14" y1="10" x2="21" y2="3"></line>
-                  <line x1="3" y1="21" x2="10" y2="14"></line>
-                {:else}
-                  <polyline points="15 3 21 3 21 9"></polyline>
-                  <polyline points="9 21 3 21 3 15"></polyline>
-                  <line x1="21" y1="3" x2="14" y2="10"></line>
-                  <line x1="3" y1="21" x2="10" y2="14"></line>
-                {/if}
-              </svg>
-              <span>{videoExpanded ? 'Компактно' : 'Слайды'}</span>
-            </button>
-          </div>
-        {:else}
-          <SlimPlayer
-            src={`/audio/${encodeURIComponent(baseName(ui.currentTranscriptPath))}`}
-            isVideo={false}
-            fileName={baseName(ui.currentTranscriptPath)}
-            mediaId="transcriptFullMedia"
-            ontime={(sec) => (playbackTime = sec)}
-          />
+    <div class="transcript-sub-actions">
+      <div class="transcript-chips">
+        <span class="meta-badge">{ui.currentTranscriptIsVideo ? 'Видео' : 'Аудио'}</span>
+        {#if transcript.utterances?.length}
+          <span class="meta-item">{transcript.utterances.length} {pluralUtterances(transcript.utterances.length)}</span>
+        {/if}
+        {#if transcript.speakers?.length}
+          <span class="meta-item">{transcript.speakers.length} {pluralSpeakers(transcript.speakers.length)}</span>
         {/if}
       </div>
 
-      <div class="transcript-sub-actions">
-        <div class="transcript-chips">
-          <span class="meta-badge">{ui.currentTranscriptIsVideo ? 'Видео' : 'Аудио'}</span>
-          {#if transcript.utterances?.length}
-            <span class="meta-item">{transcript.utterances.length} {pluralUtterances(transcript.utterances.length)}</span>
-          {/if}
-          {#if transcript.speakers?.length}
-            <span class="meta-item">{transcript.speakers.length} {pluralSpeakers(transcript.speakers.length)}</span>
-          {/if}
-        </div>
-
-        <div class="transcript-btns">
+      <div class="transcript-btns">
+        {#if transcript.speakers?.length}
           <button
-            class="btn-secondary btn-sm mobile-speakers-btn"
+            class="btn-secondary btn-sm btn-speakers-toggle {speakersOpen ? 'active' : ''}"
             aria-label="Спикеры встречи"
-            onclick={() => (speakersDrawerOpen = true)}
+            title={speakersOpen
+              ? 'Скрыть панель спикеров'
+              : (hasUnmatchedSpeakers
+                ? 'Показать спикеров (есть нераспознанные голоса)'
+                : 'Показать панель спикеров')}
+            onclick={toggleSpeakers}
           >
-            Спикеры{#if transcript.speakers.length > 0}&nbsp;· {transcript.speakers.length}{/if}
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+              <circle cx="9" cy="7" r="4"></circle>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+            </svg>
+            <span>Спикеры{#if transcript.speakers.length > 0}&nbsp;· {transcript.speakers.length}{/if}</span>
+            {#if hasUnmatchedSpeakers}
+              <span class="spk-notify-dot warn" aria-hidden="true" title="Есть нераспознанные спикеры"></span>
+            {:else if allSpeakersMatched}
+              <span class="spk-notify-dot ok" aria-hidden="true" title="Все спикеры распознаны"></span>
+            {/if}
           </button>
+        {/if}
 
+        <button
+          class="btn-primary btn-sm btn-transcribe-header"
+          disabled={engine.running}
+          title={otherRunning ? `Уже расшифровывается «${baseName(engine.file)}»` : ''}
+          onclick={() => void startTranscription(ui.currentTranscriptPath)}
+        >
+          <span class="btn-text-full">Запустить расшифровку</span>
+          <span class="btn-text-short">Расшифровать</span>
+        </button>
+
+        {#if transcript.extractVisible && !isMobile}
+          <button class="btn-secondary btn-sm desktop-only-btn" onclick={() => void extractMp3(ui.currentTranscriptPath)}>
+            Извлечь MP3
+          </button>
+        {/if}
+
+        <button
+          class="btn-secondary btn-sm"
+          disabled={!transcript.utterances.length}
+          onclick={() => void exportDocx(baseName(ui.currentTranscriptPath), transcript.utterances, transcriptMeta)}
+        >
+          DOCX
+        </button>
+        <button class="btn-secondary btn-sm" onclick={printTranscript} title="Печать или сохранение в PDF">
+          PDF
+        </button>
+        <button class="btn-secondary btn-sm" onclick={() => void copyAll()} title="Скопировать весь текст расшифровки">
+          Копировать текст
+        </button>
+      </div>
+    </div>
+
+    <div class="transcript-sub-player {videoExpanded ? 'is-expanded' : ''}">
+      {#if ui.currentTranscriptIsVideo}
+        <div class="video-player-container">
+          <!-- svelte-ignore a11y_media_has_caption -->
+          <video
+            controls
+            preload="metadata"
+            id="transcriptFullMedia"
+            src={`/audio/${encodeURIComponent(baseName(ui.currentTranscriptPath))}`}
+            aria-label={`Смотреть ${baseName(ui.currentTranscriptPath)}`}
+            ontimeupdate={(e) => (playbackTime = e.currentTarget.currentTime)}
+            onseeked={(e) => (playbackTime = e.currentTarget.currentTime)}
+          ></video>
           <button
-            class="btn-primary btn-sm btn-transcribe-header"
-            disabled={engine.running}
-            title={otherRunning ? `Уже расшифровывается «${baseName(engine.file)}»` : ''}
-            onclick={() => void startTranscription(ui.currentTranscriptPath)}
+            type="button"
+            class="btn-video-expand"
+            onclick={() => (videoExpanded = !videoExpanded)}
+            title={videoExpanded ? 'Свернуть видео' : 'Развернуть видео для просмотра слайдов'}
           >
-            <span class="btn-text-full">Запустить расшифровку</span>
-            <span class="btn-text-short">Расшифровать</span>
-          </button>
-
-          {#if transcript.extractVisible && !isMobile}
-            <button class="btn-secondary btn-sm desktop-only-btn" onclick={() => void extractMp3(ui.currentTranscriptPath)}>
-              Извлечь MP3
-            </button>
-          {/if}
-
-          <button
-            class="btn-secondary btn-sm"
-            disabled={!transcript.utterances.length}
-            onclick={() => void exportDocx(baseName(ui.currentTranscriptPath), transcript.utterances, transcriptMeta)}
-          >
-            DOCX
-          </button>
-          <button class="btn-secondary btn-sm" onclick={printTranscript} title="Печать или сохранение в PDF">
-            PDF
-          </button>
-          <button class="btn-secondary btn-sm" onclick={() => void copyAll()} title="Скопировать весь текст расшифровки">
-            Копировать текст
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              {#if videoExpanded}
+                <polyline points="4 14 10 14 10 20"></polyline>
+                <polyline points="20 10 14 10 14 4"></polyline>
+                <line x1="14" y1="10" x2="21" y2="3"></line>
+                <line x1="3" y1="21" x2="10" y2="14"></line>
+              {:else}
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <polyline points="9 21 3 21 3 15"></polyline>
+                <line x1="21" y1="3" x2="14" y2="10"></line>
+                <line x1="3" y1="21" x2="10" y2="14"></line>
+              {/if}
+            </svg>
+            <span>{videoExpanded ? 'Компактно' : 'Слайды'}</span>
           </button>
         </div>
-      </div>
+      {:else}
+        <SlimPlayer
+          src={`/audio/${encodeURIComponent(baseName(ui.currentTranscriptPath))}`}
+          isVideo={false}
+          fileName={baseName(ui.currentTranscriptPath)}
+          mediaId="transcriptFullMedia"
+          ontime={(sec) => (playbackTime = sec)}
+        />
+      {/if}
     </div>
   </header>
 
@@ -317,23 +345,24 @@
       </div>
     </div>
   {:else}
-    <div class="transcript-grid">
-      {#if speakersDrawerOpen}
+    <div class="transcript-grid {speakersOpen ? 'sidebar-open' : ''}">
+      {#if isMobile && speakersOpen}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <div
           class="speakers-drawer-overlay"
           role="presentation"
-          onclick={() => (speakersDrawerOpen = false)}
+          onclick={() => (speakersOpen = false)}
         ></div>
       {/if}
 
-      <div class="transcript-speakers-wrap {speakersDrawerOpen ? 'drawer-open' : ''}">
+      <div class="transcript-speakers-wrap {speakersOpen ? 'open' : ''}">
         <div class="speakers-drawer-top">
-          <span class="card-title">Спикеры · {transcript.speakers.length}</span>
+          <span class="card-title">Спикеры{#if transcript.speakers.length > 0}&nbsp;· {transcript.speakers.length}{/if}</span>
           <button
             class="btn-close-page"
-            aria-label="Закрыть панель спикеров"
-            onclick={() => (speakersDrawerOpen = false)}
+            aria-label="Скрыть панель спикеров"
+            title="Скрыть панель спикеров"
+            onclick={() => (speakersOpen = false)}
           >
             ✕
           </button>

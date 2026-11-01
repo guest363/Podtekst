@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Meeting Recorder — сборка Android APK одним скриптом.
+# Подтекст (Podtekst) — сборка Android APK одним скриптом.
 # Фронт (ui/web/static) → Rust-ядро (aarch64-linux-android) → APK + подсказка adb install.
 #
 # Требования (один раз): Android SDK + NDK в ~/Android/Sdk, JDK 21, Rust (rustup), Node+Yarn.
@@ -72,8 +72,8 @@ APK="$(find "$SCRIPT_DIR/src-tauri/crates/mr-app/gen/android/app/build/outputs" 
 if [ -n "$APK" ]; then
     # Все сборки проекта складываются в одну папку dist/ в корне репозитория.
     mkdir -p "$SCRIPT_DIR/dist"
-    cp "$APK" "$SCRIPT_DIR/dist/meeting-recorder-android.apk"
-    APK="$SCRIPT_DIR/dist/meeting-recorder-android.apk"
+    cp "$APK" "$SCRIPT_DIR/dist/podtekst-android.apk"
+    APK="$SCRIPT_DIR/dist/podtekst-android.apk"
 fi
 echo ""
 echo "✓ APK готов: $APK"

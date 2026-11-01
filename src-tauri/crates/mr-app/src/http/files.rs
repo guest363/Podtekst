@@ -1,5 +1,3 @@
-//! Загрузка, переименование и извлечение аудио из видео.
-
 use std::path::{Path, PathBuf};
 
 use serde_json::json;
@@ -133,8 +131,6 @@ pub(super) fn handle_recording_rename(
     );
 }
 
-/// POST /api/recordings/delete: удаляет медиафайл и его расшифровки
-/// (`.transcript.json`, `.md`, `.txt`) рядом с исходником.
 pub(super) fn handle_recording_delete(
     request: tiny_http::Request,
     body: serde_json::Value,
@@ -211,7 +207,6 @@ pub(super) fn handle_recording_delete(
     json_response(request, json!({"ok": true, "deleted": deleted}), 200);
 }
 
-/// POST /api/upload: сырое тело + заголовок X-Filename.
 /// Пишет потоком в `.part` с переименованием; лимит 4 ГБ против OOM.
 pub(super) fn handle_upload(mut request: tiny_http::Request) {
     const MAX_UPLOAD: u64 = 4 * 1024 * 1024 * 1024;
@@ -428,8 +423,6 @@ pub(super) fn handle_extract_audio(request: tiny_http::Request, body: serde_json
     }
 }
 
-/// POST /api/recording/attach_video:
-/// Принимает видеопоток экрана (WebM/MP4) и склеивает с аудиозаписью встречи через ffmpeg (-c:v copy).
 pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
     const MAX_UPLOAD: u64 = 4 * 1024 * 1024 * 1024;
     let audio_path_raw = header_value(&request, "X-Audio-Path").unwrap_or_default();
@@ -561,7 +554,6 @@ pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
         return;
     }
 
-    // 1-я попытка: быстрая склейка без перекодирования видео (-c:v copy)
     let run_ffmpeg = |extra_args: &[&str]| -> std::io::Result<std::process::Output> {
         let mut cmd = std::process::Command::new(mr_audio::tools::ffmpeg_path());
         cmd.arg("-y")
@@ -604,7 +596,6 @@ pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
         }
     }
 
-    // 2-я попытка: перекодирование, если прямое копирование контейнера не сработало
     if !success {
         let transcode_args = if is_mp4 {
             vec![

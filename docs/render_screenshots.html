@@ -1,0 +1,1006 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Podtekst Screenshots Renderer</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@700;800&family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="../ui/web/static/css/app.css">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg-page);
+      font-family: var(--font-sans);
+      color: var(--text-primary);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .capture-viewport {
+      width: 1240px;
+      height: 820px;
+      overflow: hidden;
+      position: relative;
+      background: var(--bg-page);
+      display: flex;
+      flex-direction: column;
+    }
+
+    body.gif-mode .capture-viewport {
+      width: 880px;
+      height: 609px;
+    }
+
+    body.screen-gif-mode .capture-viewport {
+      width: 880px;
+      height: 520px;
+    }
+
+    .view-container {
+      display: none;
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+    .view-container.active {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .page {
+      padding: 24px 32px;
+      height: 100%;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+    }
+    .main-column {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      max-width: 900px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    body.gif-mode .page {
+      padding: 14px 20px;
+    }
+    body.gif-mode .main-column {
+      gap: 10px;
+    }
+    body.screen-gif-mode .page {
+      padding: 14px 20px;
+    }
+    body.screen-gif-mode .main-column {
+      gap: 10px;
+    }
+
+    .mock-video-slide {
+      width: 100%;
+      height: 195px;
+      background: linear-gradient(135deg, #091322 0%, #1e293b 100%);
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      color: #fff;
+      padding: 20px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+      position: relative;
+      box-sizing: border-box;
+    }
+    body.gif-mode .mock-video-slide {
+      height: 130px;
+      padding: 12px;
+    }
+    .mock-video-slide h3 {
+      font-size: 19px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
+      color: #f8fafc;
+      text-align: center;
+    }
+    body.gif-mode .mock-video-slide h3 {
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+    .mock-video-slide p {
+      font-size: 12px;
+      color: #94a3b8;
+      font-family: var(--font-mono);
+      text-align: center;
+    }
+    body.gif-mode .mock-video-slide p {
+      font-size: 10.5px;
+    }
+    .mock-video-slide .play-overlay-badge {
+      position: absolute;
+      bottom: 12px;
+      left: 12px;
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(8px);
+      padding: 3px 9px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: #38bdf8;
+    }
+    body.gif-mode .mock-video-slide .play-overlay-badge {
+      font-size: 10px;
+      padding: 2px 7px;
+      bottom: 8px;
+      left: 8px;
+    }
+
+    .transcript-grid {
+      grid-template-columns: 275px minmax(0, 1fr) !important;
+    }
+    .transcript-speakers-wrap {
+      width: 275px !important;
+    }
+    body.gif-mode .transcript-grid {
+      grid-template-columns: 240px minmax(0, 1fr) !important;
+    }
+    body.gif-mode .transcript-speakers-wrap {
+      width: 240px !important;
+    }
+
+    body.gif-mode .w-bar.active {
+      animation: none !important;
+    }
+    body.gif-mode .app-drawer-body {
+      padding: 10px 16px !important;
+    }
+    body.gif-mode .models-list {
+      gap: 5px !important;
+    }
+    body.gif-mode .model-item {
+      padding: 6px 10px !important;
+    }
+    body.gif-mode .model-item .status-chip {
+      font-size: 10px !important;
+      padding: 2px 6px !important;
+    }
+    body.gif-mode .model-item .btn-sm {
+      font-size: 10px !important;
+      padding: 2px 6px !important;
+    }
+
+    .settings-heading {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .settings-version {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .settings-tabs {
+      display: flex; gap: 4px;
+      border-bottom: 1px solid var(--border-soft);
+      padding: 0 20px;
+      background: #fff;
+      flex-shrink: 0;
+    }
+    .settings-tab {
+      border: none; background: transparent; cursor: pointer;
+      padding: 9px 14px 10px;
+      font-family: inherit; font-size: 13px; font-weight: 700;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      white-space: nowrap;
+      transition: color 180ms ease, border-color 180ms ease;
+    }
+    .settings-tab.active {
+      color: var(--text-primary);
+      border-bottom-color: var(--accent-blue);
+    }
+  </style>
+</head>
+<body>
+  <div class="capture-viewport" id="viewport">
+    <div class="view-container" id="view-main-console">
+      <div class="page">
+        <header class="app-header">
+          <div class="app-title">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="app-title-text">Подтекст</span>
+          </div>
+          <div class="header-right">
+            <button class="icon-btn help-btn" title="Как это работает">?</button>
+            <button class="icon-btn" title="Настройки">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h9M18 6h2M4 12h3M12 12h8M4 18h11M20 18h0" /><circle cx="15.5" cy="6" r="2.5" /><circle cx="9.5" cy="12" r="2.5" /><circle cx="17.5" cy="18" r="2.5" /></svg>
+            </button>
+          </div>
+        </header>
+
+        <main class="main-column">
+          <section class="studio-deck" aria-label="Запись">
+            <div class="deck-shell">
+              <div class="deck-top">
+                <span class="deck-status" role="status">
+                  <span class="status-dot" aria-hidden="true"></span>
+                  <span>Готов к записи</span>
+                </span>
+                <div class="deck-chips">
+                  <button type="button" class="clean-chip">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                    <span>＋ Экран</span>
+                  </button>
+                  <div class="clean-chip static">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+                    <span class="mic-name-text">Raptor Lake-P/U/H cAVS Digital Microphone</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="deck-wave" aria-hidden="true" style="gap: 4px;">
+                <div class="w-bar" style="height: 6px;"></div><div class="w-bar" style="height: 6px;"></div><div class="w-bar" style="height: 8px;"></div><div class="w-bar" style="height: 10px;"></div><div class="w-bar" style="height: 7px;"></div><div class="w-bar" style="height: 6px;"></div><div class="w-bar" style="height: 9px;"></div><div class="w-bar" style="height: 12px;"></div><div class="w-bar" style="height: 8px;"></div><div class="w-bar" style="height: 6px;"></div><div class="w-bar" style="height: 10px;"></div><div class="w-bar" style="height: 14px;"></div><div class="w-bar" style="height: 8px;"></div><div class="w-bar" style="height: 6px;"></div><div class="w-bar" style="height: 12px;"></div><div class="w-bar" style="height: 16px;"></div><div class="w-bar" style="height: 10px;"></div><div class="w-bar" style="height: 7px;"></div><div class="w-bar" style="height: 14px;"></div><div class="w-bar" style="height: 18px;"></div><div class="w-bar" style="height: 11px;"></div><div class="w-bar" style="height: 8px;"></div><div class="w-bar" style="height: 14px;"></div><div class="w-bar" style="height: 18px;"></div><div class="w-bar" style="height: 11px;"></div><div class="w-bar" style="height: 8px;"></div><div class="w-bar" style="height: 12px;"></div><div class="w-bar" style="height: 16px;"></div><div class="w-bar" style="height: 10px;"></div><div class="w-bar" style="height: 7px;"></div><div class="w-bar" style="height: 10px;"></div><div class="w-bar" style="height: 14px;"></div><div class="w-bar" style="height: 8px;"></div><div class="w-bar" style="height: 6px;"></div><div class="w-bar" style="height: 9px;"></div><div class="w-bar" style="height: 12px;"></div><div class="w-bar" style="height: 8px;"></div><div class="w-bar" style="height: 6px;"></div><div class="w-bar" style="height: 7px;"></div><div class="w-bar" style="height: 6px;"></div>
+              </div>
+
+              <div class="deck-bottom">
+                <div class="deck-timer-box">
+                  <span class="deck-timer">00:00:00</span>
+                  <span class="deck-hotkey">Ctrl+Shift+R</span>
+                </div>
+                <div class="deck-bottom-right">
+                  <div class="deck-levels"><span class="levels-idle">Микрофон + система</span></div>
+                  <button class="btn-action-round" type="button"><span>● Начать запись</span></button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="card" id="recordingsCard" aria-label="Записи">
+            <div class="card-header">
+              <span class="card-title">Записи и видео <span class="count-badge">3</span></span>
+              <div class="header-actions">
+                <input type="search" class="input-field card-search" placeholder="Поиск записи…" />
+                <button class="btn-secondary">Выбрать файл</button>
+              </div>
+            </div>
+            <div class="recordings-list">
+              <div class="rec-item rec-card">
+                <div class="rec-date-col"><span class="rec-date-day">26 окт.</span><span class="rec-date-time">10:15</span></div>
+                <div class="rec-info">
+                  <span class="rec-name-row"><span class="rec-name">Встреча_2026-10-26_Архитектура_и_планирование_релиза</span><button class="rec-rename"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z" /></svg></button></span>
+                  <span class="rec-meta">14:22 • <span class="rec-state-ok">3 спикера</span> • 28.5 МБ</span>
+                </div>
+                <div class="rec-actions">
+                  <button class="slim-play"><svg class="play-glyph" width="12" height="12" viewBox="0 0 12 12"><path d="M3.6 2.1v7.8L10.2 6z" fill="currentColor" /></svg></button>
+                  <button class="btn-secondary btn-sm">Текст и спикеры</button>
+                  <button class="rec-delete-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v6M14 11v6" /></svg></button>
+                </div>
+              </div>
+              <div class="rec-item rec-card">
+                <div class="rec-date-col"><span class="rec-date-day">25 окт.</span><span class="rec-date-time">11:00</span></div>
+                <div class="rec-info">
+                  <span class="rec-name-row"><span class="rec-name">Синхронизация_команды_2026-10-25</span><button class="rec-rename"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z" /></svg></button></span>
+                  <span class="rec-meta">25:10 • <span class="rec-state-ok">4 спикера</span> • 48.2 МБ</span>
+                </div>
+                <div class="rec-actions">
+                  <button class="slim-play"><svg class="play-glyph" width="12" height="12" viewBox="0 0 12 12"><path d="M3.6 2.1v7.8L10.2 6z" fill="currentColor" /></svg></button>
+                  <button class="btn-secondary btn-sm">Текст и спикеры</button>
+                  <button class="rec-delete-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v6M14 11v6" /></svg></button>
+                </div>
+              </div>
+              <div class="rec-item rec-card">
+                <div class="rec-date-col"><span class="rec-date-day">24 окт.</span><span class="rec-date-time">16:15</span></div>
+                <div class="rec-info">
+                  <span class="rec-name-row"><span class="rec-name">Интервью_исследование_пользователей</span><button class="rec-rename"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z" /></svg></button></span>
+                  <span class="rec-meta">18:45 • <span class="rec-state-ok">2 спикера</span> • 36.1 МБ</span>
+                </div>
+                <div class="rec-actions">
+                  <button class="slim-play"><svg class="play-glyph" width="12" height="12" viewBox="0 0 12 12"><path d="M3.6 2.1v7.8L10.2 6z" fill="currentColor" /></svg></button>
+                  <button class="btn-secondary btn-sm">Текст и спикеры</button>
+                  <button class="rec-delete-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v6M14 11v6" /></svg></button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <div class="view-container" id="view-transcript">
+      <div class="page transcript-page">
+        <header class="transcript-page-header">
+          <div class="transcript-header-top">
+            <h1 class="transcript-page-title">Встреча_2026-10-26_Архитектура_и_планирование_релиза.mp4</h1>
+            <button class="btn-close-page">✕</button>
+          </div>
+          <div class="transcript-sub-actions">
+            <div class="transcript-chips">
+              <span class="meta-badge">Видео</span>
+              <span class="meta-item">78 реплик</span>
+              <span class="meta-item">3 спикера</span>
+            </div>
+            <div class="transcript-btns">
+              <button class="btn-secondary btn-sm btn-speakers-toggle active">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                <span>Спикеры · 3</span>
+                <span class="spk-notify-dot ok"></span>
+              </button>
+              <button class="btn-primary btn-sm btn-transcribe-header">Запустить расшифровку</button>
+              <button class="btn-secondary btn-sm">DOCX</button>
+              <button class="btn-secondary btn-sm">PDF</button>
+              <button class="btn-secondary btn-sm">Копировать текст</button>
+            </div>
+          </div>
+          <div class="transcript-sub-player is-expanded">
+            <div class="video-player-container">
+              <div class="mock-video-slide">
+                <h3>Подтекст (Podtekst) — Локальная архитектура v0.1.7</h3>
+                <p>GigaAM RNNT int8 • Silero VAD • ERes2NetV2 192-dim • Tauri v2 • PipeWire</p>
+                <div class="play-overlay-badge">▶ 00:18 / 14:22 • Слайд 3: Модули диаризации</div>
+              </div>
+              <button type="button" class="btn-video-expand">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 14 10 14 10 20"></polyline><polyline points="20 10 14 10 14 4"></polyline><line x1="14" y1="10" x2="21" y2="3"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
+                <span>Компактно</span>
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <div class="transcript-grid sidebar-open">
+          <aside class="transcript-speakers-wrap">
+            <div class="transcript-speakers">
+              <div class="speakers-deck">
+                <div class="speaker-card matched" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.05);">
+                  <div class="speaker-top"><span class="speaker-name">Алексей Смирнов</span><span class="speaker-status ok">Микрофон · 6</span></div>
+                  <div class="speaker-samples"><div class="sample-row"><button class="sample-play">▶</button><span class="sample-text">«Я тогда слать тебе…»</span></div></div>
+                  <div class="assign-row"><input class="input-field" value="Алексей Смирнов (Team Lead)" /><button class="btn-secondary btn-sm">Запомнить</button></div>
+                </div>
+                <div class="speaker-card matched" style="--spk: #0e7a55; --spk-bg: rgba(14, 122, 85, 0.05);">
+                  <div class="speaker-top"><span class="speaker-name">Иван Петров</span><span class="speaker-status ok">Собеседник · 38</span></div>
+                  <div class="speaker-samples"><div class="sample-row"><button class="sample-play">▶</button><span class="sample-text">«GigaAM RNNT в int8…»</span></div></div>
+                  <div class="assign-row"><input class="input-field" value="Иван Петров (Backend Lead)" /><button class="btn-secondary btn-sm">Запомнить</button></div>
+                </div>
+                <div class="speaker-card matched" style="--spk: #d97706; --spk-bg: rgba(217, 119, 6, 0.05);">
+                  <div class="speaker-top"><span class="speaker-name">Мария Сидорова</span><span class="speaker-status ok">Собеседник · 34</span></div>
+                  <div class="speaker-samples"><div class="sample-row"><button class="sample-play">▶</button><span class="sample-text">«Проверили диаризацию…»</span></div></div>
+                  <div class="assign-row"><input class="input-field" value="Мария Сидорова (QA Lead)" /><button class="btn-secondary btn-sm">Запомнить</button></div>
+                </div>
+              </div>
+            </div>
+          </aside>
+
+          <main class="transcript-content">
+            <div class="transcript-doc">
+              <div class="transcript-doc-header">
+                <span class="pane-title">Текст расшифровки</span>
+                <div class="doc-search-box">
+                  <svg class="search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                  <input type="search" class="doc-search-input" placeholder="Поиск по тексту…" />
+                </div>
+              </div>
+              <div class="markdown-body">
+                <div class="utt utterance" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.06);"><button class="utt-time-btn">00:02</button><div class="utt-body"><div class="utt-speaker">Алексей Смирнов (Team Lead)</div><div class="utt-text">Всем привет! Сверяемся по архитектуре локального распознавания и релизу версии 0.1.7.</div></div></div>
+                <div class="utt utterance" style="--spk: #0e7a55; --spk-bg: rgba(14, 122, 85, 0.06);"><button class="utt-time-btn">00:09</button><div class="utt-body"><div class="utt-speaker">Иван Петров (Backend Lead)</div><div class="utt-text">GigaAM RNNT в int8 готов. Потребление памяти снизили до 226 МБ, инференс полностью на CPU без дискретной видеокарты.</div></div></div>
+                <div class="utt utterance active" style="--spk: #d97706; --spk-bg: rgba(217, 119, 6, 0.06);"><button class="utt-time-btn">00:18</button><div class="utt-body"><div class="utt-speaker">Мария Сидорова (QA Lead)</div><div class="utt-text">Проверили диаризацию на стереозаписях: ERes2NetV2 разделяет спикеров без ошибок даже при наложении фраз.</div></div></div>
+                <div class="utt utterance" style="--spk: #0e7a55; --spk-bg: rgba(14, 122, 85, 0.06);"><button class="utt-time-btn">00:27</button><div class="utt-body"><div class="utt-speaker">Иван Петров (Backend Lead)</div><div class="utt-text">Мульти-прототипные отпечатки устойчивы. Голосовые пакеты можно подключать и переносить между машинами через Voice Packs.</div></div></div>
+                <div class="utt utterance" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.06);"><button class="utt-time-btn">00:36</button><div class="utt-body"><div class="utt-speaker">Алексей Смирнов (Team Lead)</div><div class="utt-text">Отлично. Главное — 100% приватность: ни один байт аудио или текста не уходит в облако. Экспорт в Markdown сохраняется прямо в папку встречи.</div></div></div>
+                <div class="utt utterance" style="--spk: #d97706; --spk-bg: rgba(217, 119, 6, 0.06);"><button class="utt-time-btn">00:45</button><div class="utt-body"><div class="utt-speaker">Мария Сидорова (QA Lead)</div><div class="utt-text">Все автотесты в CI зелёные. Можем открывать релиз и публиковать документацию.</div></div></div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+
+
+    <div class="view-container" id="view-settings-models">
+      <div style="filter: blur(4px) opacity(0.35); pointer-events: none; width: 100%; height: 100%;">
+        <div class="page">
+          <header class="app-header"><div class="app-title"><span class="dot"></span><span class="app-title-text">Подтекст</span></div></header>
+          <main class="main-column"><section class="studio-deck"><div class="deck-shell"><span class="deck-timer">00:00:00</span></div></section></main>
+        </div>
+      </div>
+      <div class="app-drawer-overlay" style="opacity: 1; pointer-events: auto;"></div>
+      <div class="app-drawer settings-drawer" style="animation: none;">
+        <div class="app-drawer-top">
+          <div class="settings-heading">
+            <h2 class="modal-title">Настройки</h2>
+            <div class="settings-version">Версия 0.1.7 · <a href="#check" style="color: var(--accent-blue); text-decoration: none;">Проверить обновления</a></div>
+          </div>
+          <button class="icon-btn">✕</button>
+        </div>
+        <div class="settings-tabs" role="tablist">
+          <button class="settings-tab">Запись</button>
+          <button class="settings-tab">Участники</button>
+          <button class="settings-tab">Голоса</button>
+          <button class="settings-tab active">Модели</button>
+        </div>
+        <div class="app-drawer-body">
+          <div>
+            <div class="card-title" style="margin-bottom: 6px;">Модели ИИ</div>
+            <div class="help-text">Локальные модели для распознавания речи: GigaAM (русский язык), Whisper (30+ языков), Silero VAD (детектор речи) и ERes2NetV2 (разделение голосов). Для первой расшифровки скачайте Silero VAD и одну модель распознавания.</div>
+          </div>
+          <div class="models-list" style="display: flex; flex-direction: column; gap: 14px;">
+            <div class="model-item" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 12px 14px; background: var(--bg-inset); border-radius: var(--radius-inner);">
+              <div style="flex: 1;"><div style="font-weight: 700; font-size: 13.5px; margin-bottom: 3px;">Silero VAD v6.2 (детектор речи)</div><div style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">Стриминговый детектор речи Silero v6.2.3, окно 32 мс, контекст 64 сэмпла, состояние [2,1,128]. Повышенная чувствительность к тихому и приглушённому голосу.<br>Лицензия: MIT</div></div>
+              <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;"><span class="status-chip ok" style="font-size: 11.5px; padding: 3px 8px; border-radius: 999px; background: rgba(14, 122, 85, 0.1); color: var(--accent-ok); font-weight: 600;">● Скачана v6.2.3</span><button class="btn-secondary btn-sm">Обновить</button></div>
+            </div>
+            <div class="model-item" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 12px 14px; background: var(--bg-inset); border-radius: var(--radius-inner);">
+              <div style="flex: 1;"><div style="font-weight: 700; font-size: 13.5px; margin-bottom: 3px;">GigaAM-v3 e2e RNNT int8 (русский язык, SOTA)</div><div style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">Conformer-трансдьюсер 242M, жадный RNNT-декодинг. Проверен живым прогоном на русской речи.<br>Лицензия: MIT</div></div>
+              <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;"><span class="status-chip ok" style="font-size: 11.5px; padding: 3px 8px; border-radius: 999px; background: rgba(14, 122, 85, 0.1); color: var(--accent-ok); font-weight: 600;">● Скачана v3.1.0</span><button class="btn-secondary btn-sm">Обновить</button></div>
+            </div>
+            <div class="model-item" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 12px 14px; background: var(--bg-inset); border-radius: var(--radius-inner);">
+              <div style="flex: 1;"><div style="font-weight: 700; font-size: 13.5px; margin-bottom: 3px;">Whisper large-v3-turbo (мультиязычный fallback, 30+ языков)</div><div style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">Merged-decoder с KV-кэшем, greedy-декодинг. Проверен живым прогоном на русской речи.<br>Лицензия: MIT</div></div>
+              <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;"><span class="status-chip info" style="font-size: 11.5px; padding: 3px 8px; border-radius: 999px; background: rgba(37, 99, 235, 0.1); color: var(--accent-blue); font-weight: 600;">● 1037 МБ</span><button class="btn-primary btn-sm">Скачать</button></div>
+            </div>
+            <div class="model-item" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 12px 14px; background: var(--bg-inset); border-radius: var(--radius-inner);">
+              <div style="flex: 1;"><div style="font-weight: 700; font-size: 13.5px; margin-bottom: 3px;">ERes2NetV2 192-dim (SOTA голосовые отпечатки)</div><div style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">3D-Speaker ERes2NetV2: fbank [B,T,80] → 192-dim. Проверен: косинус 1.0 с официальным чекпоинтом; кросс-спикерные пары ≤ 0.22, свой голос ≥ 0.48.<br>Лицензия: Apache-2.0</div></div>
+              <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;"><span class="status-chip ok" style="font-size: 11.5px; padding: 3px 8px; border-radius: 999px; background: rgba(14, 122, 85, 0.1); color: var(--accent-ok); font-weight: 600;">● Скачана v2.0.0</span><button class="btn-secondary btn-sm">Обновить</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="app-drawer-bottom">
+          <a href="#donate" style="color: var(--text-muted); font-size: 13px; text-decoration: underline; margin-right: auto;">Поддержать проект</a>
+          <button class="btn-primary">Готово</button>
+        </div>
+      </div>
+    </div>
+
+
+    <div class="view-container" id="view-wt">
+      <div id="wt-cursor" style="position: absolute; left: 100px; top: 100px; z-index: 99999; pointer-events: none; transition: none;">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style="filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35));">
+          <path d="M4 4l7.07 17 2.51-7.39L21 11.07 4 4z" fill="#0f172a" stroke="#ffffff" stroke-width="1.6"/>
+        </svg>
+      </div>
+
+      <div id="wt-screen-main" class="page" style="display: flex;">
+        <header class="app-header">
+          <div class="app-title">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="app-title-text">Подтекст</span>
+          </div>
+          <div class="header-right">
+            <button class="icon-btn help-btn" title="Как это работает">?</button>
+            <button class="icon-btn" id="wt-btn-settings" title="Настройки">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h9M18 6h2M4 12h3M12 12h8M4 18h11M20 18h0" /><circle cx="15.5" cy="6" r="2.5" /><circle cx="9.5" cy="12" r="2.5" /><circle cx="17.5" cy="18" r="2.5" /></svg>
+            </button>
+          </div>
+        </header>
+
+        <main class="main-column">
+          <section class="studio-deck" aria-label="Запись">
+            <div class="deck-shell">
+              <div class="deck-top">
+                <span class="deck-status" id="wt-deck-status" role="status">
+                  <span class="status-dot" id="wt-status-dot" aria-hidden="true"></span>
+                  <span id="wt-status-text">Готов к записи</span>
+                </span>
+                <div class="deck-chips">
+                  <button type="button" class="clean-chip">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                    <span>＋ Экран</span>
+                  </button>
+                  <div class="clean-chip static">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+                    <span class="mic-name-text">Raptor Lake Digital Mic</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="deck-wave" id="wt-deck-wave" aria-hidden="true" style="gap: 4px;"></div>
+
+              <div class="deck-bottom">
+                <div class="deck-timer-box">
+                  <span class="deck-timer" id="wt-deck-timer">00:00:00</span>
+                  <span class="deck-hotkey">Ctrl+Shift+R</span>
+                </div>
+                <div class="deck-bottom-right">
+                  <div class="deck-levels" id="wt-deck-levels"><span class="levels-idle">Микрофон + система</span></div>
+                  <button class="btn-action-round" id="wt-deck-btn" type="button"><span>● Начать запись</span></button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="card" id="recordingsCard" aria-label="Записи">
+            <div class="card-header">
+              <span class="card-title">Записи и видео <span class="count-badge" id="wt-rec-count">3</span></span>
+              <div class="header-actions">
+                <input type="search" class="input-field card-search" placeholder="Поиск записи…" />
+                <button class="btn-secondary">Выбрать файл</button>
+              </div>
+            </div>
+            <div class="recordings-list" id="wt-rec-list">
+              <div class="rec-item rec-card" id="wt-new-rec" style="display: none; background: rgba(37, 99, 235, 0.04); border-color: rgba(37, 99, 235, 0.25);">
+                <div class="rec-date-col"><span class="rec-date-day">Сегодня</span><span class="rec-date-time">11:35</span></div>
+                <div class="rec-info">
+                  <span class="rec-name-row"><span class="rec-name">Встреча_2026-11-01_Архитектура</span><button class="rec-rename"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z" /></svg></button></span>
+                  <span class="rec-meta">03:15 • <span class="rec-state-ok">✓ 3 спикера</span> • 6.4 МБ</span>
+                </div>
+                <div class="rec-actions">
+                  <button class="slim-play"><svg class="play-glyph" width="12" height="12" viewBox="0 0 12 12"><path d="M3.6 2.1v7.8L10.2 6z" fill="currentColor"/></svg></button>
+                  <button class="btn-primary btn-sm" id="wt-new-rec-btn">Текст и спикеры</button>
+                  <button class="rec-delete-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v6M14 11v6" /></svg></button>
+                </div>
+              </div>
+
+              <div class="rec-item rec-card">
+                <div class="rec-date-col"><span class="rec-date-day">26 окт.</span><span class="rec-date-time">10:15</span></div>
+                <div class="rec-info">
+                  <span class="rec-name-row"><span class="rec-name">Встреча_2026-10-26_Архитектура_и_планирование_релиза</span><button class="rec-rename"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z" /></svg></button></span>
+                  <span class="rec-meta">14:22 • <span class="rec-state-ok">3 спикера</span> • 28.5 МБ</span>
+                </div>
+                <div class="rec-actions">
+                  <button class="slim-play"><svg class="play-glyph" width="12" height="12" viewBox="0 0 12 12"><path d="M3.6 2.1v7.8L10.2 6z" fill="currentColor"/></svg></button>
+                  <button class="btn-secondary btn-sm">Текст и спикеры</button>
+                  <button class="rec-delete-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v6M14 11v6" /></svg></button>
+                </div>
+              </div>
+
+              <div class="rec-item rec-card">
+                <div class="rec-date-col"><span class="rec-date-day">25 окт.</span><span class="rec-date-time">11:00</span></div>
+                <div class="rec-info">
+                  <span class="rec-name-row"><span class="rec-name">Синхронизация_команды_2026-10-25</span><button class="rec-rename"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z" /></svg></button></span>
+                  <span class="rec-meta">25:10 • <span class="rec-state-ok">4 спикера</span> • 48.2 МБ</span>
+                </div>
+                <div class="rec-actions">
+                  <button class="slim-play"><svg class="play-glyph" width="12" height="12" viewBox="0 0 12 12"><path d="M3.6 2.1v7.8L10.2 6z" fill="currentColor"/></svg></button>
+                  <button class="btn-secondary btn-sm">Текст и спикеры</button>
+                  <button class="rec-delete-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v6M14 11v6" /></svg></button>
+                </div>
+              </div>
+
+              <div class="rec-item rec-card" id="wt-rec-3">
+                <div class="rec-date-col"><span class="rec-date-day">24 окт.</span><span class="rec-date-time">16:15</span></div>
+                <div class="rec-info">
+                  <span class="rec-name-row"><span class="rec-name">Интервью_исследование_пользователей</span><button class="rec-rename"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z" /></svg></button></span>
+                  <span class="rec-meta">18:45 • <span class="rec-state-ok">2 спикера</span> • 36.1 МБ</span>
+                </div>
+                <div class="rec-actions">
+                  <button class="slim-play"><svg class="play-glyph" width="12" height="12" viewBox="0 0 12 12"><path d="M3.6 2.1v7.8L10.2 6z" fill="currentColor"/></svg></button>
+                  <button class="btn-secondary btn-sm">Текст и спикеры</button>
+                  <button class="rec-delete-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v6M14 11v6" /></svg></button>
+                </div>
+              </div>
+            </div>
+            <div class="row-start" style="margin-top: 8px;">
+              <button class="btn-secondary btn-sm" type="button">Все записи · ещё 5</button>
+            </div>
+          </section>
+        </main>
+      </div>
+
+      <div id="wt-screen-transcript" class="page transcript-page" style="display: none;">
+        <header class="transcript-page-header">
+          <div class="transcript-header-top">
+            <h1 class="transcript-page-title" style="font-size: 16px;">Встреча_2026-11-01_Архитектура.mp4</h1>
+            <button class="btn-close-page">✕</button>
+          </div>
+          <div class="transcript-sub-actions">
+            <div class="transcript-chips">
+              <span class="meta-badge">Видео</span>
+              <span class="meta-item">78 реплик</span>
+              <span class="meta-item">3 спикера</span>
+            </div>
+            <div class="transcript-btns">
+              <button class="btn-secondary btn-sm active" style="font-size: 11.5px;">Спикеры · 3 <span class="spk-notify-dot ok"></span></button>
+              <button class="btn-secondary btn-sm" style="font-size: 11.5px;">Markdown</button>
+              <button class="btn-secondary btn-sm" style="font-size: 11.5px;">TXT</button>
+              <button class="btn-secondary btn-sm" style="font-size: 11.5px;">Копировать</button>
+            </div>
+          </div>
+          <div class="transcript-sub-player is-expanded" style="margin-top: 8px; padding: 8px 12px; background: var(--bg-inset); border-radius: var(--radius-inner); display: flex; align-items: center; gap: 14px;">
+            <button class="btn-action-round" style="width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--accent-blue);">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="#ffffff"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+            </button>
+            <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+              <div style="height: 6px; background: var(--border-subtle); border-radius: 999px; position: relative; overflow: hidden;">
+                <div id="wt-player-progress" style="height: 100%; width: 5%; background: var(--accent-blue); border-radius: 999px;"></div>
+              </div>
+            </div>
+            <div style="font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--text-secondary); white-space: nowrap;" id="wt-player-time">00:09 / 03:15</div>
+          </div>
+        </header>
+
+        <div class="transcript-grid sidebar-open" style="display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 14px; height: 370px; overflow: hidden;">
+          <aside class="transcript-speakers-wrap" style="width: 240px;">
+            <div class="speakers-deck">
+              <div class="speaker-card matched" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.05); padding: 7px 9px;">
+                <div class="speaker-top"><span class="speaker-name" style="font-size: 12px;">Алексей Смирнов</span><span class="speaker-status ok" style="font-size: 10px;">Микрофон · 6</span></div>
+                <div class="speaker-samples"><div class="sample-row"><button class="sample-play">▶</button><span class="sample-text">«Я тогда слать тебе…»</span></div></div>
+              </div>
+              <div class="speaker-card matched" style="--spk: #0e7a55; --spk-bg: rgba(14, 122, 85, 0.05); padding: 7px 9px;">
+                <div class="speaker-top"><span class="speaker-name" style="font-size: 12px;">Иван Петров</span><span class="speaker-status ok" style="font-size: 10px;">Собеседник · 38</span></div>
+                <div class="speaker-samples"><div class="sample-row"><button class="sample-play">▶</button><span class="sample-text">«GigaAM RNNT в int8…»</span></div></div>
+              </div>
+              <div class="speaker-card matched" style="--spk: #d97706; --spk-bg: rgba(217, 119, 6, 0.05); padding: 7px 9px;">
+                <div class="speaker-top"><span class="speaker-name" style="font-size: 12px;">Мария Сидорова</span><span class="speaker-status ok" style="font-size: 10px;">Собеседник · 34</span></div>
+                <div class="speaker-samples"><div class="sample-row"><button class="sample-play">▶</button><span class="sample-text">«Проверили диаризацию…»</span></div></div>
+              </div>
+            </div>
+          </aside>
+
+          <main class="transcript-content" style="overflow-y: auto; padding-right: 4px;">
+            <div class="markdown-body" style="font-size: 12.5px;">
+              <div class="utt utterance" id="wt-utt-1" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.06); padding: 7px 10px; margin-bottom: 6px;"><button class="utt-time-btn">00:02</button><div class="utt-body"><div class="utt-speaker">Алексей Смирнов (Team Lead)</div><div class="utt-text">Всем привет! Сверяемся по архитектуре локального распознавания и релизу версии 0.1.7.</div></div></div>
+              <div class="utt utterance active" id="wt-utt-2" style="--spk: #0e7a55; --spk-bg: rgba(14, 122, 85, 0.06); padding: 7px 10px; margin-bottom: 6px;"><button class="utt-time-btn">00:09</button><div class="utt-body"><div class="utt-speaker">Иван Петров (Backend Lead)</div><div class="utt-text">GigaAM RNNT в int8 готов. Потребление памяти снизили до 226 МБ, инференс полностью на CPU без дискретной видеокарты.</div></div></div>
+              <div class="utt utterance" id="wt-utt-3" style="--spk: #d97706; --spk-bg: rgba(217, 119, 6, 0.06); padding: 7px 10px; margin-bottom: 6px;"><button class="utt-time-btn">00:18</button><div class="utt-body"><div class="utt-speaker">Мария Сидорова (QA Lead)</div><div class="utt-text">Проверили диаризацию на стереозаписях: ERes2NetV2 разделяет спикеров без ошибок даже при наложении фраз.</div></div></div>
+              <div class="utt utterance" id="wt-utt-4" style="--spk: #0e7a55; --spk-bg: rgba(14, 122, 85, 0.06); padding: 7px 10px; margin-bottom: 6px;"><button class="utt-time-btn">00:27</button><div class="utt-body"><div class="utt-speaker">Иван Петров (Backend Lead)</div><div class="utt-text">Мульти-прототипные отпечатки устойчивы. Голосовые пакеты можно подключать и переносить между машинами через Voice Packs.</div></div></div>
+            </div>
+          </main>
+        </div>
+      </div>
+
+      <div id="wt-screen-settings" style="display: none; position: absolute; inset: 0; z-index: 100;">
+        <div style="filter: blur(4px) opacity(0.35); pointer-events: none; width: 100%; height: 100%;">
+          <div class="page" style="padding: 16px 24px;">
+            <header class="app-header"><div class="app-title"><span class="dot"></span><span class="app-title-text">Подтекст</span></div></header>
+            <main class="main-column"><section class="studio-deck"><div class="deck-shell"><span class="deck-timer">00:00:00</span></div></section></main>
+          </div>
+        </div>
+        <div class="app-drawer-overlay" style="position: absolute; inset: 0; z-index: 101; opacity: 1; pointer-events: auto;"></div>
+        <div class="app-drawer settings-drawer" style="position: absolute; right: 0; top: 0; bottom: 0; width: 520px; z-index: 102; animation: none; background: #ffffff; border-left: 1px solid var(--border-soft); box-shadow: -16px 0 48px rgba(15, 30, 51, 0.16); display: flex; flex-direction: column;">
+          <div class="app-drawer-top">
+            <div class="settings-heading">
+              <h2 class="modal-title">Настройки</h2>
+              <div class="settings-version">Версия 0.1.7 · <a href="#check" style="color: var(--accent-blue); text-decoration: none;">Проверить обновления</a></div>
+            </div>
+            <button class="icon-btn">✕</button>
+          </div>
+          <div class="settings-tabs" role="tablist">
+            <button class="settings-tab">Запись</button>
+            <button class="settings-tab">Участники</button>
+            <button class="settings-tab">Голоса</button>
+            <button class="settings-tab active">Модели</button>
+          </div>
+          <div class="app-drawer-body" style="padding: 16px 20px; overflow-y: auto; flex: 1;">
+            <div>
+              <div class="card-title" style="margin-bottom: 4px; font-size: 14px;">Модели ИИ</div>
+              <div class="help-text" style="font-size: 11.5px; margin-bottom: 12px;">Локальные модели для распознавания речи: GigaAM (русский язык), Whisper (30+ языков), Silero VAD (детектор речи) и ERes2NetV2 (разделение голосов).</div>
+            </div>
+            <div class="models-list" style="display: flex; flex-direction: column; gap: 9px;">
+              <div class="model-item" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 9px 12px; background: var(--bg-inset); border-radius: var(--radius-inner);">
+                <div style="flex: 1;"><div style="font-weight: 700; font-size: 12.5px; margin-bottom: 2px;">Silero VAD v6.2 (детектор речи)</div><div style="font-size: 11px; color: var(--text-muted); line-height: 1.3;">Стриминговый детектор речи, окно 32 мс, контекст 64 сэмпла.<br>Лицензия: MIT</div></div>
+                <div style="display: flex; gap: 6px; align-items: center; flex-shrink: 0;"><span class="status-chip ok" style="font-size: 11px; padding: 2px 7px; border-radius: 999px; background: rgba(14, 122, 85, 0.1); color: var(--accent-ok); font-weight: 600;">● Скачана v6.2.3</span><button class="btn-secondary btn-sm" style="font-size: 11px; padding: 3px 8px;">Обновить</button></div>
+              </div>
+              <div class="model-item" id="wt-card-gigaam" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 9px 12px; background: var(--bg-inset); border-radius: var(--radius-inner);">
+                <div style="flex: 1;"><div style="font-weight: 700; font-size: 12.5px; margin-bottom: 2px;">GigaAM-v3 e2e RNNT int8 (русский язык, SOTA)</div><div style="font-size: 11px; color: var(--text-muted); line-height: 1.3;">Conformer-трансдьюсер 242M, жадный RNNT-декодинг на CPU.<br>Лицензия: MIT</div></div>
+                <div style="display: flex; gap: 6px; align-items: center; flex-shrink: 0;"><span class="status-chip ok" style="font-size: 11px; padding: 2px 7px; border-radius: 999px; background: rgba(14, 122, 85, 0.1); color: var(--accent-ok); font-weight: 600;">● Скачана v3.1.0</span><button class="btn-secondary btn-sm" style="font-size: 11px; padding: 3px 8px;">Обновить</button></div>
+              </div>
+              <div class="model-item" id="wt-card-whisper" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 9px 12px; background: var(--bg-inset); border-radius: var(--radius-inner);">
+                <div style="flex: 1;"><div style="font-weight: 700; font-size: 12.5px; margin-bottom: 2px;">Whisper large-v3-turbo (мультиязычный, 30+ языков)</div><div style="font-size: 11px; color: var(--text-muted); line-height: 1.3;">Merged-decoder с KV-кэшем, greedy-декодинг.<br>Лицензия: MIT</div></div>
+                <div style="display: flex; gap: 6px; align-items: center; flex-shrink: 0;"><span class="status-chip info" style="font-size: 11px; padding: 2px 7px; border-radius: 999px; background: rgba(37, 99, 235, 0.1); color: var(--accent-blue); font-weight: 600;">● 1037 МБ</span><button class="btn-primary btn-sm" id="wt-btn-dl-whisper" style="font-size: 11px; padding: 3px 8px;">Скачать</button></div>
+              </div>
+              <div class="model-item" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 9px 12px; background: var(--bg-inset); border-radius: var(--radius-inner);">
+                <div style="flex: 1;"><div style="font-weight: 700; font-size: 12.5px; margin-bottom: 2px;">ERes2NetV2 192-dim (SOTA голосовые отпечатки)</div><div style="font-size: 11px; color: var(--text-muted); line-height: 1.3;">3D-Speaker ERes2NetV2: fbank → 192-мерные L2-векторы.<br>Лицензия: Apache-2.0</div></div>
+                <div style="display: flex; gap: 6px; align-items: center; flex-shrink: 0;"><span class="status-chip ok" style="font-size: 11px; padding: 2px 7px; border-radius: 999px; background: rgba(14, 122, 85, 0.1); color: var(--accent-ok); font-weight: 600;">● Скачана v2.0.0</span><button class="btn-secondary btn-sm" style="font-size: 11px; padding: 3px 8px;">Обновить</button></div>
+              </div>
+            </div>
+          </div>
+          <div class="app-drawer-bottom" style="padding: 12px 20px;">
+            <a href="#donate" style="color: var(--text-muted); font-size: 12.5px; text-decoration: underline; margin-right: auto;">Поддержать проект</a>
+            <button class="btn-primary" id="wt-btn-done">Готово</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <div class="view-container" id="view-sc-1">
+      <div class="page">
+        <header class="app-header"><div class="app-title"><span class="dot"></span><span class="app-title-text">Подтекст</span></div></header>
+        <main class="main-column">
+          <section class="studio-deck">
+            <div class="deck-shell">
+              <div class="deck-top">
+                <span class="deck-status"><span class="status-dot"></span><span>Готов к записи</span></span>
+                <div class="deck-chips" style="position: relative;">
+                  <button type="button" class="clean-chip">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                    <span>＋ Экран</span>
+                  </button>
+                  <div style="position: absolute; left: 30px; top: 12px;"><svg class="demo-cursor" width="22" height="22" viewBox="0 0 24 24" fill="none" style="position: absolute; filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35)); z-index: 9999; pointer-events: none;"><path d="M4 4l7.07 17 2.51-7.39L21 11.07 4 4z" fill="#0f172a" stroke="#ffffff" stroke-width="1.6"/></svg></div>
+                </div>
+              </div>
+              <div class="deck-wave" style="gap: 4px;"><div class="w-bar" style="height: 6px;"></div><div class="w-bar" style="height: 8px;"></div><div class="w-bar" style="height: 6px;"></div></div>
+              <div class="deck-bottom"><span class="deck-timer">00:00:00</span><button class="btn-action-round"><span>● Начать запись</span></button></div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <div class="view-container" id="view-sc-2">
+      <div class="page">
+        <header class="app-header"><div class="app-title"><span class="dot"></span><span class="app-title-text">Подтекст</span></div></header>
+        <main class="main-column">
+          <section class="studio-deck">
+            <div class="deck-shell">
+              <div class="deck-top">
+                <span class="deck-status"><span class="status-dot"></span><span>Готов к записи</span></span>
+                <div class="deck-chips">
+                  <button type="button" class="clean-chip active">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                    <span>Экран включен</span>
+                  </button>
+                </div>
+              </div>
+              <div class="deck-wave" style="gap: 4px;"><div class="w-bar" style="height: 6px;"></div><div class="w-bar" style="height: 8px;"></div><div class="w-bar" style="height: 6px;"></div></div>
+              <div class="deck-bottom">
+                <span class="deck-timer">00:00:00</span>
+                <div class="deck-bottom-right" style="position: relative;">
+                  <button class="btn-action-round"><span>● Начать запись</span></button>
+                  <div style="position: absolute; right: 35px; top: 12px;"><svg class="demo-cursor" width="22" height="22" viewBox="0 0 24 24" fill="none" style="position: absolute; filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35)); z-index: 9999; pointer-events: none;"><path d="M4 4l7.07 17 2.51-7.39L21 11.07 4 4z" fill="#0f172a" stroke="#ffffff" stroke-width="1.6"/></svg></div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <div class="view-container" id="view-sc-3">
+      <div class="page">
+        <header class="app-header"><div class="app-title"><span class="dot"></span><span class="app-title-text">Подтекст</span></div></header>
+        <main class="main-column">
+          <section class="studio-deck">
+            <div class="deck-shell">
+              <div class="deck-top">
+                <span class="deck-status recording"><span class="status-dot active"></span><span>Идёт запись экрана и звука</span></span>
+                <div class="deck-chips">
+                  <button type="button" class="clean-chip active" disabled>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                    <span>Экран включен</span>
+                  </button>
+                </div>
+              </div>
+              <div class="deck-wave" style="gap: 4px;">
+                <div class="w-bar active" style="height: 16px; background: var(--accent-blue);"></div><div class="w-bar active" style="height: 28px; background: var(--accent-blue);"></div><div class="w-bar active" style="height: 34px; background: var(--accent-blue);"></div><div class="w-bar active" style="height: 20px; background: var(--accent-blue);"></div>
+              </div>
+              <div class="deck-bottom">
+                <span class="deck-timer recording">00:00:02</span>
+                <button class="btn-action-round recording"><span>■ Остановить</span></button>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const WAVE_IDLE = [6, 6, 8, 10, 7, 6, 9, 12, 8, 6, 10, 14, 8, 6, 12, 16, 10, 7, 14, 18, 11, 8, 14, 18, 11, 8, 12, 16, 10, 7, 10, 14, 8, 6, 9, 12, 8, 6, 7, 6, 8, 10, 7, 6, 6];
+    const WAVE_ACTIVE_1 = [8, 12, 18, 24, 16, 10, 14, 26, 32, 22, 14, 20, 28, 18, 12, 22, 34, 28, 16, 24, 30, 20, 12, 16, 28, 22, 14, 18, 26, 18, 12, 16, 22, 14, 10, 14, 20, 16, 10, 8, 12, 16, 12, 8, 6];
+    const WAVE_ACTIVE_2 = [10, 16, 22, 30, 20, 12, 18, 30, 36, 26, 18, 24, 32, 22, 14, 26, 38, 32, 20, 28, 36, 24, 16, 20, 32, 26, 18, 22, 30, 22, 16, 20, 26, 18, 12, 18, 24, 18, 12, 10, 14, 18, 14, 10, 8];
+    const WAVE_ACTIVE_3 = [6, 10, 16, 22, 14, 8, 12, 22, 28, 18, 12, 18, 26, 16, 10, 18, 30, 24, 14, 20, 28, 18, 10, 14, 24, 18, 12, 16, 24, 16, 10, 14, 20, 12, 8, 12, 18, 14, 8, 6, 10, 14, 10, 6, 6];
+
+    function setWaveBars(container, heights, activeColor) {
+      container.innerHTML = '';
+      heights.forEach(h => {
+        const bar = document.createElement('div');
+        bar.className = 'w-bar' + (activeColor ? ' active' : '');
+        bar.style.height = h + 'px';
+        if (activeColor) bar.style.background = activeColor;
+        container.appendChild(bar);
+      });
+    }
+
+    function setWalkthroughFrame(f) {
+      const cursor = document.getElementById('wt-cursor');
+      const screenMain = document.getElementById('wt-screen-main');
+      const screenTranscript = document.getElementById('wt-screen-transcript');
+      const screenSettings = document.getElementById('wt-screen-settings');
+
+      const deckStatus = document.getElementById('wt-deck-status');
+      const statusDot = document.getElementById('wt-status-dot');
+      const statusText = document.getElementById('wt-status-text');
+      const deckTimer = document.getElementById('wt-deck-timer');
+      const deckLevels = document.getElementById('wt-deck-levels');
+      const deckBtn = document.getElementById('wt-deck-btn');
+      const deckWave = document.getElementById('wt-deck-wave');
+
+      const recCount = document.getElementById('wt-rec-count');
+      const newRec = document.getElementById('wt-new-rec');
+      const newRecBtn = document.getElementById('wt-new-rec-btn');
+      const rec3 = document.getElementById('wt-rec-3');
+      const btnSettings = document.getElementById('wt-btn-settings');
+
+      screenMain.style.display = 'flex';
+      screenTranscript.style.display = 'none';
+      screenSettings.style.display = 'none';
+      cursor.style.display = 'block';
+
+      if (f <= 3) {
+        deckStatus.className = 'deck-status';
+        statusDot.className = 'status-dot';
+        statusText.textContent = 'Готов к записи';
+        deckTimer.className = 'deck-timer';
+        deckTimer.textContent = '00:00:00';
+        deckLevels.innerHTML = '<span class="levels-idle">Микрофон + система</span>';
+        deckBtn.className = 'btn-action-round';
+        deckBtn.innerHTML = '<span>● Начать запись</span>';
+        setWaveBars(deckWave, WAVE_IDLE, null);
+        newRec.style.display = 'none';
+        rec3.style.display = 'grid';
+        recCount.textContent = '3';
+
+        if (f === 0) {
+          cursor.style.left = '240px'; cursor.style.top = '100px';
+        } else if (f === 1) {
+          cursor.style.left = '480px'; cursor.style.top = '145px';
+        } else if (f === 2) {
+          cursor.style.left = '700px'; cursor.style.top = '170px';
+        } else if (f === 3) {
+          cursor.style.left = '785px'; cursor.style.top = '178px';
+          deckBtn.style.transform = 'translateY(-1px)';
+          deckBtn.style.boxShadow = '0 4px 16px rgba(220, 38, 38, 0.4)';
+        }
+      }
+      else if (f <= 15) {
+        deckStatus.className = 'deck-status recording';
+        statusDot.className = 'status-dot active';
+        statusText.textContent = 'Идёт запись встречи';
+        deckTimer.className = 'deck-timer recording';
+        newRec.style.display = 'none';
+        rec3.style.display = 'grid';
+        recCount.textContent = '3';
+
+        if (f <= 7) {
+          deckTimer.textContent = '00:00:01';
+          deckLevels.innerHTML = '<span>Вы: -16&nbsp;дБ</span><span class="sep">·</span><span>Собеседники: -12&nbsp;дБ</span>';
+          setWaveBars(deckWave, f % 2 === 0 ? WAVE_ACTIVE_1 : WAVE_ACTIVE_2, 'var(--accent-blue)');
+        } else if (f <= 11) {
+          deckTimer.textContent = '00:00:02';
+          deckLevels.innerHTML = '<span>Вы: -12&nbsp;дБ</span><span class="sep">·</span><span>Собеседники: -8&nbsp;дБ</span>';
+          setWaveBars(deckWave, f % 2 === 0 ? WAVE_ACTIVE_2 : WAVE_ACTIVE_3, 'var(--accent-blue)');
+        } else {
+          deckTimer.textContent = '00:00:03';
+          deckLevels.innerHTML = '<span>Вы: -14&nbsp;дБ</span><span class="sep">·</span><span>Собеседники: -10&nbsp;дБ</span>';
+          setWaveBars(deckWave, f % 2 === 0 ? WAVE_ACTIVE_3 : WAVE_ACTIVE_1, 'var(--accent-blue)');
+        }
+
+        deckBtn.className = 'btn-action-round recording';
+        deckBtn.innerHTML = '<span>■ Остановить</span>';
+
+        if (f === 4) {
+          cursor.style.left = '720px'; cursor.style.top = '220px';
+        } else if (f <= 11) {
+          cursor.style.display = 'none';
+        } else if (f === 12) {
+          cursor.style.display = 'block'; cursor.style.left = '640px'; cursor.style.top = '205px';
+        } else if (f === 13) {
+          cursor.style.display = 'block'; cursor.style.left = '720px'; cursor.style.top = '190px';
+        } else if (f === 14) {
+          cursor.style.display = 'block'; cursor.style.left = '770px'; cursor.style.top = '180px';
+        } else if (f === 15) {
+          cursor.style.display = 'block'; cursor.style.left = '775px'; cursor.style.top = '178px';
+          deckBtn.style.transform = 'scale(0.96)';
+          deckBtn.style.background = '#1e293b';
+        }
+      }
+      else if (f <= 18) {
+        deckStatus.className = 'deck-status';
+        statusDot.className = 'status-dot';
+        statusText.textContent = 'Готов к записи';
+        deckTimer.className = 'deck-timer';
+        deckTimer.textContent = '00:00:00';
+        deckLevels.innerHTML = '<span class="levels-idle">Микрофон + система</span>';
+        deckBtn.className = 'btn-action-round';
+        deckBtn.innerHTML = '<span>● Начать запись</span>';
+        setWaveBars(deckWave, WAVE_IDLE, null);
+
+        newRec.style.display = 'grid';
+        rec3.style.display = 'none';
+        recCount.textContent = '4';
+
+        if (f === 16) {
+          cursor.style.left = '660px'; cursor.style.top = '245px';
+        } else if (f === 17) {
+          cursor.style.left = '755px'; cursor.style.top = '282px';
+          newRecBtn.style.transform = 'translateY(-1px)';
+        } else if (f === 18) {
+          cursor.style.left = '755px'; cursor.style.top = '282px';
+          newRecBtn.style.transform = 'scale(0.96)';
+        }
+      }
+      else if (f <= 21) {
+        screenMain.style.display = 'none';
+        screenTranscript.style.display = 'flex';
+        screenSettings.style.display = 'none';
+
+        const utt1 = document.getElementById('wt-utt-1');
+        const utt2 = document.getElementById('wt-utt-2');
+        const utt3 = document.getElementById('wt-utt-3');
+        const utt4 = document.getElementById('wt-utt-4');
+        const playerProgress = document.getElementById('wt-player-progress');
+        const playerTime = document.getElementById('wt-player-time');
+
+        utt1.className = 'utt utterance';
+        utt2.className = 'utt utterance';
+        utt3.className = 'utt utterance';
+        utt4.className = 'utt utterance';
+
+        if (f === 19) {
+          utt1.className = 'utt utterance active';
+          playerProgress.style.width = '3%';
+          playerTime.textContent = '00:02 / 03:15';
+          cursor.style.left = '750px'; cursor.style.top = '285px';
+        } else if (f === 20) {
+          utt2.className = 'utt utterance active';
+          playerProgress.style.width = '7%';
+          playerTime.textContent = '00:09 / 03:15';
+          cursor.style.left = '785px'; cursor.style.top = '175px';
+        } else if (f === 21) {
+          utt3.className = 'utt utterance active';
+          playerProgress.style.width = '14%';
+          playerTime.textContent = '00:18 / 03:15';
+          cursor.style.left = '835px'; cursor.style.top = '45px';
+        }
+      }
+      else if (f === 22) {
+        deckStatus.className = 'deck-status';
+        statusDot.className = 'status-dot';
+        statusText.textContent = 'Готов к записи';
+        deckTimer.className = 'deck-timer';
+        deckTimer.textContent = '00:00:00';
+        deckLevels.innerHTML = '<span class="levels-idle">Микрофон + система</span>';
+        deckBtn.className = 'btn-action-round';
+        deckBtn.innerHTML = '<span>● Начать запись</span>';
+        setWaveBars(deckWave, WAVE_IDLE, null);
+        newRec.style.display = 'grid';
+        rec3.style.display = 'none';
+        recCount.textContent = '4';
+
+        btnSettings.style.background = 'var(--bg-inset)';
+        cursor.style.left = '838px'; cursor.style.top = '28px';
+      }
+      else {
+        screenMain.style.display = 'none';
+        screenTranscript.style.display = 'none';
+        screenSettings.style.display = 'block';
+
+        const cardGigaam = document.getElementById('wt-card-gigaam');
+        const btnWhisper = document.getElementById('wt-btn-dl-whisper');
+        const btnDone = document.getElementById('wt-btn-done');
+
+        if (f === 23) {
+          cursor.style.left = '790px'; cursor.style.top = '95px';
+        } else if (f === 24) {
+          cursor.style.left = '720px'; cursor.style.top = '230px';
+        } else if (f === 25) {
+          cursor.style.left = '780px'; cursor.style.top = '345px';
+          btnWhisper.style.transform = 'translateY(-1px)';
+        } else if (f === 26 || f === 27) {
+          cursor.style.left = '780px'; cursor.style.top = '565px';
+          btnDone.style.transform = 'translateY(-1px)';
+        }
+      }
+    }
+
+    function updateRoute() {
+      const hash = window.location.hash.replace('#', '') || 'main-console';
+      document.querySelectorAll('.view-container').forEach(el => el.classList.remove('active'));
+
+      if (hash.startsWith('wt-')) {
+        document.body.className = 'gif-mode';
+        const activeEl = document.getElementById('view-wt');
+        if (activeEl) activeEl.classList.add('active');
+        const frameIdx = parseInt(hash.replace('wt-', ''), 10) || 0;
+        setWalkthroughFrame(frameIdx);
+      } else if (hash.startsWith('sc-')) {
+        document.body.className = 'screen-gif-mode';
+        const activeEl = document.getElementById('view-' + hash);
+        if (activeEl) activeEl.classList.add('active');
+      } else {
+        document.body.className = '';
+        const activeEl = document.getElementById('view-' + hash);
+        if (activeEl) activeEl.classList.add('active');
+      }
+    }
+    window.addEventListener('hashchange', updateRoute);
+    updateRoute();
+  </script>
+</body>
+</html>

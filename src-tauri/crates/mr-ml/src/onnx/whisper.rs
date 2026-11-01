@@ -111,7 +111,6 @@ impl Whisper {
         if mel.is_empty() {
             return Ok(String::new());
         }
-        // [1, 128, 3000] с нулевым паддингом, channel-first
         const N_FRAMES: usize = 3000;
         const N_MELS: usize = 128;
         let mut flat = vec![0.0f32; N_MELS * N_FRAMES];
@@ -148,7 +147,6 @@ impl Whisper {
         tokens.push(transcribe);
         tokens.push(self.no_timestamps);
         let prompt_len = tokens.len();
-        // present-выходы прошлого шага → past-входы следующего
         let mut kv_cache: NamedTensors = HashMap::new();
 
         for step in 0..448 {
@@ -186,7 +184,6 @@ impl Whisper {
         Ok(self.bpe.decode(body))
     }
 
-    /// Один шаг merged-декодера с KV-кэшем. Возвращает (логиты, present-кэш).
     fn dec_step(
         &mut self,
         mut f32_all: NamedTensors,
@@ -218,7 +215,6 @@ impl Whisper {
         let mut bool_in = HashMap::new();
         bool_in.insert(self.cache_input.clone(), (vec![1i64], vec![!first]));
         let mut out = self.dec.run_mixed_full(f32_all, i64_in, bool_in)?;
-        // Логиты — выход "logits"; present-кэш — по списку из графа
         let mut logits: Option<Vec<f32>> = None;
         let mut present = HashMap::new();
         for name in &self.present_names {
@@ -260,7 +256,6 @@ fn argmax(v: &[f32]) -> usize {
 pub struct Gpt2Bpe {
     id_to_token: Vec<String>,
     special: HashMap<String, i64>,
-    /// Обратное byte-mapping GPT-2: unicode char → исходный байт.
     byte_map: HashMap<char, u8>,
 }
 
@@ -333,7 +328,6 @@ impl Gpt2Bpe {
             .ok_or_else(|| format!("нет спецтокена {tok}"))
     }
 
-    /// Декодирует ids в текст (Ġ → пробел, `<0x..>` → байты, спецтокены пропускаются).
     pub fn decode(&self, ids: &[i64]) -> String {
         let mut bytes: Vec<u8> = Vec::new();
         for &id in ids {

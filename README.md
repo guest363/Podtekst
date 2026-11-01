@@ -1,21 +1,21 @@
 <div align="center">
 
-<img src="icon.png" alt="Запись встреч" width="96" height="96" />
+<img src="icon.png" alt="Подтекст" width="96" height="96" />
 
-# Запись встреч (Meeting Recorder)
+# Подтекст (Podtekst)
 
 **Локальная запись звонков и расшифровка речи на вашем компьютере.**  
 Без облачных сервисов и платных подписок.
 
-[![CI](https://github.com/guest363/meeting-record/actions/workflows/ci.yml/badge.svg)](https://github.com/guest363/meeting-record/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/guest363/meeting-record)](https://github.com/guest363/meeting-record/releases)
+[![CI](https://github.com/guest363/podtekst/actions/workflows/ci.yml/badge.svg)](https://github.com/guest363/podtekst/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/guest363/podtekst)](https://github.com/guest363/podtekst/releases)
 [![Rust](https://img.shields.io/badge/rust-1.92+-orange.svg)](rust-toolchain.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platforms: Linux | macOS | Windows](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)](#поддерживаемые-платформы)
 
 ---
 
-<img src="docs/screenshots/demo-walkthrough.gif" alt="Демо работы Meeting Recorder" width="880" />
+<img src="docs/screenshots/demo-walkthrough.gif" alt="Демо работы Подтекст" width="880" />
 <p><em>Запись в 1 клик, стерео-сплит собеседников, локальная расшифровка по спикерам и встроенный каталог моделей</em></p>
 
 </div>
@@ -67,7 +67,7 @@
 ## Быстрый старт
 
 ### Вариант 1. Готовые сборки
-Скачайте исполняемый файл для вашей операционной системы со страницы [Releases](https://github.com/guest363/meeting-record/releases):
+Скачайте исполняемый файл для вашей операционной системы со страницы [Releases](https://github.com/guest363/podtekst/releases):
 - **Linux:** `.AppImage`
 - **macOS:** `.dmg` (или запуск через `run.command`)
 - **Windows:** `.exe` (или запуск через `run.bat`)
@@ -78,8 +78,8 @@
 `.dmg`. Снимите карантин у скопированного в `/Applications` приложения один раз:
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/MeetingRecorder.app
-open /Applications/MeetingRecorder.app
+xattr -dr com.apple.quarantine /Applications/Podtekst.app
+open /Applications/Podtekst.app
 ```
 
 То же самое можно сделать без терминала: правый клик по приложению →
@@ -109,8 +109,8 @@ CoreAudio не отдаёт системный звук без виртуаль�
 ### Вариант 2. Запуск из исходников
 
 ```bash
-git clone https://github.com/guest363/meeting-record.git
-cd meeting-record
+git clone https://github.com/guest363/podtekst.git
+cd podtekst
 ./run.sh
 ```
 
@@ -235,6 +235,7 @@ cd ui/web/frontend && yarn install --immutable && yarn check && yarn build
 
 ## Документация и ссылки
 
+- [ROADMAP.md](ROADMAP.md) - планы развития и будущие возможности;
 - [ANDROID.md](ANDROID.md) - сборка и ограничения мобильной версии;
 - [docs/RELEASING.md](docs/RELEASING.md) - релизный цикл и публикация версий;
 - [PRIVACY.md](PRIVACY.md) - политика конфиденциальности и локальности данных;

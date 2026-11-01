@@ -1,5 +1,3 @@
-//! Состояние записи: старт/остановка захвата, имена файлов, авто-расшифровка.
-
 use mr_audio::ChannelMode;
 use serde_json::json;
 use std::io::{Read, Seek, SeekFrom};
@@ -237,7 +235,6 @@ fn local_date(secs: u64) -> String {
     dt.format("%d-%m-%Y").to_string()
 }
 
-/// `ЧЧ:ММ-ЧЧ:ММ__ДД-ММ-ГГГГ.wav`; пока запись идёт, известен только старт.
 pub(crate) fn recording_name(start: u64, end: Option<u64>) -> String {
     let date = local_date(start);
     match end {
@@ -247,7 +244,6 @@ pub(crate) fn recording_name(start: u64, end: Option<u64>) -> String {
 }
 
 /// Свободный путь: не перезаписываем существующую запись при совпадении имени.
-/// Сохраняет исходное расширение файла (`.wav`, `.mp3` и т.д.).
 pub(crate) fn unique_media_path(dir: &Path, fname: &str) -> PathBuf {
     let first = dir.join(fname);
     if !first.exists() {
@@ -392,7 +388,6 @@ pub(crate) fn start_recording_inner(
         "sys": has_sys})
 }
 
-/// Дописывает в имя записи время окончания: `ЧЧ:ММ__ДАТА.wav` → `ЧЧ:ММ-ЧЧ:ММ__ДАТА.wav`.
 fn finalize_recording_name(file: &str, start: u64, end: u64) -> (String, String) {
     let old = PathBuf::from(file);
     let dir = old.parent().unwrap_or_else(|| Path::new("."));
@@ -428,7 +423,6 @@ pub(crate) fn stop_recording_inner(
     let started = st.start_time;
     let elapsed = ended.saturating_sub(started);
     let file = st.current_file.clone().unwrap_or_default();
-    // Останавливаем захват и склеиваем сырые дорожки в стерео WAV 16 кГц.
     let out_path = PathBuf::from(&file);
     if let Some(checkpoint) = st.checkpoint.take() {
         checkpoint.stop();
@@ -496,7 +490,6 @@ pub(crate) fn stop_recording_inner(
             }
         }
     }
-    // Фейк-режим тестов: файл уже записан в start, остаётся только переименовать.
     let old_path = PathBuf::from(&file);
     let (mut file, mut name) = finalize_recording_name(&file, started, ended);
     if old_path != Path::new(&file) {
@@ -558,7 +551,6 @@ pub(crate) fn stop_recording_inner(
     resp
 }
 
-/// Запускает расшифровку сразу после остановки записи (если включено в настройках).
 pub(crate) fn maybe_autotranscribe(file: &str) {
     #[cfg(all(feature = "onnx", not(test)))]
     {
@@ -579,7 +571,6 @@ pub(crate) fn maybe_autotranscribe(file: &str) {
     let _ = file;
 }
 
-/// Запуск записи с показом системного уведомления на рабочем столе.
 pub(crate) fn start_recording_with_notify(st: &mut RecordingState) -> serde_json::Value {
     let mode = crate::configured_record_mode();
     let res = start_recording_inner(st, &mode, false);
@@ -590,18 +581,17 @@ pub(crate) fn start_recording_with_notify(st: &mut RecordingState) -> serde_json
         } else {
             "🔴 Запись началась (микрофон)"
         };
-        crate::desktop::notify_icon("Запись встреч", what, "media-record");
+        crate::desktop::notify_icon("Подтекст", what, "media-record");
     } else {
         let err = res
             .get("error")
             .and_then(|x| x.as_str())
             .unwrap_or("Ошибка начала записи");
-        crate::desktop::notify_icon("Запись встреч", &format!("❌ {err}"), "dialog-error");
+        crate::desktop::notify_icon("Подтекст", &format!("❌ {err}"), "dialog-error");
     }
     res
 }
 
-/// Остановка записи с показом системного уведомления на рабочем столе.
 pub(crate) fn stop_recording_with_notify(st: &mut RecordingState) -> serde_json::Value {
     let res = stop_recording_inner(st, false);
     if res.get("ok").and_then(|x| x.as_bool()) == Some(true) {
@@ -610,7 +600,7 @@ pub(crate) fn stop_recording_with_notify(st: &mut RecordingState) -> serde_json:
             .and_then(|x| x.as_str())
             .unwrap_or("Запись сохранена");
         crate::desktop::notify_icon(
-            "Запись встреч",
+            "Подтекст",
             &format!("⏹ Запись сохранена:\n{fname}"),
             "document-save",
         );
@@ -619,12 +609,11 @@ pub(crate) fn stop_recording_with_notify(st: &mut RecordingState) -> serde_json:
             .get("error")
             .and_then(|x| x.as_str())
             .unwrap_or("Ошибка остановки записи");
-        crate::desktop::notify_icon("Запись встреч", &format!("❌ {err}"), "dialog-error");
+        crate::desktop::notify_icon("Подтекст", &format!("❌ {err}"), "dialog-error");
     }
     res
 }
 
-/// Переключение записи (старт / стоп) с системным уведомлением.
 pub(crate) fn toggle_recording_with_notify(st: &mut RecordingState) -> &'static str {
     if st.is_recording {
         stop_recording_with_notify(st);
@@ -649,8 +638,6 @@ pub(crate) mod shutdown {
         PENDING.store(true, Ordering::SeqCst);
     }
 
-    /// Установить обработчики и поток-наблюдатель, который при сигнале
-    /// останавливает запись и завершает процесс кодом 0.
     pub fn install(state: std::sync::Arc<std::sync::Mutex<crate::recording::RecordingState>>) {
         unsafe {
             libc::signal(libc::SIGINT, on_signal as *const () as libc::sighandler_t);

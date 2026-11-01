@@ -1,5 +1,3 @@
-//! Покадровая сегментация PyAnnote 3.0: 7 классов Powerset, окна 10 с с шагом 1 с.
-
 use std::collections::HashMap;
 
 use super::session::OrtSession;
@@ -10,24 +8,19 @@ pub const FRAME_SAMPLES: usize = 270;
 pub const POWERSET_CLASSES: usize = 7;
 const RECEPTIVE_FIELD_SAMPLES: usize = 721;
 
-/// Локальные метки одного 10-секундного окна. Нумерация спикеров локальна для окна.
 #[derive(Debug, Clone)]
 pub struct SegmentationWindow {
     pub start_sample: usize,
     pub classes: Vec<u8>,
 }
 
-/// Результат сегментации: усреднённый таймлайн для масок и исходные окна для назначения.
 #[derive(Debug, Clone)]
 pub struct Segmentation {
-    /// Класс Powerset каждого фрейма по 270 сэмплов (16,875 мс).
     pub frames: Vec<u8>,
     pub windows: Vec<SegmentationWindow>,
 }
 
 impl Segmentation {
-    /// Обнуляет перекрытия в срезе `samples`, начинающемся с абсолютного `offset`.
-    /// Возвращает число сэмплов вне перекрытий.
     pub fn exclude_overlap(&self, samples: &mut [f32], offset: usize) -> usize {
         let end = offset + samples.len();
         let mut clean = samples.len();
@@ -76,7 +69,6 @@ impl SegmentationModel {
         })
     }
 
-    /// Сегментирует моно-аудио 16 кГц скользящим окном 10 с с перекрытием 90%.
     pub fn segment(&mut self, samples: &[f32]) -> Result<Segmentation, String> {
         if samples.is_empty() {
             return Ok(Segmentation {

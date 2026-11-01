@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Скрипт управления автозапуском "Записи встреч" в Ubuntu/Linux
+# Скрипт управления автозапуском "Подтекст" (Podtekst) в Ubuntu/Linux
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 AUTOSTART_DIR="$HOME/.config/autostart"
-TARGET_FILE="$AUTOSTART_DIR/meeting-recorder.desktop"
+TARGET_FILE="$AUTOSTART_DIR/podtekst.desktop"
 
 case "$1" in
     enable|"")
@@ -13,14 +13,14 @@ case "$1" in
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Запись встреч (Фоновый режим)
+Name=Подтекст (Фоновый режим)
 GenericName=Фоновая аудиозапись встреч и звонков
 Comment=Автозапуск в трее для быстрой записи микрофона и звука приложений
 Exec="$SCRIPT_DIR/run.sh" --tray
 Icon=$SCRIPT_DIR/icon.svg
 Terminal=false
 Categories=AudioVideo;Audio;Recorder;Utility;
-Keywords=audio;record;meeting;telegram;yandex;микрофон;запись;встречи;звонки;
+Keywords=podtekst;подтекст;audio;record;meeting;telegram;yandex;микрофон;запись;встречи;звонки;
 StartupNotify=false
 X-GNOME-Autostart-enabled=true
 X-GNOME-Autostart-Delay=2
@@ -31,22 +31,22 @@ EOF
         ;;
     install-desktop)
         APP_DESKTOP_DIR="$HOME/.local/share/applications"
-        APP_TARGET_FILE="$APP_DESKTOP_DIR/meeting-recorder.desktop"
+        APP_TARGET_FILE="$APP_DESKTOP_DIR/podtekst.desktop"
         mkdir -p "$APP_DESKTOP_DIR"
         cat <<EOF > "$APP_TARGET_FILE"
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Запись встреч
+Name=Подтекст
 GenericName=Аудиозапись встреч и звонков
 Comment=Запись звука с микрофона и приложений (Яндекс Браузер, Telegram, звонки)
 Exec="$SCRIPT_DIR/run.sh"
 Icon=$SCRIPT_DIR/icon.svg
 Terminal=false
 Categories=AudioVideo;Audio;Recorder;Utility;
-Keywords=audio;record;meeting;telegram;yandex;микрофон;запись;встречи;звонки;
+Keywords=podtekst;подтекст;audio;record;meeting;telegram;yandex;микрофон;запись;встречи;звонки;
 StartupNotify=true
-StartupWMClass=meeting-recorder
+StartupWMClass=podtekst
 Actions=ToggleRecord;ShowRecorder;
 
 [Desktop Action ToggleRecord]

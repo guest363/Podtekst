@@ -1,13 +1,3 @@
-//! Нативный захват аудио без FFmpeg и виртуальных кабелей.
-//!
-//! Стратегия по ОС (единый API, разные бэкенды):
-//! * Linux: PipeWire / PulseAudio через `libpulse` (без внешних утилит)
-//! * Windows: WASAPI (пока заглушка: импорт готовых файлов)
-//! * macOS: CoreAudio HAL — микрофон и BlackHole/Loopback для системного звука.
-//!
-//! В этом крейте — кроссплатформенное ядро: описание устройств, единый слой
-//! живого захвата (`capture`), программный микшер/сплиттер, запись WAV (`hound`).
-
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -25,7 +15,6 @@ pub enum AudioError {
 
 pub type Result<T> = std::result::Result<T, AudioError>;
 
-/// Сведения об аудиоустройствах для `/api/status`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioDevicesInfo {
     pub platform: String,
@@ -111,7 +100,6 @@ pub fn mix_channels(mic: &[f32], sys: &[f32], mode: ChannelMode) -> (Vec<f32>, V
     }
 }
 
-/// Запись моно WAV 16 кГц (режим `mix`, в том числе Android).
 pub fn write_mono_wav(path: &Path, samples: &[f32], sample_rate: u32) -> Result<PathBuf> {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -135,7 +123,6 @@ pub fn write_mono_wav(path: &Path, samples: &[f32], sample_rate: u32) -> Result<
     Ok(path.to_path_buf())
 }
 
-/// Запись стерео WAV 16 кГц (микрофон — левый, система — правый).
 pub fn write_stereo_wav(
     path: &Path,
     left: &[f32],

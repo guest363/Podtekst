@@ -1,6 +1,3 @@
-//! Стриминговый Silero VAD v6 (v6.2.3, ONNX): окна 512 сэмплов @16 кГц,
-//! контекст 64 сэмпла, состояние [2,1,128] переносится между чанками.
-
 use std::collections::HashMap;
 
 use super::session::OrtSession;
@@ -31,7 +28,6 @@ impl SileroVad {
         self.context.fill(0.0);
     }
 
-    /// Вероятность речи в окне ровно 512 сэмплов с 64 сэмплами контекста (Silero VAD v6).
     pub fn process_window(&mut self, window: &[f32]) -> Result<f32, String> {
         let mut full_input = Vec::with_capacity(VAD_CONTEXT + VAD_WINDOW);
         full_input.extend_from_slice(&self.context);
@@ -75,7 +71,6 @@ impl SileroVad {
         Ok(prob)
     }
 
-    /// Прогон всего сигнала окнами 512, возвращает вероятность на окно.
     pub fn process_all(&mut self, samples: &[f32]) -> Result<Vec<f32>, String> {
         self.process_all_with(samples, |_, _| {})
     }
@@ -118,7 +113,6 @@ impl SileroVad {
     }
 }
 
-/// Превращает вероятности окон в сегменты речи [start,end] в секундах.
 /// К началу добавляются два окна pre-roll, чтобы сохранить начальные согласные.
 pub fn vad_segments_from_probs(
     probs: &[f32],
@@ -169,7 +163,6 @@ mod tests {
 
     #[test]
     fn segments_hysteresis() {
-        // 1 с "речи" (p=0.9), 0.1 с паузы, снова речь — при min_silence 0.3 с склеивается
         let mut probs = vec![0.9f32; 31];
         probs.extend(vec![0.05; 3]);
         probs.extend(vec![0.9; 31]);

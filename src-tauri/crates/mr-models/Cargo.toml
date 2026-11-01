@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.92"
 description = "Реестр и обновление ИИ-моделей: манифест, зеркала, докачка, SHA-256"
 license = "MIT"
-repository = "https://github.com/guest363/meeting-record"
+repository = "https://github.com/guest363/podtekst"
 
 [dependencies]
 serde = { workspace = true }
