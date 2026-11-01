@@ -120,6 +120,62 @@ export function fmtClockShort(sec: number): string {
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${(s % 60).toFixed(0).padStart(2, '0')}`
 }
 
+export interface FormattedRecDate {
+  day: string
+  time: string
+  full: string
+}
+
+export function formatRecDate(rawDate?: string, rawName?: string): FormattedRecDate {
+  if (rawDate) {
+    const parts = rawDate.trim().split(' ')
+    if (parts.length >= 2) {
+      const [dPart, tPart] = parts
+      const time = tPart.slice(0, 5)
+      const [y, m, d] = dPart.split('-').map(Number)
+      if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+        const itemDate = new Date(y, m - 1, d)
+        const now = new Date()
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+        const yesterday = new Date(today)
+        yesterday.setDate(yesterday.getDate() - 1)
+
+        let day = ''
+        if (itemDate.getTime() === today.getTime()) {
+          day = 'Сегодня'
+        } else if (itemDate.getTime() === yesterday.getTime()) {
+          day = 'Вчера'
+        } else {
+          const months = [
+            'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+            'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+          ]
+          const monthName = months[m - 1] || ''
+          const yearSuffix = y !== now.getFullYear() ? ` ${y}` : ''
+          day = `${d} ${monthName}${yearSuffix}`
+        }
+        return { day, time, full: `${day}, ${time}` }
+      }
+    }
+  }
+
+  const match = String(rawName).match(/(\d{2})[:\-](\d{2}).*__(\d{2})-(\d{2})-(\d{4})/)
+  if (match) {
+    const [, h, min, d, m, y] = match
+    return { day: `${d}.${m}.${y}`, time: `${h}:${min}`, full: `${d}.${m}.${y}, ${h}:${min}` }
+  }
+
+  return { day: 'Запись', time: '', full: 'Запись' }
+}
+
+export function displayRecTitle(rawName: string): string {
+  const stem = rawName.replace(/\.[^.]+$/, '')
+  if (/^\d{2}[:\-]\d{2}(?:-\d{2}[:\-]\d{2})?__\d{2}-\d{2}-\d{4}$/.test(stem)) {
+    return 'Запись встречи'
+  }
+  return stem
+}
+
 // Сбалансированная палитра спикеров (WCAG AA > 4.5:1 к белому фону).
 const SPEAKER_PALETTE = [
   '#1e40af',

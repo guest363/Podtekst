@@ -8,17 +8,30 @@
     mediaId?: string
     durationSec?: number
     ontime?: (sec: number) => void
+    autoplay?: boolean
+    playing?: boolean
   }
-  let { src, isVideo, fileName, mediaId = '', durationSec = 0, ontime }: Props = $props()
+  let {
+    src,
+    isVideo,
+    fileName,
+    mediaId = '',
+    durationSec = 0,
+    ontime,
+    autoplay = false,
+    playing = $bindable(false),
+  }: Props = $props()
 
   let media: HTMLMediaElement | null = $state(null)
-  let playing = $state(false)
   let cur = $state(0)
   let mediaDur = $state(0)
   // Длительность из списка записей видна сразу, до загрузки метаданных плеером.
   let dur = $derived(mediaDur || durationSec || 0)
 
-  // src может меняться (сниппеты): подтягиваем в элемент.
+  export function togglePlay(): void {
+    toggle()
+  }
+
   $effect(() => {
     if (media && media.getAttribute('src') !== src) {
       media.src = src
@@ -26,6 +39,15 @@
       cur = 0
       mediaDur = 0
       ontime?.(0)
+      if (autoplay) {
+        media.play().catch(() => {})
+      }
+    }
+  })
+
+  $effect(() => {
+    if (media && autoplay && media.paused && media.currentTime === 0) {
+      media.play().catch(() => {})
     }
   })
 
