@@ -83,9 +83,7 @@ export function buildDocx(fileName: string, utterances: Utterance[], meta?: Tran
   const speakers = meta?.speakers?.filter(Boolean) || []
 
   const headerParagraphs: string[] = [
-    // Заголовок документа
     `<w:p><w:pPr><w:spacing w:after="160"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr><w:t xml:space="preserve">Расшифровка встречи: ${xml(title)}</w:t></w:r></w:p>`,
-    // Источник
     `<w:p><w:pPr><w:spacing w:after="60"/></w:pPr>${runs('Источник: ', true, '333333')}${runs(`${source}${dur}`, false, '555555')}</w:p>`,
   ]
 
@@ -95,7 +93,6 @@ export function buildDocx(fileName: string, utterances: Utterance[], meta?: Tran
     )
   }
 
-  // Горизонтальная разделительная линия
   headerParagraphs.push(
     `<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="8" w:color="D0D7DE"/></w:pBdr><w:spacing w:after="240"/></w:pPr></w:p>`,
   )
@@ -123,7 +120,6 @@ export async function exportDocx(
   const bytes = buildDocx(fileName, utterances, meta)
   const defaultName = `${fileName.replace(/\.[^.]+$/, '') || 'Расшифровка'}.docx`
 
-  // 1. Системный диалог сохранения файла через бэкенд (zenity / kdialog / osascript / powershell)
   try {
     const res = await fetch(`/api/export/save_dialog?name=${encodeURIComponent(defaultName)}`, {
       method: 'POST',
@@ -153,7 +149,6 @@ export async function exportDocx(
     // В случае сбоя сети fallback ниже
   }
 
-  // 2. В современных браузерах: File System Access API
   const win = window as unknown as {
     showSaveFilePicker?: (options: {
       suggestedName?: string
@@ -190,7 +185,6 @@ export async function exportDocx(
     }
   }
 
-  // 3. Fallback: классическое скачивание через <a>
   const blob = new Blob([bytes.buffer as ArrayBuffer], {
     type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   })

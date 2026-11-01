@@ -25,7 +25,6 @@ fn home_dir() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("."))
 }
 
-/// Путь к записи автозапуска для текущей ОС.
 pub fn autostart_file_path() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
@@ -56,13 +55,11 @@ pub fn autostart_file_path() -> PathBuf {
     }
 }
 
-/// Наличие записи автозапуска (используется тестами и внешними вызовами).
 #[allow(dead_code)]
 pub fn is_autostart_enabled() -> bool {
     autostart_file_path().exists()
 }
 
-/// Создаёт запись автозапуска (`exec_path` — путь к бинарнику).
 pub fn install_autostart(exec_path: &str) -> Result<()> {
     let target = autostart_file_path();
     if let Some(parent) = target.parent() {
@@ -111,13 +108,11 @@ pub fn uninstall_autostart() -> Result<bool> {
     Ok(true)
 }
 
-/// Системное всплывающее уведомление (Linux notify-send / macOS osascript).
 #[allow(dead_code)]
 pub fn notify(title: &str, body: &str) {
     notify_icon(title, body, "audio-input-microphone");
 }
 
-/// Системное уведомление с указанием иконки.
 pub fn notify_icon(title: &str, body: &str, icon: &str) {
     #[cfg(target_os = "linux")]
     {

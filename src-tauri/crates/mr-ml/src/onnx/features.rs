@@ -13,7 +13,6 @@ fn hann(n: usize) -> Vec<f64> {
         .collect()
 }
 
-/// Окно Hamming (WeSpeaker/pyannote): 0.54 − 0.46·cos.
 fn hamming(n: usize) -> Vec<f64> {
     (0..n)
         .map(|i| 0.54 - 0.46 * (2.0 * std::f64::consts::PI * i as f64 / (n - 1) as f64).cos())
@@ -111,8 +110,7 @@ fn dft(x: &[(f64, f64)]) -> Vec<(f64, f64)> {
 
 /// Смешанное БПФ Кули–Тьюки по множителям 2 и 5 — точное ДПФ для всех
 /// используемых `fft_size` (320, 400, 512) за O(n log n) вместо O(n²).
-/// Наивное ДПФ тратило ~0.2 с CPU на секунду аудио и вешало диаризацию
-/// длинной записи на десятки минут.
+/// Наивное ДПФ — O(n²): диаризация длинной записи занимала бы десятки минут.
 fn fft(x: &[(f64, f64)]) -> Vec<(f64, f64)> {
     let n = x.len();
     if n <= 1 {
@@ -147,7 +145,6 @@ fn fft(x: &[(f64, f64)]) -> Vec<(f64, f64)> {
         .collect()
 }
 
-/// Мощностной спектр кадра: бины `0..=n/2` (вход вещественный).
 fn fft_power(frame: &[f64]) -> Vec<f64> {
     fft(&frame.iter().map(|&x| (x, 0.0)).collect::<Vec<_>>())
         .iter()
@@ -158,23 +155,17 @@ fn fft_power(frame: &[f64]) -> Vec<f64> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct FrontendParams {
-    /// Длина окна в сэмплах (нули добиваются до fft_size).
     pub win_length: usize,
-    /// Размер ДПФ (степень двойки ≥ win_length, как в Kaldi/NeMo).
     pub fft_size: usize,
     pub hop: usize,
     pub n_mels: usize,
     pub sample_rate: u32,
-    /// Нижняя/верхняя границы мел-фильтров в Гц (Kaldi по умолчанию 20..Nyquist).
     pub fmin: f64,
     pub fmax: f64,
     pub preemphasis: f32,
     pub natural_log: bool,
     /// Окно Hamming (WeSpeaker/pyannote) вместо Hann.
     pub hamming_window: bool,
-    /// Точная семантика `torchaudio.compliance.kaldi.fbank`: покадровое
-    /// снятие DC-смещения + преэмфасис внутри кадра и мел-банки треугольниками
-    /// в мел-домене (без floor-квантования вершин по бинам).
     pub kaldi_exact: bool,
 }
 
@@ -237,7 +228,6 @@ pub const ERES2NETV2_FRONTEND: FrontendParams = FrontendParams {
     kaldi_exact: true,
 };
 
-/// Возвращает [n_frames × n_mels] log-mel энергии.
 pub fn log_mel_frames(samples: &[f32], p: FrontendParams) -> Vec<Vec<f32>> {
     let mut sig: Vec<f32> = Vec::with_capacity(samples.len());
     if p.preemphasis > 0.0 && !p.kaldi_exact {
@@ -298,7 +288,6 @@ pub fn log_mel_frames(samples: &[f32], p: FrontendParams) -> Vec<Vec<f32>> {
     frames
 }
 
-/// Whisper-фичи [frames × 80] с нормализацией OpenAI.
 pub fn whisper_mel(samples: &[f32]) -> Vec<Vec<f32>> {
     let mut frames = log_mel_frames(samples, WHISPER_FRONTEND);
     for row in frames.iter_mut() {
@@ -310,7 +299,6 @@ pub fn whisper_mel(samples: &[f32]) -> Vec<Vec<f32>> {
     frames
 }
 
-/// NeMo/GigaAM-фичи [frames × 64].
 pub fn nemo_mel(samples: &[f32]) -> Vec<Vec<f32>> {
     log_mel_frames(samples, GIGAAM_FRONTEND)
 }
@@ -333,7 +321,6 @@ pub fn eres2netv2_fbank(samples: &[f32]) -> Vec<Vec<f32>> {
     frames
 }
 
-/// Глобальная CMN: минус пофичерное среднее по всему utterance.
 fn cmn(frames: &mut [Vec<f32>]) {
     if frames.is_empty() {
         return;
@@ -377,7 +364,6 @@ mod tests {
         assert!(!w.is_empty() && !n.is_empty() && !e.is_empty() && !v2.is_empty());
         assert!(w.iter().all(|r| r.iter().all(|x| x.is_finite())));
         assert!(v2.iter().all(|r| r.iter().all(|x| x.is_finite())));
-        // CMN обнуляет пофичерное среднее
         let m: Vec<f32> = (0..v2[0].len())
             .map(|b| v2.iter().map(|r| r[b]).sum::<f32>() / v2.len() as f32)
             .collect();
@@ -406,7 +392,6 @@ mod tests {
                 .collect()
         };
         for n in [320usize, 400, 512] {
-            // Детерминированный «шумовой» сигнал: несколько тонов и гармоник.
             let frame: Vec<f64> = (0..n)
                 .map(|i| {
                     let t = i as f64;

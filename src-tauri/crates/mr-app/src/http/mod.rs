@@ -1,5 +1,3 @@
-//! HTTP REST API: роутер и обработчики эндпоинтов.
-
 pub(crate) mod export_dialog;
 pub(crate) mod files;
 pub(crate) mod media;
@@ -144,7 +142,6 @@ fn read_body_to_json(request: &mut tiny_http::Request) -> serde_json::Value {
     serde_json::from_slice(&buf).unwrap_or(json!({}))
 }
 
-/// Процент-декодирование query-параметров (`%D0%B2` → UTF-8, `+` → пробел).
 fn percent_decode(s: &str) -> String {
     let mut out = Vec::new();
     let b = s.as_bytes();
@@ -181,7 +178,6 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
             return;
         }
     };
-    // Миграция голосовых профилей в текущее пространство (см. people::migrate_voiceprints_v3)
     people::migrate_voiceprints_v3();
     people::sync_voiceprint_people();
     println!("→ Rust-ядро слушает http://127.0.0.1:{port}");
@@ -208,7 +204,6 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 let _ = request.respond(tiny_http::Response::empty(204));
                 return;
             }
-            // Раздача медиа для прослушивания (в т.ч. сниппетов спикеров через #t= и HEAD-проб)
             if (method == tiny_http::Method::Get || method == tiny_http::Method::Head)
                 && path.starts_with("/audio/")
             {
@@ -233,7 +228,6 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                         0
                     };
                     let dev = get_audio_devices_info();
-                    // Живые уровни из активного захвата (0 вне записи).
                     let levels = st
                         .capture
                         .as_ref()
@@ -353,7 +347,6 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     }
                 }
                 (tiny_http::Method::Get, "/api/people") => {
-                    // Люди из активных Voice Packs + внешние гости.
                     let mut people: Vec<serde_json::Value> = vec![];
                     let mut seen = std::collections::HashSet::new();
                     for pf in people_json_files() {
@@ -381,7 +374,6 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                             people.push(p);
                         }
                     }
-                    // Люди — только из голосовых пакетов + внешние гости.
                     for ext in load_external_people() {
                         let name = ext
                             .get("name")
@@ -764,7 +756,6 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
     }
 }
 
-// ---------- Трей / автозапуск / хоткеи (нативные заглушки) ----------
 // Полные реализации подключаются за cargo-фичей `tauri-ui` (Tauri v2 плагины).
 // Здесь — кроссплатформенные файловые реализации, достаточные для прод-использования
 // без WebView: одиночный экземпляр через TCP-сокет, автозапуск через .desktop/LaunchAgent.

@@ -15,23 +15,16 @@ use std::sync::OnceLock;
 
 use libc::{dlclose, dlopen, dlsym};
 
-/// `PA_SAMPLE_S16LE` — формат сэмпла, который запрашиваем у сервера (enum = c_int).
 pub const PA_SAMPLE_S16LE: c_int = 3;
-/// `PA_STREAM_RECORD` — направление потока (запись). 0 = NODIRECTION, 1 = PLAYBACK, 2 = RECORD.
 pub const PA_STREAM_RECORD: c_int = 2;
-/// `PA_CONTEXT_READY` — контекст подключён к серверу.
 pub const PA_CONTEXT_READY: c_int = 4;
-/// `PA_CONTEXT_FAILED` — подключение не удалось.
 pub const PA_CONTEXT_FAILED: c_int = 5;
-/// `PA_CONTEXT_TERMINATED` — сервер завершил соединение.
 pub const PA_CONTEXT_TERMINATED: c_int = 6;
-/// `PA_CONTEXT_NOAUTOSPAWN` — не поднимать демон PulseAudio автоматически.
 pub const PA_CONTEXT_NOAUTOSPAWN: c_int = 0x0001;
 
 const RTLD_NOW: c_int = 2;
 const RTLD_LOCAL: c_int = 0;
 
-/// `pa_sample_spec`: формат — enum (4 байта), затем частота и каналы.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct PaSampleSpec {
@@ -40,7 +33,6 @@ pub struct PaSampleSpec {
     pub channels: u8,
 }
 
-/// `pa_channel_map`: число каналов + позиции (enum-массив из 32 элементов).
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct PaChannelMap {
@@ -48,7 +40,6 @@ struct PaChannelMap {
     map: [c_int; 32],
 }
 
-/// `pa_cvolume`: каналы (uint8) + значения громкости (uint32 × 32).
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct PaCVolume {
@@ -86,7 +77,6 @@ struct PaSourceInfo {
     formats: *mut c_void,
 }
 
-/// `pa_sink_info` — те же начальные поля, что у источника (сверено с заголовками).
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct PaSinkInfo {
@@ -126,7 +116,6 @@ const _: () = assert!(std::mem::size_of::<PaCVolume>() == 132);
 const _: () = assert!(std::mem::size_of::<PaSampleSpec>() == 12);
 const _: () = assert!(std::mem::size_of::<PaBufferAttr>() == 20);
 
-/// `pa_buffer_attr`: параметры буферизации (раскладка 1:1 с pulse/def.h).
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct PaBufferAttr {
@@ -137,7 +126,6 @@ pub struct PaBufferAttr {
     pub fragsize: u32,
 }
 
-/// `pa_server_info` — имена устройств по умолчанию (раскладка 1:1 с introspect.h).
 #[repr(C)]
 struct PaServerInfo {
     user_name: *const c_char,
@@ -224,7 +212,6 @@ pub struct PulseLib {
 unsafe impl Send for PulseLib {}
 unsafe impl Sync for PulseLib {}
 
-/// Ошибка загрузки библиотеки или вызова PulseAudio.
 #[derive(Debug, Clone)]
 pub struct PulseError(pub String);
 
@@ -249,7 +236,6 @@ macro_rules! sym {
     }};
 }
 
-/// Открыть библиотеку по списку имён; `None`, если ни одно не нашлось.
 fn try_dlopen(names: &[&str]) -> Option<*mut c_void> {
     for name in names {
         let cname = CString::new(*name).expect("имя библиотеки без нуля");
@@ -262,8 +248,7 @@ fn try_dlopen(names: &[&str]) -> Option<*mut c_void> {
 }
 
 impl PulseLib {
-    /// Загрузить `libpulse.so.0` + `libpulse-simple.so.0` (и запасные имена).
-    #[allow(clippy::missing_transmute_annotations)] // тип задан полем структуры
+    #[allow(clippy::missing_transmute_annotations)]
     fn load() -> Result<Self, PulseError> {
         let handle = try_dlopen(&["libpulse.so.0", "libpulse.so"])
             .ok_or_else(|| PulseError("не удалось загрузить libpulse.so.0".into()))?;
@@ -321,7 +306,6 @@ impl Drop for PulseLib {
     }
 }
 
-/// Загруженная библиотека (один раз на процесс).
 pub fn lib() -> Result<&'static PulseLib, PulseError> {
     static LIB: OnceLock<Result<PulseLib, PulseError>> = OnceLock::new();
     LIB.get_or_init(PulseLib::load)
@@ -329,7 +313,6 @@ pub fn lib() -> Result<&'static PulseLib, PulseError> {
         .map_err(|e| e.clone())
 }
 
-/// Описание источника из PulseAudio.
 #[derive(Debug, Clone, Default)]
 pub struct SourceEntry {
     pub name: String,
@@ -338,7 +321,6 @@ pub struct SourceEntry {
     pub monitor: bool,
 }
 
-/// Описание выхода из PulseAudio.
 #[derive(Debug, Clone, Default)]
 pub struct SinkEntry {
     pub name: String,
@@ -346,7 +328,6 @@ pub struct SinkEntry {
     pub muted: bool,
 }
 
-/// Результат опроса сервера: источники, выходы и значения по умолчанию.
 #[derive(Debug, Clone, Default)]
 pub struct PulseDevices {
     pub sources: Vec<SourceEntry>,
@@ -355,31 +336,24 @@ pub struct PulseDevices {
     pub default_sink: Option<String>,
 }
 
-/// Счётчик источников/выходов, собираемый в колбэках обхода.
 #[derive(Default)]
 struct CollectState {
     sources: Vec<SourceEntry>,
     sinks: Vec<SinkEntry>,
-    /// Флаг «список источников получен целиком».
     sources_done: bool,
-    /// Флаг «список выходов получен целиком».
     sinks_done: bool,
 }
 
-/// Состояние обхода сервера PulseAudio.
 struct ContextState {
     ctx: *mut c_void,
     mainloop: *mut c_void,
     requested: bool,
     collect: CollectState,
-    /// Имена устройств по умолчанию из `pa_server_info`.
     default_source: Option<String>,
     default_sink: Option<String>,
-    /// Флаг «server_info получен».
     server_done: bool,
 }
 
-/// Все ли ответы сервера собраны (можно останавливать mainloop).
 fn all_done(state: &ContextState) -> bool {
     state.collect.sources_done && state.collect.sinks_done && state.server_done
 }
@@ -446,7 +420,6 @@ unsafe extern "C" fn on_sink(
     });
 }
 
-/// Ответ `pa_context_get_server_info`: имена устройств по умолчанию.
 unsafe extern "C" fn on_server_info(
     _ctx: *mut c_void,
     info: *const PaServerInfo,
@@ -469,7 +442,6 @@ unsafe extern "C" fn on_server_info(
     }
 }
 
-/// Остановить обход сервера.
 fn quit_mainloop(state: &mut ContextState) {
     if let Ok(lib) = lib() {
         unsafe { (lib.mainloop_quit)(state.mainloop, 0) };
@@ -521,7 +493,6 @@ pub struct StreamHandle(pub *mut c_void);
 unsafe impl Send for StreamHandle {}
 
 impl PulseLib {
-    /// Прочитать список устройств у сервера PulseAudio.
     pub fn devices(&self) -> Result<PulseDevices, PulseError> {
         unsafe {
             let mainloop = (self.mainloop_new)();
@@ -587,10 +558,6 @@ impl PulseLib {
         }
     }
 
-    /// Открыть поток записи с устройства (моно, s16le, указанная частота).
-    ///
-    /// `device` = `None` — устройство по умолчанию; строка — имя источника
-    /// (для системного звука это монитор выхода `<sink>.monitor`).
     pub fn open_capture(
         &self,
         device: Option<&str>,
@@ -636,7 +603,6 @@ impl PulseLib {
         Ok(StreamHandle(handle))
     }
 
-    /// Прочитать сырые байты из потока (blocking).
     pub fn read(&self, handle: &StreamHandle, buf: &mut [u8]) -> Result<usize, PulseError> {
         let mut err: c_int = 0;
         let n = unsafe {
@@ -657,7 +623,6 @@ impl PulseLib {
         Ok(buf.len())
     }
 
-    /// Закрыть поток.
     pub fn close(&self, handle: StreamHandle) {
         if !handle.0.is_null() {
             unsafe { (self.simple_free)(handle.0) };

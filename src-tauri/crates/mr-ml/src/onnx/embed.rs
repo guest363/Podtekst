@@ -30,7 +30,6 @@ impl EmbeddingExtractor {
         })
     }
 
-    /// Эмбеддинг целого фрагмента 16 кГц.
     /// Короткие фрагменты (< 0.4 с) отклоняются из-за недостатка речевых данных.
     pub fn embed(&mut self, samples_16k: &[f32]) -> Result<Option<Vec<f64>>, String> {
         if samples_16k.len() < (16000.0 * 0.4) as usize {

@@ -1,5 +1,3 @@
-//! Сырой FFI CoreAudio: типы, константы и функции AudioToolbox/CoreAudio.
-
 use std::ffi::{c_char, c_void};
 
 pub(super) type OSStatus = i32;

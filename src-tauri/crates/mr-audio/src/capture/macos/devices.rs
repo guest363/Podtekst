@@ -1,5 +1,3 @@
-//! Каталог микрофонов macOS и выбор устройства через CoreAudio.
-
 use std::ffi::{c_void, CStr};
 use std::ptr::null;
 
@@ -73,7 +71,6 @@ fn get_cf_string(object: u32, selector: u32, scope: u32) -> Option<String> {
     )
 }
 
-/// Сколько входных каналов у устройства (0 — это не микрофон).
 fn input_channels(device: AudioDeviceId) -> u32 {
     let addr = address(DEVICE_PROPERTY_STREAM_CONFIGURATION, OBJECT_SCOPE_INPUT);
     let mut size = 0u32;
@@ -173,7 +170,6 @@ fn is_loopback(name: &str) -> bool {
     .any(|needle| n.contains(needle))
 }
 
-/// Каталог устройств: микрофоны и виртуальные loopback-устройства.
 pub fn devices() -> DeviceCatalog {
     let mut catalog = DeviceCatalog {
         platform: "darwin".to_string(),

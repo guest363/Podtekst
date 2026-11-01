@@ -1,4 +1,3 @@
-// Тосты вместо alert/confirm/prompt. sticky=true — висит, пока пользователь не закроет.
 export interface ToastAction {
   label: string
   run: () => void

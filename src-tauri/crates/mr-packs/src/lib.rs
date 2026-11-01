@@ -1,19 +1,3 @@
-//! Подключаемые голосовые пакеты Voice Packs.
-//!
-//! Структура пакета на диске:
-//! ```text
-//! <app_data>/packs/<pack_id>/
-//!   manifest.json
-//!   people.json
-//!   external_people.json (опционально)
-//!   voiceprints.json (схема v3)
-//!   snippets/*.wav
-//! ```
-//!
-//! Структура крейта:
-//! * [`manifest`] — чтение/запись манифестов, список и включение пакетов
-//! * [`transfer`] — экспорт/импорт `.voicepack` (zip/json)
-
 pub mod manifest;
 pub mod transfer;
 
@@ -81,7 +65,6 @@ pub struct PackInfo {
     pub snippets_count: usize,
 }
 
-/// Метка времени создания пакета: epoch-секунды строкой.
 fn now_epoch_secs() -> String {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -110,14 +93,12 @@ pub(crate) fn slugify(value: &str) -> String {
     }
 }
 
-/// Корень хранения пакетов `<app_data>/packs`.
 pub fn packs_root_dir(app_data: &Path) -> PathBuf {
     let root = app_data.join("packs");
     let _ = fs::create_dir_all(&root);
     root
 }
 
-/// Стандартная директория данных приложения (XDG / Application Support / %APPDATA%).
 pub fn default_app_data_dir() -> PathBuf {
     if let Ok(v) =
         std::env::var("PODTEKST_DATA_DIR").or_else(|_| std::env::var("MEETING_RECORDER_DATA_DIR"))
