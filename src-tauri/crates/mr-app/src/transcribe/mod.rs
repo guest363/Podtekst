@@ -247,8 +247,9 @@ pub fn transcribe_file(
     if !mr_audio::has_audio_track(audio_path) {
         return Err("Файл не содержит аудиодорожки".to_string());
     }
-    // Видео: сначала извлекаем аудиодорожку (symphonia не берёт MKV/WebM/MOV/AVI),
-    // затем сводим в моно — каналов «микрофон/система» у видеофайла нет.
+    // Видео: сначала извлекаем аудиодорожку (symphonia не берёт MKV/WebM/MOV/AVI).
+    // Импортные видео не несут семантики «микрофон/система» — сводим их в моно.
+    // Свои записи экрана хранят стерео-сплит и расшифровываются как аудио-записи.
     let video = is_video_path(audio_path);
     if video {
         on_event(1, "Извлекаю звук из видео…");
@@ -257,7 +258,7 @@ pub fn transcribe_file(
     if channels.is_empty() || channels.iter().all(|c| c.is_empty()) {
         return Err("Файл не содержит аудиодорожки".to_string());
     }
-    let channels = if video {
+    let channels = if video && !crate::media_registry::load_registry().is_owned(audio_path) {
         let n = channels.iter().map(|c| c.len()).max().unwrap_or(0);
         let mut mono = vec![0.0f32; n];
         for ch in &channels {
