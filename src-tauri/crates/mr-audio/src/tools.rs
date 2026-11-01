@@ -1,8 +1,5 @@
-//! Поиск внешних инструментов ffmpeg/ffprobe.
-//!
-//! Порядок: папка `bin` внутри данных приложения (куда кладёт скачивание
-//! из интерфейса), затем системный PATH. Ядро нигде не хардкодит имя
-//! бинарника, поэтому установка ffmpeg не требует пересборки.
+//! Порядок поиска ffmpeg/ffprobe: `<данные>/bin` (сюда кладёт скачивание из
+//! интерфейса), затем PATH — установка ffmpeg не требует пересборки ядра.
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -11,7 +8,6 @@ use std::sync::Mutex;
 // инициализации Tauri, и регистрация должна уметь перезаписаться.
 static EXTRA_BIN_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
-/// Регистрирует дополнительную папку поиска (вызывается ядром при старте).
 pub fn set_extra_bin_dir(dir: PathBuf) {
     if let Ok(mut g) = EXTRA_BIN_DIR.lock() {
         *g = Some(dir);
@@ -35,12 +31,10 @@ fn resolve(tool: &str) -> PathBuf {
     PathBuf::from(tool)
 }
 
-/// Путь для запуска ffmpeg: `<данные>/bin`, затем PATH.
 pub fn ffmpeg_path() -> PathBuf {
     resolve("ffmpeg")
 }
 
-/// Путь для запуска ffprobe: `<данные>/bin`, затем PATH.
 pub fn ffprobe_path() -> PathBuf {
     resolve("ffprobe")
 }

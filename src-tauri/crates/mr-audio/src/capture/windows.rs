@@ -1,13 +1,5 @@
-//! Windows: WASAPI — микрофон и loopback системного звука, без внешних утилит.
-//!
-//! Общий режим (shared mode): микрофон — поток захвата устройства по умолчанию
-//! (или выбранного), системный звук — флаг `AUDCLNT_STREAMFLAGS_LOOPBACK` на
-//! конечной точке рендера. Формат микшера (обычно float32 48 кГц) сводится в
-//! моно и ресемплируется в 16 кГц общим [`StreamingResampler`].
-//!
-//! Loopback отдаёт пакеты только пока что-то воспроизводится, поэтому дорожка
-//! системного звука добирается тишиной по таймеру — иначе она отстанет от
-//! микрофона и сведётся со сдвигом.
+//! WASAPI (shared mode); системный звук — `AUDCLNT_STREAMFLAGS_LOOPBACK`
+//! на конечной точке рендера.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -67,8 +59,8 @@ pub fn devices() -> DeviceCatalog {
     catalog
 }
 
-/// Запустить поток захвата. Ошибка устройства возвращается сразу — пользователь
-/// узнаёт о проблеме при старте записи, а не обнаруживает пустую дорожку.
+/// Ошибка устройства возвращается сразу: пользователь узнаёт о проблеме при
+/// старте записи, а не обнаруживает пустую дорожку после остановки.
 pub fn start_stream(
     kind: StreamKind,
     device: Option<&str>,
@@ -89,7 +81,6 @@ pub fn start_stream(
     })
 }
 
-/// Проверяет и возвращает идентификатор конечной точки: явный или по умолчанию.
 fn resolve_endpoint_id(kind: StreamKind, device: Option<&str>) -> Result<String> {
     let com_owned = com_init();
     let res = unsafe {
@@ -133,7 +124,6 @@ fn open_device(en: &IMMDeviceEnumerator, kind: StreamKind, id: Option<&str>) -> 
     }
 }
 
-/// Живой цикл захвата: COM в потоке, WASAPI shared mode, поллинг 10 мс.
 fn run_capture(
     kind: StreamKind,
     endpoint_id: &str,
@@ -260,7 +250,8 @@ fn capture_loop(
     Ok(())
 }
 
-/// Считывает interleaved-кадры из буфера WASAPI (float32 или s16).
+/// SAFETY: data — буфер из `GetBuffer`, живой до `ReleaseBuffer`; длина ровно
+/// frames*channels сэмплов в формате, который вернул `GetMixFormat`.
 unsafe fn read_frames(
     data: *mut u8,
     frames: u32,
@@ -282,7 +273,6 @@ unsafe fn read_frames(
     }
 }
 
-/// Свод interleaved-кадров в моно усреднением каналов.
 fn downmix(interleaved: &[f32], channels: u16) -> Vec<f32> {
     let ch = channels.max(1) as usize;
     if ch == 1 {
@@ -294,10 +284,9 @@ fn downmix(interleaved: &[f32], channels: u16) -> Vec<f32> {
         .collect()
 }
 
-/// Разбор формата микшера: частота, каналы, float32 или s16.
 unsafe fn parse_format(pwfx: *mut WAVEFORMATEX) -> (u32, u16, bool) {
     let f = &*pwfx;
-    // WAVEFORMATEXTENSIBLE packed(1): GUID читаем через read_unaligned.
+    // SAFETY: SubFormat читается read_unaligned — WAVEFORMATEXTENSIBLE packed(1).
     let ext = pwfx.cast::<WAVEFORMATEXTENSIBLE>();
     let sub_format = std::ptr::addr_of!((*ext).SubFormat).read_unaligned();
     let is_float = if f.wFormatTag == TAG_EXTENSIBLE {

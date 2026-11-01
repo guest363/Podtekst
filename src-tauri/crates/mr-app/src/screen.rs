@@ -1,7 +1,3 @@
-//! Запись экрана: Linux — GNOME Shell Screencast по нативному D-Bus (zbus),
-//! Windows — ffmpeg gdigrab. Склейка видео и аудио — через ffmpeg, путь
-//! к которому ищется единым механизмом `mr_audio::tools` (`<данные>/bin`, PATH).
-
 #[cfg(not(windows))]
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -48,9 +44,7 @@ pub(crate) struct ScreenCaptureSession {
 #[cfg(target_os = "linux")]
 static SUPPORTED_CACHE: OnceLock<bool> = OnceLock::new();
 
-/// Проверяет, доступна ли запись экрана на текущей системе.
-///
-/// На Windows результат зависит от ffmpeg, который можно доустановить
+/// На Windows поддержка зависит от ffmpeg, который можно доустановить
 /// из интерфейса: успех кэшируется навсегда, неудача перепроверяется
 /// не чаще раза в 30 с — переключатель включается без перезапуска.
 pub(crate) fn is_screen_capture_supported() -> bool {
@@ -77,7 +71,6 @@ pub(crate) fn is_screen_capture_supported() -> bool {
     }
 }
 
-/// Кодировщик H.264 из установленного ffmpeg: libx264, иначе аппаратный h264_mf.
 #[cfg(windows)]
 fn windows_encoder() -> Option<&'static str> {
     static ENCODER_CACHE: Mutex<(Option<&'static str>, Option<Instant>)> = Mutex::new((None, None));
@@ -97,7 +90,6 @@ fn windows_encoder() -> Option<&'static str> {
     found
 }
 
-/// Разовая проба `ffmpeg -encoders` (поиск через `<данные>/bin`, затем PATH).
 #[cfg(windows)]
 fn probe_windows_encoder() -> Option<&'static str> {
     let out = Command::new(mr_audio::tools::ffmpeg_path())
@@ -115,7 +107,6 @@ fn probe_windows_encoder() -> Option<&'static str> {
 }
 
 impl ScreenCaptureSession {
-    /// Запускает запись экрана (Windows): ffmpeg gdigrab пишет весь рабочий стол в mp4.
     #[cfg(windows)]
     pub(crate) fn start(started_ts: u64) -> Result<Self, String> {
         let Some(encoder) = windows_encoder() else {
@@ -192,7 +183,7 @@ impl ScreenCaptureSession {
         Ok(Self { conn, video_path })
     }
 
-    /// Останавливает запись экрана (Windows): клавиша 'q' в stdin ffmpeg.
+    // ffmpeg выходит по 'q' из stdin — аналога EOF-сигнала хелпера Linux.
     #[cfg(windows)]
     pub(crate) fn stop(mut self) -> Result<PathBuf, String> {
         eprintln!("[SCREEN] Остановка записи экрана...");
@@ -203,7 +194,6 @@ impl ScreenCaptureSession {
             }
         }
 
-        // Ждём завершения процесса до 7 секунд
         let start_wait = std::time::Instant::now();
         let mut exited = false;
         while start_wait.elapsed() < Duration::from_secs(7) {
@@ -229,7 +219,6 @@ impl ScreenCaptureSession {
         wait_finalized(&self.video_path)
     }
 
-    /// Останавливает запись экрана (Linux): StopScreencast по D-Bus.
     #[cfg(not(windows))]
     pub(crate) fn stop(self) -> Result<PathBuf, String> {
         let proxy = screencast_proxy(&self.conn)?;

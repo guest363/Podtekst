@@ -81,7 +81,6 @@ export function statusBadge(kind: string, text: string): string {
   return `<span class="status-badge ${kind}">${esc}</span>`
 }
 
-/** Состояние ffmpeg: установлен, идёт ли скачивание, прогресс и подсказка вручную. */
 export const ffmpeg = $state({
   known: false,
   available: false,
@@ -112,7 +111,6 @@ export async function loadFfmpeg(): Promise<void> {
 
 let ffmpegPoll: ReturnType<typeof setInterval> | undefined
 
-/** Скачивание ffmpeg по кнопке; прогресс тянем опросом /api/status. */
 export async function downloadFfmpeg(): Promise<void> {
   try {
     const r = await fetch('/api/tools/ffmpeg/download', { method: 'POST' })

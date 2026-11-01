@@ -105,8 +105,8 @@ pub fn mobile_main() {
 pub fn run_cli() {
     let cli = Cli::parse();
 
-    // ffmpeg/ffprobe: сначала bin внутри данных приложения (кнопка «Скачать»),
-    // затем PATH. Повторно регистрируется в tauri-сетапе после установки env на мобильных.
+    // Повторная регистрация в tauri-сетапе: на мобильных env папки данных
+    // известен только после инициализации Tauri.
     mr_audio::tools::set_extra_bin_dir(crate::config::app_data_dir().join("bin"));
 
     // Локальная ONNX-расшифровка из CLI (потоковый вывод JSON-событий в stdout)

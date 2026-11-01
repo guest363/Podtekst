@@ -1,19 +1,10 @@
-//! Скачивание ffmpeg по кнопке из интерфейса (Настройки → Модели ИИ).
-//!
-//! Источники — публичные сборки, свои на каждую ОС: Windows — essentials
-//! от gyan (меньше размер) с зеркалом BtbN; Linux — статические сборки
-//! johnvansickle (amd64/arm64) с зеркалом BtbN; macOS — evermeet.cx
-//! (ffmpeg и ffprobe отдельными архивами, сборки Intel — на Apple Silicon
-//! работают через Rosetta). Архив распаковывается встроенным `tar`
-//! (bsdtar: zip/tar.gz/tar.xz; запасной путь на Windows — PowerShell),
-//! бинарники кладутся в `<данные>/bin` и проверяются запуском `-version`.
-//! Ядро подхватывает их через `mr_audio::tools::ffmpeg_path()` без пересборки.
+//! Бинарники кладутся в `<данные>/bin`, проверяются запуском `-version`
+//! и подхватываются ядром через `mr_audio::tools::ffmpeg_path()` без пересборки.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// Что кладёт архив: оба бинарника или один.
 enum Provides {
     Both,
     Single(&'static str),
@@ -24,7 +15,6 @@ struct Group {
     urls: &'static [&'static str],
 }
 
-/// Источники текущей ОС: первая сработавшая ссылка группы ставит свои бинарники.
 fn sources() -> Vec<Group> {
     const GYAN_WIN: &str = "https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip";
     const BTBN_WIN: &str = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
@@ -62,7 +52,6 @@ fn sources() -> Vec<Group> {
     }
 }
 
-/// Имя бинарника в `<данные>/bin` с учётом платформы.
 fn bin_name(tool: &str) -> String {
     if cfg!(windows) {
         format!("{tool}.exe")
@@ -83,7 +72,6 @@ struct Dl {
 
 static DL: Mutex<Option<Dl>> = Mutex::new(None);
 
-/// Состояние для `/api/status`: установлен ли ffmpeg, идёт ли скачивание.
 pub(crate) fn status_json() -> serde_json::Value {
     let available = mr_audio::tools::ffmpeg_available();
     let guard = DL.lock().unwrap_or_else(|e| e.into_inner());
@@ -106,7 +94,6 @@ pub(crate) fn status_json() -> serde_json::Value {
     }
 }
 
-/// Запускает фоновое скачивание и установку ffmpeg.
 pub(crate) fn start_download() -> Result<(), String> {
     {
         let mut guard = DL.lock().unwrap_or_else(|e| e.into_inner());
@@ -271,8 +258,6 @@ fn make_executable(path: &Path) {
     let _ = path;
 }
 
-/// Распаковка архива (zip/tar.gz/tar.xz — tar распознаёт сам):
-/// сначала встроенный `tar`, на Windows запасной путь — PowerShell.
 fn extract_archive(archive: &Path, dest: &Path) -> Result<(), String> {
     let ok = std::process::Command::new("tar")
         .arg("-xf")
@@ -301,9 +286,6 @@ fn extract_archive(archive: &Path, dest: &Path) -> Result<(), String> {
     Err("не удалось распаковать архив: нет tar.exe и PowerShell".to_string())
 }
 
-/// Рекурсивный поиск бинарника в распакованной папке. Имена зависят от
-/// сборщика: `ffmpeg`, `ffmpeg.exe` или версионированное `ffmpeg-9.0.2`
-/// (evermeet). Ищем точное имя, суффикс .exe и префикс `имя-`.
 fn find_binary(root: &Path, tool: &str) -> Option<PathBuf> {
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
