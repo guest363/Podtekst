@@ -67,10 +67,17 @@ export async function editTranscript(
 }
 
 export function emptyHint(): string {
-  if (ui.currentTranscriptIsVideo) {
-    return 'Расшифровка ещё не выполнялась. Звук из видео извлекается автоматически. Сначала скачайте Silero VAD и GigaAM: «Настройки» → «Модели».'
+  // Критерий «ядра» — как в downloadAllCoreModels: всё, кроме Whisper-fallback.
+  const missingCore = settings.models.filter(
+    (m) => !m.id.toLowerCase().includes('whisper') && !m.is_installed,
+  )
+  const base = ui.currentTranscriptIsVideo
+    ? 'Расшифровка ещё не выполнялась. Звук из видео извлекается автоматически.'
+    : 'Расшифровка ещё не выполнялась.'
+  if (missingCore.length > 0) {
+    return base + ' Для работы нужны модели: «Настройки» → «Компоненты».'
   }
-  return 'Расшифровка ещё не выполнялась. Сначала скачайте Silero VAD и GigaAM: «Настройки» → «Модели».'
+  return base + ' Нажмите «Запустить расшифровку».'
 }
 
 let evtSource: EventSource | null = null
