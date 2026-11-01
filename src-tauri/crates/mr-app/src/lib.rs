@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 mod config;
 mod desktop;
+mod ffmpeg_dl;
 mod http;
 mod ipc;
 mod media_registry;
@@ -104,6 +105,11 @@ pub fn mobile_main() {
 pub fn run_cli() {
     let cli = Cli::parse();
 
+    // Повторная регистрация в tauri-сетапе: на мобильных env папки данных
+    // известен только после инициализации Tauri.
+    mr_audio::tools::set_extra_bin_dir(crate::config::app_data_dir().join("bin"));
+
+    // Локальная ONNX-расшифровка из CLI (потоковый вывод JSON-событий в stdout)
     #[cfg(feature = "onnx")]
     if let Some(ref audio) = cli.transcribe {
         let opts = transcribe::TranscribeOptions {

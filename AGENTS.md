@@ -1,7 +1,7 @@
 # Подтекст (Podtekst) - AGENTS.md
 
 Нативное кроссплатформенное приложение для записи встреч и локальной ИИ-расшифровки
-(Linux PipeWire/PulseAudio - живой захват; macOS - CoreAudio: микрофон и BlackHole для системного звука; Windows - импорт файлов, живой захват в разработке).
+(Linux PipeWire/PulseAudio - живой захват; macOS - CoreAudio: микрофон и BlackHole для системного звука; Windows - WASAPI: микрофон и loopback системного звука).
 Стек: **Rust + Tauri v2 + ONNX Runtime** (zero-dependency бинарник ~20-30 МБ).
 Модели: **GigaAM-v3 e2e RNNT int8** (русский, SOTA) + **Whisper-turbo** (30+ языков) +
 **Silero VAD v6** + **PyAnnote Segmentation 3.0** (речь и перекрытия) +

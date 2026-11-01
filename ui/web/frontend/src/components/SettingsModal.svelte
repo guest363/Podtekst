@@ -4,8 +4,11 @@
   import { downloadModel, engine, ensureStream } from '../lib/transcript.svelte.ts'
   import {
     createPack,
+    downloadFfmpeg,
     exportPack,
+    ffmpeg,
     hasSystemAudio,
+    loadFfmpeg,
     loadModels,
     setAutoTranscribe,
     setRecordMode,
@@ -13,7 +16,7 @@
     statusBadge,
     togglePack,
   } from '../lib/settings.svelte.ts'
-  import { isMobile, readJsonSafe } from '../lib/api'
+  import { isMobile, readJsonSafe, remainingMb } from '../lib/api'
   import type { ModelInfo } from '../lib/api'
   import { checkUpdate, update } from '../lib/update.svelte.ts'
   import People from './People.svelte'
@@ -21,6 +24,9 @@
   let tab = $state<'record' | 'people' | 'voices' | 'models'>('record')
 
   on('models-changed', () => void loadModels())
+  // Компонент живёт всё время приложения: одно чтение статуса на старте,
+  // дальше состояние обновляет опрос после нажатия «Скачать».
+  void loadFfmpeg()
 
   function onWindowKey(e: KeyboardEvent): void {
     if (ui.settingsOpen && !ui.donateOpen && e.key === 'Escape') {
@@ -93,7 +99,7 @@
         aria-selected={tab === 'models'}
         onclick={() => (tab = 'models')}
       >
-        Модели
+        Компоненты
       </button>
     </div>
 
@@ -198,19 +204,66 @@
           </div>
         </div>
       {:else}
-        <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Модели ИИ">
-          <div class="card-title">Модели ИИ</div>
+        <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Компоненты">
+          <div class="card-title">Модели и компоненты</div>
           <div class="help-text">
             Локальные модели для распознавания речи: GigaAM (русский язык), Whisper (30+ языков),
             Silero VAD (детектор речи) и ERes2NetV2 (разделение голосов). Для первой
             расшифровки скачайте Silero VAD и одну модель распознавания.
           </div>
           <div class="recordings-list" id="modelsListSettings">
+            {#if !isMobile && ffmpeg.known && (!ffmpeg.available || ffmpeg.downloading || ffmpeg.error)}
+              <div class="rec-item">
+                <div class="rec-info">
+                  <span class="rec-name">ffmpeg (обработка видео)</span>
+                  <span class="rec-meta">
+                    Нужен для записи экрана, импорта видео (MP4, MKV, MOV, WEBM) и экспорта MP3.
+                    Для записи звука и расшифровки не требуется.
+                  </span>
+                  {#if ffmpeg.error}
+                    <span class="rec-meta">
+                      Автоскачивание не удалось ({ffmpeg.error}). Вручную:
+                      {#if settings.platform === 'windows'}
+                        <a href={ffmpeg.manualUrl} target="_blank" rel="noreferrer">gyan.dev/ffmpeg/builds</a>
+                        — положите ffmpeg.exe и ffprobe.exe в
+                        %APPDATA%\MeetingRecorder\bin или в PATH.
+                      {:else if settings.platform === 'darwin'}
+                        brew install ffmpeg
+                      {:else}
+                        sudo apt install ffmpeg (или dnf/pacman/zypper)
+                      {/if}
+                    </span>
+                  {/if}
+                  {#if ffmpeg.downloading}
+                    <div
+                      class="vu-track progress-track"
+                      role="progressbar"
+                      aria-valuenow={ffmpeg.pct}
+                      aria-label="Прогресс скачивания ffmpeg"
+                    >
+                      <div class="vu-bar" style={`width: ${ffmpeg.pct}%`}></div>
+                    </div>
+                  {/if}
+                </div>
+                <div class="rec-actions">
+                  {@html ffmpeg.downloading
+                    ? statusBadge('info', `Скачивание ${ffmpeg.pct}%`)
+                    : statusBadge('warn', 'Не установлен')}
+                  <button
+                    class="btn-secondary btn-sm"
+                    disabled={ffmpeg.downloading}
+                    onclick={() => void downloadFfmpeg()}
+                  >
+                    Скачать
+                  </button>
+                </div>
+              </div>
+            {/if}
             {#if settings.models.length === 0}
               <div class="empty-note">Не удалось загрузить модели</div>
             {:else}
               {#each settings.models as m (m.id)}
-                {@const sizeMb = Math.round((m.total_size_bytes || 0) / 1048576)}
+                {@const sizeMb = remainingMb(m)}
                 {@const pct = engine.downloading[m.id]}
                 {@const badge = pct !== undefined
                   ? statusBadge('info', `Скачивание ${pct}%`)

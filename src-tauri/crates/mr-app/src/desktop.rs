@@ -44,7 +44,7 @@ pub fn autostart_file_path() -> PathBuf {
                 .join("Startup")
                 .join("Podtekst.lnk");
         }
-        return home_dir().join("Podtekst-autostart.lnk");
+        home_dir().join("Podtekst-autostart.lnk")
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
@@ -83,10 +83,10 @@ pub fn install_autostart(exec_path: &str) -> Result<()> {
         // Ярлык .lnk требует COM; установщик создаёт его сам.
         // Здесь фиксируем намерение текстовым маркером рядом с бинарником.
         let _ = exec_path;
-        return Err(DesktopError::Unsupported(
+        Err(DesktopError::Unsupported(
             "на Windows автозапуск создаёт установщик (NSIS/WiX) или вручную: shell:startup"
                 .to_string(),
-        ));
+        ))
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
@@ -143,6 +143,26 @@ pub fn notify_icon(title: &str, body: &str, icon: &str) {
 mod tests {
     use super::*;
 
+    fn check_autostart_roundtrip() -> Result<()> {
+        assert!(!is_autostart_enabled());
+        #[cfg(target_os = "windows")]
+        {
+            // .lnk на Windows создаёт установщик, вручную — не поддерживается
+            assert!(install_autostart("/fake/podtekst.exe").is_err());
+            Ok(())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            install_autostart("/fake/podtekst")?;
+            assert!(is_autostart_enabled());
+            let content = std::fs::read_to_string(autostart_file_path()).unwrap();
+            assert!(content.contains("--tray"));
+            assert!(uninstall_autostart()?);
+            assert!(!is_autostart_enabled());
+            Ok(())
+        }
+    }
+
     #[test]
     fn desktop_entry_roundtrip_in_temp_home() {
         // Изолируем HOME, чтобы не трогать реальный автозапуск пользователя
@@ -152,21 +172,7 @@ mod tests {
         let prev_xdg = std::env::var("XDG_CONFIG_HOME").ok();
         std::env::set_var("HOME", &tmp);
         std::env::remove_var("XDG_CONFIG_HOME");
-        let res = (|| -> Result<()> {
-            assert!(!is_autostart_enabled());
-            #[cfg(target_os = "windows")]
-            {
-                assert!(install_autostart("/fake/podtekst.exe").is_err());
-                return Ok(());
-            }
-            install_autostart("/fake/podtekst")?;
-            assert!(is_autostart_enabled());
-            let content = std::fs::read_to_string(autostart_file_path()).unwrap();
-            assert!(content.contains("--tray"));
-            assert!(uninstall_autostart()?);
-            assert!(!is_autostart_enabled());
-            Ok(())
-        })();
+        let res = check_autostart_roundtrip();
         if let Some(h) = prev_home {
             std::env::set_var("HOME", h);
         }

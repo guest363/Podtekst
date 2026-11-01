@@ -81,6 +81,63 @@ export function statusBadge(kind: string, text: string): string {
   return `<span class="status-badge ${kind}">${esc}</span>`
 }
 
+export const ffmpeg = $state({
+  known: false,
+  available: false,
+  downloading: false,
+  pct: 0,
+  error: null as string | null,
+  manualUrl: 'https://www.gyan.dev/ffmpeg/builds/',
+})
+
+function applyFfmpegStatus(f: Record<string, unknown> | undefined): void {
+  if (!f || typeof f !== 'object') return
+  ffmpeg.known = true
+  ffmpeg.available = f.available === true
+  ffmpeg.downloading = f.downloading === true
+  ffmpeg.pct = Number(f.pct) || 0
+  ffmpeg.error = typeof f.error === 'string' ? f.error : null
+  if (typeof f.manual_url === 'string') ffmpeg.manualUrl = f.manual_url
+}
+
+export async function loadFfmpeg(): Promise<void> {
+  try {
+    const st = await readJsonSafe(await fetch('/api/status'))
+    applyFfmpegStatus(st.ffmpeg)
+  } catch {
+    /* статус недоступен — карточка просто не покажется */
+  }
+}
+
+let ffmpegPoll: ReturnType<typeof setInterval> | undefined
+
+export async function downloadFfmpeg(): Promise<void> {
+  try {
+    const r = await fetch('/api/tools/ffmpeg/download', { method: 'POST' })
+    const d = await readJsonSafe(r)
+    if (!d.ok) {
+      toast(d.error || 'Не удалось запустить скачивание', 'error')
+      return
+    }
+  } catch (e) {
+    toast('Ошибка: ' + (e as Error).message, 'error')
+    return
+  }
+  ffmpeg.downloading = true
+  ffmpeg.error = null
+  if (ffmpegPoll) return
+  ffmpegPoll = setInterval(() => {
+    void (async () => {
+      await loadFfmpeg()
+      if (!ffmpeg.downloading && ffmpegPoll) {
+        clearInterval(ffmpegPoll)
+        ffmpegPoll = undefined
+        if (ffmpeg.available && !ffmpeg.error) toast('ffmpeg установлен')
+      }
+    })()
+  }, 1000)
+}
+
 export async function loadVoicePacks(): Promise<void> {
   try {
     const r = await fetch('/api/voicepacks')

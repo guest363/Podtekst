@@ -392,7 +392,10 @@ pub(super) fn handle_extract_audio(request: tiny_http::Request, body: serde_json
             out.to_string_lossy().to_string(),
         ]
     };
-    match std::process::Command::new("ffmpeg").args(&args).output() {
+    match std::process::Command::new(mr_audio::tools::ffmpeg_path())
+        .args(&args)
+        .output()
+    {
         Ok(o) if o.status.success() && out.exists() => {
             crate::media_registry::mark_owned(&out);
             json_response(
@@ -528,11 +531,7 @@ pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
     eprintln!("[ATTACH_VIDEO] Получен видеопоток: {total} байт для аудио {audio_path:?}");
 
     let final_video = crate::recording::unique_media_path(&dir, &format!("{stem}.{video_ext}"));
-    let ffmpeg_available = std::process::Command::new("ffmpeg")
-        .arg("-version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    let ffmpeg_available = mr_audio::tools::ffmpeg_available();
 
     if !ffmpeg_available {
         let companion =
@@ -556,7 +555,7 @@ pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
     }
 
     let run_ffmpeg = |extra_args: &[&str]| -> std::io::Result<std::process::Output> {
-        let mut cmd = std::process::Command::new("ffmpeg");
+        let mut cmd = std::process::Command::new(mr_audio::tools::ffmpeg_path());
         cmd.arg("-y")
             .arg("-i")
             .arg(&temp_video)

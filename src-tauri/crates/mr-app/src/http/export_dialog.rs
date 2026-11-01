@@ -67,13 +67,11 @@ pub(crate) fn pick_save_path(default_name: &str, filter_pattern: &str) -> Option
 
     #[cfg(target_os = "windows")]
     {
-        let ext = default_name.rsplit('.').next().unwrap_or("docx");
         let script = format!(
-            "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.SaveFileDialog; $d.FileName = '{}'; $d.InitialDirectory = '{}'; $d.Filter = 'Files (*.{})|*.{}'; if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{ $d.FileName }}",
-            default_name,
-            save_dir().display(),
-            ext,
-            ext
+            "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.SaveFileDialog; $d.FileName = '{}'; $d.Filter = 'Files ({})|{}'; if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{ $d.FileName }}",
+            initial_path.display(),
+            filter_pattern,
+            filter_pattern
         );
         if let Ok(output) = std::process::Command::new("powershell")
             .arg("-NoProfile")

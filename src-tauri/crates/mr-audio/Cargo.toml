@@ -1,6 +1,6 @@
 [package]
 name = "mr-audio"
-version = "0.1.7"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.92"
 description = "Нативный захват и декодирование аудио без FFmpeg: Linux — PipeWire/PulseAudio, Windows/macOS — импорт файлов"
@@ -19,6 +19,19 @@ opus-decoder.workspace = true
 # Linux (libpulse) и Android (libaaudio) грузятся в рантайме через dlopen.
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 libc.workspace = true
+
+# Windows: WASAPI (микрофон + loopback системного звука). Крейт уже в графе
+# через Tauri — новой тяжёлой зависимости не добавляем.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Devices_FunctionDiscovery",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_UI_Shell_PropertiesSystem",
+] }
 
 [features]
 default = []

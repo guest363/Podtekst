@@ -225,6 +225,8 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
                 std::env::set_var("PODTEKST_DATA_DIR", &dir);
                 std::env::set_var("MEETING_RECORDER_DATA_DIR", &dir);
             }
+            // Папка поиска ffmpeg должна учесть уже установленный env.
+            mr_audio::tools::set_extra_bin_dir(crate::config::app_data_dir().join("bin"));
 
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {

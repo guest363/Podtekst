@@ -3,7 +3,7 @@
   import { baseName, isMobile, readJsonSafe } from '../lib/api'
   import { hasSystemAudio, settings } from '../lib/settings.svelte.ts'
   import { toast } from '../lib/toast.svelte.ts'
-  import { emit } from '../lib/ui.svelte.ts'
+  import { emit, ui } from '../lib/ui.svelte.ts'
   import { engine, syncEngineFromStatus } from '../lib/transcript.svelte.ts'
   import {
     screenRecorder,
@@ -223,6 +223,17 @@
                 ＋ Экран
               {/if}
             </span>
+          </button>
+        {:else if settings.platform === 'windows'}
+          <button
+            type="button"
+            class="clean-chip"
+            onclick={() => {
+              ui.settingsOpen = true
+            }}
+            title="ffmpeg нужен для записи экрана — установите его в Настройках → Компоненты"
+          >
+            <span>Запись экрана: нужен ffmpeg</span>
           </button>
         {/if}
 

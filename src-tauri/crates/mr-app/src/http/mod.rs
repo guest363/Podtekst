@@ -260,10 +260,20 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                             "sys_level": sys_level,
                             "screen_recording": st.screen_session.is_some(),
                             "screen_supported": crate::screen::is_screen_capture_supported(),
+                            "ffmpeg": crate::ffmpeg_dl::status_json(),
                             "core": "rust",
                         }),
                         200,
                     );
+                }
+                (tiny_http::Method::Post, "/api/tools/ffmpeg/download") => {
+                    // Тело не парсим, но сливаем, чтобы соединение не зависло
+                    let mut body = Vec::new();
+                    let _ = request.as_reader().read_to_end(&mut body);
+                    match crate::ffmpeg_dl::start_download() {
+                        Ok(()) => json_response(request, json!({"ok": true}), 200),
+                        Err(e) => json_response(request, json!({"ok": false, "error": e}), 409),
+                    }
                 }
                 (tiny_http::Method::Get, "/api/update/check") => {
                     handle_update_check(

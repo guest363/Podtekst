@@ -1,6 +1,6 @@
 [package]
 name = "mr-ml"
-version = "0.1.7"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.92"
 description = "Математика диаризации v2: мульти-прототипы, Венгерский алгоритм, Margin Gate (ONNX-рантайм за фичей onnx)"
