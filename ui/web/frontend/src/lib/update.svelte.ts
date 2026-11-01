@@ -1,4 +1,3 @@
-// Проверка обновлений приложения: GitHub Releases + установка по кнопке.
 import { readJsonSafe } from './api'
 import { toast } from './toast.svelte.ts'
 
@@ -43,7 +42,6 @@ export async function checkUpdate(force = false, notify = false): Promise<void> 
   }
 }
 
-/** Скачать и установить обновление. При успехе приложение перезапустится само. */
 export async function applyUpdate(): Promise<void> {
   if (update.applying) return
   update.applying = true

@@ -12,7 +12,6 @@ static RUNNING: OnceLock<Arc<Mutex<bool>>> = OnceLock::new();
 /// Сколько событий вытеснено из буфера: курсоры SSE-клиентов абсолютные,
 /// без учёта вытеснения reconnect по Last-Event-ID терял бы события.
 static DRAINED: AtomicUsize = AtomicUsize::new(0);
-/// Путь файла текущей расшифровки (для статуса UI; пусто, когда не выполняется).
 static CURRENT_FILE: OnceLock<Arc<Mutex<String>>> = OnceLock::new();
 /// Верхняя граница буфера SSE-событий: стрим живёт, пока открыт хоть один EventSource.
 const MAX_EVENTS: usize = 2000;
@@ -36,7 +35,6 @@ fn current_file_cell() -> Arc<Mutex<String>> {
         .clone()
 }
 
-/// Файл, который сейчас расшифровывается (пустая строка — ничего не расшифровывается).
 pub fn transcribing_file() -> String {
     current_file_cell()
         .lock()
@@ -44,8 +42,6 @@ pub fn transcribing_file() -> String {
         .clone()
 }
 
-/// События после абсолютного курсора `since` (живёт через вытеснение буфера)
-/// + новый абсолютный курсор + признак «что-то ещё выполняется».
 pub fn take_new_events(since: usize) -> (Vec<serde_json::Value>, usize, bool) {
     let ev = events();
     let lock = ev.lock().unwrap_or_else(|e| e.into_inner());
@@ -67,17 +63,14 @@ pub fn is_transcribe_running() -> bool {
     *running_flag().lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Начать скачивание модели: учитываем в счётчике активных загрузок.
 pub fn start_model_download() {
     MODEL_ACTIVE.fetch_add(1, Ordering::SeqCst);
 }
 
-/// Публичная отправка событий моделей/поддержки в общий SSE-поток.
 pub fn emit_model_event(evt: serde_json::Value) {
     emit(evt);
 }
 
-/// Завершение потока событий моделей (вызывать после model-done).
 pub fn finish_model_events() {
     let mut cur = MODEL_ACTIVE.load(Ordering::SeqCst);
     while cur > 0 {
@@ -116,8 +109,6 @@ impl Drop for RunningGuard {
     }
 }
 
-/// Запускает транскрибацию в фоне; события забираются через `take_new_events`.
-/// Возвращает false, если задача уже выполняется.
 pub fn spawn_transcription_worker(audio_path: PathBuf, opts: TranscribeOptions) -> bool {
     let flag = running_flag();
     {
@@ -185,7 +176,6 @@ mod tests {
         assert_eq!(fresh.len(), MAX_EVENTS);
         assert_eq!(total, MAX_EVENTS);
 
-        // Вытесняем 3 старых события и добавляем 2 новых.
         emit(serde_json::json!({"type": "a"}));
         emit(serde_json::json!({"type": "b"}));
         emit(serde_json::json!({"type": "c"}));

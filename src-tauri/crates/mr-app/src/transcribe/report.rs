@@ -1,9 +1,5 @@
-//! Выходные форматы расшифровки: `.md`, `.txt`, `.transcript.json`
-//! и локальная статистика.
-
 use super::{Sample, SpeakerInfo, Utterance};
 
-/// `ЧЧ:ММ:СС` или `ММ:СС` при короткой встрече.
 pub(crate) fn human_duration(secs: f64) -> String {
     let total = secs.max(0.0) as u64;
     let (h, rem) = (total / 3600, total % 3600);
@@ -15,7 +11,6 @@ pub(crate) fn human_duration(secs: f64) -> String {
     }
 }
 
-/// Таймкод реплики — всегда `ЧЧ:ММ:СС`.
 fn format_ts(secs: f64) -> String {
     let total = secs.max(0.0).round() as u64;
     format!(
@@ -113,8 +108,6 @@ pub(crate) fn build_text(utterances: &[Utterance]) -> String {
         + "\n"
 }
 
-/// Локальная статистика сохранённого времени и количества расшифровок (без сети).
-/// Атомарная запись через `update_config` исключает повреждение config.json при сбое.
 pub(crate) fn record_stats(audio_duration_sec: f64) {
     let mut should_emit = false;
     let mut emit_count = 0u64;

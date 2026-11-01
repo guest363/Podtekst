@@ -1,5 +1,3 @@
-//! Общая обёртка над `ort::session::Session`: загрузка, проброс тензоров, чтение выходов.
-
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -20,8 +18,6 @@ fn global_env() -> Arc<Environment> {
     .clone()
 }
 
-/// Открытая ONNX-сессия с именами входов/выходов, прочитанными из графа.
-/// Формат тензоров: (форма i64, плоские данные f32).
 pub type ShapeData = (Vec<i64>, Vec<f32>);
 pub type ShapeDataI64 = (Vec<i64>, Vec<i64>);
 pub type ShapeDataBool = (Vec<i64>, Vec<bool>);
@@ -50,7 +46,6 @@ impl OrtSession {
         Ok(Self::from_session(session))
     }
 
-    /// Пробует сессию на аппаратном EP (DirectML/CUDA/CoreML — какие собраны).
     #[cfg(any(feature = "ort-cuda", feature = "ort-directml", feature = "ort-coreml"))]
     fn accelerated(
         env: &Arc<Environment>,
@@ -168,7 +163,6 @@ impl OrtSession {
         Self::collect_outputs(&self.output_names, outputs)
     }
 
-    /// Прогон со смешанными типами: f32 + i64 входы.
     pub fn run_mixed(
         &mut self,
         f32_inputs: NamedTensors,
@@ -178,7 +172,6 @@ impl OrtSession {
         self.run_mixed_full(f32_inputs, i64_inputs, empty_bool)
     }
 
-    /// Прогон со смешанными типами: f32 + i64 + bool входы.
     pub fn run_mixed_full(
         &mut self,
         f32_inputs: NamedTensors,

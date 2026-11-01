@@ -140,7 +140,6 @@
       // tail_level_01 уже RMS с запасом ×3; приводим к 0…1.
       micRms = Math.min(1, (d.mic_level || 0) / 3)
     } catch {
-      /* молча */
     }
   }
 
