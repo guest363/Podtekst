@@ -1,4 +1,3 @@
-/* ---------- Страница расшифровки (минималистичный открытый стиль без рамок) ---------- */
 .transcript-page {
   max-width: 920px;
   margin: 0 auto;
@@ -9,7 +8,6 @@
   min-height: auto;
 }
 
-/* Шапка страницы: 2 строки */
 .transcript-page-header {
   display: flex;
   flex-direction: column;
@@ -18,7 +16,6 @@
   border-bottom: 1px solid var(--border-soft);
 }
 
-/* Строка 1: Заголовок слева, кнопка закрытия справа */
 .transcript-header-top {
   display: flex;
   justify-content: space-between;
@@ -63,7 +60,6 @@
   transform: scale(0.95);
 }
 
-/* Строка 2: Тулбар действий (чипы слева, кнопки справа) */
 .transcript-sub-actions {
   display: flex;
   align-items: center;
@@ -73,7 +69,6 @@
   width: 100%;
 }
 
-/* Строка 3: Медиаплеер под тулбаром действий */
 .transcript-sub-player {
   display: flex;
   align-items: center;
@@ -193,7 +188,6 @@
 }
 .transcript-empty-title { font-size: 15px; font-weight: 800; }
 
-/* Двухколоночный открытый грид со сворачиваемым сайдбаром спикеров слева */
 .transcript-grid {
   display: grid;
   grid-template-columns: 0px minmax(0, 1fr);
@@ -262,7 +256,6 @@
   background: var(--accent-ok, #0e7a55);
 }
 
-/* Колонки: абсолютно открытые, никаких внешних 1px рамок и белых карточек-коробок */
 .transcript-speakers, .transcript-doc {
   background: transparent;
   border: none;
@@ -290,7 +283,6 @@
   color: var(--text-primary);
 }
 
-/* Шапка документа: заголовок и легкий поиск-пилюля */
 .transcript-doc-header {
   display: flex;
   justify-content: space-between;
@@ -351,7 +343,6 @@
   color: var(--text-primary);
 }
 
-/* Колонка спикеров */
 .speakers-deck {
   display: flex;
   flex-direction: column;
@@ -361,7 +352,6 @@
   padding-right: 4px;
 }
 
-/* Карточки спикеров: мягкая цветная плашка без резких тёмных рамок */
 .speaker-card {
   background: var(--spk-bg, #f8fafc);
   border: 1px solid rgba(15, 30, 51, 0.05);
@@ -426,7 +416,6 @@
 }
 .link-danger:hover { text-decoration: underline; }
 
-/* Область текста стенограммы: свободное полотно с хорошей типографикой */
 .markdown-body {
   font-size: 14.5px;
   line-height: 1.7;
@@ -447,7 +436,6 @@
 .markdown-body hr { border: none; border-top: 1px solid var(--border-soft); margin: 12px 0; }
 .markdown-body .md-meta { color: var(--text-muted); font-size: 12.5px; }
 
-/* Реплики: чистый акцент слева полосой спикера, без рамок вокруг реплики */
 .utterance {
   display: flex; gap: 10px;
   padding: 6px 12px; margin: 2px 0;
@@ -633,7 +621,6 @@
     padding-right: 0;
   }
 
-  /* Спикеры на мобиле — правый drawer во весь экран */
   .transcript-speakers-wrap {
     display: none;
   }

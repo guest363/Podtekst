@@ -32,7 +32,6 @@
     toggle()
   }
 
-  // src может меняться (сниппеты / смена трека): подтягиваем в элемент.
   $effect(() => {
     if (media && media.getAttribute('src') !== src) {
       media.src = src

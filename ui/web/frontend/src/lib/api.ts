@@ -126,7 +126,6 @@ export interface FormattedRecDate {
   full: string
 }
 
-/** Форматирует дату записи в человеческий вид («Сегодня», «Вчера», «31 октября») и время старта («14:30»). */
 export function formatRecDate(rawDate?: string, rawName?: string): FormattedRecDate {
   if (rawDate) {
     const parts = rawDate.trim().split(' ')
@@ -169,7 +168,6 @@ export function formatRecDate(rawDate?: string, rawName?: string): FormattedRecD
   return { day: 'Запись', time: '', full: 'Запись' }
 }
 
-/** Очищает имя записи: если это автосгенерированное имя хоткеев (ЧЧ:ММ...__ДД-ММ-ГГГГ), возвращает «Запись встречи». */
 export function displayRecTitle(rawName: string): string {
   const stem = rawName.replace(/\.[^.]+$/, '')
   if (/^\d{2}[:\-]\d{2}(?:-\d{2}[:\-]\d{2})?__\d{2}-\d{2}-\d{4}$/.test(stem)) {

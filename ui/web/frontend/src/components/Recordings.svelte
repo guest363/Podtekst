@@ -19,7 +19,6 @@
   let deleteTarget = $state<RecordingItem | null>(null)
   let deleting = $state(false)
 
-  // Активная запись для воспроизведения в общем нижнем плеере
   let activeRec = $state<RecordingItem | null>(null)
   let isPlaying = $state(false)
   let playerRef = $state<{ togglePlay: () => void } | null>(null)

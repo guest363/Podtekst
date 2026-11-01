@@ -76,7 +76,6 @@
       gap: 10px;
     }
 
-    /* Видео слайд */
     .mock-video-slide {
       width: 100%;
       height: 195px;
@@ -170,7 +169,6 @@
       padding: 2px 6px !important;
     }
 
-    /* Настройки: стили табов */
     .settings-heading {
       display: flex;
       flex-direction: column;
@@ -205,10 +203,6 @@
 </head>
 <body>
   <div class="capture-viewport" id="viewport">
-
-    <!-- ============================================================== -->
-    <!-- 1. STATIC RETINA: MAIN CONSOLE                                 -->
-    <!-- ============================================================== -->
     <div class="view-container" id="view-main-console">
       <div class="page">
         <header class="app-header">
@@ -312,10 +306,6 @@
       </div>
     </div>
 
-
-    <!-- ============================================================== -->
-    <!-- 2. STATIC RETINA: TRANSCRIPT VIEW                              -->
-    <!-- ============================================================== -->
     <div class="view-container" id="view-transcript">
       <div class="page transcript-page">
         <header class="transcript-page-header">
@@ -403,9 +393,6 @@
     </div>
 
 
-    <!-- ============================================================== -->
-    <!-- 3. STATIC RETINA: SETTINGS MODELS                              -->
-    <!-- ============================================================== -->
     <div class="view-container" id="view-settings-models">
       <div style="filter: blur(4px) opacity(0.35); pointer-events: none; width: 100%; height: 100%;">
         <div class="page">
@@ -460,17 +447,13 @@
     </div>
 
 
-    <!-- ============================================================== -->
-    <!-- 4. WALKTHROUGH GIF FRAMES (880x609, 28-frame complete walkthrough) -->
     <div class="view-container" id="view-wt">
-      <!-- Animated cursor -->
       <div id="wt-cursor" style="position: absolute; left: 100px; top: 100px; z-index: 99999; pointer-events: none; transition: none;">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style="filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35));">
           <path d="M4 4l7.07 17 2.51-7.39L21 11.07 4 4z" fill="#0f172a" stroke="#ffffff" stroke-width="1.6"/>
         </svg>
       </div>
 
-      <!-- Walkthrough Screen 1: Main Console -->
       <div id="wt-screen-main" class="page" style="display: flex;">
         <header class="app-header">
           <div class="app-title">
@@ -505,9 +488,7 @@
                 </div>
               </div>
 
-              <div class="deck-wave" id="wt-deck-wave" aria-hidden="true" style="gap: 4px;">
-                <!-- dynamic bars injected via JS -->
-              </div>
+              <div class="deck-wave" id="wt-deck-wave" aria-hidden="true" style="gap: 4px;"></div>
 
               <div class="deck-bottom">
                 <div class="deck-timer-box">
@@ -531,7 +512,6 @@
               </div>
             </div>
             <div class="recordings-list" id="wt-rec-list">
-              <!-- New recorded card (hidden initially, visible in frame 16+) -->
               <div class="rec-item rec-card" id="wt-new-rec" style="display: none; background: rgba(37, 99, 235, 0.04); border-color: rgba(37, 99, 235, 0.25);">
                 <div class="rec-date-col"><span class="rec-date-day">Сегодня</span><span class="rec-date-time">11:35</span></div>
                 <div class="rec-info">
@@ -545,7 +525,6 @@
                 </div>
               </div>
 
-              <!-- Existing Recording 1 -->
               <div class="rec-item rec-card">
                 <div class="rec-date-col"><span class="rec-date-day">26 окт.</span><span class="rec-date-time">10:15</span></div>
                 <div class="rec-info">
@@ -559,7 +538,6 @@
                 </div>
               </div>
 
-              <!-- Existing Recording 2 -->
               <div class="rec-item rec-card">
                 <div class="rec-date-col"><span class="rec-date-day">25 окт.</span><span class="rec-date-time">11:00</span></div>
                 <div class="rec-info">
@@ -573,7 +551,6 @@
                 </div>
               </div>
 
-              <!-- Existing Recording 3 -->
               <div class="rec-item rec-card" id="wt-rec-3">
                 <div class="rec-date-col"><span class="rec-date-day">24 окт.</span><span class="rec-date-time">16:15</span></div>
                 <div class="rec-info">
@@ -594,7 +571,6 @@
         </main>
       </div>
 
-      <!-- Walkthrough Screen 2: Transcript Page -->
       <div id="wt-screen-transcript" class="page transcript-page" style="display: none;">
         <header class="transcript-page-header">
           <div class="transcript-header-top">
@@ -656,7 +632,6 @@
         </div>
       </div>
 
-      <!-- Walkthrough Screen 3: Settings Overlay -->
       <div id="wt-screen-settings" style="display: none; position: absolute; inset: 0;">
         <div style="filter: blur(4px) opacity(0.35); pointer-events: none; width: 100%; height: 100%;">
           <div class="page" style="padding: 16px 24px;">
@@ -712,9 +687,6 @@
     </div>
 
 
-    <!-- 5. SCREEN RECORDING GIF FRAMES (880x520)                       -->
-    <!-- ============================================================== -->
-    <!-- sc-1: Idle, cursor moving to Screen button -->
     <div class="view-container" id="view-sc-1">
       <div class="page">
         <header class="app-header"><div class="app-title"><span class="dot"></span><span class="app-title-text">Подтекст</span></div></header>
@@ -739,7 +711,6 @@
       </div>
     </div>
 
-    <!-- sc-2: Screen active, cursor moving to Record -->
     <div class="view-container" id="view-sc-2">
       <div class="page">
         <header class="app-header"><div class="app-title"><span class="dot"></span><span class="app-title-text">Подтекст</span></div></header>
@@ -769,7 +740,6 @@
       </div>
     </div>
 
-    <!-- sc-3: Screen recording active -->
     <div class="view-container" id="view-sc-3">
       <div class="page">
         <header class="app-header"><div class="app-title"><span class="dot"></span><span class="app-title-text">Подтекст</span></div></header>
@@ -837,13 +807,11 @@
       const rec3 = document.getElementById('wt-rec-3');
       const btnSettings = document.getElementById('wt-btn-settings');
 
-      // Default state: main screen visible
       screenMain.style.display = 'flex';
       screenTranscript.style.display = 'none';
       screenSettings.style.display = 'none';
       cursor.style.display = 'block';
 
-      // 1. Console Idle (0..3)
       if (f <= 3) {
         deckStatus.className = 'deck-status';
         statusDot.className = 'status-dot';
@@ -870,7 +838,6 @@
           deckBtn.style.boxShadow = '0 4px 16px rgba(220, 38, 38, 0.4)';
         }
       }
-      // 2. Recording in progress (4..15)
       else if (f <= 15) {
         deckStatus.className = 'deck-status recording';
         statusDot.className = 'status-dot active';
@@ -880,7 +847,6 @@
         rec3.style.display = 'grid';
         recCount.textContent = '3';
 
-        // Timer and waves progression
         if (f <= 7) {
           deckTimer.textContent = '00:00:01';
           deckLevels.innerHTML = '<span>Вы: -16&nbsp;дБ</span><span class="sep">·</span><span>Собеседники: -12&nbsp;дБ</span>';
@@ -901,7 +867,7 @@
         if (f === 4) {
           cursor.style.left = '720px'; cursor.style.top = '220px';
         } else if (f <= 11) {
-          cursor.style.display = 'none'; // hide while user records
+          cursor.style.display = 'none';
         } else if (f === 12) {
           cursor.style.display = 'block'; cursor.style.left = '640px'; cursor.style.top = '205px';
         } else if (f === 13) {
@@ -914,7 +880,6 @@
           deckBtn.style.background = '#1e293b';
         }
       }
-      // 3. Stop clicked & new recording added (16..18)
       else if (f <= 18) {
         deckStatus.className = 'deck-status';
         statusDot.className = 'status-dot';
@@ -926,9 +891,8 @@
         deckBtn.innerHTML = '<span>● Начать запись</span>';
         setWaveBars(deckWave, WAVE_IDLE, null);
 
-        // Show fresh top recording
         newRec.style.display = 'grid';
-        rec3.style.display = 'none'; // keep 3 cards visible in 609px viewport
+        rec3.style.display = 'none';
         recCount.textContent = '4';
 
         if (f === 16) {
@@ -941,7 +905,6 @@
           newRecBtn.style.transform = 'scale(0.96)';
         }
       }
-      // 4. Transcript Page (19..21)
       else if (f <= 21) {
         screenMain.style.display = 'none';
         screenTranscript.style.display = 'flex';
@@ -976,7 +939,6 @@
           cursor.style.left = '835px'; cursor.style.top = '45px';
         }
       }
-      // 5. Return to Console & Open Settings (22..27)
       else if (f === 22) {
         deckStatus.className = 'deck-status';
         statusDot.className = 'status-dot';
@@ -995,7 +957,6 @@
         cursor.style.left = '838px'; cursor.style.top = '28px';
       }
       else {
-        // 23..27: Settings Drawer Overlay
         screenMain.style.display = 'none';
         screenTranscript.style.display = 'none';
         screenSettings.style.display = 'block';
@@ -1005,14 +966,14 @@
         const btnDone = document.getElementById('wt-btn-done');
 
         if (f === 23) {
-          cursor.style.left = '790px'; cursor.style.top = '95px'; // on Models tab
+          cursor.style.left = '790px'; cursor.style.top = '95px';
         } else if (f === 24) {
-          cursor.style.left = '720px'; cursor.style.top = '230px'; // on GigaAM card
+          cursor.style.left = '720px'; cursor.style.top = '230px';
         } else if (f === 25) {
-          cursor.style.left = '780px'; cursor.style.top = '345px'; // on Whisper download button
+          cursor.style.left = '780px'; cursor.style.top = '345px';
           btnWhisper.style.transform = 'translateY(-1px)';
         } else if (f === 26 || f === 27) {
-          cursor.style.left = '780px'; cursor.style.top = '565px'; // on Done button
+          cursor.style.left = '780px'; cursor.style.top = '565px';
           btnDone.style.transform = 'translateY(-1px)';
         }
       }

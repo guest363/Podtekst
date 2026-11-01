@@ -10,7 +10,6 @@
   import SpeakersPane from './SpeakersPane.svelte'
   import TranscriptDoc from './TranscriptDoc.svelte'
 
-  // Сайдбар спикеров: на десктопе док-панель слева, на телефоне drawer. По умолчанию открыт.
   let speakersOpen = $state(
     typeof localStorage !== 'undefined'
       ? localStorage.getItem('mr_speakers_open') !== 'false'
@@ -40,7 +39,6 @@
     }
   })
 
-  // Анализ спикеров: индикатор неразмеченных голосов для кнопки тумблера
   let hasUnmatchedSpeakers = $derived(
     Boolean(transcript.speakers?.length && transcript.speakers.some((s) => !s.matched)),
   )

@@ -19,7 +19,6 @@
   let micRms = $state(0)
   let sysRms = $state(0)
 
-  // Честные −60…0 дБFS для обоих каналов звука.
   let micDb = $derived(micRms > 0.001 ? Math.max(-60, Math.round(20 * Math.log10(micRms))) : -60)
   let sysDb = $derived(sysRms > 0.001 ? Math.max(-60, Math.round(20 * Math.log10(sysRms))) : -60)
 
