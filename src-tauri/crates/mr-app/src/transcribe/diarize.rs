@@ -1103,10 +1103,7 @@ pub(crate) fn dedupe_cross_channel(utterances: &mut Vec<Utterance>) {
             if utterances[j].start > utterances[i].end + 0.75 {
                 break;
             }
-            if !keep[j]
-                || utterances[i].channel == utterances[j].channel
-                || utterances[i].speaker != utterances[j].speaker
-            {
+            if !keep[j] || utterances[i].channel == utterances[j].channel {
                 continue;
             }
             let ov = interval_overlap(
@@ -1591,6 +1588,30 @@ mod tests {
         assert_eq!(utts[0].speaker, "Собеседник 1");
         dedupe_cross_channel(&mut utts);
         assert_eq!(utts.len(), 1);
+        assert_eq!(utts[0].channel, Some(1));
+    }
+
+    #[test]
+    fn dedupe_cross_channel_drops_echo_even_with_different_speakers() {
+        let mut utts = vec![
+            utt(
+                1.0,
+                5.0,
+                "Екатерина Шерехова",
+                1,
+                "надо сначала попытаться войти в аккаунт",
+            ),
+            utt(
+                1.1,
+                5.1,
+                "Сергей Золотов",
+                0,
+                "надо сначала попытаться войти в аккаунт",
+            ),
+        ];
+        dedupe_cross_channel(&mut utts);
+        assert_eq!(utts.len(), 1);
+        assert_eq!(utts[0].speaker, "Екатерина Шерехова");
         assert_eq!(utts[0].channel, Some(1));
     }
 
