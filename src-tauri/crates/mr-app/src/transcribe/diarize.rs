@@ -230,6 +230,19 @@ fn merge_tiny_clusters(vecs: &[Vec<f64>], labels: &mut [usize], weights: &[f64],
         return;
     }
     let min_sec = (total * 0.02).clamp(2.0, 10.0);
+    // Кластер с хорошей обособленностью — отдельный голос, пусть и короткий.
+    let scores = mr_ml::cluster::silhouette_scores(vecs, labels);
+    let mut silhouettes: HashMap<usize, (f64, f64)> = HashMap::new();
+    for (i, &label) in labels.iter().enumerate() {
+        let entry = silhouettes.entry(label).or_default();
+        entry.0 += scores.get(i).copied().unwrap_or(0.0) * weights[i];
+        entry.1 += weights[i];
+    }
+    let well_separated = |label: usize| {
+        silhouettes
+            .get(&label)
+            .is_some_and(|&(sum, weight)| weight > 0.0 && sum / weight > 0.3)
+    };
     let mut protected: HashSet<usize> = HashSet::new();
     loop {
         let mut totals: HashMap<usize, f64> = HashMap::new();
@@ -241,7 +254,7 @@ fn merge_tiny_clusters(vecs: &[Vec<f64>], labels: &mut [usize], weights: &[f64],
         }
         let Some((&small, _)) = totals
             .iter()
-            .filter(|(l, &t)| t < min_sec && !protected.contains(l))
+            .filter(|(l, &t)| t < min_sec && !protected.contains(l) && !well_separated(**l))
             .min_by(|a, b| a.1.total_cmp(b.1))
         else {
             return;
@@ -876,18 +889,15 @@ pub(crate) fn reconcile_channels(infos: &mut Vec<SpeakerInfo>, utterances: &mut 
 
             let should_merge =
                 if infos[i].channel == infos[j].channel && infos[i].name != infos[j].name {
-                    // Внутри одного канала: если один распознан, а второй — безымянный хвост (например, "Я" и профиль пользователя),
-                    // либо оба безымянные ("Собеседник 2" и "3") — при уверенном сходстве (≥ 0.52) это один и тот же спикер.
-                    // Разные распознанные профили никогда не объединяем.
-                    !(infos[i].matched && infos[j].matched) && sim >= 0.52
+                    // Внутри одного канала разные распознанные профили не объединяем:
+                    // это разные люди, даже если голоса похожи.
+                    !(infos[i].matched && infos[j].matched) && sim >= 0.55
                 } else {
-                    // Разные каналы (микрофон и система) или совпадение имени:
+                    // Между каналами одного человека выдаёт либо общее имя, либо
+                    // одновременная речь (эхо). Похожести без перекрытия мало:
+                    // разные люди с похожими голосами так сливались в один профиль.
                     same_name
                         || (sim >= 0.55 && overlap >= 0.3)
-                        || (sim >= 0.58 && !infos[i].matched && !infos[j].matched)
-                        || ((infos[i].matched || infos[j].matched) && sim >= 0.50 && overlap >= 0.3)
-                        || ((infos[i].matched ^ infos[j].matched) && sim >= 0.55)
-                        || ((infos[i].matched ^ infos[j].matched) && echo && overlap >= 0.5)
                         || (echo && sim >= 0.45 && overlap >= 0.3)
                         || (echo && short && overlap >= 0.8)
                 };
@@ -1620,7 +1630,7 @@ mod tests {
     }
 
     #[test]
-    fn merges_same_voice_across_channels_without_overlap() {
+    fn similar_voices_across_channels_without_overlap_stay_separate() {
         let mut infos = vec![
             info("Участник 1", 0, vec![1.0, 0.0], 1, 3.0),
             info("Собеседник 1", 1, vec![1.0, 0.0], 1, 3.0),
@@ -1630,8 +1640,8 @@ mod tests {
             utt(20.0, 22.0, "Собеседник 1", 1, "вторая реплика"),
         ];
         reconcile_channels(&mut infos, &mut utts);
-        assert_eq!(infos.len(), 1);
-        assert_eq!(utts[0].speaker, "Собеседник 1");
+        assert_eq!(infos.len(), 2);
+        assert_eq!(utts[0].speaker, "Участник 1");
         assert_eq!(utts[1].speaker, "Собеседник 1");
     }
 
@@ -1963,6 +1973,22 @@ mod tests {
         vecs2[4] = vec![-1.0, 0.0];
         merge_tiny_clusters(&vecs2, &mut distinct, &weights, 1);
         assert_eq!(distinct[4], 2);
+    }
+
+    #[test]
+    fn short_but_distinct_voice_is_not_merged_into_dominant() {
+        let vecs = vec![
+            vec![1.0, 0.0],
+            vec![1.0, 0.0],
+            vec![1.0, 0.0],
+            vec![0.0, 1.0],
+            vec![0.0, 1.0],
+        ];
+        let weights = vec![40.0, 40.0, 40.0, 0.5, 0.5];
+        let mut labels = vec![0usize, 0, 0, 1, 1];
+        merge_tiny_clusters(&vecs, &mut labels, &weights, 1);
+        assert_eq!(labels[3], 1);
+        assert_eq!(labels[4], 1);
     }
 
     #[test]

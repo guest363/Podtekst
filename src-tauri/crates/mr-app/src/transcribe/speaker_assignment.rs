@@ -44,6 +44,10 @@ pub(super) fn apply(
     }
     let mut next_label = globals.keys().max().map_or(0, |label| label + 1);
     let mut votes: HashMap<usize, HashMap<usize, f64>> = HashMap::new();
+    let mut cooccur: HashMap<(usize, usize), f64> = HashMap::new();
+    let starts: Vec<f64> = utterances.iter().map(|u| u.start).collect();
+    let assign_min_sim = crate::config::configured_diar_assign_min_sim();
+    let new_speaker_min_sim = crate::config::configured_diar_new_speaker_min_sim();
 
     for window in &segmentation.windows {
         let window_end = window.start_sample + window.classes.len() * FRAME_SAMPLES;
@@ -84,6 +88,29 @@ pub(super) fn apply(
             }
         }
 
+        for a in 0..3 {
+            for b in (a + 1)..3 {
+                for &i in &local_members[a] {
+                    for &j in &local_members[b] {
+                        let overlap = utterances[i]
+                            .end
+                            .min(utterances[j].end)
+                            .min(window_end as f64 / 16000.0)
+                            - utterances[i]
+                                .start
+                                .max(utterances[j].start)
+                                .max(window.start_sample as f64 / 16000.0);
+                        if overlap > 0.0 {
+                            // Окна PyAnnote перекрываются: сумма раздувает один
+                            // и тот же стык, поэтому храним максимум.
+                            let seen = cooccur.entry((i.min(j), i.max(j))).or_insert(0.0);
+                            *seen = seen.max(overlap);
+                        }
+                    }
+                }
+            }
+        }
+
         let locals: Vec<(usize, Vec<f64>)> = local_members
             .iter()
             .enumerate()
@@ -119,7 +146,7 @@ pub(super) fn apply(
         let mut assigned_globals: std::collections::HashSet<usize> =
             std::collections::HashSet::new();
         for (local, global) in linear_sum_assignment_max(&scores) {
-            if scores[local][global] >= 0.20 {
+            if scores[local][global] >= assign_min_sim {
                 let gid = global_ids[global];
                 assignment.insert(locals[local].0, gid);
                 assigned[local] = true;
@@ -136,7 +163,7 @@ pub(super) fn apply(
                     .map(|&label| (label, cosine_similarity(embedding, &globals[&label])))
                     .max_by(|a, b| a.1.total_cmp(&b.1));
                 if let Some((label, sim)) = best {
-                    if sim >= 0.35 {
+                    if sim >= new_speaker_min_sim {
                         assignment.insert(locals[row].0, label);
                         assigned_globals.insert(label);
                         continue;
@@ -160,14 +187,64 @@ pub(super) fn apply(
         }
     }
 
-    for (index, scores) in votes {
-        if let Some((label, _)) = scores
-            .into_iter()
-            .max_by(|a, b| a.1.total_cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+    let can_add = max_speakers == 0 || globals.len() < max_speakers;
+    let labels = resolve_label_conflicts(&votes, &cooccur, &starts, can_add, &mut next_label);
+    for (index, label) in labels {
+        label_of.insert(index, label);
+    }
+}
+
+/// Два голоса, звучавшие одновременно, не могут получить одну метку:
+/// иначе похожие спикеры слипаются в «средний» профиль.
+fn resolve_label_conflicts(
+    votes: &HashMap<usize, HashMap<usize, f64>>,
+    cooccur: &HashMap<(usize, usize), f64>,
+    starts: &[f64],
+    can_add: bool,
+    next_label: &mut usize,
+) -> HashMap<usize, usize> {
+    let mut labels: HashMap<usize, usize> = HashMap::new();
+    for (&index, scores) in votes {
+        if let Some((&label, _)) = scores
+            .iter()
+            .max_by(|a, b| a.1.total_cmp(b.1).then_with(|| b.0.cmp(a.0)))
         {
-            label_of.insert(index, label);
+            labels.insert(index, label);
         }
     }
+    let mut conflicts: Vec<((usize, usize), f64)> = cooccur
+        .iter()
+        .filter(|(_, &overlap)| overlap > 0.5)
+        .map(|(&pair, &overlap)| (pair, overlap))
+        .collect();
+    conflicts.sort_by(|a, b| b.1.total_cmp(&a.1));
+    for ((i, j), _) in conflicts {
+        if labels.get(&i) != labels.get(&j) {
+            continue;
+        }
+        let Some(&current) = labels.get(&i) else {
+            continue;
+        };
+        let moved = if starts.get(i) > starts.get(j) { i } else { j };
+        let second = votes.get(&moved).and_then(|scores| {
+            scores
+                .iter()
+                .filter(|(label, _)| **label != current)
+                .max_by(|a, b| a.1.total_cmp(b.1).then_with(|| b.0.cmp(a.0)))
+                .map(|(&label, _)| label)
+        });
+        let target = second.or_else(|| {
+            can_add.then(|| {
+                let label = *next_label;
+                *next_label += 1;
+                label
+            })
+        });
+        if let Some(label) = target {
+            labels.insert(moved, label);
+        }
+    }
+    labels
 }
 
 #[cfg(test)]
@@ -240,5 +317,45 @@ mod tests {
             1,
         );
         assert_eq!(labels[&0], labels[&1]);
+    }
+
+    #[test]
+    fn simultaneous_different_locals_do_not_share_label() {
+        let votes = HashMap::from([
+            (0, HashMap::from([(10, 6.0), (11, 1.0)])),
+            (1, HashMap::from([(10, 6.0), (11, 5.0)])),
+        ]);
+        let cooccur = HashMap::from([((0, 1), 2.0)]);
+        let mut next = 12;
+        let labels = resolve_label_conflicts(&votes, &cooccur, &[0.0, 4.0], true, &mut next);
+        assert_eq!(labels[&0], 10);
+        assert_eq!(labels[&1], 11);
+    }
+
+    #[test]
+    fn conflict_without_second_candidate_gets_new_label() {
+        let votes = HashMap::from([
+            (0, HashMap::from([(10, 6.0)])),
+            (1, HashMap::from([(10, 6.0)])),
+        ]);
+        let cooccur = HashMap::from([((0, 1), 1.0)]);
+        let mut next = 20;
+        let labels = resolve_label_conflicts(&votes, &cooccur, &[0.0, 4.0], true, &mut next);
+        assert_eq!(labels[&0], 10);
+        assert_eq!(labels[&1], 20);
+        assert_eq!(next, 21);
+    }
+
+    #[test]
+    fn short_overlap_does_not_split_labels() {
+        let votes = HashMap::from([
+            (0, HashMap::from([(10, 6.0)])),
+            (1, HashMap::from([(10, 6.0)])),
+        ]);
+        let cooccur = HashMap::from([((0, 1), 0.4)]);
+        let mut next = 20;
+        let labels = resolve_label_conflicts(&votes, &cooccur, &[0.0, 4.0], true, &mut next);
+        assert_eq!(labels[&0], 10);
+        assert_eq!(labels[&1], 10);
     }
 }

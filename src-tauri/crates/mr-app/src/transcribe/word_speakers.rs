@@ -175,8 +175,7 @@ pub(crate) fn split_utterance_by_word_speakers(
     let mut passed = 0.0;
     for weight in weights.iter().take(word_count - 1) {
         passed += weight;
-        let raw = utterance.start
-            + (utterance.end - utterance.start) * passed / total;
+        let raw = utterance.start + (utterance.end - utterance.start) * passed / total;
         let snapped = tree.snap_to_pause(raw, 0.15).unwrap_or(raw);
         let previous = *bounds.last().unwrap_or(&utterance.start);
         bounds.push(snapped.clamp(previous, utterance.end));

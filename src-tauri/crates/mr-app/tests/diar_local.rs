@@ -3,7 +3,8 @@
 //!
 //! ```text
 //! MR_DIAR_FIXTURES_DIR=./target/local-diar \
-//!   cargo test -p mr-app --test diar_local -- --ignored --nocapture
+//!   cargo test -p mr-app --test diar_local \
+//!   --manifest-path src-tauri/Cargo.toml -- --ignored --nocapture
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -52,8 +53,8 @@ fn local_diarization_cases() {
     let mut failures = vec![];
     for case in cases {
         let wav = dir.join(format!("{}.wav", case.id));
-        let actual = mr_models::sha256_of_file(&wav)
-            .unwrap_or_else(|e| panic!("{}: {e}", wav.display()));
+        let actual =
+            mr_models::sha256_of_file(&wav).unwrap_or_else(|e| panic!("{}: {e}", wav.display()));
         assert_eq!(actual, case.sha256, "{}: хеш не совпал", case.id);
         let reader = hound::WavReader::open(&wav).expect("WAV не открывается");
         let channels = reader.spec().channels;
