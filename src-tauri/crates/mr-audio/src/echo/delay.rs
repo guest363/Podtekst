@@ -10,8 +10,6 @@ const FRAME: usize = 1 << 14;
 /// Минимум сигнала, по которому ещё возможна оценка задержки.
 pub(crate) const MIN_WINDOW_SAMPLES: usize = FRAME;
 
-
-
 /// Оценка по одному окну сигналов. Вернёт None, если в окне не набралось
 /// ни одного достаточно громкого кадра (тишина хотя бы в одном канале).
 /// Возвращает (задержка_сэмплы, проминентность) — см. калибровку порога
@@ -108,7 +106,10 @@ pub(crate) fn estimate(mic: &[f32], reference: &[f32], max_delay: usize) -> Opti
     }
     fft::ifft(&mut acc);
     let search_end = max_delay.min(spectrum_len / 2);
-    let vals: Vec<f32> = acc[..search_end].iter().map(|x| x.re / frames as f32).collect();
+    let vals: Vec<f32> = acc[..search_end]
+        .iter()
+        .map(|x| x.re / frames as f32)
+        .collect();
     let (best_idx, &peak) = vals
         .iter()
         .enumerate()
@@ -153,7 +154,8 @@ mod tests {
         for (i, m) in mic.iter_mut().enumerate() {
             *m += 0.3 * near[i];
         }
-        let (delay_found, prom) = estimate(&mic, &reference, 8000).expect("эхо должно быть найдено");
+        let (delay_found, prom) =
+            estimate(&mic, &reference, 8000).expect("эхо должно быть найдено");
         assert!(
             (delay_found as i64 - delay as i64).abs() <= 2,
             "задержка {delay_found} вместо {delay}"

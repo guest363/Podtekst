@@ -13,11 +13,17 @@ impl Cx {
     }
 
     pub fn mul(self, o: Cx) -> Cx {
-        Cx::new(self.re * o.re - self.im * o.im, self.re * o.im + self.im * o.re)
+        Cx::new(
+            self.re * o.re - self.im * o.im,
+            self.re * o.im + self.im * o.re,
+        )
     }
 
     pub fn mul_conj(self, o: Cx) -> Cx {
-        Cx::new(self.re * o.re + self.im * o.im, self.im * o.re - self.re * o.im)
+        Cx::new(
+            self.re * o.re + self.im * o.im,
+            self.im * o.re - self.re * o.im,
+        )
     }
 
     pub fn scale(self, s: f32) -> Cx {
@@ -108,8 +114,18 @@ mod tests {
         fft(&mut buf);
         let expected = naive_dft(&signal);
         for (got, want) in buf.iter().zip(expected) {
-            assert!((got.re - want.re).abs() < 1e-3, "re {} vs {}", got.re, want.re);
-            assert!((got.im - want.im).abs() < 1e-3, "im {} vs {}", got.im, want.im);
+            assert!(
+                (got.re - want.re).abs() < 1e-3,
+                "re {} vs {}",
+                got.re,
+                want.re
+            );
+            assert!(
+                (got.im - want.im).abs() < 1e-3,
+                "im {} vs {}",
+                got.im,
+                want.im
+            );
         }
         ifft(&mut buf);
         for (got, &want) in buf.iter().zip(&signal) {

@@ -38,7 +38,11 @@ fn pseudo_speech(
     for i in 0..len {
         if phrase_left == 0 {
             phrase_left = FS / 2 + (rng.next_f32().abs() * 3.0 * FS as f32) as usize;
-            gate = if rng.next_f32() > silence_share { 1.0 } else { 0.0 };
+            gate = if rng.next_f32() > silence_share {
+                1.0
+            } else {
+                0.0
+            };
             // f0 и тембр меняются от фразы к фразе, как у живого голоса;
             // диапазоны спикеров разведены — у живых людей питч-гребёнки
             // двух собеседников не совпадают целиком на всю фразу.
@@ -46,12 +50,14 @@ fn pseudo_speech(
             harmonics = (1..=9)
                 .map(|h| (f0 * h as f32, 0.9 / h as f32 + 0.2 * rng.next_f32()))
                 .collect();
-            phase = harmonics.iter().map(|_| rng.next_f32() * std::f32::consts::TAU).collect();
+            phase = harmonics
+                .iter()
+                .map(|_| rng.next_f32() * std::f32::consts::TAU)
+                .collect();
         }
         phrase_left -= 1;
         let syllable = 0.75
-            + 0.25 * (std::f32::consts::TAU * syll_rate * i as f32 / FS as f32 + syll_phase)
-                .sin();
+            + 0.25 * (std::f32::consts::TAU * syll_rate * i as f32 / FS as f32 + syll_phase).sin();
         let env = gate * syllable;
         let mut s = 0.0f32;
         for ((f, a), ph) in harmonics.iter().zip(phase.iter_mut()) {
@@ -140,16 +146,10 @@ fn db(p: f32) -> f32 {
     10.0 * p.log10()
 }
 
-
 /// ERLE по ground truth: медиана по блокам, где ближний гарантированно
 /// молчит (энергия near ниже полки), а дальний активен. Отчёт suppress_echo
 /// считает приближённо по оценке эха; здесь — эталонная метрика критерия.
-fn ground_truth_erle(
-    before: &[f32],
-    after: &[f32],
-    near_gate: &[f32],
-    reference: &[f32],
-) -> f32 {
+fn ground_truth_erle(before: &[f32], after: &[f32], near_gate: &[f32], reference: &[f32]) -> f32 {
     const BLOCK: usize = 256;
     let nf = BLOCK as f32;
     let (mut sum_before, mut sum_after, mut blocks) = (0.0f32, 0.0f32, 0usize);
@@ -182,8 +182,14 @@ fn echo_is_suppressed_by_10db_and_near_speech_survives() {
     let mut c = corpus(42, 1300, 30);
     let pristine = c.mic.clone();
     let report = suppress_echo(&mut c.mic, &c.reference, 16000);
-    assert!(report.echo_windows > 0, "эхо должно обрабатываться: {report:?}");
-    println!("ERLE по оценке из отчёта: {:?}", report.erle_db.map(|v| format!("{v:.1} дБ")));
+    assert!(
+        report.echo_windows > 0,
+        "эхо должно обрабатываться: {report:?}"
+    );
+    println!(
+        "ERLE по оценке из отчёта: {:?}",
+        report.erle_db.map(|v| format!("{v:.1} дБ"))
+    );
     let erle = ground_truth_erle(&pristine, &c.mic, &c.near_gate, &c.reference);
     println!("ERLE медиана (ground truth): {erle:.1} дБ");
     assert!(erle >= 10.0, "критерий роадмапа: ERLE {erle:.1} < 10 дБ");
@@ -244,13 +250,10 @@ fn recording_without_echo_passes_through() {
     // Гейт эха на речеподобных несвязанных каналах может сработать, но
     // мёртвая зона когерентности гасит адаптацию: отличие допустимо лишь
     // на уровне неслышного артефакта (−30 дБ от амплитуды речи 0.35).
-        // Гейт эха на речеподобных каналах не отличает «эхо» от «просто
+    // Гейт эха на речеподобных каналах не отличает «эхо» от «просто
     // системного звука» (пол PHAT-проминентности общий); защита — мёртвая
     // зона когерентности: отличие допустимо лишь на уровне околослышимого
     // артефакта, −25 дБ от амплитуды речи 0.35.
     assert!(max_diff < 0.02, "выход изменён сильно: {max_diff}");
     let _ = &mut pristine;
 }
-
-
-

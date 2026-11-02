@@ -85,12 +85,7 @@ impl EchoFilter {
     /// `mu_mult` — вес адаптации этого блока: 1.0 на блоках «только дальний»,
     /// ~0.02 на остальных (смещение от ближней речи падает в 50 раз,
     /// ремонт на чистых блоках выигрывает столько же).
-    pub(crate) fn process(
-        &mut self,
-        d: &mut [f32],
-        ref_block: &[f32],
-        mu_mult: f32,
-    ) -> BlockStats {
+    pub(crate) fn process(&mut self, d: &mut [f32], ref_block: &[f32], mu_mult: f32) -> BlockStats {
         debug_assert_eq!(d.len(), BLOCK);
         debug_assert_eq!(ref_block.len(), BLOCK);
         self.ref_hist.drain(..BLOCK);
