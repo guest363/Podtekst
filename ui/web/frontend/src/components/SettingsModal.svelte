@@ -377,8 +377,8 @@
           <div class="card-title">Словарь терминов</div>
           <div class="help-text">
             Движок распознавания отдаёт предпочтение этим словам: аббревиатуры, имена, названия.
-            Точная связка пишется через «=>»: «услышано => правильно». Клик по слову в тексте
-            подставляет его в связку. Бонус и связки действуют на следующие расшифровки:
+            «Бонус» подтягивает похожее звучание. «Связка» — точная замена «услышано → правильно»:
+            клик по слову в тексте подставляет его в связку. Действует на следующие расшифровки:
             нажмите «Повторить расшифровку».
           </div>
           <div class="row-start">
@@ -398,8 +398,10 @@
           {#if settings.hotwords.length > 0}
             <div class="dict-tags" role="list" aria-label="Термины в словаре">
               {#each settings.hotwords as t (t)}
+                {@const isPair = t.includes(' => ')}
                 <span class="dict-tag" role="listitem">
-                  {t.includes(' => ') ? t.replace(' => ', ' → ') : t}
+                  <span class="dict-badge">{isPair ? 'связка' : 'бонус'}</span>
+                  {isPair ? t.replace(' => ', ' → ') : t}
                   <button
                     type="button"
                     class="dict-del"
@@ -474,6 +476,14 @@
     background: #fff;
     border: 1px solid var(--border-card);
     border-radius: 999px;
+  }
+  .dict-badge {
+    font-size: 10px; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--text-muted);
+    border: 1px solid var(--border-card);
+    border-radius: 999px;
+    padding: 1px 6px;
   }
   .dict-del {
     border: none; background: none; cursor: pointer;

@@ -36,6 +36,24 @@
   let heardValue = $state('')
   let correctValue = $state('')
   let menuWordInput: HTMLInputElement | null = $state(null)
+  let wordMenuEl: HTMLElement | null = $state(null)
+  let speakerMenuEl: HTMLElement | null = $state(null)
+
+  function fitIntoView(
+    el: HTMLElement | null,
+    pos: { x: number; y: number },
+    anchor: { top: number; bottom: number },
+  ): { x: number; y: number } {
+    if (!el) return pos
+    const r = el.getBoundingClientRect()
+    let { x, y } = pos
+    if (r.right > window.innerWidth - 8) x = Math.max(8, x - (r.right - (window.innerWidth - 8)))
+    if (r.bottom > window.innerHeight - 8) {
+      const above = anchor.top - r.height - 6
+      y = above >= 8 ? above : Math.max(8, window.innerHeight - r.height - 8)
+    }
+    return { x, y }
+  }
   let speakerNames = $derived(
     [...new Set([...speakers.map((s) => s.name), ...utterances.map((u) => u.speaker || 'Спикер')])].filter(Boolean),
   )
@@ -160,13 +178,18 @@
       return
     }
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const estW = 250
     speakerMenu = {
       index,
-      x: Math.max(8, Math.min(rect.left, window.innerWidth - 270)),
-      y: Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - 330)),
+      x: Math.max(8, Math.min(rect.left, window.innerWidth - estW - 8)),
+      y: rect.bottom + 6,
     }
     renameValue = utterances[index]?.speaker || 'Спикер'
     await tick()
+    if (speakerMenu) {
+      const fitted = fitIntoView(speakerMenuEl, { x: speakerMenu.x, y: speakerMenu.y }, rect)
+      speakerMenu = { ...speakerMenu, ...fitted }
+    }
     menuInput?.focus()
   }
 
@@ -198,16 +221,21 @@
 
   async function openWordMenu(e: MouseEvent, index: number, word: string): Promise<void> {
     if (!word) return
-    const rect = (e.target as HTMLElement).getBoundingClientRect()
+    const anchor = (e.target as HTMLElement).getBoundingClientRect()
+    const estW = 250
     wordMenu = {
       index,
       word,
-      x: Math.max(8, Math.min(rect.left, window.innerWidth - 270)),
-      y: Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - 240)),
+      x: Math.max(8, Math.min(anchor.left, window.innerWidth - estW - 8)),
+      y: anchor.bottom + 6,
     }
     heardValue = word
     correctValue = ''
     await tick()
+    if (wordMenu) {
+      const fitted = fitIntoView(wordMenuEl, { x: wordMenu.x, y: wordMenu.y }, anchor)
+      wordMenu = { ...wordMenu, ...fitted }
+    }
     menuWordInput?.focus()
   }
 
@@ -516,6 +544,7 @@
       role="dialog"
       aria-label="Управление спикером"
       tabindex="-1"
+      bind:this={speakerMenuEl}
       style={`left: ${speakerMenu.x}px; top: ${speakerMenu.y}px`}
       onkeydown={onMenuKey}
     >
@@ -546,6 +575,7 @@
       role="dialog"
       aria-label="Добавить термин в словарь"
       tabindex="-1"
+      bind:this={wordMenuEl}
       style={`left: ${wordMenu.x}px; top: ${wordMenu.y}px`}
       onkeydown={onWordMenuKey}
     >
