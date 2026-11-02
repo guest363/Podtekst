@@ -23,12 +23,16 @@
   import { checkUpdate, update } from '../lib/update.svelte.ts'
   import People from './People.svelte'
 
-  let tab = $state<'record' | 'people' | 'voices' | 'models'>('record')
+  let tab = $state<'record' | 'people' | 'voices' | 'dict' | 'models'>('record')
   let hotwordsDraft = $state('')
   let hotwordsSaving = $state(false)
 
   async function openModelsTab(): Promise<void> {
     tab = 'models'
+  }
+
+  async function openDictTab(): Promise<void> {
+    tab = 'dict'
     if (!settings.hotwordsLoaded) await loadHotwords()
     hotwordsDraft = settings.hotwords.join('\n')
   }
@@ -124,6 +128,14 @@
         onclick={() => (tab = 'voices')}
       >
         Голоса
+      </button>
+      <button
+        class="settings-tab {tab === 'dict' ? 'active' : ''}"
+        role="tab"
+        aria-selected={tab === 'dict'}
+        onclick={() => void openDictTab()}
+      >
+        Словарь
       </button>
       <button
         class="settings-tab {tab === 'models' ? 'active' : ''}"
@@ -235,7 +247,7 @@
             {/if}
           </div>
         </div>
-      {:else}
+      {:else if tab === 'models'}
         <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Компоненты">
           <div class="card-title">Модели и компоненты</div>
           <div class="help-text">
@@ -334,10 +346,16 @@
           <div class="row-start">
             <button class="btn-secondary" onclick={() => void loadModels()}>Обновить список</button>
           </div>
-          <div class="card-title" style="margin-top: 12px">Словарь терминов</div>
+        </div>
+      {:else if tab === 'dict'}
+        <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Словарь терминов">
+          <div class="card-title">Словарь терминов</div>
           <div class="help-text">
-            Второй проход CTC даёт бонус этим словам (аббревиатуры, имена, названия)
-            и считает уверенность каждого слова. По одному на строку, не больше 500.
+            Один термин на строку. При расшифровке второй движок даёт бонус этим словам:
+            если основной ослышался, а термин распознан — слово в тексте исправляется.
+            Слова с низкой уверенностью подчёркнуты пунктиром: клик по слову добавляет
+            его в словарь. Действует на следующие расшифровки — готовый текст не меняется,
+            нажмите «Повторить расшифровку».
           </div>
           <label class="setting-check">
             <input
@@ -348,9 +366,13 @@
             <span class="setting-switch" aria-hidden="true"></span>
             <span>Второй проход CTC (уверенность + словарь)</span>
           </label>
+          <div class="help-text">
+            Без скачанной CTC-модели в «Компонентах» второй проход пропускается,
+            остальное работает как раньше.
+          </div>
           <textarea
             class="input-field"
-            rows="3"
+            rows="6"
             placeholder="Сбер&#10;овердрафт&#10;Иванова"
             autocomplete="off"
             aria-label="Словарь терминов, по одному на строку"
