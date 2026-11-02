@@ -233,7 +233,7 @@ pub fn transcribe_file(
     if channels.is_empty() || channels.iter().all(|c| c.is_empty()) {
         return Err("Файл не содержит аудиодорожки".to_string());
     }
-    let channels = if video && !crate::media_registry::load_registry().is_owned(audio_path) {
+    let mut channels = if video && !crate::media_registry::load_registry().is_owned(audio_path) {
         let n = channels.iter().map(|c| c.len()).max().unwrap_or(0);
         let mut mono = vec![0.0f32; n];
         for ch in &channels {
@@ -246,6 +246,19 @@ pub fn transcribe_file(
         channels
     };
     let is_stereo = channels.len() >= 2;
+    // Свои стерео-записи — сплит «микрофон / система»: в микрофон попадает
+    // эхо системного звука (правый канал — его чистая цифровая копия).
+    // Офлайн-проход вычищает эхо до ASR; импортное стерео не трогаем —
+    // там каналы не несут семантики «микрофон / система».
+    if is_stereo && crate::media_registry::load_registry().is_owned(audio_path) {
+        on_event(2, "Подавляю эхо системного звука…");
+        let (left, right) = channels.split_at_mut(1);
+        let report = mr_audio::echo::suppress_echo(&mut left[0], &right[0], 16000);
+        eprintln!(
+            "эхо: обработано={}, ERLE={:?} дБ",
+            report.echo_windows, report.erle_db
+        );
+    }
     let duration_sec = channels
         .first()
         .map(|c| c.len() as f64 / 16000.0)
