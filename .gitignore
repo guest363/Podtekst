@@ -30,6 +30,10 @@ media_registry.json
 # Recordings directory
 Recordings/
 
+# Локальные нарезки для проверки диаризации (P12: личные аудиоданные)
+local-diar/
+target/local-diar/
+
 # Скачанные ML-модели и голосовые пакеты (генерируются локально)
 models/
 packs/

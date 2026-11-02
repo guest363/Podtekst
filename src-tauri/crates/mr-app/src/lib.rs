@@ -14,7 +14,7 @@ pub(crate) mod screen;
 #[cfg(feature = "tauri-ui")]
 mod tauri_shell;
 #[cfg(feature = "onnx")]
-mod transcribe;
+pub mod transcribe;
 
 use config::{app_data_dir, cleanup_stale_files, configured_record_mode};
 use http::run_http_server;
