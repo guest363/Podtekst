@@ -274,18 +274,9 @@ pub fn has_audio_track(path: &Path) -> bool {
 
     // Фолбэк на ffmpeg, если ffprobe не установлен в системе:
     if let Ok(out) = std::process::Command::new(crate::tools::ffmpeg_path())
-        .args([
-            "-nostdin",
-            "-v",
-            "error",
-            "-i",
-            &path.to_string_lossy(),
-            "-map",
-            "0:a:0",
-            "-f",
-            "null",
-            "-",
-        ])
+        .args(["-nostdin", "-v", "error", "-i"])
+        .arg(path)
+        .args(["-map", "0:a:0", "-f", "null", "-"])
         .output()
     {
         if out.status.success() {
@@ -332,25 +323,20 @@ fn ffmpeg_extract_to_wav(path: &Path) -> Result<std::path::PathBuf> {
             .map(|d| d.as_nanos())
             .unwrap_or(0)
     ));
+    // create_new: не перезаписываем чужой файл и не идём по подложенной ссылке.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .map_err(|e| AudioError::Other(format!("не создан временный WAV: {e}")))?;
     let out = std::process::Command::new(crate::tools::ffmpeg_path())
-        .args([
-            "-nostdin",
-            "-v",
-            "error",
-            "-y",
-            "-i",
-            &path.to_string_lossy(),
-            "-vn",
-            "-ac",
-            "2",
-            "-ar",
-            "16000",
-            "-f",
-            "wav",
-            &tmp.to_string_lossy(),
-        ])
+        .args(["-nostdin", "-v", "error", "-y", "-i"])
+        .arg(path)
+        .args(["-vn", "-ac", "2", "-ar", "16000", "-f", "wav"])
+        .arg(&tmp)
         .output()
         .map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
             AudioError::Other(format!(
                 "ffmpeg не найден ({e}). Для видео MKV, WebM, MOV, AVI установите ffmpeg."
             ))

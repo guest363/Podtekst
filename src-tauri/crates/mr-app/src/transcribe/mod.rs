@@ -74,6 +74,45 @@ fn return_cached_models(models: ModelSet, gen: u64) {
     *cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(models);
 }
 
+/// Модели возвращаются в кэш на любом пути выхода: ошибка распознавания не
+/// должна выбрасывать сотни мегабайт весов, уже прочитанных с диска.
+struct ModelsGuard {
+    models: Option<ModelSet>,
+    gen: u64,
+}
+
+impl ModelsGuard {
+    fn take() -> Result<Self, String> {
+        let (models, gen) = take_cached_models()?;
+        Ok(Self {
+            models: Some(models),
+            gen,
+        })
+    }
+}
+
+impl std::ops::Deref for ModelsGuard {
+    type Target = ModelSet;
+
+    fn deref(&self) -> &Self::Target {
+        self.models.as_ref().expect("модели изъяты только в Drop")
+    }
+}
+
+impl std::ops::DerefMut for ModelsGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.models.as_mut().expect("модели изъяты только в Drop")
+    }
+}
+
+impl Drop for ModelsGuard {
+    fn drop(&mut self) {
+        if let Some(models) = self.models.take() {
+            return_cached_models(models, self.gen);
+        }
+    }
+}
+
 pub fn invalidate_models_cache() {
     MODELS_GEN.fetch_add(1, Ordering::SeqCst);
     let cache = MODELS_CACHE.get_or_init(|| Mutex::new(None));
@@ -104,7 +143,7 @@ pub(crate) fn extract_utterance_embedding(
     if hi.saturating_sub(lo) < (16000.0 * 0.4) as usize {
         return Err("Фрагмент короче 0.4 с: голос не извлечь".to_string());
     }
-    let (mut models, gen) = take_cached_models()?;
+    let mut models = ModelsGuard::take()?;
     let emb = models
         .embed
         .as_mut()
@@ -112,7 +151,6 @@ pub(crate) fn extract_utterance_embedding(
             "Нет модели голосовых отпечатков. Скачайте её во вкладке «Компоненты»".to_string()
         })?
         .embed(&samples[lo..hi])?;
-    return_cached_models(models, gen);
     emb.ok_or_else(|| "Голос не извлечь: тишина или шум".to_string())
 }
 
@@ -323,7 +361,7 @@ pub fn transcribe_file(
         .map(|c| c.len() as f64 / 16000.0)
         .unwrap_or(0.0);
     events::emit_stage(2, "Загружаю модели…");
-    let (mut models, models_gen) = take_cached_models()?;
+    let mut models = ModelsGuard::take()?;
     let use_gigaam = models.gigaam.is_some() && opts.engine != "whisper";
     let mut engine_name = if use_gigaam {
         "GigaAM-v3 (русский язык)".to_string()
@@ -499,17 +537,16 @@ pub fn transcribe_file(
     }
 
     let profiles = diarize::load_profiles();
-    // Заимствуем модели на время диаризации; вернём в кэш перед выходом.
-    let mut embed_ext = models.embed.take();
-    let mut segmenter = models.segmentation.take();
+    // Заимствуем модели на время диаризации: guard вернёт их в кэш на выходе.
     let mut speakers_info: Vec<SpeakerInfo> = vec![];
     let mut all_utts: Vec<Utterance> = vec![];
     for (ch, _label) in chan_list.iter() {
         let samples = &channel_samples[ch];
         let source_utts = channel_utts.remove(ch).unwrap_or_default();
-        let segmentation = if embed_ext.is_some() && !source_utts.is_empty() {
+        let segmentation = if models.embed.is_some() && !source_utts.is_empty() {
             on_event(80, "Ищу одновременную речь…");
-            segmenter
+            models
+                .segmentation
                 .as_mut()
                 .and_then(|model| match model.segment(samples) {
                     Ok(result) => Some(result),
@@ -533,7 +570,7 @@ pub fn transcribe_file(
         diar_utts = diarize::split_long_by_speaker_change(
             samples,
             diar_utts,
-            &mut embed_ext,
+            &mut models.embed,
             segmentation.as_ref(),
             &|pct, msg| on_event(pct, msg),
         );
@@ -560,7 +597,7 @@ pub fn transcribe_file(
             ch_idx,
             &default_name,
             prefix,
-            &mut embed_ext,
+            &mut models.embed,
             segmentation.as_ref(),
             &profiles,
             opts.min_speakers,
@@ -653,8 +690,10 @@ pub fn transcribe_file(
     let md_path = out_dir.join(format!("{stem}.md"));
     let txt_path = out_dir.join(format!("{stem}.txt"));
     let json_path = out_dir.join(format!("{stem}.transcript.json"));
-    std::fs::write(&md_path, report::build_markdown(&meta, &merged)).map_err(|e| e.to_string())?;
-    std::fs::write(&txt_path, report::build_text(&merged)).map_err(|e| e.to_string())?;
+    crate::fsutil::write_atomic(&md_path, report::build_markdown(&meta, &merged).as_bytes())
+        .map_err(|e| e.to_string())?;
+    crate::fsutil::write_atomic(&txt_path, report::build_text(&merged).as_bytes())
+        .map_err(|e| e.to_string())?;
     let doc = serde_json::json!({
         "meta": meta,
         "stats": {"segments": merged.len(), "words": words, "speech_sec": (speech_sec*10.0).round()/10.0, "diarized": true},
@@ -664,11 +703,8 @@ pub fn transcribe_file(
             "silhouette": u.silhouette, "words": u.words, "ctc_used": u.ctc_used,
         })).collect::<Vec<_>>(),
     });
-    std::fs::write(&json_path, serde_json::to_string_pretty(&doc).unwrap())
-        .map_err(|e| e.to_string())?;
-    models.embed = embed_ext;
-    models.segmentation = segmenter;
-    return_cached_models(models, models_gen);
+    let json = serde_json::to_string_pretty(&doc).unwrap();
+    crate::fsutil::write_atomic(&json_path, json.as_bytes()).map_err(|e| e.to_string())?;
     report::record_stats(duration_sec);
     Ok(TranscribeReport {
         md_path,

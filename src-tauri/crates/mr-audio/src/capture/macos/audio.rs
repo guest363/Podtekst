@@ -46,6 +46,8 @@ unsafe extern "C" fn input_callback(
         return status;
     }
     // Очередь переполнена — лучше потерять блок, чем блокировать аудиопоток.
+    // shortcut: `to_vec` аллоцирует в real-time колбэке CoreAudio; заменить на
+    // кольцевой буфер с предвыделенной памятью; апгрейдить при пропусках на живых записях.
     let _ = ctx.tx.try_send(buffer[..n].to_vec());
     0
 }

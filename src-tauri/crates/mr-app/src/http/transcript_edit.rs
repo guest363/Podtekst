@@ -34,7 +34,8 @@ fn edit_transcript(body: &Value) -> Result<Value, (u16, String)> {
         (&md_path, markdown.clone()),
         (&txt_path, text),
     ] {
-        atomic_write(path, &contents).map_err(|e| (500, e))?;
+        crate::fsutil::write_atomic(path, contents.as_bytes())
+            .map_err(|e| (500, format!("Не удалось записать {}: {e}", path.display())))?;
     }
 
     Ok(json!({
@@ -234,18 +235,6 @@ fn apply_edit(data: &mut Value, body: &Value) -> Result<(), String> {
     }
     data["stats"]["segments"] = json!(utterances.len());
     data["stats"]["words"] = json!(words);
-    Ok(())
-}
-
-fn atomic_write(path: &Path, contents: &str) -> Result<(), String> {
-    let name = path.file_name().unwrap_or_default().to_string_lossy();
-    let tmp = path.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
-    std::fs::write(&tmp, contents)
-        .map_err(|e| format!("Не удалось записать {}: {e}", path.display()))?;
-    if let Err(e) = std::fs::rename(&tmp, path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(format!("Не удалось сохранить {}: {e}", path.display()));
-    }
     Ok(())
 }
 

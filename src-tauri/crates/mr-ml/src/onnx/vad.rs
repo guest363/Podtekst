@@ -37,8 +37,12 @@ impl SileroVad {
             full_input.resize(VAD_CONTEXT + VAD_WINDOW, 0.0);
         }
 
+        // Контекст — последние 64 сэмпла реально поданного потока, без хвоста,
+        // добитого нулями до окна модели: иначе короткое последнее окно
+        // обнуляло бы контекст и следующий вызов терял конец фразы.
+        let real_len = VAD_CONTEXT + n;
         self.context
-            .copy_from_slice(&full_input[full_input.len() - VAD_CONTEXT..]);
+            .copy_from_slice(&full_input[real_len - VAD_CONTEXT..real_len]);
 
         let mut f32_in = HashMap::new();
         f32_in.insert(

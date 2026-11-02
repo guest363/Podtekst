@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 ))]
 use tauri::menu::{Menu, MenuItem};
 #[cfg(feature = "tauri-ui")]
-use tauri::Manager;
+use tauri::{Manager, RunEvent};
 
 #[cfg(all(
     feature = "tauri-ui",
@@ -40,8 +40,19 @@ pub(crate) const WINDOW_MIN_H: f64 = 560.0;
     not(any(target_os = "android", target_os = "ios"))
 ))]
 fn toggle_recording(state: &Arc<Mutex<RecordingState>>) {
-    let mut guard = state.lock().unwrap();
+    let mut guard = state.lock().unwrap_or_else(|e| e.into_inner());
     toggle_recording_with_notify(&mut guard);
+}
+
+#[cfg(feature = "tauri-ui")]
+fn finalize_recording_on_exit(app: &tauri::AppHandle<tauri::Wry>) {
+    let Some(st) = app.try_state::<Arc<Mutex<RecordingState>>>() else {
+        return;
+    };
+    let mut guard = st.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.is_recording {
+        let _ = crate::recording::stop_recording_with_notify(&mut guard);
+    }
 }
 
 #[cfg(all(
@@ -164,7 +175,7 @@ fn setup_global_shortcut(app: &tauri::AppHandle<tauri::Wry>) {
 }
 
 #[cfg(feature = "tauri-ui")]
-pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visible: bool) -> ! {
+pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visible: bool) -> i32 {
     let st = state.clone();
     std::thread::spawn(move || {
         crate::run_http_server(st, http_port);
@@ -203,7 +214,7 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
         // Сначала без комбинации: на Wayland её регистрирует портал,
         // на X11/macOS/Windows — плагин. Иначе на Wayland был бы двойной тумблер.
         .plugin(tauri_plugin_global_shortcut::Builder::new().build());
-    builder
+    let app = builder
         .on_window_event(|win, event| {
             // Закрытие окна = свернуть, а не выйти (десктоп: выход — через меню
             // трея; на мобильных система сама прибивает процесс).
@@ -408,10 +419,16 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
             eprintln!("ошибка запуска Tauri-окна: {e}");
             std::process::exit(1);
         });
-    std::process::exit(0);
+    app.run_return(|app_handle, event| {
+        // P7: и трей, и IPC завершают процесс через exit(0) — финализируем запись
+        // до остановки event loop, пока живы состояние и чекпоинт WAV.
+        if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
+            finalize_recording_on_exit(app_handle);
+        }
+    })
 }

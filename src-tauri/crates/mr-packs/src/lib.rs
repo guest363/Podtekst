@@ -6,10 +6,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub use manifest::{
-    create_pack, delete_pack, ensure_default_pack, get_active_packs, list_packs, pack_info_of,
-    set_pack_enabled,
+    create_pack, create_pack_with_space, delete_pack, ensure_default_pack, get_active_packs,
+    list_packs, pack_info_of, set_pack_enabled,
 };
-pub use transfer::{export_pack, import_pack};
+pub use transfer::{export_pack, import_pack, import_pack_with_space};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PacksError {
@@ -176,10 +176,24 @@ pub(crate) fn write_json_atomic<T: serde::Serialize>(path: &Path, value: &T) -> 
     {
         let mut f = fs::File::create(&tmp)?;
         f.write_all(text.as_bytes())?;
-        f.flush()?;
+        // sync_all до rename: после переименования данные обязаны уже быть на диске.
+        f.sync_all()?;
     }
     fs::rename(&tmp, path)?;
     Ok(())
+}
+
+/// Отпечатки сразу в каноническом формате v3. Пространство пишем только когда
+/// оно известно: пустая строка означала бы «чужое» и отбросила бы все профили.
+pub(crate) fn voiceprints_v3(
+    profiles: Vec<serde_json::Value>,
+    embedding_space: &str,
+) -> serde_json::Value {
+    let mut value = serde_json::json!({"version": 3, "profiles": profiles});
+    if !embedding_space.is_empty() {
+        value["embedding_space"] = serde_json::json!(embedding_space);
+    }
+    value
 }
 
 #[cfg(test)]

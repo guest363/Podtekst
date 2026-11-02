@@ -98,6 +98,7 @@ impl Node {
 #[derive(Debug)]
 pub(crate) struct DiarIntervalTree {
     segments: Vec<DiarSegment>,
+    edges: Vec<f64>,
     root: Option<Box<Node>>,
 }
 
@@ -116,7 +117,17 @@ impl DiarIntervalTree {
             })
             .collect();
         let root = Node::build(&segments, (0..segments.len()).collect());
-        Self { segments, root }
+        let mut edges = Vec::with_capacity(segments.len() * 2);
+        for segment in &segments {
+            edges.push(segment.start);
+            edges.push(segment.end);
+        }
+        edges.sort_by(f64::total_cmp);
+        Self {
+            segments,
+            edges,
+            root,
+        }
     }
 
     pub(crate) fn assign_dominant_speaker(&self, start: f64, end: f64) -> Option<(String, f64)> {
@@ -140,13 +151,19 @@ impl DiarIntervalTree {
     }
 
     fn snap_to_pause(&self, time: f64, window: f64) -> Option<f64> {
+        let at = self.edges.partition_point(|&edge| edge < time);
         let mut best: Option<(f64, f64)> = None;
-        for segment in &self.segments {
-            for edge in [segment.start, segment.end] {
-                let distance = (edge - time).abs();
-                if distance <= window && best.is_none_or(|(d, _)| distance < d) {
-                    best = Some((distance, edge));
-                }
+        if at > 0 {
+            let edge = self.edges[at - 1];
+            let distance = (edge - time).abs();
+            if distance <= window {
+                best = Some((distance, edge));
+            }
+        }
+        if let Some(&edge) = self.edges.get(at) {
+            let distance = (edge - time).abs();
+            if distance <= window && best.is_none_or(|(d, _)| distance < d) {
+                best = Some((distance, edge));
             }
         }
         best.map(|(_, edge)| edge)
@@ -169,17 +186,23 @@ pub(crate) fn split_utterance_by_word_speakers(
     let total: f64 = weights.iter().sum::<f64>().max(f64::EPSILON);
     // shortcut: ASR не даёт word timestamps — вес по символам и привязка
     // границ к паузам диаризации; заменить при появлении alignment.
+    // 20 мс — минимум, чтобы assign_dominant_speaker видел пересечение. Если
+    // на все слова меньше 20 мс, шаг уменьшается пропорционально: иначе
+    // кумулятивный пол даёт слова нулевой длины.
+    let step = ((utterance.end - utterance.start) / word_count as f64).min(0.02);
     let mut bounds = Vec::with_capacity(word_count + 1);
     bounds.push(utterance.start);
     let mut passed = 0.0;
-    for weight in weights.iter().take(word_count - 1) {
+    for (i, weight) in weights.iter().take(word_count - 1).enumerate() {
         passed += weight;
         let raw = utterance.start + (utterance.end - utterance.start) * passed / total;
         let snapped = tree.snap_to_pause(raw, 0.15).unwrap_or(raw);
         let previous = *bounds.last().unwrap_or(&utterance.start);
-        // 20 мс — минимум, иначе assign_dominant_speaker не видит пересечения.
-        let lower = (previous + 0.02).min(utterance.end);
-        bounds.push(if snapped > lower { snapped } else { raw }.clamp(lower, utterance.end));
+        // Резерв на оставшиеся слова: ранняя граница не должна съесть их время.
+        let upper = (utterance.end - (word_count - 1 - i) as f64 * step).max(utterance.start);
+        let lower = (previous + step).min(upper);
+        let chosen = if snapped > lower { snapped } else { raw };
+        bounds.push(chosen.clamp(lower, upper));
     }
     bounds.push(utterance.end);
     let mut assigned = Vec::with_capacity(word_count);
@@ -338,6 +361,33 @@ mod tests {
                 .join(" "),
             source.text
         );
+    }
+
+    #[test]
+    fn many_words_in_short_span_keep_positive_duration() {
+        let tree = DiarIntervalTree::new(&[utt(0.0, 0.03, "A", "a"), utt(0.03, 0.06, "B", "b")]);
+        let source = utt(0.0, 0.06, "unknown", "а б в г д е");
+        let out = split_utterance_by_word_speakers(&source, &tree);
+        assert!(out.iter().all(|u| u.end > u.start));
+        assert_eq!(
+            out.iter()
+                .map(|u| u.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+            source.text
+        );
+    }
+
+    #[test]
+    fn pause_snap_picks_nearest_edge_binary_search() {
+        let tree = DiarIntervalTree::new(&[
+            utt(0.0, 0.4, "A", "a"),
+            utt(0.4, 1.0, "B", "b"),
+            utt(1.0, 3.0, "C", "c"),
+        ]);
+        assert_eq!(tree.snap_to_pause(0.42, 0.15), Some(0.4));
+        assert_eq!(tree.snap_to_pause(0.98, 0.15), Some(1.0));
+        assert_eq!(tree.snap_to_pause(0.7, 0.15), None);
     }
 
     #[test]

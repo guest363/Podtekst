@@ -86,7 +86,14 @@ pub fn list_packs(app_data: &Path) -> Result<Vec<PackInfo>> {
         if !dir.is_dir() {
             continue;
         }
-        let m = read_manifest(&dir)?;
+        let m = match read_manifest(&dir) {
+            Ok(m) => m,
+            Err(e) => {
+                // Один битый пакет не должен прятать остальные из списка.
+                eprintln!("предупреждение: пакет {} пропущен: {e}", dir.display());
+                continue;
+            }
+        };
         let people_count = count_json_array(&dir.join("people.json"), None);
         let voiceprints_count = count_json_array(&dir.join("voiceprints.json"), Some("profiles"));
         let snippets_count = fs::read_dir(dir.join("snippets"))
@@ -143,7 +150,19 @@ pub fn set_pack_enabled(app_data: &Path, pack_id: &str, enabled: bool) -> Result
     Ok(true)
 }
 
+/// Новый пакет без известного пространства отпечатков: файл сразу v3, поле
+/// `embedding_space` появится при первом сохранённом профиле.
 pub fn create_pack(app_data: &Path, name: &str, description: &str) -> Result<PackInfo> {
+    create_pack_with_space(app_data, name, description, "")
+}
+
+/// Новый пакет с явно известным пространством отпечатков (`""` — неизвестно).
+pub fn create_pack_with_space(
+    app_data: &Path,
+    name: &str,
+    description: &str,
+    embedding_space: &str,
+) -> Result<PackInfo> {
     let clean = name.trim();
     if clean.is_empty() {
         return Err(PacksError::Other(
@@ -172,7 +191,7 @@ pub fn create_pack(app_data: &Path, name: &str, description: &str) -> Result<Pac
     write_json_atomic(&dir.join("people.json"), &json!([]))?;
     write_json_atomic(
         &dir.join("voiceprints.json"),
-        &json!({"version": 2, "profiles": []}),
+        &super::voiceprints_v3(vec![], embedding_space),
     )?;
     Ok(PackInfo {
         id: m.id,
@@ -273,5 +292,48 @@ mod tests {
         let active = get_active_packs(&app).unwrap();
         assert!(active.iter().any(|p| p.ends_with("default")));
         assert_eq!(active.len(), 1);
+    }
+
+    #[test]
+    fn created_pack_writes_v3_voiceprints() {
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (_g, app) = tmp_app("v3");
+        let pack = create_pack(&app, "Пакет", "").unwrap();
+        let v: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(packs_root_dir(&app).join(&pack.id).join("voiceprints.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(v["version"], 3);
+        assert_eq!(v["profiles"].as_array().unwrap().len(), 0);
+
+        let known = create_pack_with_space(&app, "Пакет со space", "", "space-a").unwrap();
+        let v: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                packs_root_dir(&app)
+                    .join(&known.id)
+                    .join("voiceprints.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(v["version"], 3);
+        assert_eq!(v["embedding_space"], "space-a");
+    }
+
+    #[test]
+    fn list_packs_skips_corrupted_manifest() {
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (_g, app) = tmp_app("skip-corrupt");
+        let good = create_pack(&app, "Хороший", "").unwrap();
+        let bad = create_pack(&app, "Плохой", "").unwrap();
+        std::fs::write(
+            packs_root_dir(&app).join(&bad.id).join("manifest.json"),
+            "{ битый",
+        )
+        .unwrap();
+        let packs = list_packs(&app).unwrap();
+        assert!(packs.iter().any(|p| p.id == good.id));
+        assert!(!packs.iter().any(|p| p.id == bad.id));
     }
 }

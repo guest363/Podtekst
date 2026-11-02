@@ -1,21 +1,37 @@
 //! Log-Mel фильтробанк (16 кГц) с параметризацией окна/шага/бинов.
 //!
 //! Пресеты:
-//! * Whisper: 400/160/80, `log10`, нормализация `(x + 4) / 4` после отсечки динамики 8 дБ.
+//! * Whisper (librosa/slaney): 400/160/128, периодическое окно Hann, reflect-pad
+//!   `center=True`, `log10`, отсечка динамики 8 дБ по глобальному максимуму окна,
+//!   затем `(x + 4) / 4`.
 //! * GigaAM/NeMo: 320/160/64, HTK-mel, натуральный логарифм, preemphasis 0.97.
 //! * WeSpeaker/pyannote: 400/160/80, HTK-mel, натуральный логарифм, preemphasis 0.97 (кухня Kaldi-fbank).
 //! * ERes2NetV2 (3D-Speaker): то же, но окно Hann и покадровая кухня kaldi
 //!   (минус среднее кадра → преэмфазис внутри кадра), как `torchaudio.compliance.kaldi.fbank`.
 
 fn hann(n: usize) -> Vec<f64> {
+    if n <= 1 {
+        return vec![1.0; n];
+    }
     (0..n)
         .map(|i| 0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / (n - 1) as f64).cos()))
         .collect()
 }
 
 fn hamming(n: usize) -> Vec<f64> {
+    if n <= 1 {
+        return vec![1.0; n];
+    }
     (0..n)
         .map(|i| 0.54 - 0.46 * (2.0 * std::f64::consts::PI * i as f64 / (n - 1) as f64).cos())
+        .collect()
+}
+
+/// Периодическое окно Hann (знаменатель `n`, как `torch.hann_window` и
+/// librosa с `fftbins=True`) — эталон Whisper использует именно его.
+fn hann_periodic(n: usize) -> Vec<f64> {
+    (0..n)
+        .map(|i| 0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / n as f64).cos()))
         .collect()
 }
 
@@ -89,6 +105,82 @@ fn mel_filters_kaldi(
         }
     }
     fb
+}
+
+/// Шкала Slaney/hearers (`librosa.filters.mel(htk=False)`): линейная до 1 кГц,
+/// затем логарифмическая. Эталон Whisper считает банки именно в ней.
+fn hz_to_mel_slaney(hz: f64) -> f64 {
+    const F_SP: f64 = 200.0 / 3.0;
+    const MIN_LOG_HZ: f64 = 1000.0;
+    const MIN_LOG_MEL: f64 = MIN_LOG_HZ / F_SP;
+    if hz >= MIN_LOG_HZ {
+        MIN_LOG_MEL + (hz / MIN_LOG_HZ).ln() / (6.4_f64.ln() / 27.0)
+    } else {
+        hz / F_SP
+    }
+}
+
+fn mel_to_hz_slaney(mel: f64) -> f64 {
+    const F_SP: f64 = 200.0 / 3.0;
+    const MIN_LOG_HZ: f64 = 1000.0;
+    const MIN_LOG_MEL: f64 = MIN_LOG_HZ / F_SP;
+    if mel >= MIN_LOG_MEL {
+        MIN_LOG_HZ * ((6.4_f64.ln() / 27.0) * (mel - MIN_LOG_MEL)).exp()
+    } else {
+        mel * F_SP
+    }
+}
+
+/// Мел-банки librosa с `htk=False, norm="slaney"` — контракт Whisper.
+/// Норма `2 / (f2 - f0)` выравнивает площадь треугольников: без неё широкие
+/// верхние банки доминировали бы над узкими нижними.
+fn mel_filters_slaney(
+    sample_rate: u32,
+    n_fft: usize,
+    n_mels: usize,
+    fmin: f64,
+    fmax: f64,
+) -> Vec<Vec<f64>> {
+    let mel_lo = hz_to_mel_slaney(fmin);
+    let mel_hi = hz_to_mel_slaney(fmax);
+    let points: Vec<f64> = (0..n_mels + 2)
+        .map(|i| mel_to_hz_slaney(mel_lo + (mel_hi - mel_lo) * i as f64 / (n_mels + 1) as f64))
+        .collect();
+    let bins = n_fft / 2 + 1;
+    let mut fb = vec![vec![0.0; bins]; n_mels];
+    for (m, row) in fb.iter_mut().enumerate() {
+        let (f0, f1, f2) = (points[m], points[m + 1], points[m + 2]);
+        let enorm = 2.0 / (f2 - f0);
+        for (k, slot) in row.iter_mut().enumerate() {
+            let freq = k as f64 * sample_rate as f64 / n_fft as f64;
+            let lower = (freq - f0) / (f1 - f0);
+            let upper = (f2 - freq) / (f2 - f1);
+            *slot = lower.min(upper).max(0.0) * enorm;
+        }
+    }
+    fb
+}
+
+/// reflect-padding как `torch.stft(center=True, pad_mode="reflect")`:
+/// крайние сэмплы не дублируются.
+fn reflect_pad(samples: &[f32], pad: usize) -> Vec<f32> {
+    let n = samples.len();
+    let mut out = Vec::with_capacity(n + 2 * pad);
+    if n == 0 {
+        out.resize(2 * pad, 0.0);
+        return out;
+    }
+    if n <= pad {
+        // Для сигнала короче pad reflect-режим не определён — повторяем край.
+        out.resize(pad, samples[0]);
+        out.extend_from_slice(samples);
+        out.resize(pad + n + pad, samples[n - 1]);
+        return out;
+    }
+    out.extend((1..=pad).rev().map(|i| samples[i]));
+    out.extend_from_slice(samples);
+    out.extend((1..=pad).map(|i| samples[n - 1 - i]));
+    out
 }
 
 /// Прямое ДПФ. Только для длин с простым множителем > 5 (в пайплайне таких
@@ -288,12 +380,43 @@ pub fn log_mel_frames(samples: &[f32], p: FrontendParams) -> Vec<Vec<f32>> {
     frames
 }
 
+/// Мел-спектрограмма Whisper с точной семантикой эталона:
+/// `librosa.filters.mel(htk=False, norm="slaney")`, `torch.stft(center=True,
+/// reflect)` и отбрасывание последнего кадра (`stft[..., :-1]`). Отсечка
+/// динамики — по глобальному максимуму всего окна, а не по кадру.
 pub fn whisper_mel(samples: &[f32]) -> Vec<Vec<f32>> {
-    let mut frames = log_mel_frames(samples, WHISPER_FRONTEND);
+    let p = WHISPER_FRONTEND;
+    let padded = reflect_pad(samples, p.win_length / 2);
+    if padded.len() < p.win_length {
+        return Vec::new();
+    }
+    let win = hann_periodic(p.win_length);
+    let fb = mel_filters_slaney(p.sample_rate, p.fft_size, p.n_mels, p.fmin, p.fmax);
+    // center=True добавляет по half-window с каждой стороны; torch отдаёт на
+    // один кадр больше, чем нужно модели, и эталон его отбрасывает.
+    let n_frames = (1 + (padded.len() - p.win_length) / p.hop) - 1;
+    let mut frames = Vec::with_capacity(n_frames);
+    let mut global_max = f32::NEG_INFINITY;
+    for t in 0..n_frames {
+        let start = t * p.hop;
+        let frame: Vec<f64> = padded[start..start + p.win_length]
+            .iter()
+            .zip(&win)
+            .map(|(&x, &w)| x as f64 * w)
+            .collect();
+        let power = fft_power(&frame);
+        let mut mel = vec![0f32; p.n_mels];
+        for (m, row) in fb.iter().enumerate() {
+            let e: f64 = row.iter().zip(power.iter()).map(|(w, q)| w * q).sum();
+            let v = (e.max(1e-10)).log10() as f32;
+            mel[m] = v;
+            global_max = global_max.max(v);
+        }
+        frames.push(mel);
+    }
     for row in frames.iter_mut() {
-        let max = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
         for x in row.iter_mut() {
-            *x = ((*x).max(max - 8.0) + 4.0) / 4.0;
+            *x = ((*x).max(global_max - 8.0) + 4.0) / 4.0;
         }
     }
     frames
@@ -372,6 +495,59 @@ mod tests {
         let tone_e: f32 = w.iter().map(|r| r.iter().sum::<f32>()).sum();
         let sil_e: f32 = sil.iter().map(|r| r.iter().sum::<f32>()).sum();
         assert!(tone_e > sil_e);
+    }
+
+    /// 30 с при hop 160 и center=True дают ровно 3000 кадров, как у эталона.
+    #[test]
+    fn whisper_mel_reference_frame_count_and_finite() {
+        let frames = whisper_mel(&vec![0.0f32; 16_000 * 30]);
+        assert_eq!(frames.len(), 3000);
+        assert!(frames.iter().all(|r| r.len() == 128));
+        assert!(frames.iter().all(|r| r.iter().all(|x| x.is_finite())));
+        // Нулевая мощность упирается в log10(1e-10) = -10, после (x + 4) / 4
+        // это ровно -1.5 — жёсткая граница снизу для тишины.
+        let max = frames
+            .iter()
+            .flatten()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!((max + 1.5).abs() < 1e-5, "тишина дала max {max}");
+        // Более короткий сигнал не должен раздувать число кадров.
+        assert_eq!(whisper_mel(&vec![0.0f32; 16_000]).len(), 100);
+    }
+
+    /// Отсечка динамики глобальная: тихие кадры не поднимаются выше общего
+    /// пика минус 8 дБ (2.0 после деления на 4), в отличие от покадровой.
+    #[test]
+    fn whisper_mel_clamps_by_global_max() {
+        let sr = 16_000usize;
+        let mut signal = vec![0.0f32; sr * 2];
+        for (i, x) in signal.iter_mut().take(sr / 2).enumerate() {
+            *x = (2.0 * std::f64::consts::PI * 440.0 * i as f64 / sr as f64).sin() as f32;
+        }
+        let frames = whisper_mel(&signal);
+        let max = frames
+            .iter()
+            .flatten()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
+        let min = frames
+            .iter()
+            .flatten()
+            .copied()
+            .fold(f32::INFINITY, f32::min);
+        assert!(max.is_finite());
+        // Тишина упирается ровно в global_max - 8 дБ, то есть в max - 2.0
+        // после `(x + 4) / 4`; при покадровой отсечке она была бы выше.
+        assert!((min - (max - 2.0)).abs() < 1e-4, "min {min}, max {max}");
+    }
+
+    #[test]
+    fn degenerate_windows_have_no_nan() {
+        assert!(hann(0).is_empty());
+        assert_eq!(hann(1), vec![1.0]);
+        assert_eq!(hamming(0), Vec::<f64>::new());
+        assert_eq!(hamming(1), vec![1.0]);
     }
 
     /// БПФ должно совпадать с прямым ДПФ для всех используемых размеров кадра.

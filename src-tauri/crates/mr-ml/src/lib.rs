@@ -23,6 +23,9 @@ pub const EMBEDDING_DIM: usize = 192;
 /// (фрагменты от 1.5 с); у самой модели в карточке порог 0.365.
 pub const DEFAULT_MATCH_THRESHOLD: f64 = 0.45;
 pub const DEFAULT_MIN_MARGIN: f64 = 0.06;
+/// Эмпирический пол отрыва лидера: ниже него два кандидата неразличимы по
+/// точности эмбеддинга, и автоматическое назначение имени чаще вредит.
+const MIN_MATCH_MARGIN_FLOOR: f64 = 0.03;
 pub const HIGH_CONFIDENCE_THRESHOLD: f64 = 0.78;
 pub const SAME_SPEAKER_MERGE_SIM: f64 = 0.55;
 pub const MAX_PROTOTYPES: usize = 10;
@@ -376,7 +379,8 @@ pub fn match_voiceprints_matrix(
         }
         let margin = results[r].margin;
         if profiles.len() > 1
-            && (margin < 0.03 || (margin < min_margin && s < HIGH_CONFIDENCE_THRESHOLD))
+            && (margin < MIN_MATCH_MARGIN_FLOOR
+                || (margin < min_margin && s < HIGH_CONFIDENCE_THRESHOLD))
         {
             continue;
         }

@@ -737,7 +737,10 @@ mod tests {
         let mono = dir.join("m.wav");
         mr_audio::write_mono_wav(&mono, &zeros, 16000).unwrap();
         let body = build_wav_snippet(&mono, 0.0, 1.0, Some(1)).expect("фолбэк на моно");
-        assert_eq!(parse_wav_header(&body[..44]).expect("заголовок").channels, 1);
+        assert_eq!(
+            parse_wav_header(&body[..44]).expect("заголовок").channels,
+            1
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -8,6 +8,27 @@ use super::media::{
 };
 use crate::config::save_dir;
 
+const SIDECAR_SUFFIXES: [&str; 3] = [".transcript.json", ".md", ".txt"];
+
+/// Тот же stem у другого медиафайла означает общие sidecar-файлы: удалять или
+/// переносить их вместе с одним из файлов нельзя.
+fn other_media_with_stem(dir: &Path, stem: &str, exclude: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        let p = e.path();
+        p != exclude
+            && p.is_file()
+            && p.file_stem()
+                .map(|s| s.to_string_lossy().as_ref() == stem)
+                .unwrap_or(false)
+            && p.extension()
+                .map(|x| is_media_ext(&x.to_string_lossy().to_lowercase()))
+                .unwrap_or(false)
+    })
+}
+
 pub(super) fn handle_recording_rename(
     request: tiny_http::Request,
     body: serde_json::Value,
@@ -99,6 +120,17 @@ pub(super) fn handle_recording_rename(
         );
         return;
     }
+    // Sidecar-файлы переименовываются без замены: чужую расшифровку не теряем.
+    for suffix in SIDECAR_SUFFIXES {
+        if dir.join(format!("{new_stem}{suffix}")).exists() {
+            json_response(
+                request,
+                json!({"ok": false, "error": "Файлы расшифровки с таким именем уже есть"}),
+                409,
+            );
+            return;
+        }
+    }
     let was_owned = crate::media_registry::load_registry().is_owned(&old_path);
     if std::fs::rename(&old_path, &new_path).is_err() {
         json_response(
@@ -118,10 +150,12 @@ pub(super) fn handle_recording_rename(
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
-    for suffix in [".transcript.json", ".md", ".txt"] {
-        let from = dir.join(format!("{old_stem}{suffix}"));
-        if from.exists() {
-            let _ = std::fs::rename(&from, dir.join(format!("{new_stem}{suffix}")));
+    if !other_media_with_stem(&dir, &old_stem, &old_path) {
+        for suffix in SIDECAR_SUFFIXES {
+            let from = dir.join(format!("{old_stem}{suffix}"));
+            if from.exists() {
+                let _ = std::fs::rename(&from, dir.join(format!("{new_stem}{suffix}")));
+            }
         }
     }
     json_response(
@@ -188,20 +222,27 @@ pub(super) fn handle_recording_delete(
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
-    let mut deleted = vec![p
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default()];
-    let _ = std::fs::remove_file(&p);
-    crate::media_registry::unmark_owned(&p);
-    for suffix in [".transcript.json", ".md", ".txt"] {
-        let side = dir.join(format!("{stem}{suffix}"));
-        if side.exists() && std::fs::remove_file(&side).is_ok() {
-            deleted.push(
-                side.file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_default(),
-            );
+    let shared_sidecars = other_media_with_stem(&dir, &stem, &p);
+    let mut deleted = Vec::new();
+    let removed = std::fs::remove_file(&p).is_ok();
+    if removed {
+        crate::media_registry::unmark_owned(&p);
+        deleted.push(
+            p.file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        );
+    }
+    if removed && !shared_sidecars {
+        for suffix in SIDECAR_SUFFIXES {
+            let side = dir.join(format!("{stem}{suffix}"));
+            if side.exists() && std::fs::remove_file(&side).is_ok() {
+                deleted.push(
+                    side.file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_default(),
+                );
+            }
         }
     }
     json_response(request, json!({"ok": true, "deleted": deleted}), 200);
@@ -359,14 +400,24 @@ pub(super) fn handle_extract_audio(request: tiny_http::Request, body: serde_json
         return;
     }
     let src = PathBuf::from(&media);
-    let out = src.parent().unwrap_or(Path::new(".")).join(format!(
-        "{}.{}",
+    let dir = src.parent().unwrap_or(Path::new("."));
+    let ext = if codec == "wav" { "wav" } else { "mp3" };
+    let candidate = format!(
+        "{}.{ext}",
         src.file_stem()
             .map(|s| s.to_string_lossy())
             .unwrap_or_default()
-            .as_ref(),
-        if codec == "wav" { "wav" } else { "mp3" }
-    ));
+    );
+    // Извлечение поверх исходника стёрло бы видео.
+    if dir.join(&candidate) == src {
+        json_response(
+            request,
+            json!({"ok": false, "error": "Имя результата совпадает с исходным файлом"}),
+            400,
+        );
+        return;
+    }
+    let out = crate::recording::unique_media_path(dir, &candidate);
     let args: Vec<String> = if codec == "wav" {
         vec![
             "-y".into(),
@@ -405,6 +456,8 @@ pub(super) fn handle_extract_audio(request: tiny_http::Request, body: serde_json
             )
         }
         Ok(o) => {
+            // ffmpeg мог оставить недописанный контейнер.
+            let _ = std::fs::remove_file(&out);
             let err = String::from_utf8_lossy(&o.stderr)
                 .chars()
                 .take(300)
@@ -415,11 +468,14 @@ pub(super) fn handle_extract_audio(request: tiny_http::Request, body: serde_json
                 500,
             )
         }
-        Err(e) => json_response(
-            request,
-            json!({"ok": false, "error": format!("ffmpeg не найден: {e}")}),
-            500,
-        ),
+        Err(e) => {
+            let _ = std::fs::remove_file(&out);
+            json_response(
+                request,
+                json!({"ok": false, "error": format!("ffmpeg не найден: {e}")}),
+                500,
+            )
+        }
     }
 }
 

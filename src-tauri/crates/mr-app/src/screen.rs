@@ -106,6 +106,19 @@ fn probe_windows_encoder() -> Option<&'static str> {
     }
 }
 
+/// Кодировщик для перекодирования уже записанного видео. На Windows libx264
+/// может отсутствовать, поэтому повторяем тот же выбор, что и при захвате.
+fn fallback_encoder() -> &'static str {
+    #[cfg(windows)]
+    {
+        windows_encoder().unwrap_or("libx264")
+    }
+    #[cfg(not(windows))]
+    {
+        "libx264"
+    }
+}
+
 impl ScreenCaptureSession {
     #[cfg(windows)]
     pub(crate) fn start(started_ts: u64) -> Result<Self, String> {
@@ -138,7 +151,9 @@ impl ScreenCaptureSession {
             .arg(&video_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(Stdio::piped());
+            // stderr не читаем во время записи: заполненный pipe заблокировал бы
+            // ffmpeg. Диагностика старта ниже и так проверяет только код выхода.
+            .stderr(Stdio::null());
 
         let mut child = cmd
             .spawn()
@@ -146,15 +161,7 @@ impl ScreenCaptureSession {
         // ffmpeg не печатает READY, поэтому handshake — процесс жив спустя секунду
         std::thread::sleep(Duration::from_millis(1200));
         if let Ok(Some(status)) = child.try_wait() {
-            let mut err = String::new();
-            if let Some(mut stderr) = child.stderr.take() {
-                use std::io::Read;
-                let _ = stderr.read_to_string(&mut err);
-            }
-            return Err(format!(
-                "ffmpeg завершился сразу ({status}): {}",
-                err.trim()
-            ));
+            return Err(format!("ffmpeg завершился сразу ({status})"));
         }
         eprintln!("[SCREEN] Запись экрана запущена: {video_path:?}");
 
@@ -276,6 +283,11 @@ pub(crate) fn mux_screen_and_audio(
 ) -> Result<(), String> {
     eprintln!("[SCREEN] Склейка видео {video_path:?} и аудио {audio_path:?} -> {final_path:?}");
 
+    let remove_leftovers = || {
+        let _ = std::fs::remove_file(video_path);
+        let _ = std::fs::remove_file(final_path);
+    };
+
     let mut cmd = Command::new(mr_audio::tools::ffmpeg_path());
     cmd.arg("-y")
         .arg("-i")
@@ -289,9 +301,13 @@ pub(crate) fn mux_screen_and_audio(
         .arg("-shortest")
         .arg(final_path);
 
-    let output = cmd
-        .output()
-        .map_err(|e| format!("Не удалось запустить ffmpeg: {e}"))?;
+    let output = match cmd.output() {
+        Ok(output) => output,
+        Err(e) => {
+            remove_leftovers();
+            return Err(format!("Не удалось запустить ffmpeg: {e}"));
+        }
+    };
     if output.status.success() && final_path.is_file() {
         let size = std::fs::metadata(final_path).map(|m| m.len()).unwrap_or(0);
         if size > 1000 {
@@ -303,6 +319,7 @@ pub(crate) fn mux_screen_and_audio(
     }
 
     eprintln!("[SCREEN] Прямое копирование не сработало, запускаю перекодирование...");
+    let encoder = fallback_encoder();
     let mut cmd = Command::new(mr_audio::tools::ffmpeg_path());
     cmd.arg("-y")
         .arg("-i")
@@ -310,19 +327,19 @@ pub(crate) fn mux_screen_and_audio(
         .arg("-i")
         .arg(audio_path)
         .arg("-c:v")
-        .arg("libx264")
-        .arg("-preset")
-        .arg("ultrafast")
-        .arg("-crf")
-        .arg("23")
-        .arg("-c:a")
-        .arg("aac")
-        .arg("-shortest")
-        .arg(final_path);
+        .arg(encoder);
+    if encoder == "libx264" {
+        cmd.args(["-preset", "ultrafast", "-crf", "23"]);
+    }
+    cmd.arg("-c:a").arg("aac").arg("-shortest").arg(final_path);
 
-    let output = cmd
-        .output()
-        .map_err(|e| format!("Не удалось запустить ffmpeg: {e}"))?;
+    let output = match cmd.output() {
+        Ok(output) => output,
+        Err(e) => {
+            remove_leftovers();
+            return Err(format!("Не удалось запустить ffmpeg: {e}"));
+        }
+    };
     if output.status.success() && final_path.is_file() {
         let size = std::fs::metadata(final_path).map(|m| m.len()).unwrap_or(0);
         if size > 1000 {
@@ -333,6 +350,8 @@ pub(crate) fn mux_screen_and_audio(
         }
     }
 
+    // Неудачная склейка не должна оставлять мусор: исходник экрана и частичный mp4.
+    remove_leftovers();
     let stderr = String::from_utf8_lossy(&output.stderr);
     Err(format!(
         "Ошибка ffmpeg: {}",

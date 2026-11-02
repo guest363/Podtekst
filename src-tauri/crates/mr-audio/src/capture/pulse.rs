@@ -183,11 +183,24 @@ type PaSourceInfoCb = unsafe extern "C" fn(*mut c_void, *const PaSourceInfo, c_i
 type PaSinkInfoCb = unsafe extern "C" fn(*mut c_void, *const PaSinkInfo, c_int, *mut c_void);
 type PaServerInfoCb = unsafe extern "C" fn(*mut c_void, *const PaServerInfo, *mut c_void);
 
+/// Владелец `dlopen`-хендла: закрывает библиотеку и при ошибке загрузки
+/// (не хватило символа), и при уничтожении `PulseLib`.
+struct DlHandle(*mut c_void);
+
+impl Drop for DlHandle {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe { dlclose(self.0) };
+        }
+    }
+}
+
 /// Загруженная библиотека PulseAudio: основной API из `libpulse.so.0`,
 /// простой потоковый API `pa_simple_*` — из `libpulse-simple.so.0`.
 pub struct PulseLib {
-    handle: *mut c_void,
-    simple_handle: *mut c_void,
+    // simple закрывается первым — так же, как ручной Drop до правки.
+    _simple_handle: DlHandle,
+    _handle: DlHandle,
     simple_new: PaSimpleNew,
     simple_read: PaSimpleRead,
     simple_free: PaSimpleFree,
@@ -250,59 +263,57 @@ fn try_dlopen(names: &[&str]) -> Option<*mut c_void> {
 impl PulseLib {
     #[allow(clippy::missing_transmute_annotations)]
     fn load() -> Result<Self, PulseError> {
-        let handle = try_dlopen(&["libpulse.so.0", "libpulse.so"])
-            .ok_or_else(|| PulseError("не удалось загрузить libpulse.so.0".into()))?;
+        let handle = DlHandle(
+            try_dlopen(&["libpulse.so.0", "libpulse.so"])
+                .ok_or_else(|| PulseError("не удалось загрузить libpulse.so.0".into()))?,
+        );
         // pa_simple_* живут в отдельной библиотеке-обёртке; без неё захват невозможен.
-        let (simple_handle, simple_new, simple_read, simple_free): (
-            *mut c_void,
-            PaSimpleNew,
-            PaSimpleRead,
-            PaSimpleFree,
-        ) = match try_dlopen(&["libpulse-simple.so.0", "libpulse-simple.so"]) {
-            Some(sh) => (
-                sh,
-                sym!(sh, "pa_simple_new"),
-                sym!(sh, "pa_simple_read"),
-                sym!(sh, "pa_simple_free"),
-            ),
-            None => {
-                return Err(PulseError(
-                    "не удалось загрузить libpulse-simple.so.0".into(),
-                ))
-            }
-        };
+        let simple = DlHandle(
+            try_dlopen(&["libpulse-simple.so.0", "libpulse-simple.so"])
+                .ok_or_else(|| PulseError("не удалось загрузить libpulse-simple.so.0".into()))?,
+        );
+        let simple_new = sym!(simple.0, "pa_simple_new");
+        let simple_read = sym!(simple.0, "pa_simple_read");
+        let simple_free = sym!(simple.0, "pa_simple_free");
+        let strerror = sym!(handle.0, "pa_strerror");
+        let mainloop_new = sym!(handle.0, "pa_mainloop_new");
+        let mainloop_get_api = sym!(handle.0, "pa_mainloop_get_api");
+        let mainloop_iterate = sym!(handle.0, "pa_mainloop_iterate");
+        let mainloop_quit = sym!(handle.0, "pa_mainloop_quit");
+        let mainloop_free = sym!(handle.0, "pa_mainloop_free");
+        let context_new = sym!(handle.0, "pa_context_new");
+        let context_connect = sym!(handle.0, "pa_context_connect");
+        let context_set_state_callback = sym!(handle.0, "pa_context_set_state_callback");
+        let context_get_state = sym!(handle.0, "pa_context_get_state");
+        let context_disconnect = sym!(handle.0, "pa_context_disconnect");
+        let context_unref = sym!(handle.0, "pa_context_unref");
+        let operation_unref = sym!(handle.0, "pa_operation_unref");
+        let context_get_source_info_list = sym!(handle.0, "pa_context_get_source_info_list");
+        let context_get_sink_info_list = sym!(handle.0, "pa_context_get_sink_info_list");
+        let context_get_server_info = sym!(handle.0, "pa_context_get_server_info");
         Ok(Self {
-            handle,
-            simple_handle,
+            _handle: handle,
+            _simple_handle: simple,
             simple_new,
             simple_read,
             simple_free,
-            strerror: sym!(handle, "pa_strerror"),
-            mainloop_new: sym!(handle, "pa_mainloop_new"),
-            mainloop_get_api: sym!(handle, "pa_mainloop_get_api"),
-            mainloop_iterate: sym!(handle, "pa_mainloop_iterate"),
-            mainloop_quit: sym!(handle, "pa_mainloop_quit"),
-            mainloop_free: sym!(handle, "pa_mainloop_free"),
-            context_new: sym!(handle, "pa_context_new"),
-            context_connect: sym!(handle, "pa_context_connect"),
-            context_set_state_callback: sym!(handle, "pa_context_set_state_callback"),
-            context_get_state: sym!(handle, "pa_context_get_state"),
-            context_disconnect: sym!(handle, "pa_context_disconnect"),
-            context_unref: sym!(handle, "pa_context_unref"),
-            operation_unref: sym!(handle, "pa_operation_unref"),
-            context_get_source_info_list: sym!(handle, "pa_context_get_source_info_list"),
-            context_get_sink_info_list: sym!(handle, "pa_context_get_sink_info_list"),
-            context_get_server_info: sym!(handle, "pa_context_get_server_info"),
+            strerror,
+            mainloop_new,
+            mainloop_get_api,
+            mainloop_iterate,
+            mainloop_quit,
+            mainloop_free,
+            context_new,
+            context_connect,
+            context_set_state_callback,
+            context_get_state,
+            context_disconnect,
+            context_unref,
+            operation_unref,
+            context_get_source_info_list,
+            context_get_sink_info_list,
+            context_get_server_info,
         })
-    }
-}
-
-impl Drop for PulseLib {
-    fn drop(&mut self) {
-        unsafe {
-            dlclose(self.simple_handle);
-            dlclose(self.handle);
-        }
     }
 }
 

@@ -3,10 +3,12 @@ pub(crate) mod files;
 pub(crate) mod media;
 pub(crate) mod people;
 pub(crate) mod transcribe_api;
+#[cfg(feature = "onnx")]
 pub(crate) mod transcript_edit;
 pub(crate) mod update;
 
 use std::io::Read;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use mr_audio::get_audio_devices_info;
@@ -28,9 +30,17 @@ use self::transcribe_api::{
     handle_hotwords_save, handle_models_update, handle_transcribe_start, serve_hotwords,
     serve_transcribe_stream, serve_transcript,
 };
+#[cfg(feature = "onnx")]
 use self::transcript_edit::handle_transcript_edit;
+#[cfg(not(feature = "onnx"))]
+fn handle_transcript_edit(request: tiny_http::Request, _body: serde_json::Value) {
+    json_response(
+        request,
+        json!({"ok": false, "error": "Правка расшифровки недоступна: сборка без onnx"}),
+        501,
+    );
+}
 use self::update::{handle_update_apply, handle_update_check, handle_update_progress};
-use crate::config::config_lock;
 use crate::config::{
     app_data_dir, configured_auto_transcribe, configured_record_mode, save_auto_transcribe,
     save_dir, save_record_mode, static_dir,
@@ -74,9 +84,17 @@ fn hdr(line: &str) -> tiny_http::Header {
 /// Разрешён только корень static/ и js/ без `..`.
 pub(crate) fn static_body(rel: &str) -> Option<(&'static str, Vec<u8>)> {
     let rel = percent_decode(rel.trim_start_matches('/'));
-    if rel.is_empty() || rel.contains("..") {
+    if rel.is_empty()
+        || rel.contains("..")
+        || rel.starts_with('/')
+        || rel.starts_with('\\')
+        // Буква диска Windows (`C:`) на Unix не считается абсолютным путём.
+        || rel.as_bytes().get(1) == Some(&b':')
+        || std::path::Path::new(&rel).is_absolute()
+    {
         return None;
     }
+    let rel_path = std::path::Path::new(&rel);
     let kind: &'static str = if rel.ends_with(".js") {
         "application/javascript; charset=utf-8"
     } else if rel.ends_with(".css") {
@@ -101,7 +119,18 @@ pub(crate) fn static_body(rel: &str) -> Option<(&'static str, Vec<u8>)> {
         "js/app.js",
         include_bytes!("../../../../../ui/web/static/js/app.js"),
     )];
-    let body = std::fs::read(static_dir().join(&rel)).ok().or_else(|| {
+    let dir = static_dir();
+    // Сначала канонизируем каталог и кандидата: иначе `%2e%2e` или симлинк
+    // выводят за пределы ui/web/static.
+    let disk = dir.canonicalize().ok().and_then(|root| {
+        let candidate = dir.join(rel_path).canonicalize().ok()?;
+        if candidate.starts_with(&root) {
+            std::fs::read(&candidate).ok()
+        } else {
+            None
+        }
+    });
+    let body = disk.or_else(|| {
         if rel == "index.html" {
             Some(FALLBACK_INDEX.to_vec())
         } else if rel == "favicon.svg" {
@@ -142,6 +171,25 @@ fn read_body_to_json(request: &mut tiny_http::Request) -> serde_json::Value {
         .take(MAX_JSON_BODY)
         .read_to_end(&mut buf);
     serde_json::from_slice(&buf).unwrap_or(json!({}))
+}
+
+const MAX_ACTIVE_REQUESTS: usize = 64;
+static ACTIVE_REQUESTS: AtomicUsize = AtomicUsize::new(0);
+
+struct RequestSlot;
+
+impl Drop for RequestSlot {
+    fn drop(&mut self) {
+        ACTIVE_REQUESTS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+fn request_slot() -> Option<RequestSlot> {
+    if ACTIVE_REQUESTS.fetch_add(1, Ordering::Relaxed) >= MAX_ACTIVE_REQUESTS {
+        ACTIVE_REQUESTS.fetch_sub(1, Ordering::Relaxed);
+        return None;
+    }
+    Some(RequestSlot)
 }
 
 fn percent_decode(s: &str) -> String {
@@ -264,7 +312,12 @@ fn handle_voicepacks_import(mut request: tiny_http::Request) {
         }
     }
     drop(out);
-    match packs::import_pack(&app_data_dir(), &part, false) {
+    match packs::import_pack_with_space(
+        &app_data_dir(),
+        &part,
+        false,
+        crate::voiceprints::EMBEDDING_SPACE,
+    ) {
         Ok(info) => {
             let _ = std::fs::remove_file(&part);
             json_response(request, json!({"ok": true, "pack": info}), 200);
@@ -339,6 +392,14 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
         // весь API (включая /api/status, который поллит UI).
         let state = state.clone();
         std::thread::spawn(move || {
+            // Ограничение параллельных потоков: медленные SSE-клиенты не должны
+            // исчерпать память и потоки процесса.
+            let Some(_slot) = request_slot() else {
+                let resp =
+                    tiny_http::Response::from_string("Service Unavailable").with_status_code(503);
+                let _ = request.respond(resp);
+                return;
+            };
             let mut request = request;
             let url = request.url().to_string();
             let method = request.method().clone();
@@ -483,7 +544,10 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 }
                 (tiny_http::Method::Post, "/api/log") => {
                     let mut s = String::new();
-                    let _ = request.as_reader().read_to_string(&mut s);
+                    let _ = request
+                        .as_reader()
+                        .take(MAX_JSON_BODY)
+                        .read_to_string(&mut s);
                     eprintln!("[UI_LOG] {s}");
                     json_response(request, json!({"ok": true}), 200);
                 }
@@ -631,18 +695,8 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     );
                 }
                 (tiny_http::Method::Post, "/api/support/dismiss") => {
-                    let cfg_path = app_data_dir().join("config.json");
-                    let mut cfg: serde_json::Value = std::fs::read_to_string(&cfg_path)
-                        .ok()
-                        .and_then(|t| serde_json::from_str(&t).ok())
-                        .unwrap_or(json!({}));
-                    cfg["donate_prompt_dismissed"] = json!(true);
-                    config_lock(|| {
-                        let _ = std::fs::create_dir_all(app_data_dir());
-                        let _ = std::fs::write(
-                            &cfg_path,
-                            serde_json::to_string_pretty(&cfg).unwrap_or_default(),
-                        );
+                    crate::config::update_config(|cfg| {
+                        cfg["donate_prompt_dismissed"] = json!(true);
                     });
                     json_response(request, json!({"ok": true}), 200);
                 }
@@ -835,7 +889,12 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                         .unwrap_or("Новый пакет")
                         .trim()
                         .to_string();
-                    match packs::create_pack(&app_data_dir(), &name, "") {
+                    match packs::create_pack_with_space(
+                        &app_data_dir(),
+                        &name,
+                        "",
+                        crate::voiceprints::EMBEDDING_SPACE,
+                    ) {
                         Ok(info) => json_response(request, json!({"ok": true, "pack": info}), 200),
                         Err(e) => json_response(
                             request,

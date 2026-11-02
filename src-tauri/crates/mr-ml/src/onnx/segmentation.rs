@@ -160,12 +160,15 @@ fn softmax(logits: &[f32]) -> [f32; POWERSET_CLASSES] {
 }
 
 fn argmax(scores: &[f32; POWERSET_CLASSES]) -> u8 {
-    scores
-        .iter()
-        .enumerate()
-        .max_by(|a, b| a.1.total_cmp(b.1))
-        .map(|(index, _)| index as u8)
-        .unwrap_or(0)
+    let mut best = 0usize;
+    for (index, &score) in scores.iter().enumerate().skip(1) {
+        // Строгое сравнение: при равенстве остаётся меньший класс, иначе
+        // детерминированно побеждал бы overlap (последний в powerset).
+        if score > scores[best] {
+            best = index;
+        }
+    }
+    best as u8
 }
 
 #[cfg(test)]
@@ -177,6 +180,7 @@ mod tests {
         assert_eq!(frames_for_samples(WINDOW_SAMPLES), 589);
         assert_eq!(argmax(&softmax(&[4.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])), 0);
         assert_eq!(argmax(&softmax(&[0.0, 0.0, 0.0, 0.0, 1.0, 3.0, 2.0])), 5);
+        assert_eq!(argmax(&[1.0; POWERSET_CLASSES]), 0);
         let probabilities = softmax(&[0.0; POWERSET_CLASSES]);
         assert!((probabilities.iter().sum::<f32>() - 1.0).abs() < 1e-6);
     }

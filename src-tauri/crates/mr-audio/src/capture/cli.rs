@@ -63,15 +63,17 @@ fn spawn_recorder(device: &str, raw: &Path, rate: u32) -> Result<Child> {
 pub fn start(device: &str, path: &Path, rate: u32) -> Result<CaptureStream> {
     let raw = path.with_extension("s16");
     let _ = std::fs::remove_file(&raw);
-    let mut child = spawn_recorder(device, &raw, rate)?;
+    let mut recorder = RecorderGuard(Some(spawn_recorder(device, &raw, rate)?));
 
     let raw_for_thread = raw.clone();
     let path = path.to_path_buf();
-    CaptureStream::spawn(path, move |path, level, stop| {
+    let stream = CaptureStream::spawn(path, move |path, level, stop| {
         let mut writer = match RawWriter::create(path) {
             Ok(w) => w,
             Err(e) => {
                 eprintln!("Не удалось создать файл записи: {e}");
+                recorder.kill_and_wait();
+                let _ = std::fs::remove_file(&raw_for_thread);
                 return;
             }
         };
@@ -81,12 +83,34 @@ pub fn start(device: &str, path: &Path, rate: u32) -> Result<CaptureStream> {
             read_new(&raw_for_thread, &mut tail, &mut writer, level);
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
-        let _ = child.kill();
-        let _ = child.wait();
+        recorder.kill_and_wait();
         read_new(&raw_for_thread, &mut tail, &mut writer, level);
         let _ = writer.flush();
         let _ = std::fs::remove_file(&raw_for_thread);
-    })
+    });
+    if stream.is_err() {
+        let _ = std::fs::remove_file(&raw);
+    }
+    stream
+}
+
+/// Внешний рекордер живёт, пока жив guard: без этого при ошибке создания
+/// файла или потока `pw-record`/`parec` продолжал бы писать в сырой файл.
+struct RecorderGuard(Option<Child>);
+
+impl RecorderGuard {
+    fn kill_and_wait(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+impl Drop for RecorderGuard {
+    fn drop(&mut self) {
+        self.kill_and_wait();
+    }
 }
 
 fn read_new(

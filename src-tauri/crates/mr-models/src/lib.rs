@@ -107,7 +107,7 @@ pub fn models_dir(app_data: &Path) -> PathBuf {
     d
 }
 
-/// Встроенный манифест: сначала ищем рядом с бинарником, иначе — исходник репозитория.
+/// Встроенный манифест: `include_str!` кладёт JSON в бинарник, поиска рядом с ним нет.
 pub fn load_bundled_manifest() -> ModelsManifest {
     const BUNDLED: &str = include_str!("../models-manifest.json");
     serde_json::from_str(BUNDLED).unwrap_or(ModelsManifest {
@@ -128,9 +128,15 @@ pub fn load_state(app_data: &Path) -> ModelsState {
 
 /// Сохранить `state.json` атомарно (tmp + rename): крах не оставляет битый файл.
 pub fn save_state(app_data: &Path, state: &ModelsState) -> Result<()> {
+    use std::io::Write;
     let p = models_dir(app_data).join("state.json");
     let tmp = p.with_extension("json.tmp");
-    fs::write(&tmp, serde_json::to_string_pretty(state).unwrap())?;
+    {
+        let mut f = fs::File::create(&tmp)?;
+        f.write_all(serde_json::to_string_pretty(state)?.as_bytes())?;
+        // sync_all до rename: после переименования данные обязаны уже быть на диске.
+        f.sync_all()?;
+    }
     fs::rename(&tmp, &p)?;
     Ok(())
 }
@@ -146,15 +152,23 @@ pub fn get_models_status(app_data: &Path, manifest: &ModelsManifest) -> Vec<Mode
             let dir = root.join(&m.id);
             let mut present = 0;
             let mut on_disk = 0u64;
+            let mut size_ok = true;
             for f in &m.files {
                 let fp = dir.join(&f.filename);
-                if fp.is_file() {
-                    present += 1;
-                    on_disk += fp.metadata().map(|md| md.len()).unwrap_or(0);
+                let Ok(md) = fp.metadata() else { continue };
+                if !md.is_file() {
+                    continue;
+                }
+                present += 1;
+                on_disk += md.len();
+                // Наличие файла ещё не целостность: обрезанную модель видно по размеру
+                // без хеширования всего файла на каждый запрос статуса.
+                if f.size_bytes > 0 && md.len() != f.size_bytes {
+                    size_ok = false;
                 }
             }
             let inst = state.installed.get(&m.id);
-            let installed = present == m.files.len() && !m.files.is_empty();
+            let installed = size_ok && present == m.files.len() && !m.files.is_empty();
             let has_update = installed && inst.map(|i| i.version != m.version).unwrap_or(false);
             ModelStatus {
                 id: m.id.clone(),
@@ -233,6 +247,8 @@ pub fn download_or_update_model(
                 continue;
             }
         }
+        // Пока другой процесс качает этот файл, в его `.part` не пишем.
+        let _lock = DownloadLock::acquire(&dir, &f.filename)?;
         let mut urls = vec![f.url_hf.clone()];
         urls.extend(f.mirrors.clone());
         let mut last_err = String::new();
@@ -289,6 +305,80 @@ pub fn download_or_update_model(
     Ok(())
 }
 
+fn http_agent() -> ureq::Agent {
+    // Отдельные таймауты вместо общего дедлайна: крупная модель качается дольше
+    // двух минут, но зависшее соединение или молчащий сокет обрываются.
+    ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(15))
+        .timeout_read(std::time::Duration::from_secs(120))
+        .build()
+}
+
+fn range_request(agent: &ureq::Agent, url: &str, already: u64) -> ureq::Request {
+    let req = agent.get(url).set("User-Agent", "Podtekst/0.1");
+    if already > 0 {
+        req.set("Range", &format!("bytes={already}-"))
+    } else {
+        req
+    }
+}
+
+/// Начало диапазона из `Content-Range: bytes 100-499/1000`.
+fn content_range_start(value: &str) -> Option<u64> {
+    value
+        .strip_prefix("bytes ")?
+        .split('-')
+        .next()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// Полный размер файла из `Content-Range: bytes 100-499/1000`.
+fn content_range_total(value: &str) -> Option<u64> {
+    let (_, total) = value.rsplit_once('/')?;
+    total.trim().parse().ok()
+}
+
+/// Замок скачивания на `.lock`-файле: без внешних крейтов и без гонки за общий `.part`.
+struct DownloadLock {
+    path: PathBuf,
+}
+
+impl DownloadLock {
+    /// Замок прошлого запуска после краха иначе блокировал бы скачивание навсегда.
+    const STALE: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+    fn acquire(dir: &Path, filename: &str) -> Result<Self> {
+        let path = dir.join(format!("{filename}.lock"));
+        if fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > Self::STALE)
+        {
+            let _ = fs::remove_file(&path);
+        }
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(_) => Ok(Self { path }),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(ModelsError::Other(
+                format!("файл {filename} уже скачивается другим процессом"),
+            )),
+            Err(e) => Err(e.into()),
+        }
+    }
+}
+
+impl Drop for DownloadLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
 fn download_with_resume(
     url: &str,
     dest_part: &Path,
@@ -296,23 +386,28 @@ fn download_with_resume(
     on_progress: &dyn Fn(ProgressEvent),
 ) -> Result<()> {
     use std::io::{Read, Write};
-    let already = if dest_part.exists() {
+    let agent = http_agent();
+    let mut already = if dest_part.exists() {
         dest_part.metadata().map(|m| m.len()).unwrap_or(0)
     } else {
         0
     };
-    let req = if already > 0 {
-        ureq::get(url)
-            .set("User-Agent", "Podtekst/0.1")
-            .set("Range", &format!("bytes={already}-"))
-    } else {
-        ureq::get(url).set("User-Agent", "Podtekst/0.1")
-    };
-    let resp = req
-        .timeout(std::time::Duration::from_secs(60))
+    let mut resp = range_request(&agent, url, already)
         .call()
         .map_err(|e| ModelsError::Net(e.to_string()))?;
-    let status = resp.status();
+    let mut status = resp.status();
+    // Сервер вернул не тот диапазон, который просили: дописывать его нельзя,
+    // иначе в `.part` окажется кусок с чужого смещения — начинаем файл заново.
+    let range_mismatch = status == 206
+        && already > 0
+        && resp.header("Content-Range").and_then(content_range_start) != Some(already);
+    if range_mismatch {
+        already = 0;
+        resp = range_request(&agent, url, 0)
+            .call()
+            .map_err(|e| ModelsError::Net(e.to_string()))?;
+        status = resp.status();
+    }
     if status != 200 && status != 206 {
         return Err(ModelsError::Net(format!("HTTP {status} для {url}")));
     }
@@ -320,12 +415,12 @@ fn download_with_resume(
     let append = status == 206 && already > 0;
     let total: u64 = resp
         .header("Content-Range")
-        .and_then(|v| v.rsplit('/').next()?.parse().ok())
+        .and_then(content_range_total)
         .or_else(|| {
             resp.header("Content-Length").and_then(|v| {
                 v.parse::<u64>()
                     .ok()
-                    .map(|l| l + u64::from(append) * already)
+                    .map(|l| l + if append { already } else { 0 })
             })
         })
         .unwrap_or(already);
@@ -434,6 +529,58 @@ mod tests {
         save_state(&tmp, &st).unwrap();
         assert_eq!(load_state(&tmp).installed.len(), 1);
         assert!(!models_dir(&tmp).join("state.json.tmp").exists());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn status_requires_exact_file_size() {
+        let tmp = std::env::temp_dir().join(format!("mr-models-size-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let m = ModelsManifest {
+            manifest_version: 1,
+            updated_at: String::new(),
+            models: vec![ModelEntry {
+                id: "m".to_string(),
+                title: "t".to_string(),
+                version: "1".to_string(),
+                files: vec![ModelFile {
+                    filename: "w.onnx".to_string(),
+                    url_hf: String::new(),
+                    mirrors: vec![],
+                    size_bytes: 4,
+                    sha256: String::new(),
+                    optional: false,
+                }],
+                embedding_space: None,
+                embedding_dim: None,
+                license: String::new(),
+                description: String::new(),
+            }],
+        };
+        let dir = models_dir(&tmp).join("m");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("w.onnx"), b"abc").unwrap();
+        assert!(!get_models_status(&tmp, &m)[0].is_installed);
+        std::fs::write(dir.join("w.onnx"), b"abcd").unwrap();
+        assert!(get_models_status(&tmp, &m)[0].is_installed);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn content_range_is_parsed() {
+        assert_eq!(content_range_start("bytes 100-499/1000"), Some(100));
+        assert_eq!(content_range_total("bytes 100-499/1000"), Some(1000));
+        assert_eq!(content_range_start("bytes */1000"), None);
+    }
+
+    #[test]
+    fn download_lock_is_exclusive_and_released() {
+        let tmp = std::env::temp_dir().join(format!("mr-models-lock-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let first = DownloadLock::acquire(&tmp, "m.onnx").unwrap();
+        assert!(DownloadLock::acquire(&tmp, "m.onnx").is_err());
+        drop(first);
+        assert!(DownloadLock::acquire(&tmp, "m.onnx").is_ok());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
