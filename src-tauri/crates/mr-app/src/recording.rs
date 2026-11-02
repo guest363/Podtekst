@@ -467,10 +467,21 @@ pub(crate) fn stop_recording_inner(
             } else {
                 mr_audio::mix_channels(&mic, &sys, ChannelMode::parse(&st.mode))
             };
-            if st.mode == "mix" {
-                mr_audio::write_mono_wav(&out_path, &l, 16000).map_err(|e| e.to_string())?;
+            // Финал пишем во временный файл рядом с целевым: сбой не обрезает
+            // уже сохранённый WAV, а rename атомарно подменяет его целиком.
+            let tmp_path = out_path.with_extension("tmp.wav");
+            let written = if st.mode == "mix" {
+                mr_audio::write_mono_wav(&tmp_path, &l, 16000)
             } else {
-                mr_audio::write_stereo_wav(&out_path, &l, &r, 16000).map_err(|e| e.to_string())?;
+                mr_audio::write_stereo_wav(&tmp_path, &l, &r, 16000)
+            };
+            if let Err(e) = written.map_err(|e| e.to_string()) {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(e);
+            }
+            if let Err(e) = std::fs::rename(&tmp_path, &out_path) {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(e.to_string());
             }
             for p in [mic_path.as_ref(), sys_path.as_ref()].into_iter().flatten() {
                 let _ = std::fs::remove_file(p);
@@ -616,6 +627,7 @@ pub(crate) fn stop_recording_with_notify(st: &mut RecordingState) -> serde_json:
     res
 }
 
+#[cfg(feature = "tauri-ui")]
 pub(crate) fn toggle_recording_with_notify(st: &mut RecordingState) -> &'static str {
     if st.is_recording {
         stop_recording_with_notify(st);

@@ -75,7 +75,13 @@ fn cli_catalog() -> DeviceCatalog {
         let monitor = src.ends_with(".monitor");
         let info = DeviceInfo {
             id: src.clone(),
-            name: src.rsplit('.').next().unwrap_or(&src).to_string(),
+            // У монитора полное имя и есть название («<sink>.monitor»);
+            // хвост после точки сделал бы все мониторы безымянными «monitor».
+            name: if monitor {
+                src.clone()
+            } else {
+                src.rsplit('.').next().unwrap_or(&src).to_string()
+            },
             muted: false,
             system: monitor,
         };

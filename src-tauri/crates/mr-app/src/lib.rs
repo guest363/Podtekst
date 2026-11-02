@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex};
 mod config;
 mod desktop;
 mod ffmpeg_dl;
+mod fsutil;
+mod hotwords;
 mod http;
 mod ipc;
 mod media_registry;
@@ -15,6 +17,7 @@ pub(crate) mod screen;
 mod tauri_shell;
 #[cfg(feature = "onnx")]
 pub mod transcribe;
+mod voiceprints;
 #[cfg(feature = "onnx")]
 pub use transcribe::{transcribe_file, TranscribeOptions};
 
@@ -72,16 +75,19 @@ struct Cli {
 
 const DEFAULT_HTTP_PORT: u16 = 8765;
 
+fn print_ipc(resp: &str) {
+    println!("{resp}");
+    if resp.starts_with("ERROR:") {
+        std::process::exit(1);
+    }
+}
+
 fn opener_url(url: &str) {
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
-        // Без CREATE_NO_WINDOW `cmd /C start` мигает консолью поверх UI.
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let _ = std::process::Command::new("cmd")
-            .args(["/C", "start", "", url])
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn();
+        // explorer.exe — GUI-процесс без консоли; URL уходит одним аргументом,
+        // без cmd.exe и переразбора метасимволов (&, ^, |) из ссылки.
+        let _ = std::process::Command::new("explorer").arg(url).spawn();
     }
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(url).spawn();
@@ -101,7 +107,8 @@ fn opener_url(url: &str) {
 pub fn mobile_main() {
     let state = Arc::new(Mutex::new(recording::RecordingState::default()));
     cleanup_stale_files();
-    tauri_shell::run_tauri_window(state, DEFAULT_HTTP_PORT, true);
+    let code = tauri_shell::run_tauri_window(state, DEFAULT_HTTP_PORT, true);
+    std::process::exit(code);
 }
 
 pub fn run_cli() {
@@ -180,23 +187,25 @@ pub fn run_cli() {
 
     if cli.toggle {
         if let Some(resp) = send_ipc("TOGGLE") {
-            println!("{resp}");
+            print_ipc(&resp);
             return;
         }
         start_on_launch = true;
     }
     if cli.start {
         if let Some(resp) = send_ipc("START") {
-            println!("{resp}");
+            print_ipc(&resp);
             return;
         }
         start_on_launch = true;
     }
     if cli.stop {
         if let Some(resp) = send_ipc("STOP") {
-            println!("{resp}");
+            print_ipc(&resp);
             return;
         }
+        eprintln!("Не удалось остановить запись: запущенное приложение не найдено.");
+        std::process::exit(1);
     }
     if cli.show || cli.hide || cli.quit {
         let cmd = if cli.show {
@@ -207,7 +216,7 @@ pub fn run_cli() {
             "QUIT"
         };
         if let Some(resp) = send_ipc(cmd) {
-            println!("{resp}");
+            print_ipc(&resp);
             return;
         }
         if cli.quit {
@@ -258,14 +267,20 @@ pub fn run_cli() {
     let lock_file = std::fs::OpenOptions::new()
         .create(true)
         .write(true)
-        .truncate(true)
+        .truncate(false)
         .open(&lock_path);
-    let _lock = lock_file.and_then(|f| {
+    let _lock = match lock_file.and_then(|f| {
         use fs2::FileExt;
         f.try_lock_exclusive()
             .map(|_| f)
             .map_err(std::io::Error::other)
-    });
+    }) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Подтекст уже запущен (lock {}): {e}", lock_path.display());
+            std::process::exit(1);
+        }
+    };
     cleanup_stale_files();
 
     if start_on_launch {
@@ -286,7 +301,11 @@ pub fn run_cli() {
     #[cfg(feature = "tauri-ui")]
     if !cli.web && !cli.browser && !cli.no_browser {
         let visible = cli.show || !cli.tray;
-        tauri_shell::run_tauri_window(state.clone(), cli.port, visible);
+        let code = tauri_shell::run_tauri_window(state.clone(), cli.port, visible);
+        if code != 0 {
+            std::process::exit(code);
+        }
+        return;
     }
     // Без фичи `tauri-ui` флаг --window открывает системный браузер на тот же UI
     if cli.window && !cli.no_browser {
@@ -1220,6 +1239,7 @@ mod live_api_tests {
                     }
                     #[cfg(not(feature = "onnx"))]
                     {
+                        let _ = &v;
                         assert_eq!(st, 501);
                     }
                 }

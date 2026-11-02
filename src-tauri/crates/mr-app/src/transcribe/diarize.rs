@@ -633,19 +633,30 @@ pub(crate) fn diarize_channel(
     let ordered_centroids: Vec<Vec<f64>> = raw_clusters
         .iter()
         .map(|c| {
-            let members: Vec<usize> = label_of
+            let members: Vec<usize> = {
+                let mut members: Vec<usize> = label_of
+                    .iter()
+                    .filter(|(_, &l)| l == *c)
+                    .map(|(&i, _)| i)
+                    .collect();
+                // Порядок обхода HashMap не должен влиять на сумму центроида.
+                members.sort_unstable();
+                members
+            };
+            // Пары «вектор-вес» строим вместе: иначе веса съезжают на
+            // реплики без эмбеддинга и центроид считается не по тем голосам.
+            let weighted: Vec<(Vec<f64>, f64)> = members
                 .iter()
-                .filter(|(_, &l)| l == *c)
-                .map(|(&i, _)| i)
+                .filter_map(|&i| {
+                    embs[i]
+                        .clone()
+                        .map(|vector| (vector, durs[i].min(8.0) * quals[i]))
+                })
                 .collect();
-            let vecs: Vec<Vec<f64>> = members.iter().filter_map(|&i| embs[i].clone()).collect();
-            let ws: Vec<f64> = members
-                .iter()
-                .map(|&i| durs[i].min(8.0) * quals[i])
-                .collect();
-            if vecs.is_empty() {
+            if weighted.is_empty() {
                 vec![0.0; mr_ml::EMBEDDING_DIM]
             } else {
+                let (vecs, ws): (Vec<Vec<f64>>, Vec<f64>) = weighted.into_iter().unzip();
                 mr_ml::weighted_centroid(&vecs, &ws)
             }
         })
@@ -726,11 +737,15 @@ pub(crate) fn diarize_channel(
             .copied()
             .filter(|c| cluster_name[c] == name)
             .collect();
-        let members: Vec<usize> = label_of
-            .iter()
-            .filter(|(_, &l)| cids.contains(&l))
-            .map(|(&i, _)| i)
-            .collect();
+        let members: Vec<usize> = {
+            let mut members: Vec<usize> = label_of
+                .iter()
+                .filter(|(_, &l)| cids.contains(&l))
+                .map(|(&i, _)| i)
+                .collect();
+            members.sort_unstable();
+            members
+        };
         if members.is_empty() {
             continue;
         }
@@ -779,14 +794,18 @@ pub(crate) fn diarize_channel(
             0.0
         };
         let emb = {
-            let vecs: Vec<Vec<f64>> = members.iter().filter_map(|&i| embs[i].clone()).collect();
-            let ws: Vec<f64> = members
+            let weighted: Vec<(Vec<f64>, f64)> = members
                 .iter()
-                .map(|&i| durs[i].min(8.0) * quals[i])
+                .filter_map(|&i| {
+                    embs[i]
+                        .clone()
+                        .map(|vector| (vector, durs[i].min(8.0) * quals[i]))
+                })
                 .collect();
-            if vecs.is_empty() {
+            if weighted.is_empty() {
                 None
             } else {
+                let (vecs, ws): (Vec<Vec<f64>>, Vec<f64>) = weighted.into_iter().unzip();
                 Some(mr_ml::weighted_centroid(&vecs, &ws))
             }
         };
@@ -848,8 +867,11 @@ pub(crate) fn text_similarity(a: &str, b: &str) -> f64 {
     let inter = wa.intersection(&wb).count() as f64;
     let union = wa.union(&wb).count() as f64;
     let j = inter / union.max(1.0);
-    // ASR в двух каналах может добавить/потерять служебные слова.
-    if wa.is_subset(&wb) || wb.is_subset(&wa) {
+    // ASR в двух каналах может добавить/потерять служебные слова. Короткие
+    // реплики («да», «угу») — это ответы, а не эхо: подмножество даёт буст
+    // только от трёх слов, иначе встречная реплика стиралась бы как дубль.
+    let subset = wa.is_subset(&wb) || wb.is_subset(&wa);
+    if subset && wa.len().min(wb.len()) >= 3 {
         j.max(0.85)
     } else {
         j
@@ -1554,6 +1576,9 @@ pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<Strin
     for (k, w) in bounds.windows(2).enumerate() {
         let frac = (w[1] - w[0]) / total;
         let nw = if k + 1 == bounds.len() - 1 {
+            // Предыдущие ветки резервируют по слову на каждый оставшийся
+            // фрагмент: при words.len() >= числа фрагментов остаток не пуст
+            // и последний интервал не пропадает из таймлайна.
             words.len().saturating_sub(pos)
         } else {
             let remaining_segs = bounds.len() - 1 - (k + 1);
@@ -1655,25 +1680,41 @@ mod tests {
     #[test]
     fn dedupe_cross_channel_drops_echo_even_with_different_speakers() {
         let mut utts = vec![
-            utt(
-                1.0,
-                5.0,
-                "Екатерина Шерехова",
-                1,
-                "надо сначала попытаться войти в аккаунт",
-            ),
-            utt(
-                1.1,
-                5.1,
-                "Сергей Золотов",
-                0,
-                "надо сначала попытаться войти в аккаунт",
-            ),
+            utt(1.0, 5.0, "Спикер B", 1, "нейтральная тестовая фраза"),
+            utt(1.1, 5.1, "Спикер A", 0, "нейтральная тестовая фраза"),
         ];
         dedupe_cross_channel(&mut utts);
         assert_eq!(utts.len(), 1);
-        assert_eq!(utts[0].speaker, "Екатерина Шерехова");
+        assert_eq!(utts[0].speaker, "Спикер B");
         assert_eq!(utts[0].channel, Some(1));
+    }
+
+    #[test]
+    fn short_backchannel_over_long_phrase_survives_dedupe() {
+        let mut utts = vec![
+            utt(
+                1.0,
+                5.0,
+                "Спикер B",
+                1,
+                "длинная нейтральная тестовая фраза",
+            ),
+            utt(2.0, 2.5, "Спикер A", 0, "да"),
+        ];
+        dedupe_cross_channel(&mut utts);
+        assert_eq!(utts.len(), 2);
+        assert_eq!(utts[1].speaker, "Спикер A");
+    }
+
+    #[test]
+    fn full_phrase_echo_still_removed_after_short_reply_guard() {
+        let mut utts = vec![
+            utt(1.0, 5.0, "Спикер B", 1, "нейтральная тестовая фраза"),
+            utt(1.1, 5.1, "Спикер A", 0, "нейтральная тестовая фраза"),
+        ];
+        dedupe_cross_channel(&mut utts);
+        assert_eq!(utts.len(), 1);
+        assert_eq!(utts[0].speaker, "Спикер B");
     }
 
     #[test]
@@ -1728,8 +1769,8 @@ mod tests {
             info("Собеседник 1", 1, vec![0.3, 0.95], 1, 3.0),
         ];
         let mut utts = vec![
-            utt(10.0, 11.8, "Участник 5", 0, "Страничку."),
-            utt(9.8, 12.8, "Собеседник 1", 1, "Страничку."),
+            utt(10.0, 11.8, "Участник 5", 0, "Слово."),
+            utt(9.8, 12.8, "Собеседник 1", 1, "Слово."),
         ];
         reconcile_channels(&mut infos, &mut utts);
         assert_eq!(infos.len(), 1);
@@ -1739,16 +1780,16 @@ mod tests {
 
     #[test]
     fn different_matched_profiles_are_never_merged() {
-        let mut a = info("Иван", 0, vec![1.0, 0.0], 1, 5.0);
+        let mut a = info("Спикер A", 0, vec![1.0, 0.0], 1, 5.0);
         a.matched = true;
-        a.matched_name = Some("Иван".to_string());
-        let mut b = info("Пётр", 1, vec![1.0, 0.0], 1, 5.0);
+        a.matched_name = Some("Спикер A".to_string());
+        let mut b = info("Спикер B", 1, vec![1.0, 0.0], 1, 5.0);
         b.matched = true;
-        b.matched_name = Some("Пётр".to_string());
+        b.matched_name = Some("Спикер B".to_string());
         let mut infos = vec![a, b];
         let mut utts = vec![
-            utt(1.0, 6.0, "Иван", 0, "одна и та же фраза"),
-            utt(1.0, 6.0, "Пётр", 1, "одна и та же фраза"),
+            utt(1.0, 6.0, "Спикер A", 0, "одна и та же фраза"),
+            utt(1.0, 6.0, "Спикер B", 1, "одна и та же фраза"),
         ];
         reconcile_channels(&mut infos, &mut utts);
         assert_eq!(infos.len(), 2);
@@ -1782,26 +1823,26 @@ mod tests {
     #[test]
     fn same_channel_padding_overlap_keeps_both_texts() {
         let utts = vec![
-            utt(10.0, 20.0, "Я", 0, "она пишет ничего всё нормально"),
-            utt(19.5, 21.0, "Я", 0, "я никуда не поведу"),
+            utt(10.0, 20.0, "Я", 0, "первая часть фразы"),
+            utt(19.5, 21.0, "Я", 0, "вторая часть фразы"),
         ];
         let merged = merge_utterances(utts);
         assert_eq!(merged.len(), 1);
-        assert!(merged[0].text.contains("никуда"));
-        assert!(merged[0].text.contains("нормально"));
+        assert!(merged[0].text.contains("вторая"));
+        assert!(merged[0].text.contains("первая"));
 
         let utts = vec![
-            utt(10.0, 20.0, "Я", 0, "я весь ваш материал в полицию угу"),
+            utt(10.0, 20.0, "Я", 0, "начало длинной тестовой фразы"),
             utt(
                 19.5,
                 21.0,
                 "Я",
                 0,
-                "я весь ваш материал в полицию угу они вас",
+                "начало длинной тестовой фразы продолжение",
             ),
         ];
         let merged = merge_utterances(utts);
-        assert_eq!(merged[0].text, "я весь ваш материал в полицию угу они вас");
+        assert_eq!(merged[0].text, "начало длинной тестовой фразы продолжение");
     }
 
     #[test]
@@ -1898,6 +1939,15 @@ mod tests {
         let texts = split_words_by_bounds(&words, &[0.0, 2.0, 4.0]);
         assert_eq!(texts.len(), 2);
         assert_eq!(texts.join(" "), "a b c d e");
+    }
+
+    #[test]
+    fn split_words_last_fragment_gets_word_when_words_remain() {
+        let words = vec!["a", "b", "c", "d"];
+        let texts = split_words_by_bounds(&words, &[0.0, 1.0, 4.0, 5.0]);
+        assert_eq!(texts.len(), 3);
+        assert!(texts.iter().all(|t| !t.is_empty()), "{texts:?}");
+        assert_eq!(texts.join(" "), "a b c d");
     }
 
     #[test]

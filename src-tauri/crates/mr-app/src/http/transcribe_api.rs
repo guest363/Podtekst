@@ -1,8 +1,13 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+
+#[cfg(feature = "onnx")]
+use std::path::Path;
 
 use serde_json::json;
 
-use super::media::{inside_save_dir, is_video_path, video_supported};
+use super::media::inside_save_dir;
+#[cfg(feature = "onnx")]
+use super::media::{is_video_path, video_supported};
 use super::{json_response, query_param};
 use crate::config::{app_data_dir, save_dir};
 
@@ -82,6 +87,8 @@ pub(super) fn serve_transcribe_stream(request: tiny_http::Request) {
             .iter()
             .find(|h| h.field.equiv("Last-Event-ID"))
             .and_then(|h| h.value.as_str().trim().parse::<usize>().ok())
+            // Клиент уже получил событие с этим id — продолжаем со следующего.
+            .map(|id| id.saturating_add(1))
             .unwrap_or_else(|| {
                 // Без курсора — только будущее: история могла относиться к прошлым запускам.
                 crate::transcribe::take_new_events(usize::MAX).1
@@ -237,7 +244,7 @@ pub(super) fn serve_hotwords(request: tiny_http::Request) {
             "ok": true,
             "hotwords": crate::config::configured_hotwords(),
             "ctc_enabled": crate::config::configured_ctc_enabled(),
-            "limit": mr_ml::hotwords::MAX_HOTWORDS,
+            "limit": crate::hotwords::MAX_HOTWORDS,
         }),
         200,
     );
@@ -253,7 +260,7 @@ pub(super) fn handle_hotwords_save(request: tiny_http::Request, body: serde_json
                 .collect()
         })
         .unwrap_or_else(crate::config::configured_hotwords);
-    if raw.len() > mr_ml::hotwords::MAX_HOTWORDS {
+    if raw.len() > crate::hotwords::MAX_HOTWORDS {
         json_response(
             request,
             json!({"ok": false, "error": "Словарь ограничен 500 записями"}),
@@ -262,7 +269,7 @@ pub(super) fn handle_hotwords_save(request: tiny_http::Request, body: serde_json
         return;
     }
     let ctc_enabled = body.get("ctc_enabled").and_then(|v| v.as_bool());
-    let clean = mr_ml::hotwords::sanitize_hotwords(&raw);
+    let clean = crate::hotwords::sanitize(&raw);
     crate::config::save_hotwords_cfg(clean.clone(), ctc_enabled);
     json_response(
         request,
@@ -275,10 +282,11 @@ pub(super) fn handle_hotwords_save(request: tiny_http::Request, body: serde_json
     );
 }
 
+#[cfg(feature = "onnx")]
 fn hotwords_from_body(body: &serde_json::Value) -> Vec<String> {
     match body.get("hotwords").and_then(|v| v.as_array()) {
         None => crate::config::configured_hotwords(),
-        Some(a) => mr_ml::hotwords::sanitize_hotwords(
+        Some(a) => crate::hotwords::sanitize(
             &a.iter()
                 .filter_map(|x| x.as_str().map(str::to_string))
                 .collect::<Vec<_>>(),
@@ -316,6 +324,8 @@ pub(super) fn handle_models_update(request: tiny_http::Request, body: serde_json
         let app_data = app_data_dir();
         let manifest = mr_models::load_bundled_manifest();
         let res = mr_models::download_or_update_model(&app_data, &manifest, &model_id, &|ev| {
+            #[cfg(not(feature = "onnx"))]
+            let _ = &ev;
             #[cfg(feature = "onnx")]
             crate::transcribe::emit_model_event(serde_json::json!({
                 "type": "progress", "stage": "model-download", "pct": ev.pct,

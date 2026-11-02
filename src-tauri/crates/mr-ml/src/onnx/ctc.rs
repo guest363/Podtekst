@@ -117,7 +117,15 @@ fn tokenize_term(term: &str, vocab: &[String]) -> Vec<Vec<i64>> {
     out
 }
 
+/// Контракт входа не фиксирован экспортом модели: часть сборок отдаёт
+/// softmax-вероятности, часть — лог-вероятности. Вероятности неотрицательны и
+/// суммируются в 1; лог-вероятности всегда содержат отрицательные значения.
 fn to_log_row(row: &[f32]) -> Vec<f32> {
+    let sum: f64 = row.iter().map(|&x| x as f64).sum();
+    let non_negative = row.iter().all(|&x| x >= 0.0);
+    if non_negative && (sum - 1.0).abs() <= 1e-3 {
+        return row.iter().map(|&x| x.max(1e-12).ln()).collect();
+    }
     let max = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
     if max <= 0.0 {
         return row.to_vec();
@@ -699,6 +707,32 @@ mod tests {
         assert_eq!(h.text, "а б");
         assert_eq!(h.words.len(), 2);
         assert!(h.words.iter().all(|w| (0.0..=1.0).contains(&w.confidence)));
+    }
+
+    #[test]
+    fn probability_rows_are_converted_to_log_probs() {
+        let v = vocab4();
+        // Вход — softmax-вероятности, а не лог-вероятности: без ln уверенность
+        // вышла бы exp(0.9) ≈ 2.46 и выпала бы из диапазона [0, 1].
+        let frames = vec![
+            vec![0.02, 0.03, 0.9, 0.03, 0.02],
+            vec![0.02, 0.03, 0.03, 0.02, 0.9],
+        ];
+        let h = decode_ctc_greedy(&frames, &v, 4);
+        assert_eq!(h.text, "а");
+        assert!((h.words[0].confidence - 0.9).abs() < 1e-5);
+    }
+
+    #[test]
+    fn log_probability_rows_keep_previous_decoding() {
+        let row = [
+            0.1f32.ln(),
+            0.2f32.ln(),
+            0.6f32.ln(),
+            0.05f32.ln(),
+            0.05f32.ln(),
+        ];
+        assert_eq!(to_log_row(&row), row.to_vec());
     }
 
     #[test]

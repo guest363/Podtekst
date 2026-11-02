@@ -83,18 +83,34 @@ fn fetch_latest() -> Result<Value, String> {
     }))
 }
 
+/// Ручная проверка обновлений не чаще раза в 5 секунд: защита от долбёжки
+/// GitHub повторными нажатиями.
+fn force_allowed() -> bool {
+    static LAST_FORCE: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+    let now = Instant::now();
+    let mut last = LAST_FORCE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if last.is_some_and(|at| now.duration_since(at) < Duration::from_secs(5)) {
+        return false;
+    }
+    *last = Some(now);
+    true
+}
+
 pub(super) fn handle_update_check(request: tiny_http::Request, force: bool) {
     let current = env!("CARGO_PKG_VERSION");
+    let requested_force = force;
+    let force = force && force_allowed();
+    let cached_entry = cache().lock().ok().and_then(|g| g.as_ref().cloned());
     let latest = {
-        let cached = if force {
-            None
-        } else {
-            cache()
-                .lock()
-                .ok()
-                .and_then(|g| g.as_ref().cloned())
-                .filter(|(at, _)| at.elapsed() < CACHE_TTL)
-                .map(|(_, v)| v)
+        let cached = match cached_entry {
+            Some(_) if force => None,
+            // Троттлинг force: отдаём прошлый результат, даже если кэш просрочен.
+            Some((_, v)) if requested_force => Some(v),
+            Some((at, v)) if at.elapsed() < CACHE_TTL => Some(v),
+            _ => None,
         };
         match cached {
             Some(v) => Ok(v),

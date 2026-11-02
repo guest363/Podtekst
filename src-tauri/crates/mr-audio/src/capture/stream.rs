@@ -153,8 +153,15 @@ impl StreamingResampler {
                 let sum: f32 = self.pending[start..end].iter().sum();
                 out.push(sum / (end - start) as f32);
             } else {
-                let i = start.min(self.pending.len().saturating_sub(2));
-                let frac = (self.pos - i as f64) as f32;
+                // Одного сэмпла мало для линейной интерполяции: хвост ждёт
+                // следующего блока, иначе индекс pending[1] паникует.
+                if self.pending.len() < 2 {
+                    break;
+                }
+                let i = start.min(self.pending.len() - 2);
+                // Шаг меньше сэмпла выводит окно за последнюю пару: frac > 1 —
+                // это экстраполяция, её прижимаем к правому сэмплу.
+                let frac = (self.pos - i as f64).clamp(0.0, 1.0) as f32;
                 out.push(self.pending[i] * (1.0 - frac) + self.pending[i + 1] * frac);
             }
             self.pos += self.step;
@@ -246,5 +253,18 @@ mod tests {
         }
         assert!(out.windows(2).all(|w| w[0] <= w[1] + 1e-3));
         assert!(out.first().copied().unwrap_or(0.0) < 2.0);
+    }
+
+    #[test]
+    fn streaming_resampler_8k_to_16k_survives_one_sample_blocks() {
+        let mut resampler = StreamingResampler::new(8_000, 16_000).expect("8k→16k");
+        let mut out = Vec::new();
+        for i in 0..100 {
+            out.extend(resampler.push(&[i as f32 / 100.0]));
+        }
+        // Одиночный сэмпл не паникует и не теряется: 100 входов дают ~200 выходов.
+        assert_eq!(out.len(), 200);
+        // Экстраполяция (frac > 1) вывела бы значение за диапазон входов.
+        assert!(out.iter().all(|&x| (0.0..=0.99 + 1e-6).contains(&x)));
     }
 }

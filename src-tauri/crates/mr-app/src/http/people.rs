@@ -1,4 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use mr_packs as packs;
 use serde_json::json;
@@ -6,6 +8,19 @@ use serde_json::json;
 use super::json_response;
 use super::media::inside_save_dir;
 use crate::config::{app_data_dir, save_dir};
+use crate::fsutil::write_atomic;
+use crate::voiceprints::{
+    cosine_similarity, l2_normalize, EMBEDDING_DIM, EMBEDDING_SPACE, MAX_PROTOTYPES,
+};
+
+/// Сериализует read-modify-write `voiceprints.json`: иначе два параллельных
+/// сохранения голоса теряют одно из изменений.
+static VOICEPRINTS_LOCK: Mutex<()> = Mutex::new(());
+static PROTO_SEQ: AtomicUsize = AtomicUsize::new(0);
+
+fn lock_voiceprints() -> std::sync::MutexGuard<'static, ()> {
+    VOICEPRINTS_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn external_people_path() -> PathBuf {
     app_data_dir().join("external_people.json")
@@ -20,10 +35,11 @@ pub(super) fn load_external_people() -> Vec<serde_json::Value> {
 }
 
 pub(super) fn save_external_people(list: &[serde_json::Value]) {
-    let _ = std::fs::create_dir_all(app_data_dir());
-    let _ = std::fs::write(
-        external_people_path(),
-        serde_json::to_string_pretty(&json!(list)).unwrap_or_default(),
+    let _ = write_atomic(
+        &external_people_path(),
+        serde_json::to_string_pretty(&json!(list))
+            .unwrap_or_default()
+            .as_bytes(),
     );
 }
 
@@ -44,7 +60,7 @@ fn parse_profiles(v: &serde_json::Value) -> Vec<serde_json::Value> {
 }
 
 fn vp_v3(profiles: Vec<serde_json::Value>) -> serde_json::Value {
-    json!({"version": 3, "embedding_space": mr_ml::EMBEDDING_SPACE, "profiles": profiles})
+    json!({"version": 3, "embedding_space": EMBEDDING_SPACE, "profiles": profiles})
 }
 
 /// Контакт в people.json не затрагивается, пропадает только голосовой вектор.
@@ -58,6 +74,7 @@ pub(crate) fn migrate_voiceprints_v3() {
     files.sort();
     files.dedup();
     for file in files {
+        let _guard = lock_voiceprints();
         let Ok(text) = std::fs::read_to_string(&file) else {
             continue;
         };
@@ -69,7 +86,7 @@ pub(crate) fn migrate_voiceprints_v3() {
         let space_ok = v
             .get("embedding_space")
             .and_then(|x| x.as_str())
-            .map(|s| s == mr_ml::EMBEDDING_SPACE)
+            .map(|s| s == EMBEDDING_SPACE)
             .unwrap_or(true);
         let kept: Vec<_> = if space_ok {
             profiles
@@ -77,7 +94,7 @@ pub(crate) fn migrate_voiceprints_v3() {
                 .filter(|p| {
                     p.get("embedding")
                         .and_then(|x| x.as_array())
-                        .map(|a| a.len() == mr_ml::EMBEDDING_DIM)
+                        .map(|a| a.len() == EMBEDDING_DIM)
                         .unwrap_or(true)
                 })
                 .collect()
@@ -88,9 +105,11 @@ pub(crate) fn migrate_voiceprints_v3() {
             continue;
         }
         let _ = std::fs::copy(&file, file.with_extension("v2.bak"));
-        let _ = std::fs::write(
+        let _ = write_atomic(
             &file,
-            serde_json::to_string_pretty(&vp_v3(kept)).unwrap_or_default(),
+            serde_json::to_string_pretty(&vp_v3(kept))
+                .unwrap_or_default()
+                .as_bytes(),
         );
     }
 }
@@ -124,13 +143,10 @@ fn rename_voiceprint_names(old: &str, new: &str) -> bool {
     files.dedup();
     let mut found = false;
     for file in files {
+        let _guard = lock_voiceprints();
         if let Ok(text) = std::fs::read_to_string(&file) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                let mut profiles = v
-                    .get("profiles")
-                    .and_then(|x| x.as_array())
-                    .cloned()
-                    .unwrap_or_else(|| v.as_array().cloned().unwrap_or_default());
+                let mut profiles = parse_profiles(&v);
                 let mut changed = false;
                 for p in &mut profiles {
                     if p.get("name")
@@ -144,9 +160,11 @@ fn rename_voiceprint_names(old: &str, new: &str) -> bool {
                     }
                 }
                 if changed {
-                    let _ = std::fs::write(
+                    let _ = write_atomic(
                         &file,
-                        serde_json::to_string_pretty(&vp_v3(profiles)).unwrap_or_default(),
+                        serde_json::to_string_pretty(&vp_v3(profiles))
+                            .unwrap_or_default()
+                            .as_bytes(),
                     );
                 }
             }
@@ -174,9 +192,11 @@ pub(super) fn update_people(old: &str, new_name: &str, role: Option<&str>) -> bo
             }
         }
         if changed {
-            let _ = std::fs::write(
+            let _ = write_atomic(
                 &file,
-                serde_json::to_string_pretty(&list).unwrap_or_default(),
+                serde_json::to_string_pretty(&list)
+                    .unwrap_or_default()
+                    .as_bytes(),
             );
         }
     }
@@ -217,9 +237,11 @@ pub(super) fn remove_person(name: &str) -> bool {
             .collect();
         if kept.len() != before {
             found = true;
-            let _ = std::fs::write(
+            let _ = write_atomic(
                 &file,
-                serde_json::to_string_pretty(&kept).unwrap_or_default(),
+                serde_json::to_string_pretty(&kept)
+                    .unwrap_or_default()
+                    .as_bytes(),
             );
         }
     }
@@ -240,8 +262,7 @@ fn voiceprint_usable(p: &serde_json::Value) -> bool {
         .get("embedding")
         .and_then(|v| v.as_array())
         .map(|a| {
-            a.len() == mr_ml::EMBEDDING_DIM
-                && a.iter().filter_map(|x| x.as_f64()).any(|x| x.abs() > 1e-12)
+            a.len() == EMBEDDING_DIM && a.iter().filter_map(|x| x.as_f64()).any(|x| x.abs() > 1e-12)
         })
         .unwrap_or(false);
     let proto_ok = p
@@ -252,7 +273,7 @@ fn voiceprint_usable(p: &serde_json::Value) -> bool {
                 x.get("embedding")
                     .and_then(|v| v.as_array())
                     .map(|e| {
-                        e.len() == mr_ml::EMBEDDING_DIM
+                        e.len() == EMBEDDING_DIM
                             && e.iter().filter_map(|n| n.as_f64()).any(|n| n.abs() > 1e-12)
                     })
                     .unwrap_or(false)
@@ -282,7 +303,7 @@ pub(super) fn load_all_voiceprints() -> Vec<serde_json::Value> {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
                     if v.get("embedding_space")
                         .and_then(|x| x.as_str())
-                        .is_some_and(|s| s != mr_ml::EMBEDDING_SPACE)
+                        .is_some_and(|s| s != EMBEDDING_SPACE)
                     {
                         continue;
                     }
@@ -299,7 +320,7 @@ pub(super) fn load_all_voiceprints() -> Vec<serde_json::Value> {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
                 if v.get("embedding_space")
                     .and_then(|x| x.as_str())
-                    .is_some_and(|s| s != mr_ml::EMBEDDING_SPACE)
+                    .is_some_and(|s| s != EMBEDDING_SPACE)
                 {
                     return out;
                 }
@@ -310,14 +331,6 @@ pub(super) fn load_all_voiceprints() -> Vec<serde_json::Value> {
         }
     }
     out
-}
-
-fn l2_normalize(v: &[f64]) -> Vec<f64> {
-    let n: f64 = v.iter().map(|x| x * x).sum::<f64>().sqrt();
-    if n < 1e-12 {
-        return vec![0.0; v.len()];
-    }
-    v.iter().map(|x| x / n).collect()
 }
 
 pub(super) fn ensure_person_in_list(name: &str, role: Option<&str>) {
@@ -374,13 +387,26 @@ fn store_voiceprint(
     if let Some(parent) = vp_file.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
+    // Сниппет собираем до lock: декодирование WAV не должно задерживать
+    // параллельные сохранения голосов.
+    let new_id = format!("p{now}-{}", PROTO_SEQ.fetch_add(1, Ordering::Relaxed) + 1);
+    let snippet_rel = snippet_for_new_prototype(
+        audio_file,
+        &new_id,
+        sample_start,
+        sample_end,
+        sample_channel,
+        vp_file.parent(),
+    );
+
+    let _guard = lock_voiceprints();
     let mut profiles: Vec<serde_json::Value> = std::fs::read_to_string(&vp_file)
         .ok()
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
         .map(|v| {
             if v.get("embedding_space")
                 .and_then(|x| x.as_str())
-                .is_some_and(|s| s != mr_ml::EMBEDDING_SPACE)
+                .is_some_and(|s| s != EMBEDDING_SPACE)
             {
                 vec![]
             } else {
@@ -389,6 +415,7 @@ fn store_voiceprint(
         })
         .unwrap_or_default();
     profiles.retain(voiceprint_usable);
+    let mut duplicate = false;
     if let Some(p) = profiles.iter_mut().find(|p| {
         p.get("name")
             .and_then(|x| x.as_str())
@@ -422,53 +449,35 @@ fn store_voiceprint(
                 .map(|a| a.len() == norm.len())
                 .unwrap_or(false)
         });
-        let duplicate = protos.iter().any(|x| {
+        duplicate = protos.iter().any(|x| {
             x.get("embedding")
                 .and_then(|v| v.as_array())
                 .map(|a| {
                     let v: Vec<f64> = a.iter().filter_map(|n| n.as_f64()).collect();
-                    mr_ml::cosine_similarity(&v, &norm) >= 0.98
+                    cosine_similarity(&v, &norm) >= 0.98
                 })
                 .unwrap_or(false)
         });
         if !duplicate {
-            let new_id = format!("p{now}-{}", protos.len() + 1);
-            let snippet_rel = snippet_for_new_prototype(
-                audio_file,
-                &new_id,
-                sample_start,
-                sample_end,
-                sample_channel,
-                vp_file.parent(),
-            );
             protos.push(json!({
                 "id": new_id,
                 "embedding": norm,
                 "duration_sec": 4.0,
                 "quality": 1.0,
                 "created_at": now_iso.clone(),
-                "snippet_relpath": snippet_rel,
+                "snippet_relpath": snippet_rel.clone(),
             }));
             p["embedding"] = json!(merged);
             p["samples_count"] = json!(cnt as u64 + 1);
         }
-        if protos.len() > mr_ml::MAX_PROTOTYPES {
-            let drop_n = protos.len() - mr_ml::MAX_PROTOTYPES;
+        if protos.len() > MAX_PROTOTYPES {
+            let drop_n = protos.len() - MAX_PROTOTYPES;
             protos.drain(0..drop_n);
         }
         p["name"] = json!(name);
         p["prototypes"] = json!(protos);
         p["updated_at"] = json!(now_iso.clone());
     } else {
-        let new_id = format!("p{now}-1");
-        let snippet_rel = snippet_for_new_prototype(
-            audio_file,
-            &new_id,
-            sample_start,
-            sample_end,
-            sample_channel,
-            vp_file.parent(),
-        );
         profiles.push(json!({
             "name": name,
             "embedding": norm.clone(),
@@ -480,14 +489,23 @@ fn store_voiceprint(
                 "duration_sec": 4.0,
                 "quality": 1.0,
                 "created_at": now_iso,
-                "snippet_relpath": snippet_rel,
+                "snippet_relpath": snippet_rel.clone(),
             }],
         }));
     }
-    let _ = std::fs::write(
+    let _ = write_atomic(
         &vp_file,
-        serde_json::to_string_pretty(&vp_v3(profiles)).unwrap_or_default(),
+        serde_json::to_string_pretty(&vp_v3(profiles))
+            .unwrap_or_default()
+            .as_bytes(),
     );
+    drop(_guard);
+    // Дубликат не попал в профиль — сниппет ему не нужен.
+    if duplicate {
+        if let (Some(rel), Some(parent)) = (snippet_rel.as_deref(), vp_file.parent()) {
+            remove_snippet(parent, rel);
+        }
+    }
 }
 
 pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_json::Value) {
@@ -497,6 +515,8 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
         .unwrap_or("")
         .trim()
         .to_string();
+    // Без onnx эмбеддинг из аудио не извлекается, поэтому mut не нужен.
+    #[cfg_attr(not(feature = "onnx"), allow(unused_mut))]
     let mut emb: Vec<f64> = body
         .get("embedding")
         .and_then(|v| v.as_array())
@@ -547,7 +567,7 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
         );
         return;
     }
-    if !emb.is_empty() && emb.len() != mr_ml::EMBEDDING_DIM {
+    if !emb.is_empty() && emb.len() != EMBEDDING_DIM {
         json_response(
             request,
             json!({"ok": false, "error": "Неверная размерность голосового отпечатка"}),
@@ -598,6 +618,19 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
     );
 }
 
+#[cfg(not(feature = "onnx"))]
+pub(super) fn handle_voiceprint_learn_sample(
+    request: tiny_http::Request,
+    _body: serde_json::Value,
+) {
+    json_response(
+        request,
+        json!({"ok": false, "error": "Обучение голоса недоступно: сборка без onnx"}),
+        501,
+    );
+}
+
+#[cfg(feature = "onnx")]
 pub(super) fn handle_voiceprint_learn_sample(request: tiny_http::Request, body: serde_json::Value) {
     let file = body
         .get("file")
@@ -704,7 +737,7 @@ pub(super) fn handle_voiceprint_learn_sample(request: tiny_http::Request, body: 
             return;
         }
     };
-    if emb.len() != mr_ml::EMBEDDING_DIM {
+    if emb.len() != EMBEDDING_DIM {
         json_response(
             request,
             json!({"ok": false, "error": "Неверная размерность голосового отпечатка"}),
@@ -771,6 +804,7 @@ pub(super) fn handle_voiceprint_delete(request: tiny_http::Request, body: serde_
     }
     let mut found = false;
     for vp_file in files {
+        let _guard = lock_voiceprints();
         if let Ok(t) = std::fs::read_to_string(&vp_file) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
                 let arr = parse_profiles(&v);
@@ -788,9 +822,11 @@ pub(super) fn handle_voiceprint_delete(request: tiny_http::Request, body: serde_
                     .collect();
                 if kept.len() != before {
                     found = true;
-                    let _ = std::fs::write(
+                    let _ = write_atomic(
                         &vp_file,
-                        serde_json::to_string_pretty(&vp_v3(kept)).unwrap_or_default(),
+                        serde_json::to_string_pretty(&vp_v3(kept))
+                            .unwrap_or_default()
+                            .as_bytes(),
                     );
                 }
             }
@@ -830,6 +866,32 @@ fn snippet_for_new_prototype(
     std::fs::create_dir_all(dir.join("snippets")).ok()?;
     std::fs::write(dir.join("snippets").join(format!("{proto_id}.wav")), bytes).ok()?;
     Some(format!("snippets/{proto_id}.wav"))
+}
+
+/// Путь сниппета приходит из `voiceprints.json` (в т.ч. импортированного пакета),
+/// поэтому доверять ему нельзя: только относительный путь, канонизированный
+/// внутри каталога пакета.
+fn safe_snippet_path(pack_dir: &Path, rel: &str) -> Option<PathBuf> {
+    let rel_path = Path::new(rel);
+    if rel_path.is_absolute()
+        || rel_path.components().any(|c| {
+            matches!(
+                c,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return None;
+    }
+    let root = pack_dir.canonicalize().ok()?;
+    let candidate = pack_dir.join(rel_path).canonicalize().ok()?;
+    (candidate.starts_with(&root) && candidate.is_file()).then_some(candidate)
+}
+
+fn remove_snippet(pack_dir: &Path, rel: &str) {
+    if let Some(path) = safe_snippet_path(pack_dir, rel) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 fn voiceprint_files() -> Vec<std::path::PathBuf> {
@@ -900,7 +962,7 @@ pub(super) fn serve_voiceprint_detail(request: tiny_http::Request, query: &str) 
                         } else {
                             mr_packs::packs_root_dir(&app_data_dir()).join(&pack_id)
                         };
-                        base.join(r).is_file()
+                        safe_snippet_path(&base, r).is_some()
                     });
                     json!({
                         "id": x.get("id"),
@@ -954,12 +1016,12 @@ fn remove_prototype(
                 .and_then(|v| v.as_array())
                 .map(|a| a.iter().filter_map(|n| n.as_f64()).collect())
         })
-        .filter(|v: &Vec<f64>| v.len() == mr_ml::EMBEDDING_DIM)
+        .filter(|v: &Vec<f64>| v.len() == EMBEDDING_DIM)
         .collect();
     if remaining.is_empty() {
         return Some((snippet, true));
     }
-    let mut mean = vec![0.0; mr_ml::EMBEDDING_DIM];
+    let mut mean = vec![0.0; EMBEDDING_DIM];
     for v in &remaining {
         for (i, x) in v.iter().enumerate() {
             mean[i] += x;
@@ -998,8 +1060,60 @@ pub(super) fn handle_voiceprint_sample_delete(
         );
         return;
     }
+    let requested_pack = body.get("pack_id").and_then(|v| v.as_str());
+    let all_files = voiceprint_files();
+    let files: Vec<PathBuf> = match requested_pack {
+        Some(id) => all_files
+            .into_iter()
+            .filter(|f| pack_id_of(f).as_deref() == Some(id))
+            .collect(),
+        None => all_files,
+    };
+    let _guard = lock_voiceprints();
+    // Один и тот же id прототипа в разных пакетах (например, из импорта) нельзя
+    // удалять «везде»: выбор пакета остаётся за пользователем.
+    if requested_pack.is_none() {
+        let mut pack_ids: Vec<String> = Vec::new();
+        for vp_file in &files {
+            let Ok(t) = std::fs::read_to_string(vp_file) else {
+                continue;
+            };
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) else {
+                continue;
+            };
+            let hit = parse_profiles(&v).iter().any(|p| {
+                same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), &name)
+                    && p.get("prototypes")
+                        .and_then(|x| x.as_array())
+                        .is_some_and(|a| {
+                            a.iter().any(|x| {
+                                x.get("id").and_then(|v| v.as_str()) == Some(proto_id.as_str())
+                            })
+                        })
+            });
+            if hit {
+                if let Some(id) = pack_id_of(vp_file) {
+                    if !pack_ids.contains(&id) {
+                        pack_ids.push(id);
+                    }
+                }
+            }
+        }
+        if pack_ids.len() > 1 {
+            json_response(
+                request,
+                json!({
+                    "ok": false,
+                    "error": "Образец найден в нескольких пакетах — укажите pack_id",
+                    "pack_ids": pack_ids,
+                }),
+                409,
+            );
+            return;
+        }
+    }
     let mut found = false;
-    for vp_file in voiceprint_files() {
+    for vp_file in files {
         let Ok(t) = std::fs::read_to_string(&vp_file) else {
             continue;
         };
@@ -1027,12 +1141,14 @@ pub(super) fn handle_voiceprint_sample_delete(
             });
         }
         if changed {
-            let _ = std::fs::write(
+            let _ = write_atomic(
                 &vp_file,
-                serde_json::to_string_pretty(&vp_v3(profiles)).unwrap_or_default(),
+                serde_json::to_string_pretty(&vp_v3(profiles))
+                    .unwrap_or_default()
+                    .as_bytes(),
             );
             if let (Some(rel), Some(parent)) = (snippet, vp_file.parent()) {
-                let _ = std::fs::remove_file(parent.join(&rel));
+                remove_snippet(parent, &rel);
             }
         }
     }
@@ -1085,9 +1201,11 @@ fn clear_matched_in_transcript(audio: &Path, name: &str) {
         }
     }
     if changed {
-        let _ = std::fs::write(
+        let _ = write_atomic(
             &json_p,
-            serde_json::to_string_pretty(&data).unwrap_or_default(),
+            serde_json::to_string_pretty(&data)
+                .unwrap_or_default()
+                .as_bytes(),
         );
     }
 }
@@ -1169,9 +1287,11 @@ fn rename_speaker_in_files(audio: &Path, new_name: &str, old_name: Option<&str>)
                     }
                 }
             }
-            let _ = std::fs::write(
+            let _ = write_atomic(
                 &json_p,
-                serde_json::to_string_pretty(&data).unwrap_or_default(),
+                serde_json::to_string_pretty(&data)
+                    .unwrap_or_default()
+                    .as_bytes(),
             );
         }
     }
@@ -1195,13 +1315,13 @@ fn rename_speaker_in_files(audio: &Path, new_name: &str, old_name: Option<&str>)
                 }
             }
             if patched != t {
-                let _ = std::fs::write(&md_p, patched);
+                let _ = write_atomic(&md_p, patched.as_bytes());
             }
         }
         if let Ok(t) = std::fs::read_to_string(&txt_p) {
             let patched = t.replace(&format!("] {o}:"), &format!("] {new_name}:"));
             if patched != t {
-                let _ = std::fs::write(&txt_p, patched);
+                let _ = write_atomic(&txt_p, patched.as_bytes());
             }
         }
     }
@@ -1212,8 +1332,8 @@ mod tests {
     use super::*;
 
     fn profile_with(two: bool) -> serde_json::Value {
-        let a: Vec<f64> = (0..mr_ml::EMBEDDING_DIM).map(|_| 1.0).collect();
-        let b: Vec<f64> = (0..mr_ml::EMBEDDING_DIM).map(|_| 0.5).collect();
+        let a: Vec<f64> = (0..EMBEDDING_DIM).map(|_| 1.0).collect();
+        let b: Vec<f64> = (0..EMBEDDING_DIM).map(|_| 0.5).collect();
         let mut protos = vec![json!({
             "id": "p1", "embedding": a, "duration_sec": 1.0,
             "quality": 1.0, "created_at": "", "snippet_relpath": null,
@@ -1228,7 +1348,7 @@ mod tests {
     }
 
     fn a_fallback() -> Vec<f64> {
-        (0..mr_ml::EMBEDDING_DIM).map(|_| 0.1).collect()
+        (0..EMBEDDING_DIM).map(|_| 0.1).collect()
     }
 
     #[test]
@@ -1239,11 +1359,29 @@ mod tests {
         assert!(!empty);
         assert_eq!(p["samples_count"], 1);
         let emb: Vec<f64> = serde_json::from_value(p["embedding"].clone()).unwrap();
-        assert_eq!(emb.len(), mr_ml::EMBEDDING_DIM);
+        assert_eq!(emb.len(), EMBEDDING_DIM);
         // Остался один прототип из 0.5: центроид — его нормаль, а не старое среднее.
         let norm: f64 = emb.iter().map(|x| x * x).sum::<f64>().sqrt();
         assert!((norm - 1.0).abs() < 1e-9);
         assert!((emb[0] - emb[100]).abs() < 1e-12);
+    }
+
+    #[test]
+    fn snippet_path_never_escapes_pack() {
+        let dir = std::env::temp_dir().join(format!(
+            "mr-snippet-path-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("snippets")).unwrap();
+        std::fs::write(dir.join("snippets/a.wav"), b"x").unwrap();
+        assert!(safe_snippet_path(&dir, "snippets/a.wav").is_some());
+        assert!(safe_snippet_path(&dir, "../a.wav").is_none());
+        assert!(safe_snippet_path(&dir, "/etc/passwd").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::path::PathBuf;
 
 use serde_json::json;
@@ -5,8 +6,18 @@ use serde_json::json;
 use super::{json_response, query_param};
 use crate::config::save_dir;
 
+/// Имя попадает в AppleScript/PowerShell: кавычки и подстановки ломают
+/// команду, поэтому оставляем только безопасные символы.
+fn sanitize_shell_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| !c.is_control() && !matches!(c, '\'' | '"' | '`' | '$' | '\n' | '\r'))
+        .collect()
+}
+
 pub(crate) fn pick_save_path(default_name: &str, filter_pattern: &str) -> Option<PathBuf> {
-    let initial_path = save_dir().join(default_name);
+    let default_name = sanitize_shell_text(default_name);
+    let initial_path = save_dir().join(&default_name);
 
     #[cfg(target_os = "linux")]
     {
@@ -67,9 +78,10 @@ pub(crate) fn pick_save_path(default_name: &str, filter_pattern: &str) -> Option
 
     #[cfg(target_os = "windows")]
     {
+        let initial = sanitize_shell_text(&initial_path.to_string_lossy());
         let script = format!(
             "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.SaveFileDialog; $d.FileName = '{}'; $d.Filter = 'Files ({})|{}'; if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{ $d.FileName }}",
-            initial_path.display(),
+            initial,
             filter_pattern,
             filter_pattern
         );
@@ -96,7 +108,13 @@ pub(super) fn handle_save_dialog(mut request: tiny_http::Request, query: &str) {
     let name = query_param(query, "name").unwrap_or_else(|| "document.docx".to_string());
 
     let mut body = Vec::new();
-    if request.as_reader().read_to_end(&mut body).is_err() || body.is_empty() {
+    if request
+        .as_reader()
+        .take(super::MAX_JSON_BODY)
+        .read_to_end(&mut body)
+        .is_err()
+        || body.is_empty()
+    {
         json_response(request, json!({"ok": false, "error": "Пустые данные"}), 400);
         return;
     }
@@ -148,5 +166,16 @@ pub(super) fn handle_save_dialog(mut request: tiny_http::Request, query: &str) {
                 json_response(request, json!({"ok": false, "no_dialog": true}), 200);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_shell_text;
+
+    #[test]
+    fn shell_text_strips_quotes_and_controls() {
+        assert_eq!(sanitize_shell_text("a'b\"c`d$e\nf\rg\u{7}"), "abcdefg");
+        assert_eq!(sanitize_shell_text("Совещание 2.docx"), "Совещание 2.docx");
     }
 }

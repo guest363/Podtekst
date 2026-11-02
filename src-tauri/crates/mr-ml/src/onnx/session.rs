@@ -5,15 +5,14 @@ use std::sync::{Arc, OnceLock};
 use ort::environment::Environment;
 use ort::value::{DynTensor, Tensor};
 
-fn global_env() -> Arc<Environment> {
-    static ENV: OnceLock<Arc<Environment>> = OnceLock::new();
+fn global_env() -> Result<Arc<Environment>, String> {
+    static ENV: OnceLock<Result<Arc<Environment>, String>> = OnceLock::new();
     ENV.get_or_init(|| {
-        Arc::new(
-            ort::environment::init()
-                .with_name("podtekst")
-                .build()
-                .expect("ort environment"),
-        )
+        ort::environment::init()
+            .with_name("podtekst")
+            .build()
+            .map(Arc::new)
+            .map_err(|e| format!("ort environment: {e}"))
     })
     .clone()
 }
@@ -35,7 +34,7 @@ impl OrtSession {
     /// пробует аппаратный ускоритель; недоступен драйвер или библиотека —
     /// прозрачно возвращается к CPU.
     pub fn load(path: &Path, intra_threads: usize) -> Result<Self, String> {
-        let env = global_env();
+        let env = global_env()?;
         #[cfg(any(feature = "ort-cuda", feature = "ort-directml", feature = "ort-coreml"))]
         match Self::accelerated(&env, path, intra_threads) {
             Ok(session) => return Ok(session),

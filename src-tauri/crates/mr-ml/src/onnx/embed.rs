@@ -8,7 +8,9 @@ use std::collections::HashMap;
 
 use super::features::eres2netv2_fbank;
 use super::session::OrtSession;
-use crate::l2_normalize;
+use crate::{l2_normalize, EMBEDDING_DIM};
+
+const LEGACY_EMBEDDING_DIM: usize = 256;
 
 pub struct EmbeddingExtractor {
     session: OrtSession,
@@ -44,14 +46,26 @@ impl EmbeddingExtractor {
         let mut inputs = HashMap::new();
         inputs.insert(self.input_name.clone(), (vec![1i64, t as i64, 80], flat));
         let out = self.session.run_f32(inputs)?;
-        let vec = out
-            .values()
-            .next()
-            .map(|(_, d)| l2_normalize(&d.iter().map(|&x| x as f64).collect::<Vec<_>>()))
-            .unwrap_or_default();
-        if vec.is_empty() {
+        // У модели несколько выходов, порядок HashMap не гарантирован:
+        // выбираем вектор по размерности пространства (192) или legacy pyannote (256).
+        let Some((_, data)) = [EMBEDDING_DIM, LEGACY_EMBEDDING_DIM]
+            .iter()
+            .find_map(|&dim| out.values().find(|(_, d)| d.len() == dim))
+        else {
+            return Ok(None);
+        };
+        // Нулевой вектор модель отдаёт на тишине: он не несёт голоса и,
+        // попав в прототипы, одинаково «близок» ко всем дикторам.
+        let norm = data
+            .iter()
+            .map(|&x| (x as f64) * (x as f64))
+            .sum::<f64>()
+            .sqrt();
+        if !norm.is_finite() || norm < 1e-6 {
             return Ok(None);
         }
-        Ok(Some(vec))
+        Ok(Some(l2_normalize(
+            &data.iter().map(|&x| x as f64).collect::<Vec<_>>(),
+        )))
     }
 }

@@ -32,7 +32,11 @@ const SUBTYPE_IEEE_FLOAT: windows::core::GUID =
 const TAG_EXTENSIBLE: u16 = 0xFFFE;
 const TAG_IEEE_FLOAT: u16 = 3;
 
-const RPC_E_CHANGED_MODE: windows::core::HRESULT = windows::core::HRESULT(0x8001_0106_u32 as i32);
+#[derive(Clone, Copy)]
+enum SampleFormat {
+    F32,
+    I16,
+}
 
 /// Каталог устройств: микрофоны (eCapture) и выходы (eRender — они же loopback-источники).
 pub fn devices() -> DeviceCatalog {
@@ -83,28 +87,26 @@ pub fn start_stream(
 
 fn resolve_endpoint_id(kind: StreamKind, device: Option<&str>) -> Result<String> {
     let com_owned = com_init();
-    let res = unsafe {
-        let Ok(en) = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) else {
-            return Err(AudioError::Other(
-                "COM MMDeviceEnumerator недоступен".into(),
-            ));
-        };
-        open_device(&en, kind, device).and_then(|d| {
-            device_id(&d).ok_or_else(|| AudioError::Other("id устройства не прочитан".into()))
-        })
-    };
+    let res = unsafe { resolve_endpoint_id_com(kind, device) };
     if com_owned {
         unsafe { CoUninitialize() };
     }
     res
 }
 
+/// Отдельная функция: ранние `?` не должны обходить `CoUninitialize` в обёртке.
+unsafe fn resolve_endpoint_id_com(kind: StreamKind, device: Option<&str>) -> Result<String> {
+    let en: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
+        .map_err(|_| AudioError::Other("COM MMDeviceEnumerator недоступен".into()))?;
+    let d = open_device(&en, kind, device)?;
+    device_id(&d).ok_or_else(|| AudioError::Other("id устройства не прочитан".into()))
+}
+
 fn com_init() -> bool {
     // Поток наш собственный, но на всякий случай допускаем уже инициализированный COM.
-    matches!(
-        unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) },
-        h if h.is_ok() || h == RPC_E_CHANGED_MODE
-    )
+    // Освобождать квартиру можно только после S_OK/S_FALSE: при
+    // RPC_E_CHANGED_MODE она чужая, и CoUninitialize испортил бы её владельцу.
+    unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_ok()
 }
 
 fn open_device(en: &IMMDeviceEnumerator, kind: StreamKind, id: Option<&str>) -> Result<IMMDevice> {
@@ -115,9 +117,11 @@ fn open_device(en: &IMMDeviceEnumerator, kind: StreamKind, id: Option<&str>) -> 
         };
         if let Some(id) = id.filter(|s| !s.is_empty()) {
             let wide: Vec<u16> = id.encode_utf16().chain([0]).collect();
-            if let Ok(d) = en.GetDevice(PCWSTR::from_raw(wide.as_ptr())) {
-                return Ok(d);
-            }
+            // Явно выбранное устройство не подменяем дефолтным: иначе пишем
+            // не туда, куда просил пользователь.
+            return en
+                .GetDevice(PCWSTR::from_raw(wide.as_ptr()))
+                .map_err(|e| AudioError::NoDevice(format!("{what} {id} не найден: {e}")));
         }
         en.GetDefaultAudioEndpoint(flow, eConsole)
             .map_err(|e| AudioError::NoDevice(format!("{what} не найден: {e}")))
@@ -158,7 +162,14 @@ fn capture_loop(
         let pwfx = client
             .GetMixFormat()
             .map_err(|e| AudioError::Record(format!("WASAPI GetMixFormat: {e}")))?;
-        let (dev_rate, channels, is_float) = parse_format(pwfx);
+        let (dev_rate, channels, sample_format) = parse_format(pwfx);
+        let Some(sample_format) = sample_format else {
+            let bits = (*pwfx).wBitsPerSample;
+            CoTaskMemFree(Some(pwfx.cast()));
+            return Err(AudioError::Record(format!(
+                "WASAPI: неподдерживаемый формат {bits} бит/сэмпл (нужен PCM 16 или float 32)"
+            )));
+        };
         let flags = match kind {
             StreamKind::System => AUDCLNT_STREAMFLAGS_LOOPBACK,
             StreamKind::Microphone => 0u32,
@@ -207,7 +218,7 @@ fn capture_loop(
                     break;
                 }
                 let silent = flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0;
-                let interleaved = read_frames(data, frames, channels, is_float, silent);
+                let interleaved = read_frames(data, frames, channels, sample_format, silent);
                 let _ = capture.ReleaseBuffer(frames);
                 let mono = downmix(&interleaved, channels);
                 let out = match resampler.as_mut() {
@@ -256,20 +267,19 @@ unsafe fn read_frames(
     data: *mut u8,
     frames: u32,
     channels: u16,
-    is_float: bool,
+    format: SampleFormat,
     silent: bool,
 ) -> Vec<f32> {
     let n = frames as usize * channels as usize;
     if silent || data.is_null() {
         return vec![0.0; n];
     }
-    if is_float {
-        std::slice::from_raw_parts(data as *const f32, n).to_vec()
-    } else {
-        std::slice::from_raw_parts(data as *const i16, n)
+    match format {
+        SampleFormat::F32 => std::slice::from_raw_parts(data as *const f32, n).to_vec(),
+        SampleFormat::I16 => std::slice::from_raw_parts(data as *const i16, n)
             .iter()
             .map(|&x| f32::from(x) / 32768.0)
-            .collect()
+            .collect(),
     }
 }
 
@@ -284,17 +294,33 @@ fn downmix(interleaved: &[f32], channels: u16) -> Vec<f32> {
         .collect()
 }
 
-unsafe fn parse_format(pwfx: *mut WAVEFORMATEX) -> (u32, u16, bool) {
+unsafe fn parse_format(pwfx: *mut WAVEFORMATEX) -> (u32, u16, Option<SampleFormat>) {
     let f = &*pwfx;
-    // SAFETY: SubFormat читается read_unaligned — WAVEFORMATEXTENSIBLE packed(1).
-    let ext = pwfx.cast::<WAVEFORMATEXTENSIBLE>();
-    let sub_format = std::ptr::addr_of!((*ext).SubFormat).read_unaligned();
+    // SubFormat существует только в WAVEFORMATEXTENSIBLE: при обычном
+    // WAVEFORMATEX чтение за границей структуры было бы UB.
     let is_float = if f.wFormatTag == TAG_EXTENSIBLE {
+        let ext = pwfx.cast::<WAVEFORMATEXTENSIBLE>();
+        // SAFETY: SubFormat читается read_unaligned — WAVEFORMATEXTENSIBLE packed(1).
+        let sub_format = std::ptr::addr_of!((*ext).SubFormat).read_unaligned();
         sub_format == SUBTYPE_IEEE_FLOAT
     } else {
         f.wFormatTag == TAG_IEEE_FLOAT
     };
-    (f.nSamplesPerSec, f.nChannels, is_float)
+    // 24/32-битный целочисленный PCM, прочитанный как i16, дал бы шум:
+    // разбираем только раскладки, для которых есть чтение. nBlockAlign сверяем
+    // с каналами и шириной сэмпла — иначе кадры упакованы не так, как мы читаем.
+    let packed =
+        u32::from(f.nBlockAlign) == u32::from(f.nChannels) * u32::from(f.wBitsPerSample / 8);
+    let format = if !packed {
+        None
+    } else if is_float && f.wBitsPerSample == 32 {
+        Some(SampleFormat::F32)
+    } else if !is_float && f.wBitsPerSample == 16 {
+        Some(SampleFormat::I16)
+    } else {
+        None
+    };
+    (f.nSamplesPerSec, f.nChannels, format)
 }
 
 unsafe fn collect_endpoints(en: &IMMDeviceEnumerator, flow: EDataFlow, out: &mut Vec<DeviceInfo>) {

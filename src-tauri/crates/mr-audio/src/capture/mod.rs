@@ -156,18 +156,27 @@ impl CaptureStream {
     /// Остановить поток и дождаться завершения рабочего потока.
     ///
     /// Ждём до трёх секунд: если система звука «заснула», чтение может
-    /// блокировать. Но поток не отсоединяем: рано удалённый сырой файл
-    /// стоил бы хвоста записи (данные дописываются до самого конца).
+    /// блокировать. Зависший поток отсоединяем, чтобы вызывающий под mutex
+    /// состояния записи не ждал вечно. Цена: пока процесс жив, бэкенд может
+    /// дописывать сырой файл, поэтому сразу читать его после таймаута нельзя.
     pub fn stop(&mut self) {
-        if self.stop.swap(true, Ordering::Relaxed) {
+        // Не swap: signal_stop мог выставить флаг раньше, а join всё равно нужен.
+        self.stop.store(true, Ordering::Relaxed);
+        let Some(worker) = self.worker.take() else {
             return;
-        }
-        if let Some(rx) = self.done.take() {
-            let _ = rx.recv_timeout(std::time::Duration::from_secs(3));
-        }
-        // Присоединяемся даже после таймаута: файл читает этот же поток записи.
-        if let Some(h) = self.worker.take() {
-            let _ = h.join();
+        };
+        let Some(rx) = self.done.take() else {
+            let _ = worker.join();
+            return;
+        };
+        match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            // Поток завершился или запаниковал: join не блокирует.
+            Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = worker.join();
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                eprintln!("Поток захвата не завершился за 3 с: отсоединён");
+            }
         }
     }
 }
@@ -311,5 +320,34 @@ fn start_stream(
             "живой захват не поддерживается на {}",
             std::env::consts::OS
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CaptureStream;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    #[test]
+    fn stop_joins_worker_after_signal_stop() {
+        let path = std::env::temp_dir().join(format!("mr-stop-{}.f32", std::process::id()));
+        let finished = Arc::new(AtomicBool::new(false));
+        let finished_c = finished.clone();
+        let mut stream = CaptureStream::spawn(path, move |_, _, stop| {
+            while !stop.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            finished_c.store(true, Ordering::Relaxed);
+        })
+        .expect("поток захвата");
+        stream.signal_stop();
+        stream.stop();
+        assert!(
+            finished.load(Ordering::Relaxed),
+            "stop должен дождаться рабочего потока"
+        );
+        // Повторная остановка (и Drop) не должны ничего ломать.
+        stream.stop();
     }
 }

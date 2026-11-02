@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 
 use libc::{dlclose, dlopen, dlsym};
 
-use super::stream::{resample_to, RawWriter};
+use super::stream::{RawWriter, StreamingResampler};
 use super::{AudioError, CaptureStream, DeviceCatalog, DeviceInfo, Result, StreamKind};
 
 pub const AAUDIO_OK: i32 = 0;
@@ -292,6 +292,7 @@ fn spawn_stream(
         } else {
             Vec::new()
         };
+        let mut resampler = StreamingResampler::new(source_rate, target_rate);
 
         while !stop.load(Ordering::Relaxed) {
             let read_frames = unsafe {
@@ -334,10 +335,9 @@ fn spawn_stream(
                     }
                 };
 
-                let final_samples = if source_rate != target_rate {
-                    resample_to(&mono_samples, source_rate, target_rate)
-                } else {
-                    mono_samples
+                let final_samples = match resampler.as_mut() {
+                    Some(r) => r.push(&mono_samples),
+                    None => mono_samples,
                 };
 
                 if !final_samples.is_empty() {

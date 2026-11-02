@@ -79,6 +79,7 @@ pub(crate) fn configured_ctc_enabled() -> bool {
         .unwrap_or(true)
 }
 
+#[cfg(feature = "onnx")]
 pub(crate) fn configured_diar_assign_min_sim() -> f64 {
     load_config()
         .get("diar")
@@ -87,6 +88,7 @@ pub(crate) fn configured_diar_assign_min_sim() -> f64 {
         .unwrap_or(0.20)
 }
 
+#[cfg(feature = "onnx")]
 pub(crate) fn configured_diar_new_speaker_min_sim() -> f64 {
     load_config()
         .get("diar")
