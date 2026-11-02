@@ -521,9 +521,14 @@ pub fn transcribe_file(
         } else {
             None
         };
-        // Диалог внутри одного VAD-окна бывает и в стерео, поэтому паузы режем всегда.
-        on_event(80, "Делю речь на паузы для спикеров…");
-        let mut diar_utts = diarize::split_at_pauses(samples, &source_utts);
+        // В стерео каналы уже разделены по голосам, а дробление по паузам
+        // даёт лишние короткие эмбеддинги и перекластеризацию.
+        let mut diar_utts = if is_stereo {
+            source_utts.clone()
+        } else {
+            on_event(80, "Делю речь на паузы для спикеров…");
+            diarize::split_at_pauses(samples, &source_utts)
+        };
         on_event(80, "Ищу смену голоса внутри реплик…");
         diar_utts = diarize::split_long_by_speaker_change(
             samples,

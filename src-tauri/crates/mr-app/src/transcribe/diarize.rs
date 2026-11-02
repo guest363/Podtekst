@@ -399,22 +399,31 @@ fn profile_anchors(
     if profiles.is_empty() {
         return HashMap::new();
     }
-    centroids
+    let mut pairs: Vec<(f64, usize, usize)> = centroids
         .iter()
-        .filter_map(|(&label, centroid)| {
-            profiles
-                .iter()
-                .map(|profile| {
-                    (
-                        profile,
-                        mr_ml::cosine_similarity(centroid, &profile.embedding),
-                    )
-                })
-                .max_by(|a, b| a.1.total_cmp(&b.1))
-                .filter(|(_, similarity)| *similarity >= 0.65)
-                .map(|(profile, _)| (label, profile.embedding.clone()))
+        .flat_map(|(&label, centroid)| {
+            profiles.iter().enumerate().map(move |(index, profile)| {
+                (
+                    mr_ml::cosine_similarity(centroid, &profile.embedding),
+                    label,
+                    index,
+                )
+            })
         })
-        .collect()
+        .collect();
+    pairs.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut labels = HashSet::new();
+    let mut used = HashSet::new();
+    let mut anchors = HashMap::new();
+    for (similarity, label, index) in pairs {
+        if similarity < 0.65 || labels.contains(&label) || used.contains(&index) {
+            continue;
+        }
+        labels.insert(label);
+        used.insert(index);
+        anchors.insert(label, profiles[index].embedding.clone());
+    }
+    anchors
 }
 
 fn fill_labels_by_time(utterances: &[Utterance], label_of: &mut HashMap<usize, usize>) {
@@ -929,9 +938,9 @@ pub(crate) fn reconcile_channels(infos: &mut Vec<SpeakerInfo>, utterances: &mut 
 
             let should_merge =
                 if infos[i].channel == infos[j].channel && infos[i].name != infos[j].name {
-                    // Разные распознанные профили — разные люди,
-                    // даже если голоса похожи.
-                    !(infos[i].matched && infos[j].matched) && sim >= 0.55
+                    // Без профиля нет доказательства, что два кластера — один человек.
+                    // Похожесть смешанных эмбеддингов сливала всех в один «средний» голос.
+                    (infos[i].matched ^ infos[j].matched) && sim >= 0.55
                 } else {
                     // Между каналами того же человека выдают общее имя или
                     // одновременная речь (эхо); похожести без перекрытия мало —
@@ -1668,6 +1677,35 @@ mod tests {
     }
 
     #[test]
+    fn unmatched_clusters_in_one_channel_stay_separate() {
+        let mut infos = vec![
+            info("Участник 1", 0, vec![1.0, 0.0], 5, 10.0),
+            info("Участник 2", 0, vec![1.0, 0.0], 5, 10.0),
+        ];
+        let mut utts = vec![
+            utt(1.0, 3.0, "Участник 1", 0, "первая реплика"),
+            utt(10.0, 12.0, "Участник 2", 0, "вторая реплика"),
+        ];
+        reconcile_channels(&mut infos, &mut utts);
+        assert_eq!(infos.len(), 2);
+    }
+
+    #[test]
+    fn matched_profile_and_unnamed_tail_in_one_channel_merge() {
+        let mut matched = info("Я", 0, vec![1.0, 0.0], 5, 10.0);
+        matched.matched = true;
+        matched.matched_name = Some("Я".to_string());
+        let mut infos = vec![matched, info("Участник 2", 0, vec![1.0, 0.0], 1, 2.0)];
+        let mut utts = vec![
+            utt(1.0, 5.0, "Я", 0, "моя реплика"),
+            utt(10.0, 11.0, "Участник 2", 0, "хвост"),
+        ];
+        reconcile_channels(&mut infos, &mut utts);
+        assert_eq!(infos.len(), 1);
+        assert_eq!(infos[0].name, "Я");
+    }
+
+    #[test]
     fn similar_voices_across_channels_without_overlap_stay_separate() {
         let mut infos = vec![
             info("Участник 1", 0, vec![1.0, 0.0], 1, 3.0),
@@ -2043,6 +2081,22 @@ mod tests {
         let anchors = profile_anchors(&centroids, &profiles);
         assert_eq!(anchors.len(), 1);
         assert_eq!(anchors[&0], vec![1.0, 0.0]);
+    }
+
+    #[test]
+    fn profile_is_anchored_to_one_cluster_only() {
+        let centroids =
+            std::collections::HashMap::from([(0usize, vec![1.0, 0.0]), (1, vec![0.99, 0.01])]);
+        let profiles = vec![mr_ml::SpeakerProfile {
+            name: "A".to_string(),
+            embedding: vec![1.0, 0.0],
+            samples_count: 1,
+            updated_at: String::new(),
+            prototypes: vec![],
+        }];
+        let anchors = profile_anchors(&centroids, &profiles);
+        assert_eq!(anchors.len(), 1);
+        assert!(anchors.contains_key(&0));
     }
 
     #[test]
