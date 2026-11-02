@@ -1,11 +1,13 @@
 import { readJsonSafe } from './api'
-import type { Person, VoiceDetail, VoiceprintSummary } from './api'
+import type { Person, VoiceDetail, Voicepack, VoiceprintSummary } from './api'
 import { toast } from './toast.svelte.ts'
 
 export const peopleState = $state({
   list: [] as Person[],
   voiceprints: [] as string[],
   voiceprintCounts: {} as Record<string, number>,
+  packs: [] as Voicepack[],
+  selectedPackFilter: 'all',
   query: '',
   voiceDetail: null as VoiceDetail | null,
   voiceDetailName: '',
@@ -19,6 +21,9 @@ export async function loadPeople(): Promise<void> {
     peopleState.voiceprints = ((d.voiceprints || []) as string[]).map((v) =>
       String(v).toLowerCase().trim(),
     )
+    if (Array.isArray(d.packs)) {
+      peopleState.packs = d.packs as Voicepack[]
+    }
   } catch {
   }
   // Сколько эмбеддингов у каждого: тот же /api/voiceprints, без нового контракта.
@@ -90,6 +95,53 @@ export async function deleteVoiceSample(name: string, prototypeId: string): Prom
     return true
   } catch (e) {
     toast('Не удалось удалить образец: ' + (e as Error).message, 'error')
+    return false
+  }
+}
+
+export async function addPerson(name: string, role: string, packId?: string): Promise<boolean> {
+  const cleanName = name.trim()
+  if (!cleanName) return false
+  const cleanRole = role.trim() || 'Участник'
+  try {
+    const r = await fetch('/api/people/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: cleanName, role: cleanRole, pack_id: packId || 'default' }),
+    })
+    const d = await readJsonSafe(r)
+    if (!d.ok) {
+      toast(d.error || 'Не удалось добавить участника', 'error')
+      return false
+    }
+    toast(`Участник «${cleanName}» добавлен`)
+    await loadPeople()
+    return true
+  } catch (e) {
+    toast('Не удалось добавить участника: ' + (e as Error).message, 'error')
+    return false
+  }
+}
+
+export async function movePerson(name: string, toPackId: string): Promise<boolean> {
+  const cleanName = name.trim()
+  if (!cleanName || !toPackId) return false
+  try {
+    const r = await fetch('/api/people/move', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: cleanName, to_pack_id: toPackId }),
+    })
+    const d = await readJsonSafe(r)
+    if (!d.ok) {
+      toast(d.error || 'Не удалось переместить участника', 'error')
+      return false
+    }
+    toast(`Участник «${cleanName}» перемещён`)
+    await loadPeople()
+    return true
+  } catch (e) {
+    toast('Не удалось переместить участника: ' + (e as Error).message, 'error')
     return false
   }
 }

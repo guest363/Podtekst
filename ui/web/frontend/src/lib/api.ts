@@ -6,6 +6,9 @@ export interface Person {
   role?: string
   domain?: string
   is_external?: boolean
+  pack_id?: string
+  pack_name?: string
+  pack_enabled?: boolean
 }
 
 export interface Voicepack {
@@ -51,6 +54,8 @@ export interface SpeakerSample {
 export interface SpeakerCandidate {
   name: string
   similarity?: number
+  pack_id?: string
+  pack_name?: string
 }
 
 export interface VoiceprintSummary {
@@ -80,6 +85,8 @@ export interface SpeakerInfo {
   channel?: number | null
   matched?: boolean
   matched_name?: string | null
+  matched_pack_id?: string | null
+  matched_pack_name?: string | null
   similarity?: number
   silhouette?: number
   candidates?: SpeakerCandidate[] | Array<[string, number]> | null

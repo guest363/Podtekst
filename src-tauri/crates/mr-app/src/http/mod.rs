@@ -22,9 +22,10 @@ use self::files::{
 };
 use self::media::{local_request_allowed, recordings_list, serve_audio_file, serve_media_snippet};
 use self::people::{
-    handle_voiceprint_delete, handle_voiceprint_learn_sample, handle_voiceprint_sample_delete,
-    handle_voiceprint_save, load_all_voiceprints, load_external_people, people_json_files,
-    read_people_list, remove_person, save_external_people, serve_voiceprint_detail, update_people,
+    handle_people_add, handle_people_move, handle_voiceprint_delete,
+    handle_voiceprint_learn_sample, handle_voiceprint_sample_delete, handle_voiceprint_save,
+    load_all_voiceprints, load_external_people, read_people_list, remove_person,
+    save_external_people, serve_voiceprint_detail, update_people,
 };
 use self::transcribe_api::{
     handle_hotwords_save, handle_models_update, handle_transcribe_start, serve_hotwords,
@@ -575,12 +576,9 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 (tiny_http::Method::Get, "/api/people") => {
                     let mut people: Vec<serde_json::Value> = vec![];
                     let mut seen = std::collections::HashSet::new();
-                    for pf in people_json_files() {
-                        let domain = pf
-                            .parent()
-                            .and_then(|d| d.file_name())
-                            .map(|s| s.to_string_lossy().to_string())
-                            .unwrap_or_default();
+                    let packs_list = packs::list_packs(&app_data_dir()).unwrap_or_default();
+                    for pack in &packs_list {
+                        let pf = pack.path.join("people.json");
                         for mut p in read_people_list(&pf).unwrap_or_default() {
                             let name = p
                                 .get("name")
@@ -591,9 +589,10 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                             if name.is_empty() || !seen.insert(name.to_lowercase()) {
                                 continue;
                             }
-                            if p.get("domain").is_none() {
-                                p["domain"] = serde_json::json!(domain);
-                            }
+                            p["pack_id"] = serde_json::json!(pack.id);
+                            p["pack_name"] = serde_json::json!(pack.name);
+                            p["pack_enabled"] = serde_json::json!(pack.enabled);
+                            p["domain"] = serde_json::json!(pack.id);
                             if p.get("is_external").is_none() {
                                 p["is_external"] = serde_json::json!(false);
                             }
@@ -610,7 +609,15 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                         if name.is_empty() || !seen.insert(name.to_lowercase()) {
                             continue;
                         }
-                        people.push(json!({"name": ext.get("name"), "role": ext.get("role").and_then(|x| x.as_str()).unwrap_or("Гость"), "is_external": true}));
+                        people.push(json!({
+                            "name": ext.get("name"),
+                            "role": ext.get("role").and_then(|x| x.as_str()).unwrap_or("Гость"),
+                            "pack_id": "default",
+                            "pack_name": "Основной профиль",
+                            "pack_enabled": true,
+                            "domain": "default",
+                            "is_external": true
+                        }));
                     }
                     let vp_list = load_all_voiceprints();
                     let mut ext_to_sync = Vec::new();
@@ -624,7 +631,23 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                         if name.is_empty() || !seen.insert(name.to_lowercase()) {
                             continue;
                         }
-                        let item = json!({"name": name, "role": "Участник", "is_external": true});
+                        let pack_id = vp
+                            .get("pack_id")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("default");
+                        let pack_name = vp
+                            .get("pack_name")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("Основной профиль");
+                        let item = json!({
+                            "name": name,
+                            "role": "Участник",
+                            "pack_id": pack_id,
+                            "pack_name": pack_name,
+                            "pack_enabled": true,
+                            "domain": pack_id,
+                            "is_external": true
+                        });
                         people.push(item.clone());
                         ext_to_sync.push(item);
                     }
@@ -645,7 +668,7 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                         .collect();
                     json_response(
                         request,
-                        json!({"people": people, "external": load_external_people(), "voiceprints": vp_names}),
+                        json!({"people": people, "external": load_external_people(), "voiceprints": vp_names, "packs": packs_list}),
                         200,
                     );
                 }
@@ -759,6 +782,14 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     }
                     json_response(request, json!({"ok": true}), 200);
                 }
+                (tiny_http::Method::Post, "/api/people/add") => {
+                    let body = read_body_to_json(&mut request);
+                    handle_people_add(request, body);
+                }
+                (tiny_http::Method::Post, "/api/people/move") => {
+                    let body = read_body_to_json(&mut request);
+                    handle_people_move(request, body);
+                }
                 (tiny_http::Method::Post, "/api/people/update") => {
                     let body = read_body_to_json(&mut request);
                     let old = body
@@ -777,14 +808,30 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                         .get("role")
                         .and_then(|x| x.as_str())
                         .map(|s| s.trim().to_string());
+                    let pack_id = body
+                        .get("pack_id")
+                        .or_else(|| body.get("target_pack_id"))
+                        .or_else(|| body.get("to_pack_id"))
+                        .and_then(|x| x.as_str())
+                        .map(|s| s.trim().to_string());
+                    let from_pack_id = body
+                        .get("from_pack_id")
+                        .and_then(|x| x.as_str())
+                        .map(|s| s.trim().to_string());
                     if old.is_empty() || name.is_empty() {
                         json_response(
                             request,
-                            json!({"ok": false, "error": "Имя не может быть пустым"}),
+                            json!({"ok": false, "error": "Укажите имя участника"}),
                             400,
                         );
                     } else {
-                        let ok = update_people(&old, &name, role.as_deref());
+                        let ok = update_people(
+                            &old,
+                            &name,
+                            role.as_deref(),
+                            pack_id.as_deref(),
+                            from_pack_id.as_deref(),
+                        );
                         json_response(
                             request,
                             json!({"ok": ok, "error": if ok { "" } else { "Участник не найден" } }),

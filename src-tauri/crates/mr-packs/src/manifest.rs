@@ -228,6 +228,15 @@ pub fn pack_info_of(app_data: &Path, pack_id: &str) -> Result<PackInfo> {
         .ok_or_else(|| PacksError::NotFound(pack_id.to_string()))
 }
 
+pub fn get_pack_manifest(app_data: &Path, pack_id: &str) -> Result<PackManifest> {
+    let pack_id = validate_pack_id(pack_id)?;
+    let dir = packs_root_dir(app_data).join(pack_id);
+    if !dir.is_dir() {
+        return Err(PacksError::NotFound(pack_id.to_string()));
+    }
+    read_manifest(&dir)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

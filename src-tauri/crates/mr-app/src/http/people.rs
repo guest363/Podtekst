@@ -44,10 +44,10 @@ pub(super) fn save_external_people(list: &[serde_json::Value]) {
 }
 
 pub(super) fn people_json_files() -> Vec<PathBuf> {
-    packs::get_active_packs(&app_data_dir())
+    packs::list_packs(&app_data_dir())
         .unwrap_or_default()
         .into_iter()
-        .map(|d| d.join("people.json"))
+        .map(|d| d.path.join("people.json"))
         .collect()
 }
 
@@ -173,8 +173,41 @@ fn rename_voiceprint_names(old: &str, new: &str) -> bool {
     found
 }
 
-pub(super) fn update_people(old: &str, new_name: &str, role: Option<&str>) -> bool {
-    let mut found = false;
+pub(super) fn update_people(
+    old: &str,
+    new_name: &str,
+    role: Option<&str>,
+    target_pack_id: Option<&str>,
+    from_pack_id: Option<&str>,
+) -> bool {
+    let mut moved = false;
+    if let Some(target_id) = target_pack_id.filter(|s| !s.trim().is_empty()) {
+        let from_pack = from_pack_id
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| resolve_target_pack(old, None));
+        if from_pack != target_id {
+            if let Err(e) = packs::move_person_pack(&app_data_dir(), old, &from_pack, target_id) {
+                eprintln!("[warn] move_person_pack {old} from {from_pack} to {target_id}: {e:?}");
+            }
+            // Гарантируем отсутствие дублей в остальных пакетах
+            if let Ok(all_packs) = packs::list_packs(&app_data_dir()) {
+                for p_info in all_packs {
+                    if p_info.id != target_id {
+                        let _ = packs::remove_person_from_pack(&app_data_dir(), &p_info.id, old);
+                    }
+                }
+            }
+            let mut ext = load_external_people();
+            let before = ext.len();
+            ext.retain(|p| !same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), old));
+            if ext.len() != before {
+                save_external_people(&ext);
+            }
+            moved = true;
+        }
+    }
+    let mut found = moved;
     for file in people_json_files() {
         let Some(mut list) = read_people_list(&file) else {
             continue;
@@ -299,6 +332,14 @@ pub(super) fn load_all_voiceprints() -> Vec<serde_json::Value> {
     };
     if let Ok(packs) = packs::get_active_packs(&app_data_dir()) {
         for dir in packs {
+            let pid = dir
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("default")
+                .to_string();
+            let pname = packs::get_pack_manifest(&app_data_dir(), &pid)
+                .map(|m| m.name)
+                .unwrap_or_else(|_| "Основной профиль".to_string());
             if let Ok(t) = std::fs::read_to_string(dir.join("voiceprints.json")) {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
                     if v.get("embedding_space")
@@ -307,7 +348,9 @@ pub(super) fn load_all_voiceprints() -> Vec<serde_json::Value> {
                     {
                         continue;
                     }
-                    for p in parse_profiles(&v) {
+                    for mut p in parse_profiles(&v) {
+                        p["pack_id"] = json!(pid);
+                        p["pack_name"] = json!(pname);
                         push(p);
                     }
                 }
@@ -333,34 +376,63 @@ pub(super) fn load_all_voiceprints() -> Vec<serde_json::Value> {
     out
 }
 
-pub(super) fn ensure_person_in_list(name: &str, role: Option<&str>) {
+pub(super) fn resolve_target_pack(name: &str, preferred_pack_id: Option<&str>) -> String {
+    if let Some(pid) = preferred_pack_id {
+        let clean = pid.trim();
+        if !clean.is_empty() {
+            let root = packs::packs_root_dir(&app_data_dir());
+            if root.join(clean).is_dir() {
+                return clean.to_string();
+            }
+        }
+    }
+    let clean_name = name.trim();
+    if !clean_name.is_empty() {
+        if let Ok(active) = packs::get_active_packs(&app_data_dir()) {
+            for dir in active {
+                let pf = dir.join("people.json");
+                if let Some(list) = read_people_list(&pf) {
+                    if list.iter().any(|p| same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), clean_name)) {
+                        if let Some(n) = dir.file_name() {
+                            return n.to_string_lossy().to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    "default".to_string()
+}
+
+pub(super) fn ensure_person_in_pack(name: &str, role: Option<&str>, pack_id: &str) {
     let clean = name.trim();
     if clean.is_empty() {
         return;
     }
-    let in_packs = people_json_files().iter().any(|pf| {
-        read_people_list(pf).unwrap_or_default().iter().any(|p| {
-            p.get("name")
-                .and_then(|x| x.as_str())
-                .map(|n| same_name(n, clean))
-                .unwrap_or(false)
-        })
-    });
     let mut ext = load_external_people();
-    let in_ext = ext.iter().any(|p| {
+    let before_ext = ext.len();
+    ext.retain(|p| !same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), clean));
+    if ext.len() != before_ext {
+        save_external_people(&ext);
+    }
+    let pf = packs::packs_root_dir(&app_data_dir()).join(pack_id).join("people.json");
+    let in_pack = read_people_list(&pf).unwrap_or_default().iter().any(|p| {
         p.get("name")
             .and_then(|x| x.as_str())
             .map(|n| same_name(n, clean))
             .unwrap_or(false)
     });
-    if !in_packs && !in_ext {
-        ext.push(json!({
+    if !in_pack {
+        let _ = packs::add_person_to_pack(&app_data_dir(), pack_id, json!({
             "name": clean,
-            "role": role.unwrap_or("Участник"),
-            "is_external": true,
+            "role": role.unwrap_or("Участник")
         }));
-        save_external_people(&ext);
     }
+}
+
+pub(super) fn ensure_person_in_list(name: &str, role: Option<&str>) {
+    let target = resolve_target_pack(name, None);
+    ensure_person_in_pack(name, role, &target);
 }
 
 pub(crate) fn sync_voiceprint_people() {
@@ -373,17 +445,19 @@ pub(crate) fn sync_voiceprint_people() {
 
 fn store_voiceprint(
     name: &str,
+    target_pack_id: Option<&str>,
     norm: Vec<f64>,
     audio_file: &str,
     sample_start: Option<f64>,
     sample_end: Option<f64>,
     sample_channel: Option<usize>,
 ) {
+    let chosen_pack = resolve_target_pack(name, target_pack_id);
     let now = crate::recording::now_secs();
     let now_iso = chrono::Utc::now().to_rfc3339();
-    let vp_file = packs::ensure_default_pack(&app_data_dir())
-        .map(|d| d.join("voiceprints.json"))
-        .unwrap_or_else(|_| app_data_dir().join("packs/default/voiceprints.json"));
+    let pack_dir = packs::packs_root_dir(&app_data_dir()).join(&chosen_pack);
+    let _ = std::fs::create_dir_all(pack_dir.join("snippets"));
+    let vp_file = pack_dir.join("voiceprints.json");
     if let Some(parent) = vp_file.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -506,6 +580,7 @@ fn store_voiceprint(
             remove_snippet(parent, rel);
         }
     }
+    ensure_person_in_pack(name, Some("Участник"), &chosen_pack);
 }
 
 pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_json::Value) {
@@ -515,6 +590,10 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
         .unwrap_or("")
         .trim()
         .to_string();
+    let pack_id = body
+        .get("pack_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string());
     // Без onnx эмбеддинг из аудио не извлекается, поэтому mut не нужен.
     #[cfg_attr(not(feature = "onnx"), allow(unused_mut))]
     let mut emb: Vec<f64> = body
@@ -562,7 +641,7 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
     if name.is_empty() {
         json_response(
             request,
-            json!({"ok": false, "error": "Имя не может быть пустым"}),
+            json!({"ok": false, "error": "Укажите имя участника"}),
             400,
         );
         return;
@@ -575,6 +654,7 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
         );
         return;
     }
+    let chosen_pack = resolve_target_pack(&name, pack_id.as_deref());
     if !emb.is_empty() {
         let norm = l2_normalize(&emb);
         if norm.iter().all(|x| x.abs() < 1e-12) {
@@ -587,6 +667,7 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
         }
         store_voiceprint(
             &name,
+            Some(&chosen_pack),
             norm,
             &audio_file,
             sample_start,
@@ -595,7 +676,7 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
         );
     }
 
-    ensure_person_in_list(&name, Some("Участник"));
+    ensure_person_in_pack(&name, Some("Участник"), &chosen_pack);
     if !audio_file.is_empty() {
         // Правим расшифровки только внутри папки записей (запись в произвольную
         // директорию через чужое имя файла недопустима).
@@ -613,9 +694,92 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
     }
     json_response(
         request,
-        json!({"ok": true, "voiceprint_saved": !emb.is_empty()}),
+        json!({"ok": true, "voiceprint_saved": !emb.is_empty(), "pack_id": chosen_pack}),
         200,
     );
+}
+
+pub(super) fn handle_people_add(request: tiny_http::Request, body: serde_json::Value) {
+    let name = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let role = body
+        .get("role")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Участник")
+        .trim()
+        .to_string();
+    let pack_id = body
+        .get("pack_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default")
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        json_response(
+            request,
+            json!({"ok": false, "error": "Укажите имя участника"}),
+            400,
+        );
+        return;
+    }
+    match packs::add_person_to_pack(
+        &app_data_dir(),
+        &pack_id,
+        json!({"name": name, "role": role}),
+    ) {
+        Ok(_) => json_response(request, json!({"ok": true}), 200),
+        Err(e) => json_response(request, json!({"ok": false, "error": e.to_string()}), 500),
+    }
+}
+
+pub(super) fn handle_people_move(request: tiny_http::Request, body: serde_json::Value) {
+    let name = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let to_pack = body
+        .get("to_pack_id")
+        .or_else(|| body.get("pack_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let from_pack = body
+        .get("from_pack_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if name.is_empty() || to_pack.is_empty() {
+        json_response(
+            request,
+            json!({"ok": false, "error": "Укажите имя участника и целевой голосовой пакет"}),
+            400,
+        );
+        return;
+    }
+    let from_pack = if from_pack.is_empty() {
+        resolve_target_pack(&name, None)
+    } else {
+        from_pack
+    };
+    match packs::move_person_pack(&app_data_dir(), &name, &from_pack, &to_pack) {
+        Ok(_) => {
+            let mut ext = load_external_people();
+            let before = ext.len();
+            ext.retain(|p| !same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), &name));
+            if ext.len() != before {
+                save_external_people(&ext);
+            }
+            json_response(request, json!({"ok": true}), 200)
+        }
+        Err(e) => json_response(request, json!({"ok": false, "error": e.to_string()}), 500),
+    }
 }
 
 #[cfg(not(feature = "onnx"))]
@@ -754,18 +918,24 @@ pub(super) fn handle_voiceprint_learn_sample(request: tiny_http::Request, body: 
         );
         return;
     }
+    let pack_id = body
+        .get("pack_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string());
+    let chosen_pack = resolve_target_pack(&name, pack_id.as_deref());
     store_voiceprint(
         &name,
+        Some(&chosen_pack),
         norm,
         &audio.to_string_lossy(),
         Some(start),
         Some(end),
         channel.map(|c| c.max(0) as usize),
     );
-    ensure_person_in_list(&name, Some("Участник"));
+    ensure_person_in_pack(&name, Some("Участник"), &chosen_pack);
     json_response(
         request,
-        json!({"ok": true, "voiceprint_saved": !emb.is_empty()}),
+        json!({"ok": true, "voiceprint_saved": !emb.is_empty(), "pack_id": chosen_pack}),
         200,
     );
 }
@@ -785,7 +955,7 @@ pub(super) fn handle_voiceprint_delete(request: tiny_http::Request, body: serde_
     if name.is_empty() {
         json_response(
             request,
-            json!({"ok": false, "error": "Имя не может быть пустым"}),
+            json!({"ok": false, "error": "Укажите имя участника"}),
             400,
         );
         return;
@@ -1390,5 +1560,52 @@ mod tests {
         let (_, empty) = remove_prototype(&mut p, "p1").expect("p1 обязан найтись");
         assert!(empty);
         assert!(remove_prototype(&mut p, "nope").is_none());
+    }
+
+    #[test]
+    fn target_pack_routing_and_people_sync() {
+        let _guard = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!(
+            "mr-pack-routing-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let prev = std::env::var("MEETING_RECORDER_DATA_DIR").ok();
+        std::env::set_var("MEETING_RECORDER_DATA_DIR", &dir);
+
+        let custom = mr_packs::create_pack(&dir, "Команда Альфа", "").unwrap();
+        ensure_person_in_pack("Инженер 1", Some("Разработчик"), &custom.id);
+
+        assert_eq!(resolve_target_pack("Инженер 1", None), custom.id);
+        assert_eq!(resolve_target_pack("Новый", None), "default");
+        assert_eq!(resolve_target_pack("Новый", Some(&custom.id)), custom.id);
+
+        let custom2 = mr_packs::create_pack(&dir, "Команда Бета", "").unwrap();
+        let ok = update_people(
+            "Инженер 1",
+            "Инженер 1 (Старший)",
+            Some("Лид"),
+            Some(&custom2.id),
+            Some(&custom.id),
+        );
+        assert!(ok);
+        assert_eq!(resolve_target_pack("Инженер 1 (Старший)", None), custom2.id);
+        let p1_file = dir.join("packs").join(&custom.id).join("people.json");
+        let t1 = std::fs::read_to_string(&p1_file).unwrap_or_default();
+        assert!(!t1.contains("Инженер 1"));
+        let p2_file = dir.join("packs").join(&custom2.id).join("people.json");
+        let t2 = std::fs::read_to_string(&p2_file).unwrap_or_default();
+        assert!(t2.contains("Инженер 1 (Старший)"));
+        assert!(t2.contains("Лид"));
+
+        if let Some(p) = prev {
+            std::env::set_var("MEETING_RECORDER_DATA_DIR", p);
+        } else {
+            std::env::remove_var("MEETING_RECORDER_DATA_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

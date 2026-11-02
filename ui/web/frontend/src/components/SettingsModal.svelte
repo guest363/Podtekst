@@ -23,6 +23,7 @@
   import { isMobile, readJsonSafe, remainingMb } from '../lib/api'
   import type { ModelInfo } from '../lib/api'
   import { checkUpdate, update } from '../lib/update.svelte.ts'
+  import { peopleState } from '../lib/people.svelte.ts'
   import People from './People.svelte'
 
   let tab = $state<'record' | 'people' | 'voices' | 'dict' | 'models'>('record')
@@ -234,9 +235,8 @@
         <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Голосовые пакеты">
           <div class="card-title">Голосовые пакеты</div>
           <div class="help-text">
-            Переносимые базы голосов: личные, рабочие, гостевые. Отключённый пакет исключается из
-            распознавания. Имена людей живут во вкладке «Участники», здесь — только голоса.
-            Экспорт складывает пакет в папку записей, импорт принимает .voicepack.zip/.json.
+            Наборы голосов и участников: личные, рабочие или проектные. Выключенный пакет не участвует
+            в распознавании. Экспорт сохраняет пакет в папку записей, импорт принимает файлы .voicepack.zip и .json.
           </div>
           <div class="row-start">
             <input
@@ -274,7 +274,18 @@
                   <div class="rec-info">
                     <span class="rec-name">{p.name}</span>
                     <span class="rec-meta">
-                      Голосов: {p.voiceprints_count || 0} • Людей: {p.people_count || 0}
+                      Голосов: {p.voiceprints_count || 0} •
+                      <button
+                        type="button"
+                        class="link-meta-btn"
+                        title="Показать участников этого пакета"
+                        onclick={() => {
+                          tab = 'people'
+                          peopleState.selectedPackFilter = p.id
+                        }}
+                      >
+                        Участников: {p.people_count || 0} →
+                      </button>
                     </span>
                   </div>
                   <div class="rec-actions">
@@ -607,6 +618,7 @@
     background: #fff;
     flex-shrink: 0;
     overflow-x: auto;
+    overflow-y: hidden;
   }
   @media (max-width: 640px) {
     .settings-tabs {
@@ -614,6 +626,7 @@
       gap: 0;
       padding: 0 10px;
       overflow-x: auto;
+      overflow-y: hidden;
     }
   }
   .settings-tab {
@@ -658,5 +671,20 @@
   .setting-check input:checked + .setting-switch::after { transform: translateX(15px); }
   .setting-check input:focus-visible + .setting-switch {
     outline: 2px solid var(--accent-blue); outline-offset: 2px;
+  }
+  .link-meta-btn {
+    border: none;
+    background: transparent;
+    padding: 0;
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--accent-blue);
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .link-meta-btn:hover {
+    color: #1a4299;
   }
 </style>

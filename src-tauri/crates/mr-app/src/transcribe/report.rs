@@ -28,6 +28,8 @@ pub(crate) fn speaker_to_json(s: &SpeakerInfo) -> serde_json::Value {
         "channel": s.channel,
         "matched": s.matched,
         "matched_name": s.matched_name,
+        "matched_pack_id": s.matched_pack_id,
+        "matched_pack_name": s.matched_pack_name,
         "similarity": s.similarity,
         "silhouette": s.silhouette,
         "candidates": s.candidates.iter().map(|(n, v)| serde_json::json!({"name": n, "similarity": v})).collect::<Vec<_>>(),

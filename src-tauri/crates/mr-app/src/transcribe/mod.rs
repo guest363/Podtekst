@@ -216,6 +216,8 @@ pub struct SpeakerInfo {
     pub channel: Option<i32>,
     pub matched: bool,
     pub matched_name: Option<String>,
+    pub matched_pack_id: Option<String>,
+    pub matched_pack_name: Option<String>,
     pub similarity: f64,
     pub silhouette: f64,
     pub candidates: Vec<(String, f64)>,

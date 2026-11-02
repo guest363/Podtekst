@@ -194,16 +194,28 @@ pub(crate) fn read_profiles_file(file: &std::path::Path) -> Vec<SpeakerProfile> 
 /// важнее старых локальных данных.
 pub(crate) fn load_profiles() -> Vec<SpeakerProfile> {
     let app = packs::default_app_data_dir();
-    let mut files = vec![app.join("voiceprints.json")];
-    files.extend(
-        packs::get_active_packs(&app)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|d| d.join("voiceprints.json")),
-    );
+    let mut files: Vec<(std::path::PathBuf, String, String)> = vec![];
+    let root_vp = app.join("voiceprints.json");
+    if root_vp.is_file() {
+        files.push((root_vp, "default".to_string(), "Основной профиль".to_string()));
+    }
+    if let Ok(active) = packs::get_active_packs(&app) {
+        for dir in active {
+            let pid = dir
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let pname = packs::get_pack_manifest(&app, &pid)
+                .map(|m| m.name)
+                .unwrap_or_else(|_| pid.clone());
+            files.push((dir.join("voiceprints.json"), pid, pname));
+        }
+    }
     let mut by_name: HashMap<String, SpeakerProfile> = HashMap::new();
-    for f in files {
-        for prof in read_profiles_file(&f) {
+    for (f, pid, pname) in files {
+        for mut prof in read_profiles_file(&f) {
+            prof.pack_id = pid.clone();
+            prof.pack_name = pname.clone();
             by_name.insert(prof.name.trim().to_lowercase(), prof);
         }
     }
@@ -510,6 +522,8 @@ pub(crate) fn diarize_channel(
             channel: channel_idx,
             matched: false,
             matched_name: None,
+            matched_pack_id: None,
+            matched_pack_name: None,
             similarity: 0.0,
             silhouette: 0.0,
             candidates: vec![],
@@ -668,10 +682,19 @@ pub(crate) fn diarize_channel(
         mr_ml::DEFAULT_MIN_MARGIN,
     );
     let mut cluster_name: HashMap<usize, String> = HashMap::new();
+    let mut cluster_pack_id: HashMap<usize, String> = HashMap::new();
+    let mut cluster_pack_name: HashMap<usize, String> = HashMap::new();
     let mut unmatched = vec![];
     for (k, &c) in raw_clusters.iter().enumerate() {
         if matches[k].matched {
-            cluster_name.insert(c, matches[k].name.clone().unwrap());
+            let m_name = matches[k].name.clone().unwrap();
+            cluster_name.insert(c, m_name);
+            if let Some(pid) = &matches[k].pack_id {
+                cluster_pack_id.insert(c, pid.clone());
+            }
+            if let Some(pname) = &matches[k].pack_name {
+                cluster_pack_name.insert(c, pname.clone());
+            }
         } else {
             unmatched.push(c);
         }
@@ -816,12 +839,24 @@ pub(crate) fn diarize_channel(
         } else {
             format!("spk_{name}")
         };
+        let matched_pack_id = if is_matched {
+            cids.iter().find_map(|c| cluster_pack_id.get(c)).cloned()
+        } else {
+            None
+        };
+        let matched_pack_name = if is_matched {
+            cids.iter().find_map(|c| cluster_pack_name.get(c)).cloned()
+        } else {
+            None
+        };
         infos.push(SpeakerInfo {
             id: spk_id,
             name: name.clone(),
             channel: channel_idx,
             matched: is_matched,
             matched_name: if is_matched { Some(name.clone()) } else { None },
+            matched_pack_id,
+            matched_pack_name,
             similarity: (sim * 1000.0).round() / 1000.0,
             silhouette: (speaker_silhouette * 1000.0).round() / 1000.0,
             candidates: cands,
@@ -1619,6 +1654,8 @@ mod tests {
             channel: Some(ch),
             matched: false,
             matched_name: None,
+            matched_pack_id: None,
+            matched_pack_name: None,
             similarity: 0.0,
             silhouette: 0.0,
             candidates: vec![],
@@ -2123,6 +2160,8 @@ mod tests {
             std::collections::HashMap::from([(0usize, vec![0.9, 0.1]), (1, vec![0.2, 0.9])]);
         let profiles = vec![mr_ml::SpeakerProfile {
             name: "A".to_string(),
+            pack_id: String::new(),
+            pack_name: String::new(),
             embedding: vec![1.0, 0.0],
             samples_count: 1,
             updated_at: String::new(),
@@ -2139,6 +2178,8 @@ mod tests {
             std::collections::HashMap::from([(0usize, vec![1.0, 0.0]), (1, vec![0.99, 0.01])]);
         let profiles = vec![mr_ml::SpeakerProfile {
             name: "A".to_string(),
+            pack_id: String::new(),
+            pack_name: String::new(),
             embedding: vec![1.0, 0.0],
             samples_count: 1,
             updated_at: String::new(),

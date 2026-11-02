@@ -1,4 +1,5 @@
 pub mod manifest;
+pub mod people;
 pub mod transfer;
 
 use std::fs;
@@ -7,8 +8,9 @@ use std::path::{Path, PathBuf};
 
 pub use manifest::{
     create_pack, create_pack_with_space, delete_pack, ensure_default_pack, get_active_packs,
-    list_packs, pack_info_of, set_pack_enabled,
+    get_pack_manifest, list_packs, pack_info_of, set_pack_enabled,
 };
+pub use people::{add_person_to_pack, move_person_pack, remove_person_from_pack};
 pub use transfer::{export_pack, import_pack, import_pack_with_space};
 
 #[derive(Debug, thiserror::Error)]

@@ -132,6 +132,10 @@ fn default_qual() -> f64 {
 pub struct SpeakerProfile {
     pub name: String,
     #[serde(default)]
+    pub pack_id: String,
+    #[serde(default)]
+    pub pack_name: String,
+    #[serde(default)]
     pub embedding: Vec<f64>,
     #[serde(default)]
     pub samples_count: u32,
@@ -144,6 +148,10 @@ pub struct SpeakerProfile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchCandidate {
     pub name: String,
+    #[serde(default)]
+    pub pack_id: String,
+    #[serde(default)]
+    pub pack_name: String,
     pub similarity: f64,
 }
 
@@ -151,6 +159,10 @@ pub struct MatchCandidate {
 pub struct ClusterMatch {
     pub matched: bool,
     pub name: Option<String>,
+    #[serde(default)]
+    pub pack_id: Option<String>,
+    #[serde(default)]
+    pub pack_name: Option<String>,
     pub similarity: f64,
     pub margin: f64,
     #[serde(default)]
@@ -338,6 +350,8 @@ pub fn match_voiceprints_matrix(
         .map(|_| ClusterMatch {
             matched: false,
             name: None,
+            pack_id: None,
+            pack_name: None,
             similarity: 0.0,
             margin: 0.0,
             candidates: vec![],
@@ -368,6 +382,8 @@ pub fn match_voiceprints_matrix(
             .filter(|(_, s)| *s >= threshold * 0.85)
             .map(|(idx, s)| MatchCandidate {
                 name: profiles[*idx].name.clone(),
+                pack_id: profiles[*idx].pack_id.clone(),
+                pack_name: profiles[*idx].pack_name.clone(),
                 similarity: (s * 1000.0).round() / 1000.0,
             })
             .collect();
@@ -386,6 +402,16 @@ pub fn match_voiceprints_matrix(
         }
         results[r].matched = true;
         results[r].name = Some(profiles[c].name.clone());
+        results[r].pack_id = if profiles[c].pack_id.is_empty() {
+            None
+        } else {
+            Some(profiles[c].pack_id.clone())
+        };
+        results[r].pack_name = if profiles[c].pack_name.is_empty() {
+            None
+        } else {
+            Some(profiles[c].pack_name.clone())
+        };
         results[r].similarity = (s * 1000.0).round() / 1000.0;
     }
     let assigned: std::collections::HashMap<usize, usize> = results
@@ -454,6 +480,8 @@ mod tests {
     fn hungarian_prevents_collision() {
         let ivan = SpeakerProfile {
             name: "Иван".to_string(),
+            pack_id: String::new(),
+            pack_name: String::new(),
             embedding: unit(8, 0),
             samples_count: 1,
             updated_at: String::new(),
@@ -480,6 +508,8 @@ mod tests {
     fn margin_gate_ambiguous() {
         let mk = |name: &str, v: Vec<f64>| SpeakerProfile {
             name: name.to_string(),
+            pack_id: String::new(),
+            pack_name: String::new(),
             embedding: v.clone(),
             samples_count: 1,
             updated_at: String::new(),

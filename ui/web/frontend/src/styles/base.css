@@ -198,7 +198,7 @@
 
 /* ---------- Формы ---------- */
 .input-row { display: flex; flex-direction: column; gap: 5px; }
-.input-row label { font-size: 11.5px; font-weight: 600; color: var(--text-muted); }
+.input-row label, .input-row .input-label { font-size: 11.5px; font-weight: 600; color: var(--text-muted); }
 .input-field {
   padding: 8px 12px; border: 1px solid var(--border-card); border-radius: var(--radius-inner);
   font-size: 13.5px; font-family: inherit; outline: none; background: #fff; width: 100%;

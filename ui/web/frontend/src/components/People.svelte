@@ -15,7 +15,11 @@
   let filtered = $derived(
     peopleState.list.filter((p) => {
       const q = peopleState.query.trim().toLowerCase()
-      return !q || String(p.name || '').toLowerCase().includes(q)
+      const matchQ = !q || String(p.name || '').toLowerCase().includes(q)
+      const matchPack =
+        peopleState.selectedPackFilter === 'all' ||
+        (p.pack_id || 'default') === peopleState.selectedPackFilter
+      return matchQ && matchPack
     }),
   )
 
@@ -23,12 +27,44 @@
   let editingPerson = $state<Person | null>(null)
   let name = $state('')
   let role = $state('')
+  let targetPackId = $state('default')
   let saving = $state(false)
+  let packDropdownOpen = $state(false)
+  let selectedPackName = $derived(
+    peopleState.packs.find((p) => p.id === targetPackId)?.name || 'Основной профиль',
+  )
+
+  function togglePackDropdown(): void {
+    packDropdownOpen = !packDropdownOpen
+  }
+
+  function selectPack(id: string): void {
+    targetPackId = id
+    packDropdownOpen = false
+  }
+
+  $effect(() => {
+    if (!packDropdownOpen) return
+    const onScroll = (e: Event) => {
+      const target = e.target as HTMLElement | null
+      if (target?.closest?.('.pack-dropdown-popover')) return
+      packDropdownOpen = false
+    }
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true })
+    return () => {
+      window.removeEventListener('scroll', onScroll, { capture: true })
+    }
+  })
 
   function startAdd(): void {
     editingPerson = null
     name = ''
     role = ''
+    targetPackId =
+      peopleState.selectedPackFilter !== 'all'
+        ? peopleState.selectedPackFilter
+        : (peopleState.packs[0]?.id || 'default')
+    packDropdownOpen = false
     formOpen = true
     peopleState.voiceDetail = null
     peopleState.voiceDetailName = ''
@@ -38,6 +74,8 @@
     editingPerson = p
     name = p.name || ''
     role = p.role || ''
+    targetPackId = p.pack_id || 'default'
+    packDropdownOpen = false
     formOpen = true
     peopleState.voiceDetail = null
     peopleState.voiceDetailName = ''
@@ -49,6 +87,8 @@
     editingPerson = null
     name = ''
     role = ''
+    targetPackId = 'default'
+    packDropdownOpen = false
     stopVoice()
     peopleState.voiceDetail = null
     peopleState.voiceDetailName = ''
@@ -57,16 +97,24 @@
   async function savePerson(): Promise<void> {
     const cleanName = name.trim()
     if (!cleanName) return
-    const cleanRole = role.trim() || 'Гость'
+    const cleanRole = role.trim() || 'Участник'
     saving = true
     try {
-      const r = await fetch(editingPerson ? '/api/people/update' : '/api/people/add_external', {
+      const oldPack = editingPerson?.pack_id || 'default'
+      const r = await fetch(editingPerson ? '/api/people/update' : '/api/people/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
           editingPerson
-            ? { old_name: editingPerson.name, name: cleanName, role: cleanRole }
-            : { name: cleanName, role: cleanRole },
+            ? {
+                old_name: editingPerson.name,
+                name: cleanName,
+                role: cleanRole,
+                from_pack_id: oldPack,
+                pack_id: targetPackId,
+                target_pack_id: targetPackId,
+              }
+            : { name: cleanName, role: cleanRole, pack_id: targetPackId },
         ),
       })
       const d = await readJsonSafe(r)
@@ -74,7 +122,7 @@
         toast(d.error || 'Не удалось сохранить участника', 'error')
         return
       }
-      toast(editingPerson ? `Участник «${cleanName}» обновлён` : `Гость «${cleanName}» добавлен`)
+      toast(editingPerson ? `Участник «${cleanName}» сохранён` : `Участник «${cleanName}» добавлен`)
       closeForm()
       await loadPeople()
     } catch (e) {
@@ -155,7 +203,7 @@
     </div>
     {#if !formOpen}
       <button class="btn-secondary" onclick={startAdd}>
-        + Добавить гостя
+        + Добавить участника
       </button>
     {/if}
   </div>
@@ -163,7 +211,7 @@
   {#if formOpen}
     <div class="inline-person-form">
       <div class="form-top">
-        <span class="form-title">{editingPerson ? 'Изменить участника' : 'Новый гость'}</span>
+        <span class="form-title">{editingPerson ? 'Изменить участника' : 'Новый участник'}</span>
         <button class="icon-btn btn-sm" aria-label="Закрыть форму" onclick={closeForm}>✕</button>
       </div>
       <div class="form-inputs">
@@ -197,6 +245,72 @@
             }}
           />
         </div>
+        {#if peopleState.packs.length > 1}
+          <div class="input-row">
+            <span class="input-label" id="packLabel">Голосовой пакет</span>
+            <div class="custom-select-wrap">
+              <button
+                type="button"
+                class="input-field custom-select-trigger"
+                aria-haspopup="listbox"
+                aria-expanded={packDropdownOpen}
+                aria-labelledby="packLabel"
+                onclick={togglePackDropdown}
+                onkeydown={(e) => {
+                  if (e.key === 'Escape' && packDropdownOpen) {
+                    e.stopPropagation()
+                    packDropdownOpen = false
+                  }
+                }}
+              >
+                <span class="custom-select-val">{selectedPackName}</span>
+                <span class="custom-select-chevron {packDropdownOpen ? 'open' : ''}" aria-hidden="true">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
+                </span>
+              </button>
+
+              {#if packDropdownOpen}
+                <button
+                  type="button"
+                  class="speaker-popover-backdrop"
+                  style="z-index: 65;"
+                  aria-label="Закрыть список"
+                  onclick={() => (packDropdownOpen = false)}
+                  onwheel={(e) => e.preventDefault()}
+                ></button>
+                <div
+                  class="speaker-select-popover pack-dropdown-popover"
+                  role="listbox"
+                  aria-label="Выбор голосового пакета"
+                >
+                  {#each peopleState.packs as pk (pk.id)}
+                    <button
+                      type="button"
+                      class="speaker-select-item"
+                      style={targetPackId === pk.id ? 'background: #f1f5f9; font-weight: 600;' : ''}
+                      onclick={() => selectPack(pk.id)}
+                    >
+                      <span class="speaker-select-item-left">
+                        <span
+                          class="speaker-select-item-dot"
+                          style={`background: ${targetPackId === pk.id ? 'var(--accent-blue)' : '#94a3b8'}`}
+                        ></span>
+                        <span class="speaker-select-item-name">{pk.name}</span>
+                      </span>
+                      {#if typeof pk.people_count === 'number'}
+                        <span class="speaker-select-item-sub">{pk.people_count} уч.{pk.id === 'default' ? ' · по умолчанию' : ''}</span>
+                      {:else if pk.id === 'default'}
+                        <span class="speaker-select-item-sub">по умолчанию</span>
+                      {/if}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          </div>
+        {/if}
       </div>
       {#if editingPerson && editingPerson.name && peopleState.voiceDetailName === editingPerson.name}
         <div class="voice-list">
@@ -206,7 +320,7 @@
           {#if !peopleState.voiceDetail}
             <div class="empty-note">Загружаю образцы…</div>
           {:else if !(peopleState.voiceDetail.prototypes?.length || 0)}
-            <div class="empty-note">Образцов нет — голос запомнится из расшифровки кнопкой «Запомнить».</div>
+            <div class="empty-note">Образцов нет - голос запоминается из расшифровки кнопкой «Запомнить».</div>
           {:else}
             {#each peopleState.voiceDetail.prototypes || [] as proto, i (proto.id || i)}
               {@const pid = String(proto.id || '')}
@@ -218,17 +332,25 @@
                   {#if proto.has_snippet && pid}
                     <button
                       type="button"
-                      class="btn-secondary btn-sm"
-                      title="Прослушать образец"
+                      class="voice-btn play {playingProto === pid ? 'playing' : ''}"
+                      title={playingProto === pid ? 'Остановить образец' : 'Прослушать образец'}
                       aria-label={`Прослушать голос ${i + 1}`}
                       onclick={() => playVoice(String(peopleState.voiceDetail?.pack_id || ''), pid)}
                     >
-                      {playingProto === pid ? '■' : '▶'}
+                      {#if playingProto === pid}
+                        <svg width="8" height="8" viewBox="0 0 12 12" aria-hidden="true">
+                          <rect x="2" y="2" width="8" height="8" rx="1" fill="currentColor" />
+                        </svg>
+                      {:else}
+                        <svg width="9" height="9" viewBox="0 0 12 12" aria-hidden="true">
+                          <path d="M3.6 2.1v7.8L10.2 6z" fill="currentColor" />
+                        </svg>
+                      {/if}
                     </button>
                   {/if}
                   <button
                     type="button"
-                    class="btn-secondary btn-sm"
+                    class="voice-btn del"
                     title="Удалить этот образец"
                     aria-label={`Удалить голос ${i + 1}`}
                     onclick={() =>
@@ -238,7 +360,10 @@
                         () => void deleteVoiceSample(String(editingPerson?.name || ''), pid),
                       )}
                   >
-                    ✕
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                      <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
                   </button>
                 </span>
               </div>
@@ -260,37 +385,60 @@
   {/if}
 
   <div class="help-text">
-    Каталог людей: имена и роли. Голоса хранятся отдельно, во вкладке «Голоса»,
-    и привязываются к участникам при расшифровке кнопкой «Запомнить».
-    Нажмите карандаш — там видно все образцы голоса человека.
+    Каталог участников: имена и роли. Образцы голоса хранятся во вкладке «Голоса».
+    Они привязываются к людям кнопкой «Запомнить» на странице расшифровки.
+    Чтобы посмотреть или удалить образцы голоса, нажмите на значок карандаша.
   </div>
+
+  {#if peopleState.packs.length > 1}
+    <div class="pack-filter-bar" role="tablist" aria-label="Фильтр по голосовым пакетам">
+      <button
+        class="pack-filter-btn {peopleState.selectedPackFilter === 'all' ? 'active' : ''}"
+        onclick={() => (peopleState.selectedPackFilter = 'all')}
+      >
+        Все ({peopleState.list.length})
+      </button>
+      {#each peopleState.packs as pk (pk.id)}
+        {@const count = peopleState.list.filter((p) => (p.pack_id || 'default') === pk.id).length}
+        <button
+          class="pack-filter-btn {peopleState.selectedPackFilter === pk.id ? 'active' : ''}"
+          onclick={() => (peopleState.selectedPackFilter = pk.id)}
+        >
+          {pk.name} ({count})
+        </button>
+      {/each}
+    </div>
+  {/if}
+
   <div class="row-start">
     <input
       type="search"
       class="input-field search-field"
-      placeholder="Найти человека…"
+      placeholder="Найти участника…"
       autocomplete="off"
-      aria-label="Найти человека"
+      aria-label="Найти участника"
       bind:value={peopleState.query}
     />
   </div>
   <div class="people-chips">
     {#if filtered.length === 0}
       <div class="empty-note">
-        {peopleState.list.length ? 'Никого не найдено' : 'Пока никого нет. Добавьте первого участника кнопкой выше.'}
+        {peopleState.list.length ? 'Ничего не найдено' : 'Участников пока нет. Добавьте первого кнопкой выше.'}
       </div>
     {:else}
       {#each filtered as p (p.name)}
         <div
           class="chip {p.is_external ? 'external' : ''} {hasVoiceprint(p.name) ? 'has-voiceprint' : ''}"
-          title={p.role ? `${p.name} – ${p.role}` : p.name}
+          title={p.role ? `${p.name} - ${p.role}` : p.name}
         >
           {#if hasVoiceprint(p.name)}
             <span class="voice-dot" title="Голос сохранён в базе"></span>
           {/if}
           <span class="chip-main">
-            <span class="chip-name">{p.name}{p.is_external ? ' · гость' : ''}{voiceprintCount(p.name) ? ` · голосов: ${voiceprintCount(p.name)}` : ''}</span>
-            {#if p.role}<span class="chip-role">{p.role}</span>{/if}
+            <span class="chip-name">{p.name}{voiceprintCount(p.name) ? ` · голосов: ${voiceprintCount(p.name)}` : ''}</span>
+            <span class="chip-role">
+              {p.role || (p.is_external ? 'Гость' : 'Участник')}{p.pack_name ? ` · ${p.pack_name}` : ''}
+            </span>
           </span>
           <button
             class="chip-edit"
@@ -323,6 +471,75 @@
     flex-direction: column;
     gap: 12px;
   }
+  .pack-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+  }
+  .pack-filter-btn {
+    border: 1px solid var(--border-card);
+    background: #fff;
+    color: var(--text-muted);
+    padding: 4px 10px;
+    border-radius: var(--radius-pill);
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 140ms ease;
+  }
+  .pack-filter-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-inset);
+  }
+  .pack-filter-btn.active {
+    background: #16233a;
+    color: #fff;
+    border-color: #16233a;
+  }
+  .custom-select-wrap {
+    position: relative;
+    width: 100%;
+  }
+  .custom-select-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    text-align: left;
+    cursor: pointer;
+    box-sizing: border-box;
+  }
+  .custom-select-val {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .custom-select-chevron {
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-faint);
+    transition: transform 160ms var(--ease-spring);
+    flex-shrink: 0;
+    margin-left: 8px;
+  }
+  .custom-select-chevron.open {
+    transform: rotate(180deg);
+  }
+  .pack-dropdown-popover {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    max-height: 220px;
+    z-index: 70;
+    box-sizing: border-box;
+  }
+  :global(.app-drawer:has(.pack-dropdown-popover) .app-drawer-body) {
+    overflow-y: hidden;
+  }
   .inline-person-form {
     display: flex;
     flex-direction: column;
@@ -337,6 +554,18 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+  }
+  .form-top .icon-btn {
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+    border: none;
+    background: transparent;
+    color: var(--text-faint);
+  }
+  .form-top .icon-btn:hover {
+    background: rgba(15, 30, 51, 0.06);
+    color: var(--text-primary);
   }
   .form-title {
     font-size: 13.5px;
@@ -371,6 +600,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+    padding: 2px 0;
   }
   .voice-name {
     font-size: 12.5px;
@@ -379,5 +609,47 @@
   .voice-actions {
     display: flex;
     gap: 6px;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .voice-btn {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: transform 160ms var(--ease-spring), background 160ms var(--ease-spring), color 160ms var(--ease-spring);
+  }
+  .voice-btn.play {
+    background: #e8effc;
+    color: var(--accent-blue);
+  }
+  .voice-btn.play:hover {
+    background: #d8e5fb;
+    transform: scale(1.08);
+  }
+  .voice-btn.play:active {
+    transform: scale(0.95);
+  }
+  .voice-btn.play.playing {
+    background: var(--accent-blue);
+    color: #fff;
+  }
+  .voice-btn.del {
+    color: var(--text-faint);
+  }
+  .voice-btn.del:hover {
+    background: #fee2e2;
+    color: var(--accent-rec);
+    transform: scale(1.08);
+  }
+  .voice-btn.del:active {
+    transform: scale(0.95);
   }
 </style>

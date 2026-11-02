@@ -1,6 +1,6 @@
 <script lang="ts">
   import { baseName, encPath, fmtClockShort, readJsonSafe, speakerColor, speakerTint } from '../lib/api'
-  import type { SpeakerInfo, SpeakerSample } from '../lib/api'
+  import type { SpeakerCandidate, SpeakerInfo, SpeakerSample } from '../lib/api'
   import { toast, toastConfirm } from '../lib/toast.svelte.ts'
   import { emit, ui } from '../lib/ui.svelte.ts'
   import { loadPeople, peopleState } from '../lib/people.svelte.ts'
@@ -54,6 +54,8 @@
       if (spk.matched) {
         cur.matched = true
         cur.matched_name = spk.matched_name || cur.matched_name
+        cur.matched_pack_id = spk.matched_pack_id || cur.matched_pack_id
+        cur.matched_pack_name = spk.matched_pack_name || cur.matched_pack_name
       }
       if (!cur.embedding && spk.embedding) cur.embedding = spk.embedding
       if ((!cur.candidates || cur.candidates.length === 0) && spk.candidates?.length) {
@@ -162,6 +164,7 @@
     embedding: number[] | null | undefined,
     saveBtn: HTMLButtonElement,
     sample?: { start: number; end: number; channel?: number | null },
+    targetPackId?: string,
   ): Promise<void> {
     const finalName = (typeof nameOrInput === 'string' ? nameOrInput : nameOrInput?.value.trim() || '').trim()
     if (!finalName) {
@@ -176,6 +179,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: finalName,
+          pack_id: targetPackId || undefined,
           embedding: hasEmb ? embedding : null,
           audio_file: ui.currentTranscriptPath,
           old_name: oldName,
@@ -260,6 +264,7 @@
   }
 
   let inputValues = $state<Record<string, string>>({})
+  let cardPack = $state<Record<string, string>>({})
 
   function getCardValue(key: string, fallback: string): string {
     return inputValues[key] ?? fallback
@@ -267,6 +272,16 @@
 
   function setCardValue(key: string, val: string): void {
     inputValues[key] = val
+  }
+
+  function getCardPack(key: string, currentVal?: string): string {
+    if (cardPack[key]) return cardPack[key]
+    const val = (currentVal || '').trim().toLowerCase()
+    if (val) {
+      const match = peopleState.list.find((p) => p.name.toLowerCase() === val)
+      if (match?.pack_id) return match.pack_id
+    }
+    return peopleState.packs[0]?.id || 'default'
   }
 
   interface DropdownState {
@@ -344,9 +359,16 @@
     return !inPeople && !inOther
   })
 
-  function selectPerson(name: string): void {
+  function selectPerson(name: string, packId?: string): void {
     if (!activeDropdown) return
-    setCardValue(activeDropdown.spkKey, name)
+    const k = activeDropdown.spkKey
+    setCardValue(k, name)
+    if (packId) {
+      cardPack[k] = packId
+    } else {
+      const match = peopleState.list.find((p) => p.name.toLowerCase() === name.trim().toLowerCase())
+      if (match?.pack_id) cardPack[k] = match.pack_id
+    }
     closeDropdown()
   }
 
@@ -419,7 +441,7 @@
             <div class="speaker-top">
               <span class="speaker-name">{displayName}</span>
               {#if spk.matched}
-                <span class="speaker-status ok">узнан{typeof spk.similarity === 'number' ? ` · ${spk.similarity.toFixed(2)}` : ''}</span>
+                <span class="speaker-status ok">узнан{spk.matched_pack_name ? ` · ${spk.matched_pack_name}` : ''}{typeof spk.similarity === 'number' ? ` · ${spk.similarity.toFixed(2)}` : ''}</span>
               {/if}
             </div>
             {#if meta}
@@ -432,12 +454,17 @@
               .slice(0, 4)
               .map((c) => {
                 if (Array.isArray(c)) return `${String(c[0])} · ${Number(c[1]).toFixed(2)}`
-                const sim = (c as { similarity?: number }).similarity
-                return typeof sim === 'number' ? `${(c as { name: string }).name} · ${sim.toFixed(2)}` : (c as { name: string }).name
+                const cand = c as SpeakerCandidate
+                const pSuffix = cand.pack_name ? ` (${cand.pack_name})` : ''
+                const sim = cand.similarity
+                return typeof sim === 'number' ? `${cand.name}${pSuffix} · ${sim.toFixed(2)}` : `${cand.name}${pSuffix}`
               })}
             {@const fullNames = spk.candidates
               .slice(0, 4)
-              .map((c) => (Array.isArray(c) ? String(c[0]) : (c as { name: string }).name))}
+              .map((c) => (Array.isArray(c) ? String(c[0]) : (c as SpeakerCandidate).name))}
+            {@const candPacks = spk.candidates
+              .slice(0, 4)
+              .map((c) => (Array.isArray(c) ? undefined : (c as SpeakerCandidate).pack_id))}
             <div class="assign-label">Похожие голоса:</div>
             <div class="candidates">
               {#each names as label, i (fullNames[i])}
@@ -446,6 +473,7 @@
                   title="Подставить это имя"
                   onclick={() => {
                     setCardValue(spk.key, fullNames[i])
+                    if (candPacks[i]) cardPack[spk.key] = candPacks[i]!
                     closeDropdown()
                   }}
                 >
@@ -523,6 +551,7 @@
                   samples[0]
                     ? { start: samples[0].start, end: samples[0].end, channel: samples[0].channel }
                     : undefined,
+                  getCardPack(spk.key, cardVal),
                 )
               }}
             >
@@ -580,21 +609,21 @@
       {/if}
 
       {#if filteredPeople.length > 0}
-        <div class="speaker-select-section-title">Люди из базы</div>
+        <div class="speaker-select-section-title">Участники из базы</div>
         {#each filteredPeople as p (p.name)}
           <button
             type="button"
             class="speaker-select-item"
-            title={p.role ? `${p.name} — ${p.role}` : p.name}
-            onclick={() => selectPerson(p.name)}
+            title={p.role ? `${p.name} - ${p.role}` : p.name}
+            onclick={() => selectPerson(p.name, p.pack_id)}
           >
             <span class="speaker-select-item-left">
               <span class="speaker-select-item-dot" style={`background: ${speakerColor(p.name)}`}></span>
               <span class="speaker-select-item-name">{p.name}</span>
             </span>
-            {#if p.role}
-              <span class="speaker-select-item-sub">{p.role}</span>
-            {/if}
+            <span class="speaker-select-item-sub">
+              {p.role ? `${p.role} · ` : ''}{p.pack_name || (p.is_external ? 'Гость' : 'Основной профиль')}
+            </span>
           </button>
         {/each}
       {/if}
@@ -606,7 +635,7 @@
           <button
             type="button"
             class="speaker-select-item"
-            title={s.utterances_count ? `${sName} — ${s.utterances_count} реплик` : sName}
+            title={s.utterances_count ? `${sName} - ${s.utterances_count} реплик` : sName}
             onclick={() => selectPerson(sName)}
           >
             <span class="speaker-select-item-left">
@@ -614,7 +643,7 @@
               <span class="speaker-select-item-name">{sName}</span>
             </span>
             {#if s.utterances_count}
-              <span class="speaker-select-item-sub">{s.utterances_count} репл.</span>
+              <span class="speaker-select-item-sub">{s.utterances_count} реплик</span>
             {/if}
           </button>
         {/each}
