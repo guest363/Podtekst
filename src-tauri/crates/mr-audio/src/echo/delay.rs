@@ -1,19 +1,8 @@
-//! Оценка задержки «референс → эхо в микрофоне» методом GCC-PHAT.
-//! PHAT-взвешивание (нормировка кросс-спектра на модуль) убирает амплитудную
-//! окраску речи, поэтому пик остаётся резким в ревербирующем помещении.
-
 use super::fft::{self, Cx};
 
-/// Размер PHAT-кадра: 2^14 = 1.024 с на 16 кГц — разрешение по задержке 1 сэмпл.
 const FRAME: usize = 1 << 14;
-
-/// Минимум сигнала, по которому ещё возможна оценка задержки.
 pub(crate) const MIN_WINDOW_SAMPLES: usize = FRAME;
 
-/// Оценка по одному окну сигналов. Вернёт None, если в окне не набралось
-/// ни одного достаточно громкого кадра (тишина хотя бы в одном канале).
-/// Возвращает (задержка_сэмплы, проминентность) — см. калибровку порога
-/// в вызывающем модуле.
 pub(crate) fn estimate(mic: &[f32], reference: &[f32], max_delay: usize) -> Option<(usize, f32)> {
     let n = mic.len().min(reference.len());
     if n < FRAME {
@@ -28,8 +17,6 @@ pub(crate) fn estimate(mic: &[f32], reference: &[f32], max_delay: usize) -> Opti
     let mut bins = 0usize;
     let mut d_buf = vec![Cx::default(); spectrum_len];
     let mut x_buf = vec![Cx::default(); spectrum_len];
-    // Бины ниже 400 Гц и выше 7.8 кГц не участвуют: DC, гул и фазовое
-    // искажение DC-блокера (полюс 0.97) смещают PHAT-пик на низах.
     let low = (400.0 * FRAME as f32 / 16000.0) as usize;
     let high = (spectrum_len * 78 / 100).min(spectrum_len / 2);
     let mut d_mag = vec![0.0f32; high];
@@ -42,18 +29,9 @@ pub(crate) fn estimate(mic: &[f32], reference: &[f32], max_delay: usize) -> Opti
         }
         fft::fft(&mut d_buf);
         fft::fft(&mut x_buf);
-        // SAFETY-гейт: кадры с тишиной не несут задержки и портят нормировку.
         if frame_power(&d_buf) < 1e-8 || frame_power(&x_buf) < 1e-8 {
             continue;
         }
-        // PHAT: кросс-спектр микрофон×conj(референс) делим на модуль. Деление
-        // на |cross|≈0 усиливает численный шум до единичной амплитуды и
-        // захламляет спектр — копим только бины со сколько-нибудь заметной
-        // энергией в кадре. Зеркалим в сопряжённую половину: без Эрмитовой
-        // симметрии IFFT давал бы комплексную корреляцию без вещественного пика.
-        // Порог — от истинного спектрального пика всего кадра: относительно
-        // максимума только внутри полосы протечки узкополосного тона у его
-        // края не отрезаются никогда (затухание 1/расстояние).
         let mut max_mag = 0.0f32;
         for k in 1..spectrum_len / 2 {
             max_mag = max_mag.max(d_buf[k].norm2().sqrt() * x_buf[k].norm2().sqrt());
@@ -78,8 +56,6 @@ pub(crate) fn estimate(mic: &[f32], reference: &[f32], max_delay: usize) -> Opti
                 acc[spectrum_len - k].re + norm.re,
                 acc[spectrum_len - k].im - norm.im,
             );
-            // Сырой кросс-спектр и мощности каналов — для когерентности
-            // между кадрами (взвешивание ниже).
             csum[k] = Cx::new(csum[k].re + cross.re, csum[k].im + cross.im);
             den_d[k] += d_mag[k];
             den_x[k] += x_buf[k].norm2();
@@ -88,16 +64,9 @@ pub(crate) fn estimate(mic: &[f32], reference: &[f32], max_delay: usize) -> Opti
             frames += 1;
         }
     }
-    // Гейт разреженности: эхо настоящего звука широкополосно. Узкий гул
-    // «протекает» во все бины, PHAT уравнивает эти протечки с настоящими
-    // бинами и строит ложную корреляцию — такой спектр детекту не эхо.
     if frames == 0 || bins < frames * (high - low) / 20 {
         return None;
     }
-    // Взвешивание по величине когерентности (MSC): бины, где кросс-спектр
-    // когерентен между кадрами (эхо), весят ~1, некогерентная ближняя речь
-    // и шум — ~0. Без этого слабое эхо на фоне двойного разговора не
-    // отличить от случайного пика шума.
     for k in low..high {
         let coh = csum[k].norm2() / (den_d[k] * den_x[k] + 1e-12);
         let w = coh.min(1.0);
@@ -130,8 +99,6 @@ fn frame_power(spectrum: &[Cx]) -> f32 {
 mod tests {
     use super::*;
 
-    /// Чирп 200–4000 Гц: широкополосный детерминированный сигнал, PHAT на
-    /// чистых тонах вырождается (весь вес в 2–4 бинах).
     fn chirp(len: usize, f0: f32, f1: f32) -> Vec<f32> {
         let mut phase = 0.0f32;
         (0..len)
@@ -150,7 +117,6 @@ mod tests {
         let delay = 2400usize;
         let mut mic = vec![0.0f32; delay];
         mic.extend(reference[..reference.len() - delay].iter().copied());
-        // Ближний сигнал, некоррелированный с референсом, не должен сбить пик.
         for (i, m) in mic.iter_mut().enumerate() {
             *m += 0.3 * near[i];
         }
@@ -166,8 +132,6 @@ mod tests {
 
     #[test]
     fn uncorrelated_channels_have_no_confident_peak() {
-        // Псевдошум вместо второго чирпа: два детерминированных чирпа
-        // структурно когерентны и дают ложный пик.
         let reference = chirp(FRAME * 2, 200.0, 4000.0);
         let mut seed = 0x1234567890ABCDEFu64;
         let mut mic = Vec::with_capacity(FRAME * 2);
@@ -185,9 +149,6 @@ mod tests {
 
     #[test]
     fn narrowband_hum_is_rejected() {
-        // Узкополосный референс и его эхо: в полосе анализа почти нет
-        // бинов с энергией — гейт разреженности не даёт PHAT-протечкам
-        // построить ложную корреляцию.
         let reference = chirp(FRAME * 2, 220.0, 225.0);
         let mut mic = vec![0.0f32; 1600];
         mic.extend(reference[..reference.len() - 1600].iter().copied());

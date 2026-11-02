@@ -246,10 +246,6 @@ pub fn transcribe_file(
         channels
     };
     let is_stereo = channels.len() >= 2;
-    // Свои стерео-записи — сплит «микрофон / система»: в микрофон попадает
-    // эхо системного звука (правый канал — его чистая цифровая копия).
-    // Офлайн-проход вычищает эхо до ASR; импортное стерео не трогаем —
-    // там каналы не несут семантики «микрофон / система».
     if is_stereo && crate::media_registry::load_registry().is_owned(audio_path) {
         on_event(2, "Подавляю эхо системного звука…");
         let (left, right) = channels.split_at_mut(1);

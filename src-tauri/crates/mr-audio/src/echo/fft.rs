@@ -1,6 +1,3 @@
-//! Компактный radix-2 БПФ. Офлайн-обработке хватает f32, а внешние крейты
-//! запрещены правилом P2 — поэтому собственная реализация.
-
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Cx {
     pub re: f32,
@@ -35,8 +32,6 @@ impl Cx {
     }
 }
 
-/// Преобразование на месте; длина — степень двойки ≥ 2. Нормировка не делается:
-/// обратный вызов нормирует сам.
 pub(crate) fn transform(data: &mut [Cx], inverse: bool) {
     let n = data.len();
     assert!(n.is_power_of_two() && n >= 2);
@@ -100,7 +95,6 @@ mod tests {
 
     #[test]
     fn matches_naive_dft_and_roundtrip() {
-        // Детерминированный LCG вместо крейта rand (P2).
         let mut seed = 0x9E3779B97F4A7C15u64;
         let mut next = move || {
             seed ^= seed << 13;

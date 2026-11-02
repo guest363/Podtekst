@@ -4,30 +4,16 @@ mod filter;
 
 use filter::EchoFilter;
 
-/// 500 мс: покрывает loopback (10–50 мс) и Bluetooth-колонки (100–300 мс).
 const MAX_DELAY: usize = 8000;
-// Гейт закрывает только случай тихого системного канала (экономия DSP):
-// речеподобный несвязанный звук неотличим от слабого эха по PHAT (пол
-// 5.4, слабое эхо 5.2+), защита сценария «наушники» — мёртвая зона
-// когерентности в фильтре (несвязанные каналы дают coh ~0.16 ниже 0.3 →
-// шаг почти нулевой, артефакт не глубже −25 дБ).
 const ECHO_MIN_PROMINENCE: f32 = 4.5;
-/// Полка шума в критерии «только дальний собеседник»: ниже неё блок
-/// считается тишиной и в ERLE не попадает.
 const POWER_FLOOR: f32 = 1e-7;
 
 #[derive(Debug)]
 pub struct EchoReport {
-    /// Эхо обнаружено и канал обработан.
     pub echo_windows: usize,
-    /// Медиана ERLE по блокам «только дальний собеседник», дБ.
     pub erle_db: Option<f32>,
 }
 
-/// Чистит канал микрофона (`mic`) по референсу системного звука.
-/// Оба канала — моно 16 кГц из стерео-сплита записи (mic — левый).
-/// Аудио без эха (наушники, паузы системного звука) остаётся практически
-/// без изменений: снимается только DC/гул ниже ~75 Гц.
 pub fn suppress_echo(mic: &mut [f32], reference: &[f32], sample_rate: u32) -> EchoReport {
     let n = mic.len().min(reference.len());
     if sample_rate != 16000 || n < delay::MIN_WINDOW_SAMPLES {
@@ -36,11 +22,6 @@ pub fn suppress_echo(mic: &mut [f32], reference: &[f32], sample_rate: u32) -> Ec
             erle_db: None,
         };
     }
-    // Гейт эха: максимум проминентности по окнам 10 с (до 3 минут).
-    // Длинное усреднение размазывает пик, если задержка дрейфует; в
-    // отдельном же окне она локально стабильна. Задержка из оценки не
-    // применяется: эхопуть до 320 мс фильтр покрывает сам; выравнивание
-    // нужно лишь для задержек больше ёмкости фильтра (Bluetooth-колонки).
     let mut echo_present = false;
     let window_len = 10 * 16000;
     let probe_end = n.min(180 * 16000);
@@ -60,14 +41,7 @@ pub fn suppress_echo(mic: &mut [f32], reference: &[f32], sample_rate: u32) -> Ec
     let echo_windows = usize::from(echo_present);
     let mut erle: Vec<f32> = Vec::new();
 
-    // Обработка независимыми чанками по 10 с со свежим фильтром в каждом:
-    // в пределах чанка адаптивный фильтр устойчив (сходится за ~1.5 с
-    // дальней речи), а блуждание на двойном разговоре не успевает
-    // накопиться и не переходит между чанками. Эхопуть статичен, каждый
-    // чанк переучивает его заново.
     if echo_present {
-        // Проход 1 — прогрев на копии канала: к выводу фильтр уже сошёлся,
-        // и первые секунды записи не выходят с недавшим фильтром.
         let mut line = DelayLine::new(reference);
         let mut filter = EchoFilter::new();
         let mut scratch = vec![0.0f32; filter::BLOCK];
@@ -79,7 +53,6 @@ pub fn suppress_echo(mic: &mut [f32], reference: &[f32], sample_rate: u32) -> Ec
             filter.process(&mut scratch, &ref_block, 1.0);
             t += filter::BLOCK;
         }
-        // Проход 2 — подавление в живом канале.
         let mut line = DelayLine::new(reference);
         let mut t = 0usize;
         while t + filter::BLOCK <= n {
@@ -99,8 +72,6 @@ pub fn suppress_echo(mic: &mut [f32], reference: &[f32], sample_rate: u32) -> Ec
     }
 }
 
-/// DC-блокер (полюс 0.97 ≈ 75 Гц на 16 кГц): DC и гул рушат нормировку
-/// мощности бинов в адаптивном фильтре.
 fn dc_block(samples: &mut [f32]) {
     let (mut x_prev, mut y_prev) = (0.0f32, 0.0f32);
     for s in samples.iter_mut() {
@@ -111,8 +82,6 @@ fn dc_block(samples: &mut [f32]) {
     }
 }
 
-/// Потоковый доступ к DC-блокированному референсу с произвольной задержкой
-/// 0..MAX_DELAY: копия всего канала на час записи — сотни МБ, кольцо — 33 КБ.
 struct DelayLine<'a> {
     reference: &'a [f32],
     buf: Vec<f32>,
@@ -144,17 +113,12 @@ impl<'a> DelayLine<'a> {
         self.produced += 1;
     }
 
-    /// Заполняет `out` сэмплами референса с задержкой `delay` относительно
-    /// позиции `t` обрабатываемого блока микрофона. Вызывается по блокам
-    /// подряд; за пределами записи — тишина (системный канал короче микрофонного).
     fn pull(&mut self, delay: usize, t: usize, out: &mut [f32]) {
         let end = t + out.len();
         while self.produced < end {
             self.push_one();
         }
         for (j, slot) in out.iter_mut().enumerate() {
-            // saturating_sub: до начала записи референса нет — тишина
-            // (usize-вычитание в release молча заворачивалось бы).
             let i = (t + j).saturating_sub(delay);
             *slot = if i < self.produced {
                 self.buf[i % self.buf.len()]
@@ -192,8 +156,6 @@ mod tests {
     #[test]
     fn delay_line_returns_shifted_reference() {
         let reference: Vec<f32> = (0..30000).map(|i| (i as f32 * 0.1).sin()).collect();
-        // Линия задержки прогоняет референс через DC-блокер — эталон считаем
-        // тем же фильтром, проверяется именно кольцевая арифметика.
         let mut blocked = reference.clone();
         dc_block(&mut blocked);
         let mut line = DelayLine::new(&reference);
