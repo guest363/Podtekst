@@ -1,4 +1,6 @@
 mod delay;
+#[cfg(test)]
+mod diag;
 mod fft;
 mod filter;
 
