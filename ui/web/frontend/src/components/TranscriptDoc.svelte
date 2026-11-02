@@ -241,8 +241,6 @@
     return String(s).replace(/[&<>"']/g, (c) => (({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c))
   }
 
-  // Слова с уверенностью: сомнительные — еле заметным пунктиром,
-  // клик по любому слову открывает «в словарь» вместо редактирования.
   function wordsHtml(u: Utterance): string {
     const ws = u.words
     const plain = (u.text || '').split(/\s+/).filter(Boolean)

@@ -155,9 +155,7 @@ pub struct TranscribeOptions {
     pub language: String,
     pub min_speakers: usize,
     pub max_speakers: usize,
-    /// Словарь терминов для CTC-бонуса (до 500, санитизируется в mr-ml).
     pub hotwords: Vec<String>,
-    /// Второй проход CTC (уверенность + словарь). Выключается в настройках.
     pub ctc_enabled: bool,
 }
 

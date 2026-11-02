@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
-/// Словарь терминов для CTC-бонуса: чистые строки, без зависимости от ONNX,
-/// чтобы конфиг и HTTP-слой пользовались ими и в сборке без моделей.
+/// Без зависимости от ONNX: конфиг и HTTP собираются и без моделей.
 pub const MAX_HOTWORDS: usize = 500;
 pub const MAX_HOTWORD_CHARS: usize = 64;
 pub const DEFAULT_CONFIDENCE_THRESHOLD: f64 = 0.55;

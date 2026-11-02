@@ -64,7 +64,6 @@ pub(crate) fn save_auto_transcribe(enabled: bool) {
     update_config(|cfg| cfg["auto_transcribe"] = json!(enabled));
 }
 
-/// Словарь терминов для CTC-бонуса (глобальный, до 500; санитизация в mr-ml).
 pub(crate) fn configured_hotwords() -> Vec<String> {
     let raw: Vec<String> = load_config()
         .get("hotwords")
@@ -73,7 +72,6 @@ pub(crate) fn configured_hotwords() -> Vec<String> {
     mr_ml::hotwords::sanitize_hotwords(&raw)
 }
 
-/// Второй проход CTC включён по умолчанию; выключается в настройках.
 pub(crate) fn configured_ctc_enabled() -> bool {
     load_config()
         .get("ctc_enabled")
