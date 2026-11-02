@@ -12,6 +12,8 @@ use std::sync::{Mutex, OnceLock};
 use mr_audio::decode::{decode_to_channels_16k_auto, is_video_path};
 use mr_packs as packs;
 
+use mr_ml::hotwords::{sanitize_hotwords, DEFAULT_CONFIDENCE_THRESHOLD};
+use mr_ml::onnx::ctc::{align_to_reference, GigaCTC};
 use mr_ml::onnx::embed::EmbeddingExtractor;
 use mr_ml::onnx::rnnt::GigaAM;
 use mr_ml::onnx::segmentation::SegmentationModel;
@@ -39,6 +41,7 @@ fn find_model_file(model_id: &str, needle: &str) -> Option<PathBuf> {
 pub struct ModelSet {
     vad: SileroVad,
     gigaam: Option<GigaAM>,
+    ctc: Option<GigaCTC>,
     whisper: Option<Whisper>,
     embed: Option<EmbeddingExtractor>,
     segmentation: Option<SegmentationModel>,
@@ -69,6 +72,8 @@ impl ModelSet {
         let vad = SileroVad::load(&vad_path)?;
         let giga_dir = models_root().join("asr-gigaam-v3-rnnt-int8");
         let gigaam = GigaAM::load(&giga_dir).ok();
+        let ctc_dir = models_root().join("asr-gigaam-v3-e2e-ctc-int8");
+        let ctc = GigaCTC::load(&ctc_dir).ok();
         let whisper_dir = models_root().join("asr-whisper-large-v3-turbo-q");
         let whisper = Whisper::load(&whisper_dir).ok();
         let emb_path = find_model_file("diar-eres2netv2-emb", ".onnx")
@@ -83,6 +88,7 @@ impl ModelSet {
         Ok(Self {
             vad,
             gigaam,
+            ctc,
             whisper,
             embed,
             segmentation,
@@ -90,7 +96,14 @@ impl ModelSet {
     }
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WordConf {
+    pub w: String,
+    pub conf: f64,
+    pub needs_review: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Utterance {
     pub start: f64,
     pub end: f64,
@@ -101,6 +114,10 @@ pub struct Utterance {
     pub diarized: bool,
     #[serde(default)]
     pub silhouette: f64,
+    #[serde(default)]
+    pub words: Vec<WordConf>,
+    #[serde(default)]
+    pub ctc_used: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -138,6 +155,10 @@ pub struct TranscribeOptions {
     pub language: String,
     pub min_speakers: usize,
     pub max_speakers: usize,
+    /// Словарь терминов для CTC-бонуса (до 500, санитизируется в mr-ml).
+    pub hotwords: Vec<String>,
+    /// Второй проход CTC (уверенность + словарь). Выключается в настройках.
+    pub ctc_enabled: bool,
 }
 
 impl Default for TranscribeOptions {
@@ -149,6 +170,8 @@ impl Default for TranscribeOptions {
             language: "auto".to_string(),
             min_speakers: 0,
             max_speakers: 0,
+            hotwords: Vec::new(),
+            ctc_enabled: true,
         }
     }
 }
@@ -262,10 +285,10 @@ pub fn transcribe_file(
     events::emit_stage(2, "Загружаю модели…");
     let mut models = take_cached_models()?;
     let use_gigaam = models.gigaam.is_some() && opts.engine != "whisper";
-    let engine_name = if use_gigaam {
-        "GigaAM-v3 (русский язык)"
+    let mut engine_name = if use_gigaam {
+        "GigaAM-v3 (русский язык)".to_string()
     } else {
-        "Whisper large-v3-turbo (30+ языков)"
+        "Whisper large-v3-turbo (30+ языков)".to_string()
     };
     events::emit_stage(6, &format!("Модели готовы: {engine_name}"));
 
@@ -325,6 +348,7 @@ pub fn transcribe_file(
     }
     let total_segs: usize = channel_grouped.values().map(|v| v.len()).sum();
     let mut done_segs = 0usize;
+    let mut ctc_used_any = false;
     let mut channel_utts: HashMap<usize, Vec<Utterance>> = HashMap::new();
     for (ch, label) in chan_list.iter() {
         let samples = &channel_samples[ch];
@@ -365,20 +389,56 @@ pub fn transcribe_file(
             let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
             done_segs += 1;
             let pct = (15.0 + 65.0 * done_segs as f64 / total_segs.max(1) as f64) as u8;
+            // Второй проход CTC идёт внутри того же счётчика сегментов,
+            // поэтому прогресс его уже учитывает без отдельных стадий.
             on_event(
                 pct.min(80),
                 &format!("Реплик распознано: {done_segs} из {total_segs}"),
             );
             // Зацикленный вывод жадного декодера на шуме — не речь.
             if !text.is_empty() && !looks_like_asr_loop(&text) {
+                let mut words: Vec<WordConf> = Vec::new();
+                let mut ctc_used = false;
+                let mut final_text = text;
+                if use_gigaam && opts.ctc_enabled {
+                    if let Some(ctc) = models.ctc.as_mut() {
+                        if let Ok(hyp) = ctc.transcribe_segment(chunk, &opts.hotwords) {
+                            if !hyp.words.is_empty() {
+                                let aligned = align_to_reference(
+                                    &final_text,
+                                    &hyp,
+                                    &opts.hotwords,
+                                    DEFAULT_CONFIDENCE_THRESHOLD,
+                                );
+                                final_text = aligned
+                                    .iter()
+                                    .map(|w| w.text.clone())
+                                    .collect::<Vec<_>>()
+                                    .join(" ");
+                                words = aligned
+                                    .into_iter()
+                                    .map(|w| WordConf {
+                                        w: w.text,
+                                        conf: (w.confidence * 1000.0).round() / 1000.0,
+                                        needs_review: w.needs_review,
+                                    })
+                                    .collect();
+                                ctc_used = true;
+                                ctc_used_any = true;
+                            }
+                        }
+                    }
+                }
                 utts.push(Utterance {
                     start: (a * 100.0).round() / 100.0,
                     end: (b * 100.0).round() / 100.0,
                     speaker: label.clone(),
                     channel: Some(*ch as i32),
-                    text,
+                    text: final_text,
                     diarized: false,
                     silhouette: 0.0,
+                    words,
+                    ctc_used,
                 });
             }
         }
@@ -521,6 +581,10 @@ pub fn transcribe_file(
     } else {
         speaker_method.to_string() + " + разделение голосов"
     };
+    if ctc_used_any {
+        engine_name.push_str(" + CTC-уточнение");
+    }
+    let hotwords_applied = sanitize_hotwords(&opts.hotwords);
     let meta = serde_json::json!({
         "audio": audio_path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
         "is_video": video,
@@ -529,6 +593,8 @@ pub fn transcribe_file(
         "speaker_method": method,
         "speakers": speakers,
         "speakers_info": speakers_info.iter().map(report::speaker_to_json).collect::<Vec<_>>(),
+        "hotwords_applied": hotwords_applied,
+        "confidence": serde_json::json!({"engine": "ctc", "threshold": DEFAULT_CONFIDENCE_THRESHOLD}),
     });
     let md_path = out_dir.join(format!("{stem}.md"));
     let txt_path = out_dir.join(format!("{stem}.txt"));
@@ -541,7 +607,7 @@ pub fn transcribe_file(
         "utterances": merged.iter().map(|u| serde_json::json!({
             "start": u.start, "end": u.end, "speaker": u.speaker,
             "channel": u.channel, "text": u.text, "diarized": u.diarized,
-            "silhouette": u.silhouette,
+            "silhouette": u.silhouette, "words": u.words, "ctc_used": u.ctc_used,
         })).collect::<Vec<_>>(),
     });
     std::fs::write(&json_path, serde_json::to_string_pretty(&doc).unwrap())
@@ -566,7 +632,7 @@ pub fn transcribe_file(
 
 #[cfg(test)]
 mod tests {
-    use super::{looks_like_asr_loop, quiet_blank_penalty};
+    use super::{looks_like_asr_loop, quiet_blank_penalty, Utterance};
 
     #[test]
     fn detects_repeated_asr_hallucination() {
@@ -601,5 +667,17 @@ mod tests {
         ));
 
         assert!(!looks_like_asr_loop(""));
+    }
+
+    #[test]
+    fn old_transcript_without_words_parses() {
+        // P9: старые .transcript.json без words/ctc_used читаются с дефолтами.
+        let u: Utterance = serde_json::from_value(serde_json::json!({
+            "start": 0.0, "end": 1.0, "speaker": "Спикер",
+            "channel": null, "text": "раз два"
+        }))
+        .unwrap();
+        assert!(u.words.is_empty());
+        assert!(!u.ctc_used);
     }
 }

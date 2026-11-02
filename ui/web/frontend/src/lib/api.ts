@@ -66,12 +66,20 @@ export interface SpeakerInfo {
   total_speech_sec?: number
 }
 
+export interface WordConf {
+  w: string
+  conf: number
+  needs_review: boolean
+}
+
 export interface Utterance {
   start: number
   end?: number
   speaker?: string
   channel?: number | null
   text?: string
+  words?: WordConf[] | null
+  ctc_used?: boolean
 }
 
 export interface TranscriptData {

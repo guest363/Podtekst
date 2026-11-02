@@ -24,7 +24,8 @@ use self::people::{
     people_json_files, read_people_list, remove_person, save_external_people, update_people,
 };
 use self::transcribe_api::{
-    handle_models_update, handle_transcribe_start, serve_transcribe_stream, serve_transcript,
+    handle_hotwords_save, handle_models_update, handle_transcribe_start, serve_hotwords,
+    serve_transcribe_stream, serve_transcript,
 };
 use self::transcript_edit::handle_transcript_edit;
 use self::update::{handle_update_apply, handle_update_check, handle_update_progress};
@@ -723,6 +724,13 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 }
                 (tiny_http::Method::Post, "/api/recording/attach_video") => {
                     handle_attach_video(request);
+                }
+                (tiny_http::Method::Get, "/api/hotwords") => {
+                    serve_hotwords(request);
+                }
+                (tiny_http::Method::Post, "/api/hotwords") => {
+                    let body = read_body_to_json(&mut request);
+                    handle_hotwords_save(request, body);
                 }
                 (tiny_http::Method::Get, "/api/transcript") => {
                     serve_transcript(request, &query);

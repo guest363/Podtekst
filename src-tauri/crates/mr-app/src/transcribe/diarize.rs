@@ -1039,25 +1039,29 @@ pub(crate) fn reconcile_channels(infos: &mut Vec<SpeakerInfo>, utterances: &mut 
 
 /// Приклеить текст с учётом общего стыка: ASR мог распознать одни и те же
 /// слова в перекрытии кусков. Срезаем самый длинный повторяющийся стык.
-fn append_overlap_text(last: &mut String, next: &str) {
-    let a: Vec<&str> = last.split_whitespace().collect();
-    let b: Vec<&str> = next.split_whitespace().collect();
+fn overlap_word_count(a: &str, b: &str) -> usize {
+    let aa: Vec<&str> = a.split_whitespace().collect();
+    let bb: Vec<&str> = b.split_whitespace().collect();
     let norm = |w: &str| {
         w.trim_matches(|c: char| !c.is_alphanumeric())
             .to_lowercase()
     };
-    let max_k = a.len().min(b.len()).min(10);
-    let mut k = 0;
+    let max_k = aa.len().min(bb.len()).min(10);
     for cand in (1..=max_k).rev() {
-        let same = a[a.len() - cand..]
+        let same = aa[aa.len() - cand..]
             .iter()
-            .zip(&b[..cand])
+            .zip(&bb[..cand])
             .all(|(x, y)| norm(x) == norm(y));
         if same {
-            k = cand;
-            break;
+            return cand;
         }
     }
+    0
+}
+
+fn append_overlap_text(last: &mut String, next: &str) {
+    let b: Vec<&str> = next.split_whitespace().collect();
+    let k = overlap_word_count(last, next);
     if k < b.len() {
         last.push(' ');
         last.push_str(&b[k..].join(" "));
@@ -1153,10 +1157,20 @@ pub(crate) fn merge_utterances(utterances: Vec<Utterance>) -> Vec<Utterance> {
                     // стыке кусков: текст разный, терять его нельзя.
                     // Эхо между каналами — дубль одной фразы, берём лучшую.
                     if u.channel == last.channel {
+                        let k = overlap_word_count(&last.text, &u.text);
                         append_overlap_text(&mut last.text, &u.text);
+                        if last.words.is_empty() || u.words.is_empty() {
+                            last.words.clear();
+                        } else {
+                            last.words
+                                .extend(u.words.get(k..).unwrap_or(&[]).iter().cloned());
+                        }
+                        last.ctc_used = last.ctc_used || u.ctc_used;
                     } else if better_utterance(&u, last) {
                         last.text = u.text.clone();
                         last.channel = u.channel;
+                        last.words = u.words.clone();
+                        last.ctc_used = u.ctc_used;
                     }
                     last.start = last.start.min(u.start);
                     last.end = last.end.max(u.end);
@@ -1170,6 +1184,12 @@ pub(crate) fn merge_utterances(utterances: Vec<Utterance>) -> Vec<Utterance> {
                     // каналами.
                     if u.channel == last.channel || !words_contained(&u.text, &last.text) {
                         last.text = format!("{} {}", last.text, u.text).trim().to_string();
+                        if last.words.is_empty() || u.words.is_empty() {
+                            last.words.clear();
+                        } else {
+                            last.words.extend(u.words.iter().cloned());
+                        }
+                        last.ctc_used = last.ctc_used || u.ctc_used;
                     }
                     last.end = last.end.max(u.end);
                     last.silhouette = combined_silhouette;
@@ -1316,6 +1336,7 @@ pub(crate) fn split_at_pauses(samples: &[f32], utterances: &[Utterance]) -> Vec<
             out.push(u.clone());
             continue;
         }
+        let mut wpos = 0;
         for (text, w) in split_words_by_bounds(&words, &bounds)
             .into_iter()
             .zip(bounds.windows(2))
@@ -1323,6 +1344,9 @@ pub(crate) fn split_at_pauses(samples: &[f32], utterances: &[Utterance]) -> Vec<
             if text.is_empty() {
                 continue;
             }
+            let nw = text.split_whitespace().count();
+            let wconfs = u.words.get(wpos..wpos + nw).unwrap_or(&[]).to_vec();
+            wpos += nw;
             out.push(Utterance {
                 start: (w[0] * 100.0).round() / 100.0,
                 end: (w[1] * 100.0).round() / 100.0,
@@ -1331,6 +1355,8 @@ pub(crate) fn split_at_pauses(samples: &[f32], utterances: &[Utterance]) -> Vec<
                 text,
                 diarized: false,
                 silhouette: 0.0,
+                words: wconfs,
+                ctc_used: u.ctc_used,
             });
         }
     }
@@ -1430,6 +1456,7 @@ pub(crate) fn split_long_by_speaker_change(
             out.push(u);
             continue;
         }
+        let mut wpos = 0;
         for (text, w) in split_words_by_bounds(&words, &bounds)
             .into_iter()
             .zip(bounds.windows(2))
@@ -1437,6 +1464,9 @@ pub(crate) fn split_long_by_speaker_change(
             if text.is_empty() {
                 continue;
             }
+            let nw = text.split_whitespace().count();
+            let wconfs = u.words.get(wpos..wpos + nw).unwrap_or(&[]).to_vec();
+            wpos += nw;
             out.push(Utterance {
                 start: w[0],
                 end: w[1],
@@ -1445,6 +1475,8 @@ pub(crate) fn split_long_by_speaker_change(
                 text,
                 diarized: false,
                 silhouette: 0.0,
+                words: wconfs,
+                ctc_used: u.ctc_used,
             });
         }
     }
@@ -1523,6 +1555,8 @@ mod tests {
             text: text.to_string(),
             diarized: true,
             silhouette: 0.5,
+            words: Vec::new(),
+            ctc_used: false,
         }
     }
 
@@ -1813,6 +1847,8 @@ mod tests {
             text: "один два три четыре пять шесть семь восемь".to_string(),
             diarized: false,
             silhouette: 0.0,
+            words: Vec::new(),
+            ctc_used: false,
         };
         let out = split_at_pauses(&samples, &[utt()]);
         assert!(out.len() >= 2);
@@ -1939,6 +1975,8 @@ mod tests {
                 .to_string(),
             diarized: false,
             silhouette: 0.0,
+            words: Vec::new(),
+            ctc_used: false,
         };
         let out = split_at_pauses(&samples, &[u]);
         assert_eq!(out.len(), 3);
@@ -1971,6 +2009,8 @@ mod tests {
             text: "Непрерывный поток слов без настоящих пауз в диалоге".to_string(),
             diarized: false,
             silhouette: 0.0,
+            words: Vec::new(),
+            ctc_used: false,
         };
         let out = split_at_pauses(&samples, &[u]);
         assert_eq!(out.len(), 1);
@@ -1996,6 +2036,8 @@ mod tests {
             text: "Фраза со смычкой внутри слова".to_string(),
             diarized: false,
             silhouette: 0.0,
+            words: Vec::new(),
+            ctc_used: false,
         };
         let out1 = split_at_pauses(&samples_closure, &[u1]);
         assert_eq!(out1.len(), 1, "90 мс пауза не должна дробить реплику");
@@ -2012,6 +2054,8 @@ mod tests {
             text: "Первая реплика диалога. Ответная реплика собеседника.".to_string(),
             diarized: false,
             silhouette: 0.0,
+            words: Vec::new(),
+            ctc_used: false,
         };
         let out2 = split_at_pauses(&samples_turn, &[u2]);
         assert_eq!(
@@ -2042,6 +2086,8 @@ mod tests {
             text: words.join(" "),
             diarized: false,
             silhouette: 0.0,
+            words: Vec::new(),
+            ctc_used: false,
         };
         let out = split_at_pauses(&samples, &[u]);
         assert!(

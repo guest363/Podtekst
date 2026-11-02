@@ -64,6 +64,32 @@ pub(crate) fn save_auto_transcribe(enabled: bool) {
     update_config(|cfg| cfg["auto_transcribe"] = json!(enabled));
 }
 
+/// Словарь терминов для CTC-бонуса (глобальный, до 500; санитизация в mr-ml).
+pub(crate) fn configured_hotwords() -> Vec<String> {
+    let raw: Vec<String> = load_config()
+        .get("hotwords")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+    mr_ml::hotwords::sanitize_hotwords(&raw)
+}
+
+/// Второй проход CTC включён по умолчанию; выключается в настройках.
+pub(crate) fn configured_ctc_enabled() -> bool {
+    load_config()
+        .get("ctc_enabled")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(true)
+}
+
+pub(crate) fn save_hotwords_cfg(hotwords: Vec<String>, ctc_enabled: Option<bool>) {
+    update_config(|cfg| {
+        cfg["hotwords"] = json!(mr_ml::hotwords::sanitize_hotwords(&hotwords));
+        if let Some(e) = ctc_enabled {
+            cfg["ctc_enabled"] = json!(e);
+        }
+    });
+}
+
 pub(crate) fn save_dir() -> PathBuf {
     if let Some(s) = load_config().get("save_dir").and_then(|x| x.as_str()) {
         let p = PathBuf::from(shellexpand(s));

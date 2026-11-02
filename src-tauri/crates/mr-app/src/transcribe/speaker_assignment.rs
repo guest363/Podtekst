@@ -185,6 +185,8 @@ mod tests {
             text: String::new(),
             diarized: false,
             silhouette: 0.0,
+            words: Vec::new(),
+            ctc_used: false,
         }
     }
 

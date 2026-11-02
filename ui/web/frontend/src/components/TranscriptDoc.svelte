@@ -3,6 +3,7 @@
   import { fmtClockShort, speakerColor, speakerTint } from '../lib/api'
   import type { SpeakerInfo, Utterance } from '../lib/api'
   import { editTranscript } from '../lib/transcript.svelte.ts'
+  import { addHotword } from '../lib/settings.svelte.ts'
   import { toast } from '../lib/toast.svelte.ts'
 
   interface Props {
@@ -31,6 +32,9 @@
   let speakerMenu = $state<{ index: number; x: number; y: number } | null>(null)
   let renameValue = $state('')
   let menuInput: HTMLInputElement | null = $state(null)
+  let wordMenu = $state<{ index: number; word: string; x: number; y: number } | null>(null)
+  let wordValue = $state('')
+  let menuWordInput: HTMLInputElement | null = $state(null)
   let speakerNames = $derived(
     [...new Set([...speakers.map((s) => s.name), ...utterances.map((u) => u.speaker || 'Спикер')])].filter(Boolean),
   )
@@ -181,6 +185,47 @@
     void assignSpeaker(`Спикер ${n}`)
   }
 
+  async function onUttTextClick(e: MouseEvent, index: number): Promise<void> {
+    const t = (e.target as HTMLElement).closest?.('[data-w]') as HTMLElement | null
+    if (t && index >= 0) {
+      e.stopPropagation()
+      await openWordMenu(e, index, t.dataset.w || '')
+      return
+    }
+    await startEdit(index, { x: e.clientX, y: e.clientY })
+  }
+
+  async function openWordMenu(e: MouseEvent, index: number, word: string): Promise<void> {
+    if (!word) return
+    const rect = (e.target as HTMLElement).getBoundingClientRect()
+    wordMenu = {
+      index,
+      word,
+      x: Math.max(8, Math.min(rect.left, window.innerWidth - 270)),
+      y: Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - 200)),
+    }
+    wordValue = word
+    await tick()
+    menuWordInput?.focus()
+    menuWordInput?.select()
+  }
+
+  async function saveWord(): Promise<void> {
+    if (!wordMenu || !wordValue.trim()) return
+    if (await addHotword(wordValue.trim())) wordMenu = null
+  }
+
+  function onWordMenuKey(e: KeyboardEvent): void {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      wordMenu = null
+    } else if (e.key === 'Enter' && e.target instanceof HTMLInputElement) {
+      e.preventDefault()
+      void saveWord()
+    }
+  }
+
   function onMenuKey(e: KeyboardEvent): void {
     if (e.key === 'Escape') {
       e.preventDefault()
@@ -194,6 +239,24 @@
 
   function escapeHtml(s: string): string {
     return String(s).replace(/[&<>"']/g, (c) => (({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c))
+  }
+
+  // Слова с уверенностью: сомнительные — еле заметным пунктиром,
+  // клик по любому слову открывает «в словарь» вместо редактирования.
+  function wordsHtml(u: Utterance): string {
+    const ws = u.words
+    const plain = (u.text || '').split(/\s+/).filter(Boolean)
+    if (!ws || ws.length === 0 || ws.length !== plain.length) return escapeHtml(u.text || '')
+    return ws
+      .map((w) => {
+        const cls = w.needs_review ? 'w low' : 'w'
+        const conf = typeof w.conf === 'number' ? w.conf.toFixed(2) : '?'
+        const title = w.needs_review
+          ? `Уверенность ${conf} — клик: добавить в словарь`
+          : `Клик: добавить в словарь`
+        return `<span class="${cls}" data-w="${escapeHtml(w.w)}" title="${escapeHtml(title)}">${escapeHtml(w.w)}</span>`
+      })
+      .join(' ')
   }
 
   function inlineMd(s: string): string {
@@ -226,7 +289,7 @@
         kind: 'utt' as const,
         time: fmtClockShort(u.start),
         speaker: u.speaker || 'Спикер',
-        html: escapeHtml(u.text || ''),
+        html: wordsHtml(u),
         search: `${fmtClockShort(u.start)} ${u.speaker || ''} ${u.text || ''}`.toLowerCase(),
         sec: u.start,
         index,
@@ -399,7 +462,7 @@
                 role="textbox"
                 aria-label="Редактировать реплику"
                 tabindex="0"
-                onclick={(e) => void startEdit((b as Block).index, { x: e.clientX, y: e.clientY })}
+                onclick={(e) => void onUttTextClick(e, (b as Block).index)}
                 onkeydown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
@@ -473,4 +536,39 @@
       </button>
     </div>
   {/if}
+  {#if wordMenu}
+    <button type="button" class="speaker-popover-backdrop" aria-label="Закрыть словарь" onclick={() => (wordMenu = null)}></button>
+    <div
+      class="speaker-popover"
+      role="dialog"
+      aria-label="Добавить термин в словарь"
+      tabindex="-1"
+      style={`left: ${wordMenu.x}px; top: ${wordMenu.y}px`}
+      onkeydown={onWordMenuKey}
+    >
+      <label class="speaker-rename-label">
+        Реальное значение для словаря
+        <input class="speaker-rename-input" bind:this={menuWordInput} bind:value={wordValue} maxlength="64" />
+      </label>
+      <div class="help-text">Следующие расшифровки получат бонус на этот термин.</div>
+      <button type="button" class="btn-secondary btn-sm" onclick={() => void saveWord()}>
+        В словарь
+      </button>
+    </div>
+  {/if}
 </div>
+
+<style>
+  /* Классы живут в {@html}-строках: :global, иначе svelte-check сочтёт их мёртвыми. */
+  :global(.w) {
+    cursor: pointer;
+    border-radius: 3px;
+    padding: 0 1px;
+  }
+  :global(.w:hover) {
+    background: #faf6e9;
+  }
+  :global(.w.low) {
+    border-bottom: 1px dotted #b08d2e;
+  }
+</style>

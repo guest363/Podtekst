@@ -11,6 +11,9 @@ export const settings = $state({
   platform: '',
   systemAudio: false,
   autoTranscribe: true,
+  hotwords: [] as string[],
+  ctcEnabled: true,
+  hotwordsLoaded: false,
 })
 
 export async function loadAutoTranscribe(): Promise<void> {
@@ -156,6 +159,63 @@ export async function loadModels(): Promise<void> {
   } catch {
     settings.models = []
   }
+}
+
+export async function loadHotwords(): Promise<void> {
+  try {
+    const d = await readJsonSafe(await fetch('/api/hotwords'))
+    if (Array.isArray(d.hotwords)) settings.hotwords = d.hotwords.filter((x: unknown) => typeof x === 'string')
+    if (typeof d.ctc_enabled === 'boolean') settings.ctcEnabled = d.ctc_enabled
+    settings.hotwordsLoaded = true
+  } catch {
+  }
+}
+
+export async function saveHotwords(hotwords: string[], ctcEnabled: boolean): Promise<boolean> {
+  try {
+    const d = await readJsonSafe(
+      await fetch('/api/hotwords', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hotwords, ctc_enabled: ctcEnabled }),
+      }),
+    )
+    if (!d.ok) {
+      toast(d.error || 'Не удалось сохранить словарь', 'error')
+      return false
+    }
+    settings.hotwords = Array.isArray(d.hotwords) ? d.hotwords : []
+    settings.ctcEnabled = d.ctc_enabled !== false
+    settings.hotwordsLoaded = true
+    return true
+  } catch (e) {
+    toast('Не удалось сохранить словарь: ' + (e as Error).message, 'error')
+    return false
+  }
+}
+
+export async function addHotword(term: string): Promise<boolean> {
+  const t = term.trim()
+  if (!t) return false
+  let cur: string[] = settings.hotwordsLoaded ? [...settings.hotwords] : []
+  if (!settings.hotwordsLoaded) {
+    try {
+      const d = await readJsonSafe(await fetch('/api/hotwords'))
+      if (Array.isArray(d.hotwords)) cur = d.hotwords.filter((x: unknown) => typeof x === 'string')
+      if (typeof d.ctc_enabled === 'boolean') settings.ctcEnabled = d.ctc_enabled
+      settings.hotwordsLoaded = true
+    } catch {
+    }
+  }
+  if (cur.some((x) => x.toLowerCase() === t.toLowerCase())) {
+    toast(`«${t}» уже в словаре`)
+    return true
+  }
+  if (cur.length >= 500) {
+    toast('Словарь полон (500). Удалите лишнее в «Настройки» → «Компоненты».', 'error')
+    return false
+  }
+  return saveHotwords([...cur, t], settings.ctcEnabled)
 }
 
 export async function togglePack(p: Voicepack): Promise<void> {

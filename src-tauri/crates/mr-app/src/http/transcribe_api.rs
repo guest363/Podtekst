@@ -192,6 +192,11 @@ pub(super) fn handle_transcribe_start(request: tiny_http::Request, body: serde_j
         language,
         min_speakers: 0,
         max_speakers: 0,
+        hotwords: hotwords_from_body(&body),
+        ctc_enabled: body
+            .get("ctc_enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or_else(crate::config::configured_ctc_enabled),
     };
     if crate::transcribe::spawn_transcription_worker(PathBuf::from(audio_file), opts) {
         json_response(
@@ -215,6 +220,62 @@ pub(super) fn handle_transcribe_start(request: tiny_http::Request, _body: serde_
         json!({"ok": false, "error": "Расшифровка недоступна: ядро собрано без --features onnx"}),
         501,
     );
+}
+
+pub(super) fn serve_hotwords(request: tiny_http::Request) {
+    json_response(
+        request,
+        json!({
+            "ok": true,
+            "hotwords": crate::config::configured_hotwords(),
+            "ctc_enabled": crate::config::configured_ctc_enabled(),
+            "limit": mr_ml::hotwords::MAX_HOTWORDS,
+        }),
+        200,
+    );
+}
+
+pub(super) fn handle_hotwords_save(request: tiny_http::Request, body: serde_json::Value) {
+    let raw: Vec<String> = body
+        .get("hotwords")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_else(crate::config::configured_hotwords);
+    if raw.len() > mr_ml::hotwords::MAX_HOTWORDS {
+        json_response(
+            request,
+            json!({"ok": false, "error": "Словарь ограничен 500 записями"}),
+            400,
+        );
+        return;
+    }
+    let ctc_enabled = body.get("ctc_enabled").and_then(|v| v.as_bool());
+    let clean = mr_ml::hotwords::sanitize_hotwords(&raw);
+    crate::config::save_hotwords_cfg(clean.clone(), ctc_enabled);
+    json_response(
+        request,
+        json!({
+            "ok": true,
+            "hotwords": clean,
+            "ctc_enabled": ctc_enabled.unwrap_or_else(crate::config::configured_ctc_enabled),
+        }),
+        200,
+    );
+}
+
+fn hotwords_from_body(body: &serde_json::Value) -> Vec<String> {
+    match body.get("hotwords").and_then(|v| v.as_array()) {
+        None => crate::config::configured_hotwords(),
+        Some(a) => mr_ml::hotwords::sanitize_hotwords(
+            &a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect::<Vec<_>>(),
+        ),
+    }
 }
 
 pub(super) fn handle_models_update(request: tiny_http::Request, body: serde_json::Value) {

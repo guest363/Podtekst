@@ -119,6 +119,8 @@ pub fn run_cli() {
             language: cli.language.to_lowercase(),
             min_speakers: 0,
             max_speakers: 0,
+            hotwords: crate::config::configured_hotwords(),
+            ctc_enabled: crate::config::configured_ctc_enabled(),
         };
         match transcribe::transcribe_file(audio, &opts, &|pct, msg| {
             println!(

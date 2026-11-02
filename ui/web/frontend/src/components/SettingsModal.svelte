@@ -9,7 +9,9 @@
     ffmpeg,
     hasSystemAudio,
     loadFfmpeg,
+    loadHotwords,
     loadModels,
+    saveHotwords,
     setAutoTranscribe,
     setRecordMode,
     settings,
@@ -22,6 +24,36 @@
   import People from './People.svelte'
 
   let tab = $state<'record' | 'people' | 'voices' | 'models'>('record')
+  let hotwordsDraft = $state('')
+  let hotwordsSaving = $state(false)
+
+  async function openModelsTab(): Promise<void> {
+    tab = 'models'
+    if (!settings.hotwordsLoaded) await loadHotwords()
+    hotwordsDraft = settings.hotwords.join('\n')
+  }
+
+  async function saveHotwordsDraft(): Promise<void> {
+    if (hotwordsSaving) return
+    hotwordsSaving = true
+    try {
+      const list = hotwordsDraft
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean)
+      if (await saveHotwords(list, settings.ctcEnabled)) {
+        hotwordsDraft = settings.hotwords.join('\n')
+        toast('Словарь сохранён')
+      }
+    } finally {
+      hotwordsSaving = false
+    }
+  }
+
+  async function setCtcEnabled(enabled: boolean): Promise<void> {
+    settings.ctcEnabled = enabled
+    await saveHotwords(settings.hotwords, enabled)
+  }
 
   on('models-changed', () => void loadModels())
   // Компонент живёт всё время приложения: одно чтение статуса на старте,
@@ -97,7 +129,7 @@
         class="settings-tab {tab === 'models' ? 'active' : ''}"
         role="tab"
         aria-selected={tab === 'models'}
-        onclick={() => (tab = 'models')}
+        onclick={() => void openModelsTab()}
       >
         Компоненты
       </button>
@@ -301,6 +333,34 @@
           </div>
           <div class="row-start">
             <button class="btn-secondary" onclick={() => void loadModels()}>Обновить список</button>
+          </div>
+          <div class="card-title" style="margin-top: 12px">Словарь терминов</div>
+          <div class="help-text">
+            Второй проход CTC даёт бонус этим словам (аббревиатуры, имена, названия)
+            и считает уверенность каждого слова. По одному на строку, не больше 500.
+          </div>
+          <label class="setting-check">
+            <input
+              type="checkbox"
+              checked={settings.ctcEnabled}
+              onchange={(e) => void setCtcEnabled(e.currentTarget.checked)}
+            />
+            <span class="setting-switch" aria-hidden="true"></span>
+            <span>Второй проход CTC (уверенность + словарь)</span>
+          </label>
+          <textarea
+            class="input-field"
+            rows="3"
+            placeholder="Сбер&#10;овердрафт&#10;Иванова"
+            autocomplete="off"
+            aria-label="Словарь терминов, по одному на строку"
+            bind:value={hotwordsDraft}
+          ></textarea>
+          <div class="row-start">
+            <button class="btn-secondary" disabled={hotwordsSaving} onclick={() => void saveHotwordsDraft()}>
+              {hotwordsSaving ? 'Сохраняю…' : 'Сохранить словарь'}
+            </button>
+            <span class="rec-meta">{settings.hotwords.length} / 500</span>
           </div>
         </div>
       {/if}
