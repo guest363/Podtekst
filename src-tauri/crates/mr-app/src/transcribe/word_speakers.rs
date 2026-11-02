@@ -177,7 +177,9 @@ pub(crate) fn split_utterance_by_word_speakers(
         let raw = utterance.start + (utterance.end - utterance.start) * passed / total;
         let snapped = tree.snap_to_pause(raw, 0.15).unwrap_or(raw);
         let previous = *bounds.last().unwrap_or(&utterance.start);
-        bounds.push(snapped.clamp(previous, utterance.end));
+        // 20 мс — минимум, иначе assign_dominant_speaker не видит пересечения.
+        let lower = (previous + 0.02).min(utterance.end);
+        bounds.push(if snapped > lower { snapped } else { raw }.clamp(lower, utterance.end));
     }
     bounds.push(utterance.end);
     let mut assigned = Vec::with_capacity(word_count);
@@ -320,6 +322,22 @@ mod tests {
         assert_eq!(out[0].text, "а");
         assert!((out[0].end - 0.5).abs() < 0.01, "{}", out[0].end);
         assert_eq!(out[1].text, "длинноеслово");
+    }
+
+    #[test]
+    fn nearby_boundaries_do_not_collapse_word_to_zero() {
+        let long = "x".repeat(96);
+        let tree = DiarIntervalTree::new(&[utt(0.0, 0.3, "A", "a"), utt(0.3, 10.0, "B", "b")]);
+        let source = utt(0.0, 10.0, "unknown", &format!("а б {long}"));
+        let out = split_utterance_by_word_speakers(&source, &tree);
+        assert!(out.iter().all(|u| u.end > u.start));
+        assert_eq!(
+            out.iter()
+                .map(|u| u.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+            source.text
+        );
     }
 
     #[test]
