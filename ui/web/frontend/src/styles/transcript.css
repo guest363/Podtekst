@@ -488,7 +488,7 @@ body:has(.transcript-page) {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  width: 250px;
+  min-width: 260px;
   max-width: calc(100vw - 16px);
   max-height: 270px;
   overflow-y: auto;
@@ -538,7 +538,11 @@ body:has(.transcript-page) {
   align-items: center;
   gap: 7px;
   min-width: 0;
-  flex: 1;
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+.speaker-select-item:has(.speaker-select-item-sub) .speaker-select-item-left {
+  max-width: 70%;
 }
 .speaker-select-item-dot {
   width: 7px;
@@ -551,11 +555,18 @@ body:has(.transcript-page) {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 600;
+  min-width: 0;
 }
 .speaker-select-item-sub {
   font-size: 11px;
   color: var(--text-faint);
-  flex-shrink: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  margin-left: auto;
 }
 .speaker-select-empty {
   padding: 10px 8px;

@@ -279,8 +279,10 @@
   let dropdownEl = $state<HTMLElement | null>(null)
 
   async function openDropdownFor(key: string, anchorEl: HTMLElement): Promise<void> {
+    const card = anchorEl.closest('.speaker-card') as HTMLElement | null
+    const cardRect = card?.getBoundingClientRect()
     const rect = anchorEl.getBoundingClientRect()
-    const estW = Math.max(250, rect.width)
+    const estW = Math.max(270, cardRect ? cardRect.right - rect.left : rect.width)
     activeDropdown = {
       spkKey: key,
       x: Math.max(8, Math.min(rect.left, window.innerWidth - estW - 8)),
@@ -564,6 +566,7 @@
         <button
           type="button"
           class="speaker-select-item is-create"
+          title={`Запомнить «${currentInputVal}»`}
           onclick={() => selectPerson(currentInputVal)}
         >
           <span class="speaker-select-item-left">
@@ -582,6 +585,7 @@
           <button
             type="button"
             class="speaker-select-item"
+            title={p.role ? `${p.name} — ${p.role}` : p.name}
             onclick={() => selectPerson(p.name)}
           >
             <span class="speaker-select-item-left">
@@ -602,6 +606,7 @@
           <button
             type="button"
             class="speaker-select-item"
+            title={s.utterances_count ? `${sName} — ${s.utterances_count} реплик` : sName}
             onclick={() => selectPerson(sName)}
           >
             <span class="speaker-select-item-left">
