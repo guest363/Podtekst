@@ -7,6 +7,8 @@
 //!   --manifest-path src-tauri/Cargo.toml -- --ignored --nocapture
 //! ```
 
+#![cfg(feature = "onnx")]
+
 use std::path::{Path, PathBuf};
 
 use mr_app_lib::transcribe::{transcribe_file, TranscribeOptions};
