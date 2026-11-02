@@ -20,9 +20,9 @@ use self::files::{
 };
 use self::media::{local_request_allowed, recordings_list, serve_audio_file, serve_media_snippet};
 use self::people::{
-    handle_voiceprint_delete, handle_voiceprint_sample_delete, handle_voiceprint_save,
-    load_all_voiceprints, load_external_people, people_json_files, read_people_list, remove_person,
-    save_external_people, serve_voiceprint_detail, update_people,
+    handle_voiceprint_delete, handle_voiceprint_learn_sample, handle_voiceprint_sample_delete,
+    handle_voiceprint_save, load_all_voiceprints, load_external_people, people_json_files,
+    read_people_list, remove_person, save_external_people, serve_voiceprint_detail, update_people,
 };
 use self::transcribe_api::{
     handle_hotwords_save, handle_models_update, handle_transcribe_start, serve_hotwords,
@@ -204,8 +204,15 @@ fn handle_voicepacks_import(mut request: tiny_http::Request) {
         );
         return;
     };
-    let part = mr_packs::packs_root_dir(&app_data_dir())
-        .join(format!(".import-{}.{ext}", std::process::id()));
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let part = mr_packs::packs_root_dir(&app_data_dir()).join(format!(
+        ".import-{}-{:?}-{nanos}.{ext}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
     let mut out = match std::fs::File::create(&part) {
         Ok(f) => f,
         Err(e) => {
@@ -757,6 +764,10 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 (tiny_http::Method::Post, "/api/voiceprints/save") => {
                     let body = read_body_to_json(&mut request);
                     handle_voiceprint_save(request, body);
+                }
+                (tiny_http::Method::Post, "/api/voiceprints/learn_sample") => {
+                    let body = read_body_to_json(&mut request);
+                    handle_voiceprint_learn_sample(request, body);
                 }
                 (tiny_http::Method::Post, "/api/voiceprints/delete") => {
                     let body = read_body_to_json(&mut request);

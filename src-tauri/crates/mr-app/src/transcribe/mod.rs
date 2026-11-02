@@ -7,6 +7,7 @@ mod word_speakers;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use mr_audio::decode::{decode_to_channels_16k_auto, is_video_path};
@@ -50,19 +51,69 @@ pub struct ModelSet {
 /// Кэш моделей процесса: веса в сотни МБ читаются с диска один раз,
 /// а не на каждую расшифровку. Конкуренция исключена флагом RUNNING.
 static MODELS_CACHE: OnceLock<Mutex<Option<ModelSet>>> = OnceLock::new();
+/// Сброс кэша бесполезен без поколения: активная расшифровка вернула бы старые веса.
+static MODELS_GEN: AtomicU64 = AtomicU64::new(0);
 
-fn take_cached_models() -> Result<ModelSet, String> {
+fn take_cached_models() -> Result<(ModelSet, u64), String> {
     let cache = MODELS_CACHE.get_or_init(|| Mutex::new(None));
     let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
     if guard.is_none() {
         *guard = Some(ModelSet::load()?);
     }
-    Ok(guard.take().expect("только что положили"))
+    Ok((
+        guard.take().expect("только что положили"),
+        MODELS_GEN.load(Ordering::SeqCst),
+    ))
 }
 
-fn return_cached_models(models: ModelSet) {
+fn return_cached_models(models: ModelSet, gen: u64) {
+    if MODELS_GEN.load(Ordering::SeqCst) != gen {
+        return;
+    }
     let cache = MODELS_CACHE.get_or_init(|| Mutex::new(None));
     *cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(models);
+}
+
+pub fn invalidate_models_cache() {
+    MODELS_GEN.fetch_add(1, Ordering::SeqCst);
+    let cache = MODELS_CACHE.get_or_init(|| Mutex::new(None));
+    *cache.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+pub(crate) fn extract_utterance_embedding(
+    audio: &Path,
+    start: f64,
+    end: f64,
+    channel: Option<i32>,
+) -> Result<Vec<f64>, String> {
+    memory::check(audio)?;
+    if end - start < 0.4 {
+        return Err("Фрагмент короче 0.4 с: голос не извлечь".to_string());
+    }
+    if !mr_audio::has_audio_track(audio) {
+        return Err("Файл не содержит аудиодорожки".to_string());
+    }
+    let channels = decode_to_channels_16k_auto(audio).map_err(|e| e.to_string())?;
+    let ch = channel.unwrap_or(0).max(0) as usize;
+    let samples = channels
+        .get(ch)
+        .or(channels.first())
+        .ok_or_else(|| "Файл не содержит аудиодорожки".to_string())?;
+    let lo = ((start.max(0.0) * 16000.0) as usize).min(samples.len());
+    let hi = ((end.max(start).max(0.0) * 16000.0) as usize).min(samples.len());
+    if hi.saturating_sub(lo) < (16000.0 * 0.4) as usize {
+        return Err("Фрагмент короче 0.4 с: голос не извлечь".to_string());
+    }
+    let (mut models, gen) = take_cached_models()?;
+    let emb = models
+        .embed
+        .as_mut()
+        .ok_or_else(|| {
+            "Нет модели голосовых отпечатков. Скачайте её во вкладке «Компоненты»".to_string()
+        })?
+        .embed(&samples[lo..hi])?;
+    return_cached_models(models, gen);
+    emb.ok_or_else(|| "Голос не извлечь: тишина или шум".to_string())
 }
 
 impl ModelSet {
@@ -272,7 +323,7 @@ pub fn transcribe_file(
         .map(|c| c.len() as f64 / 16000.0)
         .unwrap_or(0.0);
     events::emit_stage(2, "Загружаю модели…");
-    let mut models = take_cached_models()?;
+    let (mut models, models_gen) = take_cached_models()?;
     let use_gigaam = models.gigaam.is_some() && opts.engine != "whisper";
     let mut engine_name = if use_gigaam {
         "GigaAM-v3 (русский язык)".to_string()
@@ -280,6 +331,19 @@ pub fn transcribe_file(
         "Whisper large-v3-turbo (30+ языков)".to_string()
     };
     events::emit_stage(6, &format!("Модели готовы: {engine_name}"));
+    if use_gigaam && !opts.hotwords.is_empty() {
+        if !opts.ctc_enabled {
+            on_event(
+                6,
+                "Словарь терминов не применён: второй проход выключен в «Модели ИИ»",
+            );
+        } else if models.ctc.is_none() {
+            on_event(
+                6,
+                "CTC-модель не скачана — словарь не применён. Скачайте её во вкладке «Компоненты»",
+            );
+        }
+    }
 
     let (chan_list, speaker_method) = if is_stereo {
         (
@@ -603,7 +667,7 @@ pub fn transcribe_file(
         .map_err(|e| e.to_string())?;
     models.embed = embed_ext;
     models.segmentation = segmenter;
-    return_cached_models(models);
+    return_cached_models(models, models_gen);
     report::record_stats(duration_sec);
     Ok(TranscribeReport {
         md_path,

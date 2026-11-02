@@ -318,6 +318,7 @@ pub(super) fn handle_models_update(request: tiny_http::Request, body: serde_json
         #[cfg(feature = "onnx")]
         match res {
             Ok(()) => {
+                crate::transcribe::invalidate_models_cache();
                 crate::transcribe::emit_model_event(
                     serde_json::json!({"type": "model-done", "ok": true, "model_id": model_id}),
                 );

@@ -358,6 +358,138 @@ pub(crate) fn sync_voiceprint_people() {
     }
 }
 
+fn store_voiceprint(
+    name: &str,
+    norm: Vec<f64>,
+    audio_file: &str,
+    sample_start: Option<f64>,
+    sample_end: Option<f64>,
+    sample_channel: Option<usize>,
+) {
+    let now = crate::recording::now_secs();
+    let now_iso = chrono::Utc::now().to_rfc3339();
+    let vp_file = packs::ensure_default_pack(&app_data_dir())
+        .map(|d| d.join("voiceprints.json"))
+        .unwrap_or_else(|_| app_data_dir().join("packs/default/voiceprints.json"));
+    if let Some(parent) = vp_file.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut profiles: Vec<serde_json::Value> = std::fs::read_to_string(&vp_file)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .map(|v| {
+            if v.get("embedding_space")
+                .and_then(|x| x.as_str())
+                .is_some_and(|s| s != mr_ml::EMBEDDING_SPACE)
+            {
+                vec![]
+            } else {
+                parse_profiles(&v)
+            }
+        })
+        .unwrap_or_default();
+    profiles.retain(voiceprint_usable);
+    if let Some(p) = profiles.iter_mut().find(|p| {
+        p.get("name")
+            .and_then(|x| x.as_str())
+            .map(|n| same_name(n, name))
+            .unwrap_or(false)
+    }) {
+        let old: Vec<f64> = p
+            .get("embedding")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_f64()).collect())
+            .unwrap_or_default();
+        let cnt = p.get("samples_count").and_then(|x| x.as_u64()).unwrap_or(1) as f64;
+        let merged = if old.len() == norm.len() {
+            l2_normalize(
+                &old.iter()
+                    .zip(norm.iter())
+                    .map(|(o, n)| (o * cnt + n) / (cnt + 1.0))
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            norm.clone()
+        };
+        let mut protos: Vec<serde_json::Value> = p
+            .get("prototypes")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        protos.retain(|x| {
+            x.get("embedding")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len() == norm.len())
+                .unwrap_or(false)
+        });
+        let duplicate = protos.iter().any(|x| {
+            x.get("embedding")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    let v: Vec<f64> = a.iter().filter_map(|n| n.as_f64()).collect();
+                    mr_ml::cosine_similarity(&v, &norm) >= 0.98
+                })
+                .unwrap_or(false)
+        });
+        if !duplicate {
+            let new_id = format!("p{now}-{}", protos.len() + 1);
+            let snippet_rel = snippet_for_new_prototype(
+                audio_file,
+                &new_id,
+                sample_start,
+                sample_end,
+                sample_channel,
+                vp_file.parent(),
+            );
+            protos.push(json!({
+                "id": new_id,
+                "embedding": norm,
+                "duration_sec": 4.0,
+                "quality": 1.0,
+                "created_at": now_iso.clone(),
+                "snippet_relpath": snippet_rel,
+            }));
+            p["embedding"] = json!(merged);
+            p["samples_count"] = json!(cnt as u64 + 1);
+        }
+        if protos.len() > mr_ml::MAX_PROTOTYPES {
+            let drop_n = protos.len() - mr_ml::MAX_PROTOTYPES;
+            protos.drain(0..drop_n);
+        }
+        p["name"] = json!(name);
+        p["prototypes"] = json!(protos);
+        p["updated_at"] = json!(now_iso.clone());
+    } else {
+        let new_id = format!("p{now}-1");
+        let snippet_rel = snippet_for_new_prototype(
+            audio_file,
+            &new_id,
+            sample_start,
+            sample_end,
+            sample_channel,
+            vp_file.parent(),
+        );
+        profiles.push(json!({
+            "name": name,
+            "embedding": norm.clone(),
+            "samples_count": 1,
+            "updated_at": now_iso.clone(),
+            "prototypes": [{
+                "id": new_id,
+                "embedding": norm,
+                "duration_sec": 4.0,
+                "quality": 1.0,
+                "created_at": now_iso,
+                "snippet_relpath": snippet_rel,
+            }],
+        }));
+    }
+    let _ = std::fs::write(
+        &vp_file,
+        serde_json::to_string_pretty(&vp_v3(profiles)).unwrap_or_default(),
+    );
+}
+
 pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_json::Value) {
     let name = body
         .get("name")
@@ -413,127 +545,13 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
             );
             return;
         }
-        let now = crate::recording::now_secs();
-        let now_iso = chrono::Utc::now().to_rfc3339();
-        let vp_file = packs::ensure_default_pack(&app_data_dir())
-            .map(|d| d.join("voiceprints.json"))
-            .unwrap_or_else(|_| app_data_dir().join("packs/default/voiceprints.json"));
-        if let Some(parent) = vp_file.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let mut profiles: Vec<serde_json::Value> = std::fs::read_to_string(&vp_file)
-            .ok()
-            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-            .map(|v| {
-                if v.get("embedding_space")
-                    .and_then(|x| x.as_str())
-                    .is_some_and(|s| s != mr_ml::EMBEDDING_SPACE)
-                {
-                    vec![]
-                } else {
-                    parse_profiles(&v)
-                }
-            })
-            .unwrap_or_default();
-        profiles.retain(voiceprint_usable);
-        if let Some(p) = profiles.iter_mut().find(|p| {
-            p.get("name")
-                .and_then(|x| x.as_str())
-                .map(|n| same_name(n, &name))
-                .unwrap_or(false)
-        }) {
-            let old: Vec<f64> = p
-                .get("embedding")
-                .and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|x| x.as_f64()).collect())
-                .unwrap_or_default();
-            let cnt = p.get("samples_count").and_then(|x| x.as_u64()).unwrap_or(1) as f64;
-            let merged = if old.len() == norm.len() {
-                l2_normalize(
-                    &old.iter()
-                        .zip(norm.iter())
-                        .map(|(o, n)| (o * cnt + n) / (cnt + 1.0))
-                        .collect::<Vec<_>>(),
-                )
-            } else {
-                norm.clone()
-            };
-            let mut protos: Vec<serde_json::Value> = p
-                .get("prototypes")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-            protos.retain(|x| {
-                x.get("embedding")
-                    .and_then(|v| v.as_array())
-                    .map(|a| a.len() == norm.len())
-                    .unwrap_or(false)
-            });
-            let duplicate = protos.iter().any(|x| {
-                x.get("embedding")
-                    .and_then(|v| v.as_array())
-                    .map(|a| {
-                        let v: Vec<f64> = a.iter().filter_map(|n| n.as_f64()).collect();
-                        mr_ml::cosine_similarity(&v, &norm) >= 0.98
-                    })
-                    .unwrap_or(false)
-            });
-            if !duplicate {
-                let new_id = format!("p{now}-{}", protos.len() + 1);
-                let snippet_rel = snippet_for_new_prototype(
-                    &audio_file,
-                    &new_id,
-                    sample_start,
-                    sample_end,
-                    sample_channel,
-                    vp_file.parent(),
-                );
-                protos.push(json!({
-                    "id": new_id,
-                    "embedding": norm,
-                    "duration_sec": 4.0,
-                    "quality": 1.0,
-                    "created_at": now_iso.clone(),
-                    "snippet_relpath": snippet_rel,
-                }));
-                p["embedding"] = json!(merged);
-                p["samples_count"] = json!(cnt as u64 + 1);
-            }
-            if protos.len() > mr_ml::MAX_PROTOTYPES {
-                let drop_n = protos.len() - mr_ml::MAX_PROTOTYPES;
-                protos.drain(0..drop_n);
-            }
-            p["name"] = json!(name.clone());
-            p["prototypes"] = json!(protos);
-            p["updated_at"] = json!(now_iso.clone());
-        } else {
-            let new_id = format!("p{now}-1");
-            let snippet_rel = snippet_for_new_prototype(
-                &audio_file,
-                &new_id,
-                sample_start,
-                sample_end,
-                sample_channel,
-                vp_file.parent(),
-            );
-            profiles.push(json!({
-                "name": name.clone(),
-                "embedding": norm.clone(),
-                "samples_count": 1,
-                "updated_at": now_iso.clone(),
-                "prototypes": [{
-                    "id": new_id,
-                    "embedding": norm,
-                    "duration_sec": 4.0,
-                    "quality": 1.0,
-                    "created_at": now_iso,
-                    "snippet_relpath": snippet_rel,
-                }],
-            }));
-        }
-        let _ = std::fs::write(
-            &vp_file,
-            serde_json::to_string_pretty(&vp_v3(profiles)).unwrap_or_default(),
+        store_voiceprint(
+            &name,
+            norm,
+            &audio_file,
+            sample_start,
+            sample_end,
+            sample_channel,
         );
     }
 
@@ -553,6 +571,141 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
             );
         }
     }
+    json_response(request, json!({"ok": true}), 200);
+}
+
+pub(super) fn handle_voiceprint_learn_sample(request: tiny_http::Request, body: serde_json::Value) {
+    let file = body
+        .get("file")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let index = body
+        .get("index")
+        .and_then(|v| v.as_u64())
+        .and_then(|v| usize::try_from(v).ok());
+    let name = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if file.is_empty() || name.is_empty() || index.is_none() {
+        json_response(
+            request,
+            json!({"ok": false, "error": "Нужны file, index и name"}),
+            400,
+        );
+        return;
+    }
+    if name.chars().count() > 200 {
+        json_response(
+            request,
+            json!({"ok": false, "error": "Имя слишком длинное"}),
+            400,
+        );
+        return;
+    }
+    if crate::transcribe::is_transcribe_running() {
+        json_response(
+            request,
+            json!({"ok": false, "error": "Дождитесь окончания расшифровки"}),
+            409,
+        );
+        return;
+    }
+    let raw = PathBuf::from(&file);
+    let audio = if raw.is_absolute() {
+        raw
+    } else {
+        save_dir().join(raw)
+    };
+    if audio.file_name().is_none() || !inside_save_dir(&audio) {
+        json_response(
+            request,
+            json!({"ok": false, "error": "Файл вне папки записей"}),
+            404,
+        );
+        return;
+    }
+    let stem = audio
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let json_p = audio
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(save_dir)
+        .join(format!("{stem}.transcript.json"));
+    let data: serde_json::Value = match std::fs::read_to_string(&json_p)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+    {
+        Some(v) => v,
+        None => {
+            json_response(
+                request,
+                json!({"ok": false, "error": "Расшифровка не найдена"}),
+                404,
+            );
+            return;
+        }
+    };
+    let u = data
+        .get("utterances")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.get(index.unwrap_or(usize::MAX)));
+    let (start, end, channel) = match u {
+        Some(u) => (
+            u.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0),
+            u.get("end")
+                .and_then(|v| v.as_f64())
+                .unwrap_or_else(|| u.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0)),
+            u.get("channel").and_then(|v| v.as_i64()).map(|c| c as i32),
+        ),
+        None => {
+            json_response(
+                request,
+                json!({"ok": false, "error": "Реплика не найдена"}),
+                404,
+            );
+            return;
+        }
+    };
+    let emb = match crate::transcribe::extract_utterance_embedding(&audio, start, end, channel) {
+        Ok(e) => e,
+        Err(e) => {
+            json_response(request, json!({"ok": false, "error": e}), 500);
+            return;
+        }
+    };
+    if emb.len() != mr_ml::EMBEDDING_DIM {
+        json_response(
+            request,
+            json!({"ok": false, "error": "Неверная размерность голосового отпечатка"}),
+            500,
+        );
+        return;
+    }
+    let norm = l2_normalize(&emb);
+    if norm.iter().all(|x| x.abs() < 1e-12) {
+        json_response(
+            request,
+            json!({"ok": false, "error": "Пустой голосовой отпечаток"}),
+            400,
+        );
+        return;
+    }
+    store_voiceprint(
+        &name,
+        norm,
+        &audio.to_string_lossy(),
+        Some(start),
+        Some(end),
+        channel.map(|c| c.max(0) as usize),
+    );
+    ensure_person_in_list(&name, Some("Участник"));
     json_response(request, json!({"ok": true}), 200);
 }
 

@@ -39,11 +39,13 @@ fn cmp_norm(s: &str) -> String {
         .to_string()
 }
 
-fn tokenize_term(term: &str, vocab: &[String]) -> Option<Vec<i64>> {
+fn tokenize_greedy(term: &str, vocab: &[String]) -> Option<Vec<i64>> {
+    let sep = vocab.iter().position(|p| p == "▁")? as i64;
     let mut ids = Vec::new();
     for word in normalize_term(term).split(' ').filter(|w| !w.is_empty()) {
         let chars: Vec<char> = word.chars().collect();
         let mut pos = 0;
+        let mut first = true;
         while pos < chars.len() {
             let mut best: Option<(usize, i64)> = None;
             for (id, piece) in vocab.iter().enumerate() {
@@ -51,10 +53,10 @@ fn tokenize_term(term: &str, vocab: &[String]) -> Option<Vec<i64>> {
                 if bare.is_empty() {
                     continue;
                 }
-                if pos == 0 && !piece.starts_with('▁') {
+                if first && !piece.starts_with('▁') {
                     continue;
                 }
-                if pos > 0 && piece.starts_with('▁') {
+                if !first && piece.starts_with('▁') {
                     continue;
                 }
                 let blen = bare.chars().count();
@@ -72,8 +74,10 @@ fn tokenize_term(term: &str, vocab: &[String]) -> Option<Vec<i64>> {
                     ids.push(id);
                     pos += l;
                 }
+                None if first => ids.push(sep),
                 None => return None,
             }
+            first = false;
         }
     }
     if ids.is_empty() {
@@ -81,6 +85,36 @@ fn tokenize_term(term: &str, vocab: &[String]) -> Option<Vec<i64>> {
     } else {
         Some(ids)
     }
+}
+
+fn tokenize_chars(term: &str, vocab: &[String]) -> Option<Vec<i64>> {
+    let sep = vocab.iter().position(|p| p == "▁")? as i64;
+    let mut ids = Vec::new();
+    for word in normalize_term(term).split(' ').filter(|w| !w.is_empty()) {
+        ids.push(sep);
+        for ch in word.chars() {
+            let s = ch.to_string();
+            ids.push(vocab.iter().position(|p| *p == s)? as i64);
+        }
+    }
+    if ids.is_empty() {
+        None
+    } else {
+        Some(ids)
+    }
+}
+
+fn tokenize_term(term: &str, vocab: &[String]) -> Vec<Vec<i64>> {
+    let mut out = Vec::new();
+    for v in [tokenize_greedy(term, vocab), tokenize_chars(term, vocab)]
+        .into_iter()
+        .flatten()
+    {
+        if !out.contains(&v) {
+            out.push(v);
+        }
+    }
+    out
 }
 
 fn to_log_row(row: &[f32]) -> Vec<f32> {
@@ -119,11 +153,14 @@ fn render_words(ids: &[i64], probs: &[f64], vocab: &[String], blank: usize) -> V
             *n = 0;
         }
     };
+    let mut skipped = 0usize;
     for (k, &id) in ids.iter().enumerate() {
         if id as usize == blank {
+            skipped += 1;
             continue;
         }
         if id == 0 {
+            skipped += 1;
             flush(&mut cur, &mut acc, &mut n, &mut words);
             continue;
         }
@@ -134,8 +171,11 @@ fn render_words(ids: &[i64], probs: &[f64], vocab: &[String], blank: usize) -> V
             } else {
                 cur.push_str(piece);
             }
-            acc += probs.get(k).copied().unwrap_or(0.0);
+            // probs параллелен ids без blank/<unk> — их пропускает жадный декодер.
+            acc += probs.get(k - skipped).copied().unwrap_or(0.0);
             n += 1;
+        } else {
+            skipped += 1;
         }
     }
     flush(&mut cur, &mut acc, &mut n, &mut words);
@@ -162,7 +202,6 @@ pub fn decode_ctc_greedy(logprobs: &[Vec<f32>], vocab: &[String], blank: usize) 
         }
         if best == 0 {
             ids.push(0);
-            probs.push(1.0);
             prev = id;
             continue;
         }
@@ -322,6 +361,29 @@ fn align_conf(target: &[String], source: &[CtcWord]) -> Vec<f64> {
         .collect()
 }
 
+// Без гейта близости бонус CTC затирал бы несвязанные слова («проект» → «объектом»).
+fn edit_dist(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() {
+        return b.len();
+    }
+    if b.is_empty() {
+        return a.len();
+    }
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, &ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1; b.len() + 1];
+        for (j, &cb) in b.iter().enumerate() {
+            cur[j + 1] = (prev[j] + usize::from(ca != cb))
+                .min(prev[j + 1] + 1)
+                .min(cur[j] + 1);
+        }
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
 // shortcut: лишние CTC-слова не вставляем; вставлять, когда появятся word timestamps.
 pub fn align_to_reference(
     rnnt_text: &str,
@@ -356,7 +418,12 @@ pub fn align_to_reference(
                     confidence = cw.confidence;
                     let nw = cmp_norm(&w);
                     let nc = cmp_norm(&cw.text);
-                    if nc != nw && in_dict(&cw.text) {
+                    // SAFETY: бонусное слово — только при близком написании и уверенности ≥ порога, иначе словарь затирал бы несвязанные слова на шуме.
+                    let close = {
+                        let longest = nw.chars().count().max(nc.chars().count());
+                        !nc.is_empty() && edit_dist(&nw, &nc) <= longest / 3
+                    };
+                    if nc != nw && confidence >= threshold && close && in_dict(&cw.text) {
                         text = full
                             .get(&nc)
                             .map(|s| s.to_string())
@@ -427,6 +494,8 @@ pub struct GigaCTC {
     out_lp: String,
     vocab: Vec<String>,
     blank: usize,
+    hw_cache_key: Vec<String>,
+    hw_cache_ids: Vec<Vec<i64>>,
 }
 
 impl GigaCTC {
@@ -506,6 +575,8 @@ impl GigaCTC {
             out_lp,
             vocab,
             blank,
+            hw_cache_key: Vec::new(),
+            hw_cache_ids: Vec::new(),
         })
     }
 
@@ -565,18 +636,33 @@ impl GigaCTC {
                 words: Vec::new(),
             });
         }
-        let mut hw_ids = Vec::new();
-        for e in parse_hotwords(hotwords) {
-            if let Some(ids) = tokenize_term(&e.boost, &self.vocab) {
-                hw_ids.push(ids);
+        if hotwords != self.hw_cache_key.as_slice() {
+            let mut hw_ids = Vec::new();
+            let mut hw_skipped = Vec::new();
+            for e in parse_hotwords(hotwords) {
+                let mut variants = tokenize_term(&e.boost, &self.vocab);
+                if variants.is_empty() {
+                    hw_skipped.push(e.boost.clone());
+                } else {
+                    hw_ids.append(&mut variants);
+                }
             }
+            if !hw_skipped.is_empty() {
+                eprintln!(
+                    "CTC: мимо вокаба ({}) — бонус их не подхватит: {}",
+                    hw_skipped.len(),
+                    hw_skipped.join(", ")
+                );
+            }
+            self.hw_cache_key = hotwords.to_vec();
+            self.hw_cache_ids = hw_ids;
         }
         Ok(decode_ctc_beam(
             &frames,
             &self.vocab,
             self.blank,
             BEAM_WIDTH,
-            &hw_ids,
+            &self.hw_cache_ids,
             HOTWORD_BONUS,
         ))
     }
@@ -625,9 +711,45 @@ mod tests {
         ];
         let plain = decode_ctc_beam(&frames, &v, 4, 4, &[], 0.0);
         assert_eq!(plain.text, "а");
-        let hw = tokenize_term("б", &v).unwrap();
-        let boosted = decode_ctc_beam(&frames, &v, 4, 4, &[hw], 5.0);
+        let hw = tokenize_term("б", &v);
+        assert!(!hw.is_empty());
+        let boosted = decode_ctc_beam(&frames, &v, 4, 4, &hw, 5.0);
         assert_eq!(boosted.text, "б");
+    }
+
+    #[test]
+    fn tokenize_falls_back_to_separator_and_chars() {
+        // Вокаб без ▁-куска на старте слова: оба варианта дают разделитель + буквы.
+        let v = vec![
+            "<unk>".to_string(),
+            "▁".to_string(),
+            "м".to_string(),
+            "е".to_string(),
+            "<blk>".to_string(),
+        ];
+        let vars = tokenize_term("ме", &v);
+        assert_eq!(vars, vec![vec![1, 2, 3]]);
+        // Нет ни кусков, ни букв — термин без вариантов, бонуса не будет.
+        let vars = tokenize_term("ме", &["<unk>".to_string(), "▁".to_string()]);
+        assert!(vars.is_empty());
+    }
+
+    #[test]
+    fn tokenize_prefers_longest_piece_but_keeps_char_variant() {
+        let v = vec![
+            "<unk>".to_string(),
+            "▁".to_string(),
+            "▁на".to_string(),
+            "н".to_string(),
+            "а".to_string(),
+            "д".to_string(),
+            "о".to_string(),
+            "до".to_string(),
+            "<blk>".to_string(),
+        ];
+        let vars = tokenize_term("надо", &v);
+        assert!(vars.contains(&vec![2, 7]));
+        assert!(vars.contains(&vec![1, 3, 4, 5, 6]));
     }
 
     #[test]
@@ -655,6 +777,39 @@ mod tests {
         assert_eq!(aligned[0].text, "Сбер");
         assert!(!aligned[0].needs_review);
         assert!(aligned[1].needs_review);
+    }
+
+    #[test]
+    fn align_rejects_unrelated_dict_word_and_low_confidence() {
+        let ctc = CtcHypothesis {
+            text: "объект".to_string(),
+            words: vec![CtcWord {
+                text: "объект".to_string(),
+                confidence: 0.9,
+            }],
+        };
+        let aligned = align_to_reference(
+            "проект готов",
+            &ctc,
+            &["объект".to_string()],
+            DEFAULT_CONFIDENCE_THRESHOLD,
+        );
+        assert_eq!(aligned[0].text, "проект");
+        let ctc = CtcHypothesis {
+            text: "сбер".to_string(),
+            words: vec![CtcWord {
+                text: "сбер".to_string(),
+                confidence: 0.2,
+            }],
+        };
+        let aligned = align_to_reference(
+            "сбир",
+            &ctc,
+            &["Сбер".to_string()],
+            DEFAULT_CONFIDENCE_THRESHOLD,
+        );
+        assert_eq!(aligned[0].text, "сбир");
+        assert!(aligned[0].needs_review);
     }
 
     #[test]
