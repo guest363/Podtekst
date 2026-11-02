@@ -59,6 +59,21 @@ export interface VoiceprintSummary {
   updated_at?: string
 }
 
+export interface VoicePrototype {
+  id?: string | null
+  created_at?: string | null
+  duration_sec?: number | null
+  quality?: number | null
+  has_snippet?: boolean
+}
+
+export interface VoiceDetail {
+  name?: string | null
+  pack_id?: string
+  samples_count?: number | null
+  prototypes?: VoicePrototype[]
+}
+
 export interface SpeakerInfo {
   id?: string
   name: string
@@ -75,12 +90,20 @@ export interface SpeakerInfo {
   total_speech_sec?: number
 }
 
+export interface WordConf {
+  w: string
+  conf: number
+  needs_review: boolean
+}
+
 export interface Utterance {
   start: number
   end?: number
   speaker?: string
   channel?: number | null
   text?: string
+  words?: WordConf[] | null
+  ctc_used?: boolean
 }
 
 export interface TranscriptData {

@@ -30,6 +30,10 @@
 Задача считается завершённой только после успешного прогона проверок:
 
 ```bash
+# 0. Форматирование Rust (CI-гейт: rustfmt)
+cargo fmt --all --manifest-path src-tauri/Cargo.toml
+git diff --check
+
 # 1. Линтер Rust ядра (строгий режим без предупреждений)
 cargo clippy --workspace --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
 
@@ -42,6 +46,12 @@ cargo clippy -p mr-app --features tauri-ui --all-targets --locked --manifest-pat
 # 4. Проверка типов и сборка фронтенда (если изменялся ui/web/frontend)
 cd ui/web/frontend && yarn check && yarn build
 ```
+
+# 5. P11-аудит комментариев (всегда, до коммита)
+./scripts/p11-diff.sh
+# Каждая показанная строка обязана быть «зачем» (ограничение платформы,
+# контракт формата, калибровка порога), SAFETY:/shortcut: или ссылкой на
+# правило (P3/P9…); пересказ кода — удалить, а не перефразировать.
 
 ---
 

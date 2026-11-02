@@ -273,6 +273,7 @@
 }
 
 .transcript-doc {
+  position: relative;
   gap: 14px;
 }
 
@@ -389,7 +390,7 @@
 }
 .sample-play:hover { background: #d8e5fb; transform: scale(1.08); }
 .sample-play.playing { background: var(--accent-blue); color: #fff; }
-.sample-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sample-text { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .candidates { display: flex; flex-wrap: wrap; gap: 6px; }
 .candidate {
   font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: var(--radius-pill);
@@ -437,7 +438,9 @@
 .markdown-body .md-meta { color: var(--text-muted); font-size: 12.5px; }
 
 .utterance {
+  position: relative;
   display: flex; gap: 10px;
+  align-items: baseline;
   padding: 6px 12px; margin: 2px 0;
   background: transparent;
   border-left: 3px solid var(--spk, var(--border-soft));
@@ -455,11 +458,12 @@
   background: linear-gradient(90deg, rgba(36, 86, 198, 0.12), rgba(36, 86, 198, 0.025));
 }
 .follow-current {
-  position: sticky;
-  bottom: 10px;
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 5;
-  display: block;
-  margin: 8px auto;
+  white-space: nowrap;
   border: none;
   border-radius: var(--radius-pill);
   padding: 8px 14px;
@@ -509,7 +513,6 @@
   cursor: pointer;
 }
 .speaker-chip:disabled { cursor: default; }
-.utt-text.editable { cursor: text; white-space: pre-wrap; }
 .utt-text.editing {
   white-space: pre-wrap;
   outline: none;
@@ -532,7 +535,8 @@
   flex-direction: column;
   gap: 9px;
   width: 250px;
-  max-height: 320px;
+  max-width: calc(100vw - 16px);
+  max-height: min(320px, calc(100dvh - 16px));
   overflow-y: auto;
   padding: 12px;
   border: 1px solid var(--border-card);

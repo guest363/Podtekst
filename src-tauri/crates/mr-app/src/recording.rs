@@ -564,6 +564,8 @@ pub(crate) fn maybe_autotranscribe(file: &str) {
             language: "auto".to_string(),
             min_speakers: 0,
             max_speakers: 0,
+            hotwords: crate::config::configured_hotwords(),
+            ctc_enabled: crate::config::configured_ctc_enabled(),
         };
         let _ = crate::transcribe::spawn_transcription_worker(PathBuf::from(file), opts);
     }

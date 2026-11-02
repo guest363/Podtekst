@@ -126,6 +126,10 @@ fn apply_edit(data: &mut Value, body: &Value) -> Result<(), String> {
             .ok_or_else(|| "Реплика не найдена".to_string())?;
         if let Some(text) = text {
             utterance["text"] = json!(text);
+            // Уверенность привязана к старому тексту: чистим слова,
+            // иначе UI покажет чипы чужой расшифровки.
+            utterance["words"] = json!([]);
+            utterance["ctc_used"] = json!(false);
         }
         if !new_speaker.is_empty() {
             utterance["speaker"] = json!(new_speaker);
@@ -246,5 +250,22 @@ mod tests {
             .all(|u| u["speaker"] == "Ведущий"));
         assert_eq!(data["stats"]["words"], 3);
         assert_eq!(data["meta"]["speakers_info"][1]["total_speech_sec"], 5.0);
+    }
+
+    #[test]
+    fn text_edit_drops_stale_confidence() {
+        let mut data = json!({
+            "meta": {"speakers": ["Спикер"], "speakers_info": []},
+            "stats": {},
+            "utterances": [
+                {"start": 0.0, "end": 2.0, "speaker": "Спикер", "text": "раз два",
+                 "words": [{"w": "раз", "conf": 0.9, "needs_review": false}],
+                 "ctc_used": true}
+            ]
+        });
+        apply_edit(&mut data, &json!({"index": 0, "text": "раз два три"})).unwrap();
+        assert_eq!(data["utterances"][0]["text"], "раз два три");
+        assert_eq!(data["utterances"][0]["words"], json!([]));
+        assert_eq!(data["utterances"][0]["ctc_used"], json!(false));
     }
 }

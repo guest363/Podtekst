@@ -1,6 +1,6 @@
 import { isMobile, readJsonSafe } from './api'
 import type { ModelInfo, Voicepack } from './api'
-import { toast } from './toast.svelte.ts'
+import { toast, toastConfirm } from './toast.svelte.ts'
 import { loadPeople } from './people.svelte.ts'
 
 export const settings = $state({
@@ -11,6 +11,9 @@ export const settings = $state({
   platform: '',
   systemAudio: false,
   autoTranscribe: true,
+  hotwords: [] as string[],
+  ctcEnabled: true,
+  hotwordsLoaded: false,
 })
 
 export async function loadAutoTranscribe(): Promise<void> {
@@ -158,6 +161,63 @@ export async function loadModels(): Promise<void> {
   }
 }
 
+export async function loadHotwords(): Promise<void> {
+  try {
+    const d = await readJsonSafe(await fetch('/api/hotwords'))
+    if (Array.isArray(d.hotwords)) settings.hotwords = d.hotwords.filter((x: unknown) => typeof x === 'string')
+    if (typeof d.ctc_enabled === 'boolean') settings.ctcEnabled = d.ctc_enabled
+    settings.hotwordsLoaded = true
+  } catch {
+  }
+}
+
+export async function saveHotwords(hotwords: string[], ctcEnabled: boolean): Promise<boolean> {
+  try {
+    const d = await readJsonSafe(
+      await fetch('/api/hotwords', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hotwords, ctc_enabled: ctcEnabled }),
+      }),
+    )
+    if (!d.ok) {
+      toast(d.error || 'Не удалось сохранить словарь', 'error')
+      return false
+    }
+    settings.hotwords = Array.isArray(d.hotwords) ? d.hotwords : []
+    settings.ctcEnabled = d.ctc_enabled !== false
+    settings.hotwordsLoaded = true
+    return true
+  } catch (e) {
+    toast('Не удалось сохранить словарь: ' + (e as Error).message, 'error')
+    return false
+  }
+}
+
+export async function addHotword(term: string): Promise<boolean> {
+  const t = term.trim()
+  if (!t) return false
+  let cur: string[] = settings.hotwordsLoaded ? [...settings.hotwords] : []
+  if (!settings.hotwordsLoaded) {
+    try {
+      const d = await readJsonSafe(await fetch('/api/hotwords'))
+      if (Array.isArray(d.hotwords)) cur = d.hotwords.filter((x: unknown) => typeof x === 'string')
+      if (typeof d.ctc_enabled === 'boolean') settings.ctcEnabled = d.ctc_enabled
+      settings.hotwordsLoaded = true
+    } catch {
+    }
+  }
+  if (cur.some((x) => x.toLowerCase() === t.toLowerCase())) {
+    toast(`«${t}» уже в словаре`)
+    return true
+  }
+  if (cur.length >= 500) {
+    toast('Словарь полон (500). Удалите лишнее в «Настройки» → «Компоненты».', 'error')
+    return false
+  }
+  return saveHotwords([...cur, t], settings.ctcEnabled)
+}
+
 export async function togglePack(p: Voicepack): Promise<void> {
   await fetch('/api/voicepacks/toggle', {
     method: 'POST',
@@ -166,6 +226,38 @@ export async function togglePack(p: Voicepack): Promise<void> {
   })
   await loadVoicePacks()
   await loadPeople()
+}
+
+export function deletePack(p: Voicepack): void {
+  if (p.id === 'default') {
+    toast('Базовый пакет удалить нельзя: выключите его или удалите голоса по одному', 'error')
+    return
+  }
+  toastConfirm(
+    `Удалить пакет «${p.name}»? Его голоса и люди пропадут из распознавания.`,
+    'Удалить',
+    () =>
+      void (async () => {
+        try {
+          const d = await readJsonSafe(
+            await fetch('/api/voicepacks/delete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ pack_id: p.id }),
+            }),
+          )
+          if (!d.ok) {
+            toast(d.error || 'Не удалось удалить пакет', 'error')
+            return
+          }
+          toast(`Пакет «${p.name}» удалён`)
+          await loadVoicePacks()
+          await loadPeople()
+        } catch (e) {
+          toast('Не удалось удалить пакет: ' + (e as Error).message, 'error')
+        }
+      })(),
+  )
 }
 
 export async function exportPack(p: Voicepack): Promise<void> {
@@ -179,6 +271,33 @@ export async function exportPack(p: Voicepack): Promise<void> {
     toast(dd.ok ? `Пакет экспортирован: ${dd.path}` : dd.error || 'Ошибка экспорта', dd.ok ? '' : 'error')
   } catch (e) {
     toast('Ошибка экспорта: ' + (e as Error).message, 'error')
+  }
+}
+
+export async function importPack(file: File): Promise<boolean> {
+  const name = file.name || 'pack.voicepack.zip'
+  if (!/\.zip$|\.json$/i.test(name)) {
+    toast('Нужен .voicepack.zip или .voicepack.json', 'error')
+    return false
+  }
+  try {
+    const r = await fetch('/api/voicepacks/import', {
+      method: 'POST',
+      headers: { 'X-Filename': encodeURIComponent(name) },
+      body: file,
+    })
+    const d = await readJsonSafe(r)
+    if (!d.ok) {
+      toast(d.error || 'Не удалось импортировать пакет', 'error')
+      return false
+    }
+    toast(`Пакет «${d.pack?.name || name}» импортирован`)
+    await loadVoicePacks()
+    await loadPeople()
+    return true
+  } catch (e) {
+    toast('Не удалось импортировать: ' + (e as Error).message, 'error')
+    return false
   }
 }
 

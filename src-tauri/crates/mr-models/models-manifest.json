@@ -61,6 +61,30 @@
       "description": "Офлайн-распознавание русской речи на процессоре. Проверен живым прогоном на русской речи."
     },
     {
+      "id": "asr-gigaam-v3-e2e-ctc-int8",
+      "title": "GigaAM-v3 e2e CTC int8 (словарь терминов + уверенность слов)",
+      "version": "3.1.0",
+      "files": [
+        {
+          "filename": "gigaam_ctc_q.onnx",
+          "url_hf": "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/v3_e2e_ctc.int8.onnx",
+          "size_bytes": 224893347,
+          "sha256": "2e3fcb7a7b66030336fd10c2fcfb033bd1dc7e1bf238fe5cfd83b1d0cfc9d28e",
+          "optional": false
+        },
+        {
+          "filename": "gigaam_ctc_vocab.txt",
+          "url_hf": "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/v3_e2e_ctc_vocab.txt",
+          "size_bytes": 2007,
+          "sha256": "142de7570b3de5b3035ce111a89c228e80e6085273731d944093ddf24fa539cd",
+          "optional": false
+        }
+      ],
+      "embedding_space": null,
+      "license": "MIT",
+      "description": "Второй проход поверх RNNT: бонус словам из словаря терминов и уверенность каждого слова. Необязателен: без него расшифровка работает как раньше."
+    },
+    {
       "id": "asr-whisper-large-v3-turbo-q",
       "title": "Whisper large-v3-turbo (мультиязычный fallback, 30+ языков)",
       "version": "1.0.0",

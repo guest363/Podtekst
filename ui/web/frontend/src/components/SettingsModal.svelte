@@ -4,12 +4,16 @@
   import { downloadModel, engine, ensureStream } from '../lib/transcript.svelte.ts'
   import {
     createPack,
+    deletePack,
     downloadFfmpeg,
     exportPack,
     ffmpeg,
     hasSystemAudio,
+    importPack,
     loadFfmpeg,
+    loadHotwords,
     loadModels,
+    saveHotwords,
     setAutoTranscribe,
     setRecordMode,
     settings,
@@ -21,7 +25,45 @@
   import { checkUpdate, update } from '../lib/update.svelte.ts'
   import People from './People.svelte'
 
-  let tab = $state<'record' | 'people' | 'voices' | 'models'>('record')
+  let tab = $state<'record' | 'people' | 'voices' | 'dict' | 'models'>('record')
+  let packFileInput: HTMLInputElement | null = $state(null)
+  let termInput = $state('')
+
+  async function openModelsTab(): Promise<void> {
+    tab = 'models'
+  }
+
+  async function openDictTab(): Promise<void> {
+    tab = 'dict'
+    if (!settings.hotwordsLoaded) await loadHotwords()
+  }
+
+  async function addTerm(): Promise<void> {
+    const t = termInput.trim()
+    if (!t) return
+    if (settings.hotwords.some((x) => x.toLowerCase() === t.toLowerCase())) {
+      toast(`«${t}» уже в словаре`)
+      return
+    }
+    if (settings.hotwords.length >= 500) {
+      toast('Словарь полон: 500 из 500. Удалите лишнее.', 'error')
+      return
+    }
+    termInput = ''
+    await saveHotwords([...settings.hotwords, t], settings.ctcEnabled)
+  }
+
+  async function removeTerm(t: string): Promise<void> {
+    await saveHotwords(
+      settings.hotwords.filter((x) => x !== t),
+      settings.ctcEnabled,
+    )
+  }
+
+  async function setCtcEnabled(enabled: boolean): Promise<void> {
+    settings.ctcEnabled = enabled
+    await saveHotwords(settings.hotwords, enabled)
+  }
 
   on('models-changed', () => void loadModels())
   // Компонент живёт всё время приложения: одно чтение статуса на старте,
@@ -94,10 +136,18 @@
         Голоса
       </button>
       <button
+        class="settings-tab {tab === 'dict' ? 'active' : ''}"
+        role="tab"
+        aria-selected={tab === 'dict'}
+        onclick={() => void openDictTab()}
+      >
+        Словарь
+      </button>
+      <button
         class="settings-tab {tab === 'models' ? 'active' : ''}"
         role="tab"
         aria-selected={tab === 'models'}
-        onclick={() => (tab = 'models')}
+        onclick={() => void openModelsTab()}
       >
         Компоненты
       </button>
@@ -160,8 +210,9 @@
         <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Голосовые пакеты">
           <div class="card-title">Голосовые пакеты</div>
           <div class="help-text">
-            Базы голосов команд: личные, рабочие, гостевые. Отключённый пакет исключается из
-            распознавания.
+            Переносимые базы голосов: личные, рабочие, гостевые. Отключённый пакет исключается из
+            распознавания. Имена людей живут во вкладке «Участники», здесь — только голоса.
+            Экспорт складывает пакет в папку записей, импорт принимает .voicepack.zip/.json.
           </div>
           <div class="row-start">
             <input
@@ -176,6 +227,19 @@
               }}
             />
             <button class="btn-secondary" onclick={() => void createPack()}>Создать пакет</button>
+            <button class="btn-secondary" onclick={() => packFileInput?.click()}>Импортировать</button>
+            <input
+              type="file"
+              accept=".zip,.json"
+              hidden
+              aria-label="Выбрать файл пакета для импорта"
+              bind:this={packFileInput}
+              onchange={(e) => {
+                const f = e.currentTarget.files?.[0]
+                e.currentTarget.value = ''
+                if (f) void importPack(f)
+              }}
+            />
           </div>
           <div class="recordings-list" id="packsListSettings">
             {#if settings.packs.length === 0}
@@ -197,13 +261,18 @@
                     <button class="btn-secondary btn-sm" onclick={() => void exportPack(p)}>
                       Экспорт
                     </button>
+                    {#if p.id !== 'default'}
+                      <button class="btn-secondary btn-sm" onclick={() => deletePack(p)}>
+                        Удалить
+                      </button>
+                    {/if}
                   </div>
                 </div>
               {/each}
             {/if}
           </div>
         </div>
-      {:else}
+      {:else if tab === 'models'}
         <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Компоненты">
           <div class="card-title">Модели и компоненты</div>
           <div class="help-text">
@@ -303,6 +372,66 @@
             <button class="btn-secondary" onclick={() => void loadModels()}>Обновить список</button>
           </div>
         </div>
+      {:else if tab === 'dict'}
+        <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Словарь терминов">
+          <div class="card-title">Словарь терминов</div>
+          <div class="help-text">
+            Движок распознавания отдаёт предпочтение этим словам: аббревиатуры, имена, названия.
+            «Бонус» подтягивает похожее звучание. «Связка» — точная замена «услышано → правильно»:
+            клик по слову в тексте подставляет его в связку. Действует на следующие расшифровки:
+            нажмите «Повторить расшифровку».
+          </div>
+          <div class="row-start">
+            <input
+              type="text"
+              class="input-field"
+              placeholder="Например, овердрафт"
+              autocomplete="off"
+              aria-label="Новый термин"
+              bind:value={termInput}
+              onkeydown={(e) => {
+                if (e.key === 'Enter') void addTerm()
+              }}
+            />
+            <button class="btn-secondary" onclick={() => void addTerm()}>Добавить</button>
+          </div>
+          {#if settings.hotwords.length > 0}
+            <div class="dict-tags" role="list" aria-label="Термины в словаре">
+              {#each settings.hotwords as t (t)}
+                {@const isPair = t.includes(' => ')}
+                <span class="dict-tag" role="listitem">
+                  <span class="dict-badge">{isPair ? 'связка' : 'бонус'}</span>
+                  {isPair ? t.replace(' => ', ' → ') : t}
+                  <button
+                    type="button"
+                    class="dict-del"
+                    title={`Убрать «${t}» из словаря`}
+                    aria-label={`Убрать «${t}» из словаря`}
+                    onclick={() => void removeTerm(t)}
+                  >✕</button>
+                </span>
+              {/each}
+            </div>
+          {:else}
+            <div class="empty-note">Пока пусто. Добавьте первый термин полем выше.</div>
+          {/if}
+          <div class="row-start">
+            <span class="rec-meta">Терминов: {settings.hotwords.length} из 500</span>
+          </div>
+          <label class="setting-check">
+            <input
+              type="checkbox"
+              checked={settings.ctcEnabled}
+              onchange={(e) => void setCtcEnabled(e.currentTarget.checked)}
+            />
+            <span class="setting-switch" aria-hidden="true"></span>
+            <span>Второй проход (уверенность слов + словарь)</span>
+          </label>
+          <div class="help-text">
+            Требует модель «GigaAM-v3 e2e CTC int8» из вкладки «Компоненты».
+            Без неё второй проход пропускается.
+          </div>
+        </div>
       {/if}
     </div>
 
@@ -336,20 +465,47 @@
     text-decoration: underline; text-underline-offset: 3px;
   }
   .support-link:hover { color: var(--text-muted); }
+  .dict-tags {
+    display: flex; flex-wrap: wrap; gap: 6px;
+  }
+  .dict-tag {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 6px 4px 10px;
+    font-size: 12.5px; font-weight: 600;
+    color: var(--text-primary);
+    background: #fff;
+    border: 1px solid var(--border-card);
+    border-radius: 999px;
+  }
+  .dict-badge {
+    font-size: 10px; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--text-muted);
+    border: 1px solid var(--border-card);
+    border-radius: 999px;
+    padding: 1px 6px;
+  }
+  .dict-del {
+    border: none; background: none; cursor: pointer;
+    color: var(--text-faint);
+    font-size: 12px; line-height: 1;
+    padding: 2px 4px; border-radius: 50%;
+  }
+  .dict-del:hover { color: var(--text-primary); }
   .settings-tabs {
     display: flex; gap: 4px;
     border-bottom: 1px solid var(--border-soft);
     padding: 0 20px;
     background: #fff;
     flex-shrink: 0;
-    overflow: hidden;
+    overflow-x: auto;
   }
   @media (max-width: 640px) {
     .settings-tabs {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      display: flex;
       gap: 0;
       padding: 0 10px;
+      overflow-x: auto;
     }
   }
   .settings-tab {
@@ -360,6 +516,7 @@
     border-bottom: 2px solid transparent;
     margin-bottom: -1px;
     white-space: nowrap;
+    flex-shrink: 0;
     transition: color 180ms var(--ease-spring), border-color 180ms var(--ease-spring);
   }
   .settings-tab:hover { color: var(--text-primary); }

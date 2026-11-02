@@ -1,8 +1,10 @@
 <script lang="ts">
   import { tick } from 'svelte'
-  import { fmtClockShort, speakerColor, speakerTint } from '../lib/api'
+  import { fmtClockShort, readJsonSafe, speakerColor, speakerTint } from '../lib/api'
   import type { SpeakerInfo, Utterance } from '../lib/api'
   import { editTranscript } from '../lib/transcript.svelte.ts'
+  import { emit } from '../lib/ui.svelte.ts'
+  import { addHotword } from '../lib/settings.svelte.ts'
   import { toast } from '../lib/toast.svelte.ts'
 
   interface Props {
@@ -30,7 +32,31 @@
   let saving = $state(false)
   let speakerMenu = $state<{ index: number; x: number; y: number } | null>(null)
   let renameValue = $state('')
+  let assignValue = $state('')
   let menuInput: HTMLInputElement | null = $state(null)
+  let assignInput: HTMLInputElement | null = $state(null)
+  let wordMenu = $state<{ index: number; word: string; x: number; y: number } | null>(null)
+  let heardValue = $state('')
+  let correctValue = $state('')
+  let menuWordInput: HTMLInputElement | null = $state(null)
+  let wordMenuEl: HTMLElement | null = $state(null)
+  let speakerMenuEl: HTMLElement | null = $state(null)
+
+  function fitIntoView(
+    el: HTMLElement | null,
+    pos: { x: number; y: number },
+    anchor: { top: number; bottom: number },
+  ): { x: number; y: number } {
+    if (!el) return pos
+    const r = el.getBoundingClientRect()
+    let { x, y } = pos
+    if (r.right > window.innerWidth - 8) x = Math.max(8, x - (r.right - (window.innerWidth - 8)))
+    if (r.bottom > window.innerHeight - 8) {
+      const above = anchor.top - r.height - 6
+      y = above >= 8 ? above : Math.max(8, window.innerHeight - r.height - 8)
+    }
+    return { x, y }
+  }
   let speakerNames = $derived(
     [...new Set([...speakers.map((s) => s.name), ...utterances.map((u) => u.speaker || 'Спикер')])].filter(Boolean),
   )
@@ -155,13 +181,19 @@
       return
     }
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const estW = 250
     speakerMenu = {
       index,
-      x: Math.max(8, Math.min(rect.left, window.innerWidth - 270)),
-      y: Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - 330)),
+      x: Math.max(8, Math.min(rect.left, window.innerWidth - estW - 8)),
+      y: rect.bottom + 6,
     }
     renameValue = utterances[index]?.speaker || 'Спикер'
+    assignValue = ''
     await tick()
+    if (speakerMenu) {
+      const fitted = fitIntoView(speakerMenuEl, { x: speakerMenu.x, y: speakerMenu.y }, rect)
+      speakerMenu = { ...speakerMenu, ...fitted }
+    }
     menuInput?.focus()
   }
 
@@ -175,10 +207,82 @@
     if (await applyChange({ index: speakerMenu.index, speaker: name })) speakerMenu = null
   }
 
+  async function learnVoice(): Promise<void> {
+    if (!speakerMenu || !file || saving) return
+    const name = assignValue.trim()
+    if (!name) return
+    if (!(await applyChange({ index: speakerMenu.index, speaker: name }))) return
+    saving = true
+    try {
+      const r = await fetch('/api/voiceprints/learn_sample', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file, index: speakerMenu.index, name }),
+      })
+      const d = await readJsonSafe(r)
+      if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      speakerMenu = null
+      toast(`Голос «${name}» запомнен`)
+      emit('voiceprints-changed')
+    } catch (e) {
+      toast('Не удалось запомнить голос: ' + (e as Error).message, 'error')
+    } finally {
+      saving = false
+    }
+  }
+
   function addSpeaker(): void {
     let n = 1
     while (speakerNames.includes(`Спикер ${n}`)) n += 1
     void assignSpeaker(`Спикер ${n}`)
+  }
+
+  async function onUttTextClick(e: MouseEvent, index: number): Promise<void> {
+    const t = (e.target as HTMLElement).closest?.('[data-w]') as HTMLElement | null
+    if (t && index >= 0) {
+      e.stopPropagation()
+      await openWordMenu(e, index, t.dataset.w || '')
+    }
+  }
+
+  async function openWordMenu(e: MouseEvent, index: number, word: string): Promise<void> {
+    if (!word) return
+    const anchor = (e.target as HTMLElement).getBoundingClientRect()
+    const estW = 250
+    wordMenu = {
+      index,
+      word,
+      x: Math.max(8, Math.min(anchor.left, window.innerWidth - estW - 8)),
+      y: anchor.bottom + 6,
+    }
+    heardValue = word
+    correctValue = ''
+    await tick()
+    if (wordMenu) {
+      const fitted = fitIntoView(wordMenuEl, { x: wordMenu.x, y: wordMenu.y }, anchor)
+      wordMenu = { ...wordMenu, ...fitted }
+    }
+    menuWordInput?.focus()
+  }
+
+  async function saveWord(): Promise<void> {
+    if (!wordMenu) return
+    const heard = heardValue.trim()
+    const correct = correctValue.trim()
+    if (!heard) return
+    const entry = correct && correct.toLowerCase() !== heard.toLowerCase() ? `${heard} => ${correct}` : heard
+    if (await addHotword(entry)) wordMenu = null
+  }
+
+  function onWordMenuKey(e: KeyboardEvent): void {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      wordMenu = null
+    } else if (e.key === 'Enter' && e.target instanceof HTMLInputElement) {
+      e.preventDefault()
+      void saveWord()
+    }
   }
 
   function onMenuKey(e: KeyboardEvent): void {
@@ -188,12 +292,29 @@
       speakerMenu = null
     } else if (e.key === 'Enter' && e.target instanceof HTMLInputElement) {
       e.preventDefault()
-      void renameSpeaker()
+      if (e.target === menuInput) void renameSpeaker()
+      else if (e.target === assignInput && assignValue.trim()) void assignSpeaker(assignValue.trim())
     }
   }
 
   function escapeHtml(s: string): string {
     return String(s).replace(/[&<>"']/g, (c) => (({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c))
+  }
+
+  function wordsHtml(u: Utterance): string {
+    const ws = u.words
+    const plain = (u.text || '').split(/\s+/).filter(Boolean)
+    if (!ws || ws.length === 0 || ws.length !== plain.length) return escapeHtml(u.text || '')
+    return ws
+      .map((w) => {
+        const cls = w.needs_review ? 'w low' : 'w'
+        const conf = typeof w.conf === 'number' ? w.conf.toFixed(2) : '?'
+        const title = w.needs_review
+          ? `Уверенность ${conf} — клик: добавить в словарь`
+          : `Клик: добавить в словарь`
+        return `<span class="${cls}" data-w="${escapeHtml(w.w)}" title="${escapeHtml(title)}">${escapeHtml(w.w)}</span>`
+      })
+      .join(' ')
   }
 
   function inlineMd(s: string): string {
@@ -226,7 +347,7 @@
         kind: 'utt' as const,
         time: fmtClockShort(u.start),
         speaker: u.speaker || 'Спикер',
-        html: escapeHtml(u.text || ''),
+        html: wordsHtml(u),
         search: `${fmtClockShort(u.start)} ${u.speaker || ''} ${u.text || ''}`.toLowerCase(),
         sec: u.start,
         index,
@@ -378,6 +499,19 @@
             >
               {(b as Block).speaker}
             </button>
+            {#if (b as Block).index >= 0}
+              <button
+                type="button"
+                class="utt-edit-btn"
+                title="Редактировать реплику"
+                aria-label="Редактировать реплику"
+                onclick={() => void startEdit((b as Block).index)}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path>
+                </svg>
+              </button>
+            {/if}
             {#if editingIndex === (b as Block).index}
               <div
                 class="utt-text editing"
@@ -395,11 +529,11 @@
               ></div>
             {:else if (b as Block).index >= 0}
               <div
-                class="utt-text editable"
+                class="utt-text"
                 role="textbox"
                 aria-label="Редактировать реплику"
                 tabindex="0"
-                onclick={(e) => void startEdit((b as Block).index, { x: e.clientX, y: e.clientY })}
+                onclick={(e) => void onUttTextClick(e, (b as Block).index)}
                 onkeydown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
@@ -437,12 +571,12 @@
     {#if q && hitCount === 0}
       <div class="empty-note">Ничего не найдено</div>
     {/if}
-    {#if !follow && activeIndex >= 0}
-      <button type="button" class="follow-current" onclick={() => { follow = true; scrollActive() }}>
-        К текущей реплике
-      </button>
-    {/if}
   </div>
+  {#if !follow && activeIndex >= 0}
+    <button type="button" class="follow-current" onclick={() => { follow = true; scrollActive() }}>
+      К текущей реплике
+    </button>
+  {/if}
   {#if speakerMenu}
     <button type="button" class="speaker-popover-backdrop" aria-label="Закрыть меню спикера" onclick={() => (speakerMenu = null)}></button>
     <div
@@ -450,6 +584,7 @@
       role="dialog"
       aria-label="Управление спикером"
       tabindex="-1"
+      bind:this={speakerMenuEl}
       style={`left: ${speakerMenu.x}px; top: ${speakerMenu.y}px`}
       onkeydown={onMenuKey}
     >
@@ -471,6 +606,101 @@
       <button type="button" class="speaker-menu-item speaker-menu-add" disabled={saving} onclick={addSpeaker}>
         + Спикер
       </button>
+      <label class="speaker-rename-label">
+        Новое имя этой реплике
+        <input
+          class="speaker-rename-input"
+          bind:this={assignInput}
+          bind:value={assignValue}
+          maxlength="200"
+          placeholder="Например, Миша"
+          aria-label="Новое имя этой реплике"
+        />
+      </label>
+      <button type="button" class="btn-secondary btn-sm" disabled={saving || !assignValue.trim()} onclick={() => void assignSpeaker(assignValue.trim())}>
+        Присвоить этой реплике
+      </button>
+      <button type="button" class="btn-secondary btn-sm" disabled={saving || !assignValue.trim()} onclick={() => void learnVoice()}>
+        Присвоить и запомнить голос
+      </button>
+    </div>
+  {/if}
+  {#if wordMenu}
+    <button type="button" class="speaker-popover-backdrop" aria-label="Закрыть словарь" onclick={() => (wordMenu = null)}></button>
+    <div
+      class="speaker-popover"
+      role="dialog"
+      aria-label="Добавить термин в словарь"
+      tabindex="-1"
+      bind:this={wordMenuEl}
+      style={`left: ${wordMenu.x}px; top: ${wordMenu.y}px`}
+      onkeydown={onWordMenuKey}
+    >
+      <label class="speaker-rename-label">
+        Услышано
+        <input class="speaker-rename-input" bind:this={menuWordInput} bind:value={heardValue} maxlength="64" />
+      </label>
+      <label class="speaker-rename-label">
+        Правильно (пусто — просто бонус этому слову)
+        <input
+          class="speaker-rename-input"
+          bind:value={correctValue}
+          maxlength="64"
+          placeholder="Например, фикс багов"
+          aria-label="Правильное написание"
+        />
+      </label>
+      <div class="help-text">Связка «услышано → правильно» исправляет текст точно. Без второго поля — только бонус.</div>
+      <button type="button" class="btn-secondary btn-sm" onclick={() => void saveWord()}>
+        В словарь
+      </button>
     </div>
   {/if}
 </div>
+
+<style>
+  /* Классы живут в {@html}-строках: :global, иначе svelte-check сочтёт их мёртвыми. */
+  :global(.w) {
+    cursor: pointer;
+    border-radius: 3px;
+    padding: 0 1px;
+  }
+  :global(.w:hover) {
+    background: #faf6e9;
+  }
+  :global(.w.low) {
+    border-bottom: 1px dotted #b08d2e;
+  }
+  .utt-edit-btn {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: #b5b5b5;
+    cursor: pointer;
+    opacity: 0;
+  }
+  .utterance:hover .utt-edit-btn,
+  .utt-edit-btn:focus-visible {
+    opacity: 0.85;
+  }
+  .utt-edit-btn:hover {
+    opacity: 1;
+    background: #f1efe9;
+    color: #666;
+    outline: none;
+  }
+  @media (hover: none) {
+    .utt-edit-btn {
+      opacity: 0.55;
+    }
+  }
+</style>

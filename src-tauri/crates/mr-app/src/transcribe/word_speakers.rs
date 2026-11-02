@@ -162,11 +162,18 @@ pub(crate) fn split_utterance_by_word_speakers(
         let (speaker, silhouette) = tree
             .assign_dominant_speaker(start, end)
             .unwrap_or_else(|| (utterance.speaker.clone(), utterance.silhouette));
-        assigned.push((word, start, end, speaker, silhouette));
+        assigned.push((
+            word,
+            start,
+            end,
+            speaker,
+            silhouette,
+            utterance.words.get(i).cloned(),
+        ));
     }
 
     let mut out: Vec<Utterance> = Vec::new();
-    for (word, start, end, speaker, silhouette) in assigned {
+    for (word, start, end, speaker, silhouette, wc) in assigned {
         if let Some(last) = out.last_mut() {
             if last.speaker == speaker {
                 let old_dur = (last.end - last.start).max(0.0);
@@ -176,6 +183,9 @@ pub(crate) fn split_utterance_by_word_speakers(
                 last.end = end;
                 last.text.push(' ');
                 last.text.push_str(word);
+                if let Some(w) = wc {
+                    last.words.push(w);
+                }
                 continue;
             }
         }
@@ -187,6 +197,8 @@ pub(crate) fn split_utterance_by_word_speakers(
             text: word.to_string(),
             diarized: true,
             silhouette,
+            words: wc.map(|w| vec![w]).unwrap_or_default(),
+            ctc_used: utterance.ctc_used,
         });
     }
     out
@@ -205,6 +217,8 @@ mod tests {
             text: text.to_string(),
             diarized: true,
             silhouette: 0.5,
+            words: Vec::new(),
+            ctc_used: false,
         }
     }
 

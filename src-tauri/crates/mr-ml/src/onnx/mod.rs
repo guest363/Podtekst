@@ -1,3 +1,4 @@
+pub mod ctc;
 pub mod embed;
 pub mod features;
 pub mod rnnt;
