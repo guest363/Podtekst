@@ -44,7 +44,10 @@ fn live_corpus_diagnostics() {
         let (d, prom) = delay::estimate(&mic[start..end], &reference[start..end], MAX_DELAY)
             .map(|(d, p)| (d as i64, p))
             .unwrap_or((-1, 0.0));
-        println!("окно {:4.0} с: задержка={d} проминентность={prom:.1}", start as f32 / 16000.0);
+        println!(
+            "окно {:4.0} с: задержка={d} проминентность={prom:.1}",
+            start as f32 / 16000.0
+        );
         windows += 1;
         if prom >= ECHO_MIN_PROMINENCE {
             delays.push(d);
@@ -78,7 +81,10 @@ fn live_corpus_diagnostics() {
         frames.push((pm.sqrt(), pr.sqrt()));
     }
     let floor = |idx: usize| {
-        let mut v: Vec<f32> = frames.iter().map(|f| if idx == 0 { f.0 } else { f.1 }).collect();
+        let mut v: Vec<f32> = frames
+            .iter()
+            .map(|f| if idx == 0 { f.0 } else { f.1 })
+            .collect();
         v.sort_by(f32::total_cmp);
         v[v.len() / 10]
     };
@@ -103,7 +109,10 @@ fn live_corpus_diagnostics() {
     let att = if echo_ratios.is_empty() {
         "-".to_string()
     } else {
-        format!("{:.1} дБ", -10.0 * echo_ratios[echo_ratios.len() / 2].max(1e-9).log10())
+        format!(
+            "{:.1} дБ",
+            -10.0 * echo_ratios[echo_ratios.len() / 2].max(1e-9).log10()
+        )
     };
     println!(
         "кадры: тишина={:.0}% только дальний={:.0}% только ближний={:.0}% оба={:.0}%; затухание эха на far-only ~{att}",
