@@ -1,8 +1,11 @@
 use super::delay;
 
+const MAX_DELAY: usize = 8000;
+const ECHO_MIN_PROMINENCE: f32 = 4.5;
+
 // Зачем: живая донастройка AEC вслепую невозможна — сначала цифры по реальным
-// стерео-записям (задержка/дрейф/double-talk), и только потом крутить фильтр.
-// Только тест-харнесс: в прод-коде ни строки. Выход — одни числа, без аудио.
+// стерео-записям (задержка/дрейф/double-talk). Только тест-харнесс, в прод-коде
+// ни строки. Выход — одни числа, без аудио.
 #[test]
 fn live_corpus_diagnostics() {
     let Ok(path) = std::env::var("MR_DIAG_WAV") else {
@@ -38,12 +41,12 @@ fn live_corpus_diagnostics() {
     let mut windows = 0;
     while start + delay::MIN_WINDOW_SAMPLES <= n {
         let end = (start + win).min(n);
-        let (d, prom) = delay::estimate(&mic[start..end], &reference[start..end], super::MAX_DELAY)
+        let (d, prom) = delay::estimate(&mic[start..end], &reference[start..end], MAX_DELAY)
             .map(|(d, p)| (d as i64, p))
             .unwrap_or((-1, 0.0));
         println!("окно {:4.0} с: задержка={d} проминентность={prom:.1}", start as f32 / 16000.0);
         windows += 1;
-        if prom >= super::ECHO_MIN_PROMINENCE {
+        if prom >= ECHO_MIN_PROMINENCE {
             delays.push(d);
         }
         if end == n {
@@ -82,12 +85,14 @@ fn live_corpus_diagnostics() {
     let (tm, tr) = ((floor(0) * 4.0).max(0.01), (floor(1) * 4.0).max(0.01));
     let (mut sil, mut far, mut near, mut dbl) = (0usize, 0usize, 0usize, 0usize);
     let mut echo_ratios = vec![];
+    let mut far_mic = vec![];
     for &(rm, rr) in &frames {
         match (rm > tm, rr > tr) {
             (false, false) => sil += 1,
             (false, true) => {
                 far += 1;
                 echo_ratios.push(rm * rm / (rr * rr).max(1e-12));
+                far_mic.push(rm);
             }
             (true, false) => near += 1,
             (true, true) => dbl += 1,
@@ -108,12 +113,6 @@ fn live_corpus_diagnostics() {
         100.0 * dbl as f32 / total,
     );
     // Шумовой пол vs эхо: если эхо на уровне пола, AEC физически нечего снимать.
-    let mut far_mic = vec![];
-    for &(rm, rr) in &frames {
-        if rm <= tm && rr > tr {
-            far_mic.push(rm);
-        }
-    }
     far_mic.sort_by(f32::total_cmp);
     let far_med = far_mic.get(far_mic.len() / 2).copied().unwrap_or(0.0);
     println!(
@@ -121,38 +120,5 @@ fn live_corpus_diagnostics() {
         floor(0),
         floor(1),
         far_med,
-    );
-
-    // Качество подавления на живых: маска кадров по ИСХОДНИКУ, замер по ОБРАБОТКЕ.
-    // far-only: микрофон там — почти чистое эхо, его энергия должна упасть.
-    // near-only: референс молчит, микрофон должен остаться цел.
-    let mut mic2 = mic[..n].to_vec();
-    let report = super::suppress_echo(&mut mic2, &reference[..n], 16000);
-    let (mut fb, mut fa, mut nb, mut na) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
-    // dc_block фильтра меняет постоянку: «до» считаем тоже после него.
-    let mut mic_dc = mic[..n].to_vec();
-    super::dc_block(&mut mic_dc);
-    for (k, &(rm, rr)) in frames.iter().enumerate() {
-        let t = k * frame;
-        let e = (t + frame).min(n);
-        let b: f64 = mic_dc[t..e].iter().map(|v| (*v as f64).powi(2)).sum();
-        let a: f64 = mic2[t..e].iter().map(|v| (*v as f64).powi(2)).sum();
-        match (rm > tm, rr > tr) {
-            (false, true) => {
-                fb += b;
-                fa += a;
-            }
-            (true, false) => {
-                nb += b;
-                na += a;
-            }
-            _ => {}
-        }
-    }
-    println!(
-        "подавление: far-only ERLE={:.1} дБ ближняя речь={:+.1} дБ guard={:?}",
-        10.0 * (fb / fa.max(1e-12)).log10(),
-        10.0 * (na / nb.max(1e-12)).log10(),
-        if report.echo_windows > 0 { "держит" } else { "откат" },
     );
 }
