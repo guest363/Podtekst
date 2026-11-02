@@ -194,6 +194,24 @@ fn delay_drift_is_tracked() {
 }
 
 #[test]
+fn never_mangles_mic_energy() {
+    // Зачем: регресс живых записей — фильтр без пользы менял энергию микрофона
+    // и ронял ASR; инвариант — выход всегда в пределах [0.25, 1.5] от входа.
+    for (seed, delay) in [(11, 1300), (12, 3000), (13, 5000)] {
+        let mut c = corpus(seed, delay, 12);
+        let before: f32 = c.mic.iter().map(|x| x * x).sum();
+        let report = suppress_echo(&mut c.mic, &c.reference, 16000);
+        let after: f32 = c.mic.iter().map(|x| x * x).sum();
+        assert!(after.is_finite() && after > 0.0, "seed={seed}");
+        let ratio = after / before.max(1e-9);
+        assert!(
+            (0.25..=1.5).contains(&ratio),
+            "seed={seed} delay={delay}: энергия ×{ratio:.2} {report:?}"
+        );
+    }
+}
+
+#[test]
 fn recording_without_echo_passes_through() {
     let c = corpus(99, 0, 12);
     let mut mic = c.near.clone();

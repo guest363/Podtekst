@@ -42,6 +42,8 @@ pub fn suppress_echo(mic: &mut [f32], reference: &[f32], sample_rate: u32) -> Ec
     let mut erle: Vec<f32> = Vec::new();
 
     if echo_present {
+        let original = mic[..n].to_vec();
+        let mic_before: f32 = original.iter().map(|x| x * x).sum();
         let mut line = DelayLine::new(reference);
         let mut filter = EchoFilter::new();
         let mut scratch = vec![0.0f32; filter::BLOCK];
@@ -64,6 +66,21 @@ pub fn suppress_echo(mic: &mut [f32], reference: &[f32], sample_rate: u32) -> Ec
                 erle.push(10.0 * (stats.mic_power / (stats.out_power + 1e-10)).log10());
             }
             t += filter::BLOCK;
+        }
+        let erle_db = median(&mut erle);
+        // Зачем: расходящийся фильтр без пользы калечит микрофон и роняет
+        // ASR/кластеризацию — честнее оставить исходник, чем «давить» в минус.
+        let mic_after: f32 = mic[..n].iter().map(|x| x * x).sum();
+        let bad_erle = erle_db.map(|v| v < 1.0).unwrap_or(false);
+        let bad_energy = mic_before > 0.0
+            && (mic_after / mic_before > 1.5 || mic_after / mic_before < 0.25);
+        if bad_erle || bad_energy {
+            mic[..n].copy_from_slice(&original);
+            eprintln!("эхо: подавление без пользы (ERLE={erle_db:?} дБ) — оставлен исходник");
+            return EchoReport {
+                echo_windows: 0,
+                erle_db: None,
+            };
         }
     }
 
