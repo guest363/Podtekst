@@ -187,8 +187,7 @@ pub(super) fn apply(
         }
     }
 
-    let can_add = max_speakers == 0 || globals.len() < max_speakers;
-    let labels = resolve_label_conflicts(&votes, &cooccur, &starts, can_add, &mut next_label);
+    let labels = resolve_label_conflicts(&votes, &cooccur, &starts, max_speakers, &mut next_label);
     for (index, label) in labels {
         label_of.insert(index, label);
     }
@@ -199,7 +198,7 @@ fn resolve_label_conflicts(
     votes: &HashMap<usize, HashMap<usize, f64>>,
     cooccur: &HashMap<(usize, usize), f64>,
     starts: &[f64],
-    can_add: bool,
+    max_speakers: usize,
     next_label: &mut usize,
 ) -> HashMap<usize, usize> {
     let mut labels: HashMap<usize, usize> = HashMap::new();
@@ -233,7 +232,11 @@ fn resolve_label_conflicts(
                 .map(|(&label, _)| label)
         });
         let target = second.or_else(|| {
-            can_add.then(|| {
+            let unique = labels
+                .values()
+                .copied()
+                .collect::<std::collections::HashSet<_>>();
+            (max_speakers == 0 || unique.len() < max_speakers).then(|| {
                 let label = *next_label;
                 *next_label += 1;
                 label
@@ -326,7 +329,7 @@ mod tests {
         ]);
         let cooccur = HashMap::from([((0, 1), 2.0)]);
         let mut next = 12;
-        let labels = resolve_label_conflicts(&votes, &cooccur, &[0.0, 4.0], true, &mut next);
+        let labels = resolve_label_conflicts(&votes, &cooccur, &[0.0, 4.0], 0, &mut next);
         assert_eq!(labels[&0], 10);
         assert_eq!(labels[&1], 11);
     }
@@ -339,7 +342,7 @@ mod tests {
         ]);
         let cooccur = HashMap::from([((0, 1), 1.0)]);
         let mut next = 20;
-        let labels = resolve_label_conflicts(&votes, &cooccur, &[0.0, 4.0], true, &mut next);
+        let labels = resolve_label_conflicts(&votes, &cooccur, &[0.0, 4.0], 0, &mut next);
         assert_eq!(labels[&0], 10);
         assert_eq!(labels[&1], 20);
         assert_eq!(next, 21);
@@ -353,8 +356,22 @@ mod tests {
         ]);
         let cooccur = HashMap::from([((0, 1), 0.4)]);
         let mut next = 20;
-        let labels = resolve_label_conflicts(&votes, &cooccur, &[0.0, 4.0], true, &mut next);
+        let labels = resolve_label_conflicts(&votes, &cooccur, &[0.0, 4.0], 0, &mut next);
         assert_eq!(labels[&0], 10);
         assert_eq!(labels[&1], 10);
+    }
+
+    #[test]
+    fn several_conflicts_do_not_exceed_speaker_limit() {
+        let votes = HashMap::from([
+            (0, HashMap::from([(10, 6.0)])),
+            (1, HashMap::from([(10, 6.0)])),
+            (2, HashMap::from([(10, 6.0)])),
+        ]);
+        let cooccur = HashMap::from([((0, 1), 1.0), ((0, 2), 1.0)]);
+        let mut next = 11;
+        let labels = resolve_label_conflicts(&votes, &cooccur, &[0.0, 4.0, 8.0], 2, &mut next);
+        let unique: std::collections::HashSet<usize> = labels.values().copied().collect();
+        assert_eq!(unique.len(), 2);
     }
 }
