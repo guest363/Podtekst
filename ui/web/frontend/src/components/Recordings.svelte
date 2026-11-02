@@ -381,7 +381,7 @@
           Отмена
         </button>
         <button
-          class={deleteTarget.owned ? 'btn-danger' : 'btn-primary'}
+          class={deleteTarget.owned ? 'btn-primary btn-danger' : 'btn-primary'}
           disabled={deleting}
           onclick={() => void confirmDelete()}
         >
