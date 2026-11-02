@@ -1,6 +1,6 @@
 <script lang="ts">
   import { readJsonSafe } from '../lib/api'
-  import { hasVoiceprint, loadPeople, peopleState } from '../lib/people.svelte.ts'
+  import { hasVoiceprint, loadPeople, peopleState, voiceprintCount } from '../lib/people.svelte.ts'
   import { toast, toastConfirm } from '../lib/toast.svelte.ts'
   import type { Person } from '../lib/api'
 
@@ -182,7 +182,7 @@
             <span class="voice-dot" title="Голос сохранён в базе"></span>
           {/if}
           <span class="chip-main">
-            <span class="chip-name">{p.name}{p.is_external ? ' · гость' : ''}</span>
+            <span class="chip-name">{p.name}{p.is_external ? ' · гость' : ''}{voiceprintCount(p.name) ? ` · голосов: ${voiceprintCount(p.name)}` : ''}</span>
             {#if p.role}<span class="chip-role">{p.role}</span>{/if}
           </span>
           <button
