@@ -138,6 +138,19 @@ impl DiarIntervalTree {
                 (speaker.to_string(), weighted / area.max(f64::EPSILON))
             })
     }
+
+    fn snap_to_pause(&self, time: f64, window: f64) -> Option<f64> {
+        let mut best: Option<(f64, f64)> = None;
+        for segment in &self.segments {
+            for edge in [segment.start, segment.end] {
+                let distance = (edge - time).abs();
+                if distance <= window && best.is_none_or(|(d, _)| distance < d) {
+                    best = Some((distance, edge));
+                }
+            }
+        }
+        best.map(|(_, edge)| edge)
+    }
 }
 
 pub(crate) fn split_utterance_by_word_speakers(
@@ -148,17 +161,30 @@ pub(crate) fn split_utterance_by_word_speakers(
     if words.is_empty() || utterance.end <= utterance.start || tree.root.is_none() {
         return vec![utterance.clone()];
     }
-    // shortcut: ASR пока не возвращает word timestamps, интерполяция; заменить при появлении alignment.
     let word_count = words.len();
-    let step = (utterance.end - utterance.start) / word_count as f64;
+    let weights: Vec<f64> = words
+        .iter()
+        .map(|word| word.chars().count() as f64 + 1.0)
+        .collect();
+    let total: f64 = weights.iter().sum::<f64>().max(f64::EPSILON);
+    // shortcut: ASR не даёт word timestamps — вес по символам и привязка
+    // границ к паузам диаризации; заменить при появлении alignment.
+    let mut bounds = Vec::with_capacity(word_count + 1);
+    bounds.push(utterance.start);
+    let mut passed = 0.0;
+    for weight in weights.iter().take(word_count - 1) {
+        passed += weight;
+        let raw = utterance.start + (utterance.end - utterance.start) * passed / total;
+        let snapped = tree.snap_to_pause(raw, 0.15).unwrap_or(raw);
+        let previous = *bounds.last().unwrap_or(&utterance.start);
+        // 20 мс — минимум, иначе assign_dominant_speaker не видит пересечения.
+        let lower = (previous + 0.02).min(utterance.end);
+        bounds.push(if snapped > lower { snapped } else { raw }.clamp(lower, utterance.end));
+    }
+    bounds.push(utterance.end);
     let mut assigned = Vec::with_capacity(word_count);
     for (i, word) in words.into_iter().enumerate() {
-        let start = utterance.start + i as f64 * step;
-        let end = if i + 1 == word_count {
-            utterance.end
-        } else {
-            start + step
-        };
+        let (start, end) = (bounds[i], bounds[i + 1]);
         let (speaker, silhouette) = tree
             .assign_dominant_speaker(start, end)
             .unwrap_or_else(|| (utterance.speaker.clone(), utterance.silhouette));
@@ -265,6 +291,53 @@ mod tests {
         assert_eq!(out[0].speaker, "A");
         assert_eq!(out[0].text, "yes");
         assert!(out[0].diarized);
+    }
+
+    #[test]
+    fn uneven_words_get_proportional_time_not_equal_steps() {
+        let tree = DiarIntervalTree::new(&[utt(0.0, 1.5, "A", "a"), utt(1.5, 4.0, "B", "b")]);
+        let source = utt(0.0, 4.0, "unknown", "а длинноеслово");
+        let out = split_utterance_by_word_speakers(&source, &tree);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].speaker, "A");
+        assert_eq!(out[1].speaker, "B");
+        assert!(out[0].end < 1.0, "короткое слово не должно занять 2 с");
+        assert_eq!(out[1].end, source.end);
+        assert_eq!(
+            out.iter()
+                .map(|u| u.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+            source.text
+        );
+    }
+
+    #[test]
+    fn word_boundary_snaps_to_nearby_pause() {
+        let tree = DiarIntervalTree::new(&[utt(0.0, 0.5, "A", "a"), utt(0.5, 4.0, "B", "b")]);
+        let source = utt(0.0, 4.0, "unknown", "а длинноеслово");
+        let out = split_utterance_by_word_speakers(&source, &tree);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].speaker, "A");
+        assert_eq!(out[0].text, "а");
+        assert!((out[0].end - 0.5).abs() < 0.01, "{}", out[0].end);
+        assert_eq!(out[1].text, "длинноеслово");
+    }
+
+    #[test]
+    fn nearby_boundaries_do_not_collapse_word_to_zero() {
+        let long = "x".repeat(96);
+        let tree = DiarIntervalTree::new(&[utt(0.0, 0.3, "A", "a"), utt(0.3, 10.0, "B", "b")]);
+        let source = utt(0.0, 10.0, "unknown", &format!("а б {long}"));
+        let out = split_utterance_by_word_speakers(&source, &tree);
+        assert!(out.iter().all(|u| u.end > u.start));
+        assert_eq!(
+            out.iter()
+                .map(|u| u.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+            source.text
+        );
     }
 
     #[test]

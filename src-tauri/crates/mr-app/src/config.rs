@@ -79,6 +79,22 @@ pub(crate) fn configured_ctc_enabled() -> bool {
         .unwrap_or(true)
 }
 
+pub(crate) fn configured_diar_assign_min_sim() -> f64 {
+    load_config()
+        .get("diar")
+        .and_then(|d| d.get("assign_min_sim"))
+        .and_then(|x| x.as_f64())
+        .unwrap_or(0.20)
+}
+
+pub(crate) fn configured_diar_new_speaker_min_sim() -> f64 {
+    load_config()
+        .get("diar")
+        .and_then(|d| d.get("new_speaker_min_sim"))
+        .and_then(|x| x.as_f64())
+        .unwrap_or(0.35)
+}
+
 pub(crate) fn save_hotwords_cfg(hotwords: Vec<String>, ctc_enabled: Option<bool>) {
     update_config(|cfg| {
         cfg["hotwords"] = json!(mr_ml::hotwords::sanitize_hotwords(&hotwords));

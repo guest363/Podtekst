@@ -212,13 +212,10 @@ pub(crate) fn load_profiles() -> Vec<SpeakerProfile> {
     out
 }
 
-/// Порог 0.6 с (P10): в реальных диалогах второй спикер нередко отвечает
-/// только короткими репликами («Ну да», «Хорошо», 0.6–1.0 с).
-///
-/// Замеры ERes2NetV2 (тест `onnx_real::eres2netv2_parity_with_official_reference`):
-/// на окнах 0.6 с сходство со своим голосом составляет 0.41–0.79, с чужим — 0.04–0.19
-/// (дельта > 0.22), что обеспечивает устойчивое разделение спикеров в кластеризации.
-const CORE_MIN_DUR: f64 = 0.6;
+/// Замеры ERes2NetV2 (`onnx_real::eres2netv2_parity_with_official_reference`):
+/// на окнах 0.6 с сходство со своим голосом 0.41–0.79, с чужим — 0.04–0.19.
+/// Короче 1 с эмбеддинг слишком шумный и становится отдельным «голосом».
+const CORE_MIN_DUR: f64 = 1.0;
 
 /// Кластеры короче 2% речи — обычно шумные короткие эмбеддинги. Клеим их
 /// к ближайшему крупному голосу (косинус ≥ 0.30), а непохожие оставляем:
@@ -229,6 +226,19 @@ fn merge_tiny_clusters(vecs: &[Vec<f64>], labels: &mut [usize], weights: &[f64],
         return;
     }
     let min_sec = (total * 0.02).clamp(2.0, 10.0);
+    // Кластер с хорошей обособленностью — отдельный голос, пусть и короткий.
+    let scores = mr_ml::cluster::silhouette_scores(vecs, labels);
+    let mut silhouettes: HashMap<usize, (f64, f64)> = HashMap::new();
+    for (i, &label) in labels.iter().enumerate() {
+        let entry = silhouettes.entry(label).or_default();
+        entry.0 += scores.get(i).copied().unwrap_or(0.0) * weights[i];
+        entry.1 += weights[i];
+    }
+    let well_separated = |label: usize| {
+        silhouettes
+            .get(&label)
+            .is_some_and(|&(sum, weight)| weight > 0.0 && sum / weight > 0.3)
+    };
     let mut protected: HashSet<usize> = HashSet::new();
     loop {
         let mut totals: HashMap<usize, f64> = HashMap::new();
@@ -240,7 +250,7 @@ fn merge_tiny_clusters(vecs: &[Vec<f64>], labels: &mut [usize], weights: &[f64],
         }
         let Some((&small, _)) = totals
             .iter()
-            .filter(|(l, &t)| t < min_sec && !protected.contains(l))
+            .filter(|(l, &t)| t < min_sec && !protected.contains(l) && !well_separated(**l))
             .min_by(|a, b| a.1.total_cmp(b.1))
         else {
             return;
@@ -381,6 +391,62 @@ fn rms_quality(chunk: &[f32]) -> f64 {
     (rms / 0.05).clamp(0.3, 1.5)
 }
 
+/// Короткие реплики не должны утаскивать узнанный профиль к «среднему» голосу.
+fn profile_anchors(
+    centroids: &HashMap<usize, Vec<f64>>,
+    profiles: &[SpeakerProfile],
+) -> HashMap<usize, Vec<f64>> {
+    if profiles.is_empty() {
+        return HashMap::new();
+    }
+    let mut pairs: Vec<(f64, usize, usize)> = centroids
+        .iter()
+        .flat_map(|(&label, centroid)| {
+            profiles.iter().enumerate().map(move |(index, profile)| {
+                (
+                    mr_ml::cosine_similarity(centroid, &profile.embedding),
+                    label,
+                    index,
+                )
+            })
+        })
+        .collect();
+    pairs.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut labels = HashSet::new();
+    let mut used = HashSet::new();
+    let mut anchors = HashMap::new();
+    for (similarity, label, index) in pairs {
+        if similarity < 0.65 || labels.contains(&label) || used.contains(&index) {
+            continue;
+        }
+        labels.insert(label);
+        used.insert(index);
+        anchors.insert(label, profiles[index].embedding.clone());
+    }
+    anchors
+}
+
+fn fill_labels_by_time(utterances: &[Utterance], label_of: &mut HashMap<usize, usize>) {
+    let mut labeled: Vec<usize> = (0..utterances.len())
+        .filter(|&i| label_of.contains_key(&i))
+        .collect();
+    for i in 0..utterances.len() {
+        if label_of.contains_key(&i) || labeled.is_empty() {
+            continue;
+        }
+        let (start, end) = (utterances[i].start, utterances[i].end);
+        let mut best = (f64::INFINITY, 0usize);
+        for &v in &labeled {
+            let gap = interval_gap(start, end, utterances[v].start, utterances[v].end);
+            if gap < best.0 {
+                best = (gap, label_of[&v]);
+            }
+        }
+        label_of.insert(i, best.1);
+        labeled.push(i);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn diarize_channel(
     samples: &[f32],
@@ -513,44 +579,31 @@ pub(crate) fn diarize_channel(
             .collect()
     };
     let mut centroids = recompute(&label_of);
-    let mut core_sorted = core.clone();
-    core_sorted.sort_by(|a, b| utterances[*a].start.total_cmp(&utterances[*b].start));
+    let anchors = profile_anchors(&centroids, profiles);
+    let anchor = |centroids: &mut HashMap<usize, Vec<f64>>| {
+        for (label, vector) in &anchors {
+            if let Some(centroid) = centroids.get_mut(label) {
+                *centroid = vector.clone();
+            }
+        }
+    };
+    anchor(&mut centroids);
     for &si in valid.iter().filter(|i| !core.contains(i)) {
         let se = embs[si].clone().unwrap();
-        let (s0, e0) = (utterances[si].start, utterances[si].end);
-        let mut best = (i32::MIN, 0usize, -2.0f64);
+        let mut best = (f64::NEG_INFINITY, 0usize);
         for (&lbl, cent) in centroids.iter() {
-            let mut score = cosine_similarity(&se, cent);
-            for &ci in core_sorted
-                .iter()
-                .filter(|&&ci| label_of.get(&ci) == Some(&lbl))
-            {
-                if interval_gap(s0, e0, utterances[ci].start, utterances[ci].end) <= 0.6 {
-                    score += 0.12;
-                    break;
-                }
-            }
-            if score > best.2 {
-                best = (0, lbl, score);
+            let score = cosine_similarity(&se, cent);
+            if score > best.0 {
+                best = (score, lbl);
             }
         }
-        label_of.insert(si, best.1);
-        centroids = recompute(&label_of);
+        if best.0 >= 0.65 {
+            label_of.insert(si, best.1);
+            centroids = recompute(&label_of);
+            anchor(&mut centroids);
+        }
     }
-    for i in 0..n {
-        if label_of.contains_key(&i) {
-            continue;
-        }
-        let (s0, e0) = (utterances[i].start, utterances[i].end);
-        let mut best = (f64::INFINITY, 0usize);
-        for &v in valid.iter() {
-            let g = interval_gap(s0, e0, utterances[v].start, utterances[v].end);
-            if g < best.0 {
-                best = (g, label_of[&v]);
-            }
-        }
-        label_of.insert(i, best.1);
-    }
+    fill_labels_by_time(utterances, &mut label_of);
     // Одиночный шумный кусок не должен рвать монолог на два голоса.
     // При явно заданном минимуме спикеров не сглаживаем: метки важнее.
     if channel_idx.is_none() && min_speakers == 0 {
@@ -885,18 +938,15 @@ pub(crate) fn reconcile_channels(infos: &mut Vec<SpeakerInfo>, utterances: &mut 
 
             let should_merge =
                 if infos[i].channel == infos[j].channel && infos[i].name != infos[j].name {
-                    // Внутри одного канала: если один распознан, а второй — безымянный хвост (например, "Я" и профиль пользователя),
-                    // либо оба безымянные ("Собеседник 2" и "3") — при уверенном сходстве (≥ 0.52) это один и тот же спикер.
-                    // Разные распознанные профили никогда не объединяем.
-                    !(infos[i].matched && infos[j].matched) && sim >= 0.52
+                    // Без профиля нет доказательства, что два кластера — один человек.
+                    // Похожесть смешанных эмбеддингов сливала всех в один «средний» голос.
+                    (infos[i].matched ^ infos[j].matched) && sim >= 0.55
                 } else {
-                    // Разные каналы (микрофон и система) или совпадение имени:
+                    // Между каналами того же человека выдают общее имя или
+                    // одновременная речь (эхо); похожести без перекрытия мало —
+                    // голоса разных людей тоже похожи.
                     same_name
                         || (sim >= 0.55 && overlap >= 0.3)
-                        || (sim >= 0.58 && !infos[i].matched && !infos[j].matched)
-                        || ((infos[i].matched || infos[j].matched) && sim >= 0.50 && overlap >= 0.3)
-                        || ((infos[i].matched ^ infos[j].matched) && sim >= 0.55)
-                        || ((infos[i].matched ^ infos[j].matched) && echo && overlap >= 0.5)
                         || (echo && sim >= 0.45 && overlap >= 0.3)
                         || (echo && short && overlap >= 0.8)
                 };
@@ -1360,11 +1410,9 @@ pub(crate) fn split_at_pauses(samples: &[f32], utterances: &[Utterance]) -> Vec<
     out
 }
 
-/// Потолок числа окон на одну реплику: 8 эмбеддингов на 20-секундный
-/// фрагмент вместо 37 при шаге 0.5 с. Разрезаем только длинные реплики:
-/// на коротких смена голоса почти всегда совпадает с паузой VAD, а каждый
-/// лишний эмбеддинг на ARM стоит сотни миллисекунд.
-const SPLIT_MIN_DUR: f64 = 8.0;
+/// Эмбеддинг на ARM стоит сотни миллисекунд: короткие реплики не режем,
+/// число окон ограничиваем.
+const SPLIT_MIN_DUR: f64 = 3.0;
 const SPLIT_MAX_WINDOWS: usize = 8;
 const SPLIT_WINDOW_SEC: f64 = 1.6;
 
@@ -1375,14 +1423,39 @@ fn split_step(duration: f64) -> f64 {
     (span / (SPLIT_MAX_WINDOWS - 1) as f64).max(0.5)
 }
 
-/// Разрез длинных реплик при смене голоса (стерео: каналы уже разделены,
-/// поэтому режем только совсем длинные монологи). Работает по скользящему
-/// окну эмбеддингов 1.6 с; разрез при косинусном сходстве < 0.35 (локальный
-/// минимум; один голос даёт ~0.5+, смена диктора ≤ 0.22).
+/// +0.8 с компенсирует отставание окна: эмбеддинг 1.6 с «видит» обоих
+/// говорящих ещё какое-то время после стыка.
+fn speaker_change_cuts(start: f64, end: f64, wins: &[(f64, Vec<f64>)]) -> Vec<f64> {
+    let sims: Vec<f64> = wins
+        .windows(2)
+        .map(|w| mr_ml::cosine_similarity(&w[0].1, &w[1].1))
+        .collect();
+    let mut cuts = vec![];
+    for (i, &s) in sims.iter().enumerate() {
+        if s >= 0.35 {
+            continue;
+        }
+        let prev = if i > 0 { sims[i - 1] } else { 1.0 };
+        let next = sims.get(i + 1).copied().unwrap_or(1.0);
+        if s > prev || s > next {
+            continue;
+        }
+        let b = ((wins[i].0 + wins[i + 1].0) / 2.0 + 0.8).clamp(start + 0.5, end - 0.5);
+        if cuts.last().map(|&c| b - c >= 1.0).unwrap_or(true) {
+            cuts.push((b * 100.0).round() / 100.0);
+        }
+    }
+    cuts
+}
+
+/// Один голос даёт ~0.5+, смена диктора ≤ 0.22 — замеры ERes2NetV2
+/// (`onnx_real::eres2netv2_parity_with_official_reference`).
+/// Перекрытия обнуляются до эмбеддинга: иначе оба голоса дают «средний» вектор.
 pub(crate) fn split_long_by_speaker_change(
     samples: &[f32],
     utterances: Vec<Utterance>,
     extractor: &mut Option<EmbeddingExtractor>,
+    segmentation: Option<&Segmentation>,
     on_event: &dyn Fn(u8, &str),
 ) -> Vec<Utterance> {
     let Some(ext) = extractor else {
@@ -1403,8 +1476,6 @@ pub(crate) fn split_long_by_speaker_change(
             out.push(u);
             continue;
         }
-        // Шаг растягивается только на длинных репликах; на коротких остаётся
-        // 0.5 с, чтобы не размывать границу смены голоса.
         let step = split_step(dur);
         let mut wins: Vec<(f64, Vec<f64>)> = vec![];
         let mut t = u.start;
@@ -1412,8 +1483,14 @@ pub(crate) fn split_long_by_speaker_change(
             let lo = (t * sr) as usize;
             let hi = ((t + SPLIT_WINDOW_SEC).min(u.end) * sr) as usize;
             if hi > lo && hi <= samples.len() {
-                if let Ok(Some(e)) = ext.embed(&samples[lo..hi]) {
-                    wins.push((t, e));
+                let mut chunk = samples[lo..hi].to_vec();
+                let clean_len = segmentation
+                    .map(|seg| seg.exclude_overlap(&mut chunk, lo))
+                    .unwrap_or(chunk.len());
+                if clean_len >= (sr * 0.4) as usize {
+                    if let Ok(Some(e)) = ext.embed(&chunk) {
+                        wins.push((t, e));
+                    }
                 }
             }
             t += step;
@@ -1422,24 +1499,7 @@ pub(crate) fn split_long_by_speaker_change(
             out.push(u);
             continue;
         }
-        let sims: Vec<f64> = wins
-            .windows(2)
-            .map(|w| mr_ml::cosine_similarity(&w[0].1, &w[1].1))
-            .collect();
-        let mut cuts = vec![];
-        for (i, &s) in sims.iter().enumerate() {
-            if s < 0.35 {
-                let prev = if i > 0 { sims[i - 1] } else { 1.0 };
-                let next = sims.get(i + 1).copied().unwrap_or(1.0);
-                if s <= prev && s <= next {
-                    let b =
-                        ((wins[i].0 + wins[i + 1].0) / 2.0 + 0.8).clamp(u.start + 0.5, u.end - 0.5);
-                    if cuts.last().map(|&c| b - c >= 1.0).unwrap_or(true) {
-                        cuts.push((b * 100.0).round() / 100.0);
-                    }
-                }
-            }
-        }
+        let cuts = speaker_change_cuts(u.start, u.end, &wins);
         if cuts.is_empty() {
             out.push(u);
             continue;
@@ -1521,9 +1581,10 @@ pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::{
-        dedupe_cross_channel, group_segments, merge_quiet_short, merge_tiny_clusters,
-        merge_utterances, read_profiles_file, reconcile_channels, refresh_speaker_stats,
-        split_at_pauses, split_words_by_bounds, SpeakerInfo, Utterance,
+        dedupe_cross_channel, fill_labels_by_time, group_segments, merge_quiet_short,
+        merge_tiny_clusters, merge_utterances, profile_anchors, read_profiles_file,
+        reconcile_channels, refresh_speaker_stats, speaker_change_cuts, split_at_pauses,
+        split_words_by_bounds, SpeakerInfo, Utterance,
     };
 
     fn info(name: &str, ch: i32, emb: Vec<f64>, count: usize, sec: f64) -> SpeakerInfo {
@@ -1616,7 +1677,36 @@ mod tests {
     }
 
     #[test]
-    fn merges_same_voice_across_channels_without_overlap() {
+    fn unmatched_clusters_in_one_channel_stay_separate() {
+        let mut infos = vec![
+            info("Участник 1", 0, vec![1.0, 0.0], 5, 10.0),
+            info("Участник 2", 0, vec![1.0, 0.0], 5, 10.0),
+        ];
+        let mut utts = vec![
+            utt(1.0, 3.0, "Участник 1", 0, "первая реплика"),
+            utt(10.0, 12.0, "Участник 2", 0, "вторая реплика"),
+        ];
+        reconcile_channels(&mut infos, &mut utts);
+        assert_eq!(infos.len(), 2);
+    }
+
+    #[test]
+    fn matched_profile_and_unnamed_tail_in_one_channel_merge() {
+        let mut matched = info("Я", 0, vec![1.0, 0.0], 5, 10.0);
+        matched.matched = true;
+        matched.matched_name = Some("Я".to_string());
+        let mut infos = vec![matched, info("Участник 2", 0, vec![1.0, 0.0], 1, 2.0)];
+        let mut utts = vec![
+            utt(1.0, 5.0, "Я", 0, "моя реплика"),
+            utt(10.0, 11.0, "Участник 2", 0, "хвост"),
+        ];
+        reconcile_channels(&mut infos, &mut utts);
+        assert_eq!(infos.len(), 1);
+        assert_eq!(infos[0].name, "Я");
+    }
+
+    #[test]
+    fn similar_voices_across_channels_without_overlap_stay_separate() {
         let mut infos = vec![
             info("Участник 1", 0, vec![1.0, 0.0], 1, 3.0),
             info("Собеседник 1", 1, vec![1.0, 0.0], 1, 3.0),
@@ -1626,8 +1716,8 @@ mod tests {
             utt(20.0, 22.0, "Собеседник 1", 1, "вторая реплика"),
         ];
         reconcile_channels(&mut infos, &mut utts);
-        assert_eq!(infos.len(), 1);
-        assert_eq!(utts[0].speaker, "Собеседник 1");
+        assert_eq!(infos.len(), 2);
+        assert_eq!(utts[0].speaker, "Участник 1");
         assert_eq!(utts[1].speaker, "Собеседник 1");
     }
 
@@ -1872,7 +1962,7 @@ mod tests {
             ctc_used: false,
         };
         let out = split_at_pauses(&samples, &[utt()]);
-        assert!(out.len() >= 2);
+        assert!(out.len() >= 3);
         assert!(out.iter().all(|u| u.end - u.start <= 6.01));
         assert_eq!(
             out.iter()
@@ -1885,6 +1975,19 @@ mod tests {
         let quiet: Vec<f32> = samples.iter().map(|x| x * 0.01).collect();
         let out_quiet = split_at_pauses(&quiet, &[utt()]);
         assert_eq!(out.len(), out_quiet.len());
+    }
+
+    #[test]
+    fn split_long_finds_one_voice_change_in_four_seconds() {
+        let a = vec![1.0, 0.0];
+        let b = vec![0.0, 1.0];
+        let wins: Vec<(f64, Vec<f64>)> = [0.0, 0.5, 1.0, 1.5, 2.0]
+            .into_iter()
+            .map(|t| (t, if t < 2.0 { a.clone() } else { b.clone() }))
+            .collect();
+        let cuts = speaker_change_cuts(0.0, 4.0, &wins);
+        assert_eq!(cuts.len(), 1);
+        assert!((2.0..=2.9).contains(&cuts[0]), "{cuts:?}");
     }
 
     #[test]
@@ -1946,6 +2049,66 @@ mod tests {
         vecs2[4] = vec![-1.0, 0.0];
         merge_tiny_clusters(&vecs2, &mut distinct, &weights, 1);
         assert_eq!(distinct[4], 2);
+    }
+
+    #[test]
+    fn short_but_distinct_voice_is_not_merged_into_dominant() {
+        let vecs = vec![
+            vec![1.0, 0.0],
+            vec![1.0, 0.0],
+            vec![1.0, 0.0],
+            vec![0.0, 1.0],
+            vec![0.0, 1.0],
+        ];
+        let weights = vec![40.0, 40.0, 40.0, 0.5, 0.5];
+        let mut labels = vec![0usize, 0, 0, 1, 1];
+        merge_tiny_clusters(&vecs, &mut labels, &weights, 1);
+        assert_eq!(labels[3], 1);
+        assert_eq!(labels[4], 1);
+    }
+
+    #[test]
+    fn recognized_profile_anchors_only_its_cluster() {
+        let centroids =
+            std::collections::HashMap::from([(0usize, vec![0.9, 0.1]), (1, vec![0.2, 0.9])]);
+        let profiles = vec![mr_ml::SpeakerProfile {
+            name: "A".to_string(),
+            embedding: vec![1.0, 0.0],
+            samples_count: 1,
+            updated_at: String::new(),
+            prototypes: vec![],
+        }];
+        let anchors = profile_anchors(&centroids, &profiles);
+        assert_eq!(anchors.len(), 1);
+        assert_eq!(anchors[&0], vec![1.0, 0.0]);
+    }
+
+    #[test]
+    fn profile_is_anchored_to_one_cluster_only() {
+        let centroids =
+            std::collections::HashMap::from([(0usize, vec![1.0, 0.0]), (1, vec![0.99, 0.01])]);
+        let profiles = vec![mr_ml::SpeakerProfile {
+            name: "A".to_string(),
+            embedding: vec![1.0, 0.0],
+            samples_count: 1,
+            updated_at: String::new(),
+            prototypes: vec![],
+        }];
+        let anchors = profile_anchors(&centroids, &profiles);
+        assert_eq!(anchors.len(), 1);
+        assert!(anchors.contains_key(&0));
+    }
+
+    #[test]
+    fn unlabelled_short_gets_nearest_time_label_without_panic() {
+        let utts = vec![
+            utt(0.0, 2.0, "A", 0, "a"),
+            utt(10.0, 12.0, "B", 0, "b"),
+            utt(9.0, 9.5, "A", 0, "short"),
+        ];
+        let mut labels = std::collections::HashMap::from([(0, 7), (1, 8)]);
+        fill_labels_by_time(&utts, &mut labels);
+        assert_eq!(labels[&2], 8);
     }
 
     #[test]

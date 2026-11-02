@@ -521,21 +521,22 @@ pub fn transcribe_file(
         } else {
             None
         };
-        // В стерео каналы уже разделены по голосам, и прежний разрез по
-        // эмбеддингам там не трогаем. В моно реплики режем по паузам:
-        // иначе 20 секунд сплошного диалога дают «средний голос» двух людей.
+        // В стерео каналы уже разделены по голосам, а дробление по паузам
+        // даёт лишние короткие эмбеддинги и перекластеризацию.
         let mut diar_utts = if is_stereo {
-            on_event(80, "Ищу смену голоса внутри длинных реплик…");
-            diarize::split_long_by_speaker_change(
-                samples,
-                source_utts.clone(),
-                &mut embed_ext,
-                &|pct, msg| on_event(pct, msg),
-            )
+            source_utts.clone()
         } else {
             on_event(80, "Делю речь на паузы для спикеров…");
             diarize::split_at_pauses(samples, &source_utts)
         };
+        on_event(80, "Ищу смену голоса внутри реплик…");
+        diar_utts = diarize::split_long_by_speaker_change(
+            samples,
+            diar_utts,
+            &mut embed_ext,
+            segmentation.as_ref(),
+            &|pct, msg| on_event(pct, msg),
+        );
         let (prefix, ch_idx) = if is_stereo {
             (
                 if *ch == 0 {

@@ -190,8 +190,16 @@ pub(super) fn handle_transcribe_start(request: tiny_http::Request, body: serde_j
         speaker_right: "Собеседник".to_string(),
         engine,
         language,
-        min_speakers: 0,
-        max_speakers: 0,
+        min_speakers: body
+            .get("min_speakers")
+            .and_then(|v| v.as_u64())
+            .and_then(|v| usize::try_from(v).ok())
+            .unwrap_or(0),
+        max_speakers: body
+            .get("max_speakers")
+            .and_then(|v| v.as_u64())
+            .and_then(|v| usize::try_from(v).ok())
+            .unwrap_or(0),
         hotwords: hotwords_from_body(&body),
         ctc_enabled: body
             .get("ctc_enabled")
