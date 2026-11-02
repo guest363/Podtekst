@@ -212,13 +212,14 @@ pub(crate) fn load_profiles() -> Vec<SpeakerProfile> {
     out
 }
 
-/// Порог 0.6 с (P10): в реальных диалогах второй спикер нередко отвечает
-/// только короткими репликами («Ну да», «Хорошо», 0.6–1.0 с).
+/// В кластеризацию идут только фрагменты от 1 с: на более коротких эмбеддинг
+/// слишком шумный и легко становится отдельным «голосом».
 ///
 /// Замеры ERes2NetV2 (тест `onnx_real::eres2netv2_parity_with_official_reference`):
-/// на окнах 0.6 с сходство со своим голосом составляет 0.41–0.79, с чужим — 0.04–0.19
-/// (дельта > 0.22), что обеспечивает устойчивое разделение спикеров в кластеризации.
-const CORE_MIN_DUR: f64 = 0.6;
+/// на окнах 0.6 с сходство со своим голосом 0.41–0.79, с чужим — 0.04–0.19.
+/// Поэтому короткие куски не кластеризуются, а прикрепляются к готовому
+/// кластеру только при сходстве ≥ 0.65; иначе — по ближайшей реплике во времени.
+const CORE_MIN_DUR: f64 = 1.0;
 
 /// Кластеры короче 2% речи — обычно шумные короткие эмбеддинги. Клеим их
 /// к ближайшему крупному голосу (косинус ≥ 0.30), а непохожие оставляем:
@@ -513,29 +514,19 @@ pub(crate) fn diarize_channel(
             .collect()
     };
     let mut centroids = recompute(&label_of);
-    let mut core_sorted = core.clone();
-    core_sorted.sort_by(|a, b| utterances[*a].start.total_cmp(&utterances[*b].start));
     for &si in valid.iter().filter(|i| !core.contains(i)) {
         let se = embs[si].clone().unwrap();
-        let (s0, e0) = (utterances[si].start, utterances[si].end);
-        let mut best = (i32::MIN, 0usize, -2.0f64);
+        let mut best = (f64::NEG_INFINITY, 0usize);
         for (&lbl, cent) in centroids.iter() {
-            let mut score = cosine_similarity(&se, cent);
-            for &ci in core_sorted
-                .iter()
-                .filter(|&&ci| label_of.get(&ci) == Some(&lbl))
-            {
-                if interval_gap(s0, e0, utterances[ci].start, utterances[ci].end) <= 0.6 {
-                    score += 0.12;
-                    break;
-                }
-            }
-            if score > best.2 {
-                best = (0, lbl, score);
+            let score = cosine_similarity(&se, cent);
+            if score > best.0 {
+                best = (score, lbl);
             }
         }
-        label_of.insert(si, best.1);
-        centroids = recompute(&label_of);
+        if best.0 >= 0.65 {
+            label_of.insert(si, best.1);
+            centroids = recompute(&label_of);
+        }
     }
     for i in 0..n {
         if label_of.contains_key(&i) {
@@ -1361,10 +1352,9 @@ pub(crate) fn split_at_pauses(samples: &[f32], utterances: &[Utterance]) -> Vec<
 }
 
 /// Потолок числа окон на одну реплику: 8 эмбеддингов на 20-секундный
-/// фрагмент вместо 37 при шаге 0.5 с. Разрезаем только длинные реплики:
-/// на коротких смена голоса почти всегда совпадает с паузой VAD, а каждый
-/// лишний эмбеддинг на ARM стоит сотни миллисекунд.
-const SPLIT_MIN_DUR: f64 = 8.0;
+/// фрагмент вместо 37 при шаге 0.5 с. Каждый лишний эмбеддинг на ARM
+/// стоит сотни миллисекунд, поэтому шаг растягивается на длинных репликах.
+const SPLIT_MIN_DUR: f64 = 3.0;
 const SPLIT_MAX_WINDOWS: usize = 8;
 const SPLIT_WINDOW_SEC: f64 = 1.6;
 
@@ -1375,14 +1365,41 @@ fn split_step(duration: f64) -> f64 {
     (span / (SPLIT_MAX_WINDOWS - 1) as f64).max(0.5)
 }
 
-/// Разрез длинных реплик при смене голоса (стерео: каналы уже разделены,
-/// поэтому режем только совсем длинные монологи). Работает по скользящему
+/// Смена голоса — локальный минимум сходства ниже 0.35. Поправка +0.8 с
+/// компенсирует отставание окна: эмбеддинг 1.6 с «видит» обоих говорящих
+/// ещё какое-то время после стыка.
+fn speaker_change_cuts(start: f64, end: f64, wins: &[(f64, Vec<f64>)]) -> Vec<f64> {
+    let sims: Vec<f64> = wins
+        .windows(2)
+        .map(|w| mr_ml::cosine_similarity(&w[0].1, &w[1].1))
+        .collect();
+    let mut cuts = vec![];
+    for (i, &s) in sims.iter().enumerate() {
+        if s >= 0.35 {
+            continue;
+        }
+        let prev = if i > 0 { sims[i - 1] } else { 1.0 };
+        let next = sims.get(i + 1).copied().unwrap_or(1.0);
+        if s > prev || s > next {
+            continue;
+        }
+        let b = ((wins[i].0 + wins[i + 1].0) / 2.0 + 0.8).clamp(start + 0.5, end - 0.5);
+        if cuts.last().map(|&c| b - c >= 1.0).unwrap_or(true) {
+            cuts.push((b * 100.0).round() / 100.0);
+        }
+    }
+    cuts
+}
+
+/// Разрез длинных реплик при смене голоса. Работает по скользящему
 /// окну эмбеддингов 1.6 с; разрез при косинусном сходстве < 0.35 (локальный
-/// минимум; один голос даёт ~0.5+, смена диктора ≤ 0.22).
+/// минимум; один голос даёт ~0.5+, смена диктора ≤ 0.22). Перекрытия
+/// обнуляются до эмбеддинга: иначе оба голоса дают «средний» вектор.
 pub(crate) fn split_long_by_speaker_change(
     samples: &[f32],
     utterances: Vec<Utterance>,
     extractor: &mut Option<EmbeddingExtractor>,
+    segmentation: Option<&Segmentation>,
     on_event: &dyn Fn(u8, &str),
 ) -> Vec<Utterance> {
     let Some(ext) = extractor else {
@@ -1403,8 +1420,6 @@ pub(crate) fn split_long_by_speaker_change(
             out.push(u);
             continue;
         }
-        // Шаг растягивается только на длинных репликах; на коротких остаётся
-        // 0.5 с, чтобы не размывать границу смены голоса.
         let step = split_step(dur);
         let mut wins: Vec<(f64, Vec<f64>)> = vec![];
         let mut t = u.start;
@@ -1412,8 +1427,14 @@ pub(crate) fn split_long_by_speaker_change(
             let lo = (t * sr) as usize;
             let hi = ((t + SPLIT_WINDOW_SEC).min(u.end) * sr) as usize;
             if hi > lo && hi <= samples.len() {
-                if let Ok(Some(e)) = ext.embed(&samples[lo..hi]) {
-                    wins.push((t, e));
+                let mut chunk = samples[lo..hi].to_vec();
+                let clean_len = segmentation
+                    .map(|seg| seg.exclude_overlap(&mut chunk, lo))
+                    .unwrap_or(chunk.len());
+                if clean_len >= (sr * 0.4) as usize {
+                    if let Ok(Some(e)) = ext.embed(&chunk) {
+                        wins.push((t, e));
+                    }
                 }
             }
             t += step;
@@ -1422,24 +1443,7 @@ pub(crate) fn split_long_by_speaker_change(
             out.push(u);
             continue;
         }
-        let sims: Vec<f64> = wins
-            .windows(2)
-            .map(|w| mr_ml::cosine_similarity(&w[0].1, &w[1].1))
-            .collect();
-        let mut cuts = vec![];
-        for (i, &s) in sims.iter().enumerate() {
-            if s < 0.35 {
-                let prev = if i > 0 { sims[i - 1] } else { 1.0 };
-                let next = sims.get(i + 1).copied().unwrap_or(1.0);
-                if s <= prev && s <= next {
-                    let b =
-                        ((wins[i].0 + wins[i + 1].0) / 2.0 + 0.8).clamp(u.start + 0.5, u.end - 0.5);
-                    if cuts.last().map(|&c| b - c >= 1.0).unwrap_or(true) {
-                        cuts.push((b * 100.0).round() / 100.0);
-                    }
-                }
-            }
-        }
+        let cuts = speaker_change_cuts(u.start, u.end, &wins);
         if cuts.is_empty() {
             out.push(u);
             continue;
@@ -1523,7 +1527,7 @@ mod tests {
     use super::{
         dedupe_cross_channel, group_segments, merge_quiet_short, merge_tiny_clusters,
         merge_utterances, read_profiles_file, reconcile_channels, refresh_speaker_stats,
-        split_at_pauses, split_words_by_bounds, SpeakerInfo, Utterance,
+        speaker_change_cuts, split_at_pauses, split_words_by_bounds, SpeakerInfo, Utterance,
     };
 
     fn info(name: &str, ch: i32, emb: Vec<f64>, count: usize, sec: f64) -> SpeakerInfo {
@@ -1872,7 +1876,7 @@ mod tests {
             ctc_used: false,
         };
         let out = split_at_pauses(&samples, &[utt()]);
-        assert!(out.len() >= 2);
+        assert!(out.len() >= 3);
         assert!(out.iter().all(|u| u.end - u.start <= 6.01));
         assert_eq!(
             out.iter()
@@ -1885,6 +1889,19 @@ mod tests {
         let quiet: Vec<f32> = samples.iter().map(|x| x * 0.01).collect();
         let out_quiet = split_at_pauses(&quiet, &[utt()]);
         assert_eq!(out.len(), out_quiet.len());
+    }
+
+    #[test]
+    fn split_long_finds_one_voice_change_in_four_seconds() {
+        let a = vec![1.0, 0.0];
+        let b = vec![0.0, 1.0];
+        let wins: Vec<(f64, Vec<f64>)> = [0.0, 0.5, 1.0, 1.5, 2.0]
+            .into_iter()
+            .map(|t| (t, if t < 2.0 { a.clone() } else { b.clone() }))
+            .collect();
+        let cuts = speaker_change_cuts(0.0, 4.0, &wins);
+        assert_eq!(cuts.len(), 1);
+        assert!((2.0..=2.9).contains(&cuts[0]), "{cuts:?}");
     }
 
     #[test]
