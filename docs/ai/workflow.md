@@ -30,6 +30,10 @@
 Задача считается завершённой только после успешного прогона проверок:
 
 ```bash
+# 0. Форматирование Rust (CI-гейт: rustfmt)
+cargo fmt --all --manifest-path src-tauri/Cargo.toml
+git diff --check
+
 # 1. Линтер Rust ядра (строгий режим без предупреждений)
 cargo clippy --workspace --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
 

@@ -190,7 +190,8 @@ fn handle_voicepacks_import(mut request: tiny_http::Request) {
             return;
         }
     }
-    let raw = media::header_value(&request, "X-Filename").unwrap_or_else(|| "pack.voicepack.zip".to_string());
+    let raw = media::header_value(&request, "X-Filename")
+        .unwrap_or_else(|| "pack.voicepack.zip".to_string());
     let ext = if raw.to_lowercase().ends_with(".json") {
         "json"
     } else if raw.to_lowercase().ends_with(".zip") {
@@ -294,7 +295,11 @@ fn serve_pack_snippet(request: tiny_http::Request, query: &str) {
     };
     let path = dir.join("snippets").join(&file);
     if !path.is_file() {
-        json_response(request, json!({"ok": false, "error": "Сниппет не найден"}), 404);
+        json_response(
+            request,
+            json!({"ok": false, "error": "Сниппет не найден"}),
+            404,
+        );
         return;
     }
     match std::fs::read(&path) {

@@ -478,7 +478,8 @@ pub(super) fn build_wav_snippet(
         return None;
     }
     let n_bytes = (last - first) * block;
-    file.seek(SeekFrom::Start(info.data_offset + first * block)).ok()?;
+    file.seek(SeekFrom::Start(info.data_offset + first * block))
+        .ok()?;
     let mut pcm = vec![0u8; n_bytes as usize];
     file.read_exact(&mut pcm).ok()?;
     match channel {

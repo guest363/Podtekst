@@ -8,9 +8,7 @@ use std::path::Path;
 use super::session::OrtSession;
 use crate::hotwords::{normalize_term, sanitize_hotwords};
 
-pub use crate::hotwords::{
-    DEFAULT_CONFIDENCE_THRESHOLD, MAX_HOTWORD_CHARS, MAX_HOTWORDS,
-};
+pub use crate::hotwords::{DEFAULT_CONFIDENCE_THRESHOLD, MAX_HOTWORDS, MAX_HOTWORD_CHARS};
 
 pub const HOTWORD_BONUS: f32 = 3.0;
 pub const BEAM_WIDTH: usize = 8;
@@ -90,9 +88,7 @@ fn to_log_row(row: &[f32]) -> Vec<f32> {
     if max <= 0.0 {
         return row.to_vec();
     }
-    let lse = row
-        .iter()
-        .fold(f32::NEG_INFINITY, |a, &x| log_add(a, x));
+    let lse = row.iter().fold(f32::NEG_INFINITY, |a, &x| log_add(a, x));
     row.iter().map(|x| x - lse).collect()
 }
 
@@ -146,11 +142,7 @@ fn render_words(ids: &[i64], probs: &[f64], vocab: &[String], blank: usize) -> V
     words
 }
 
-pub fn decode_ctc_greedy(
-    logprobs: &[Vec<f32>],
-    vocab: &[String],
-    blank: usize,
-) -> CtcHypothesis {
+pub fn decode_ctc_greedy(logprobs: &[Vec<f32>], vocab: &[String], blank: usize) -> CtcHypothesis {
     let mut ids = Vec::new();
     let mut probs = Vec::new();
     let mut prev: i64 = -1;
@@ -183,7 +175,11 @@ pub fn decode_ctc_greedy(
     }
     let words = render_words(&ids, &probs, vocab, blank);
     CtcHypothesis {
-        text: words.iter().map(|w| w.text.clone()).collect::<Vec<_>>().join(" "),
+        text: words
+            .iter()
+            .map(|w| w.text.clone())
+            .collect::<Vec<_>>()
+            .join(" "),
         words,
     }
 }
@@ -204,8 +200,7 @@ pub fn decode_ctc_beam(
     bonus: f32,
 ) -> CtcHypothesis {
     let bw = beam_width.max(1);
-    let mut beams: Vec<(Vec<i64>, f32, f32)> =
-        vec![(Vec::new(), 0.0, f32::NEG_INFINITY)];
+    let mut beams: Vec<(Vec<i64>, f32, f32)> = vec![(Vec::new(), 0.0, f32::NEG_INFINITY)];
     for row in logprobs {
         let lp = to_log_row(row);
         let mut order: Vec<usize> = (0..lp.len()).collect();
@@ -248,9 +243,7 @@ pub fn decode_ctc_beam(
             }
         }
         let mut v: Vec<_> = next.into_iter().collect();
-        v.sort_by(|a, b| {
-            log_add(b.1.0, b.1.1).total_cmp(&log_add(a.1.0, a.1.1))
-        });
+        v.sort_by(|a, b| log_add(b.1 .0, b.1 .1).total_cmp(&log_add(a.1 .0, a.1 .1)));
         v.truncate(bw);
         beams = v.into_iter().map(|(p, (a, b))| (p, a, b)).collect();
     }
@@ -270,12 +263,7 @@ pub fn decode_ctc_beam(
     }
     let greedy = decode_ctc_greedy(logprobs, vocab, blank);
     let beam_texts: Vec<String> = {
-        let w = render_words(
-            &best_prefix,
-            &vec![1.0; best_prefix.len()],
-            vocab,
-            blank,
-        );
+        let w = render_words(&best_prefix, &vec![1.0; best_prefix.len()], vocab, blank);
         w.into_iter().map(|x| x.text).collect()
     };
     let confs = align_conf(&beam_texts, &greedy.words);
@@ -285,7 +273,11 @@ pub fn decode_ctc_beam(
         .map(|(text, confidence)| CtcWord { text, confidence })
         .collect();
     CtcHypothesis {
-        text: words.iter().map(|w| w.text.clone()).collect::<Vec<_>>().join(" "),
+        text: words
+            .iter()
+            .map(|w| w.text.clone())
+            .collect::<Vec<_>>()
+            .join(" "),
         words,
     }
 }
@@ -338,10 +330,7 @@ pub fn align_to_reference(
     threshold: f64,
 ) -> Vec<AlignedWord> {
     let clean = sanitize_hotwords(hotwords);
-    let full: HashMap<String, &str> = clean
-        .iter()
-        .map(|h| (cmp_norm(h), h.trim()))
-        .collect();
+    let full: HashMap<String, &str> = clean.iter().map(|h| (cmp_norm(h), h.trim())).collect();
     let in_dict = |w: &str| -> bool {
         let n = cmp_norm(w);
         full.contains_key(&n)
@@ -373,7 +362,11 @@ pub fn align_to_reference(
                 }
             }
             let needs_review = confidence < threshold;
-            AlignedWord { text, confidence, needs_review }
+            AlignedWord {
+                text,
+                confidence,
+                needs_review,
+            }
         })
         .collect()
 }
@@ -412,9 +405,8 @@ impl GigaCTC {
                 }
             }
         }
-        let onnx = onnx.ok_or_else(|| {
-            "нет CTC-модели: скачайте её в «Настройки» → «Модели ИИ»".to_string()
-        })?;
+        let onnx = onnx
+            .ok_or_else(|| "нет CTC-модели: скачайте её в «Настройки» → «Модели ИИ»".to_string())?;
         let sess = OrtSession::load(&onnx, 0)?;
         let in_feat = if sess.input_names.iter().any(|n| n == "features") {
             "features".to_string()
@@ -435,8 +427,8 @@ impl GigaCTC {
                 .cloned()
                 .ok_or_else(|| "у CTC нет выходов".to_string())?
         };
-        let vocab_text = std::fs::read_to_string(dir.join("gigaam_ctc_vocab.txt"))
-            .map_err(|e| e.to_string())?;
+        let vocab_text =
+            std::fs::read_to_string(dir.join("gigaam_ctc_vocab.txt")).map_err(|e| e.to_string())?;
         let mut pairs: Vec<(usize, String)> = Vec::new();
         for line in vocab_text.lines() {
             let mut it = line.split_whitespace();
@@ -458,7 +450,14 @@ impl GigaCTC {
             .iter()
             .rposition(|p| p.contains("blk"))
             .unwrap_or_else(|| vocab.len().saturating_sub(1));
-        Ok(Self { sess, in_feat, in_len, out_lp, vocab, blank })
+        Ok(Self {
+            sess,
+            in_feat,
+            in_len,
+            out_lp,
+            vocab,
+            blank,
+        })
     }
 
     pub fn transcribe_segment(
@@ -467,11 +466,17 @@ impl GigaCTC {
         hotwords: &[String],
     ) -> Result<CtcHypothesis, String> {
         if samples.len() < 1600 {
-            return Ok(CtcHypothesis { text: String::new(), words: Vec::new() });
+            return Ok(CtcHypothesis {
+                text: String::new(),
+                words: Vec::new(),
+            });
         }
         let mel = super::features::nemo_mel(samples);
         if mel.is_empty() {
-            return Ok(CtcHypothesis { text: String::new(), words: Vec::new() });
+            return Ok(CtcHypothesis {
+                text: String::new(),
+                words: Vec::new(),
+            });
         }
         let tf = mel.len();
         let mut flat = Vec::with_capacity(64 * tf);
@@ -493,22 +498,23 @@ impl GigaCTC {
         let v = self.vocab.len();
         let frames: Vec<Vec<f32>> = if shape.len() == 3 && shape[0] == 1 && shape[2] as usize == v {
             let te = shape[1] as usize;
-            (0..te)
-                .map(|t| data[t * v..(t + 1) * v].to_vec())
-                .collect()
+            (0..te).map(|t| data[t * v..(t + 1) * v].to_vec()).collect()
         } else if shape.len() == 2 && shape[1] as usize == v {
             let te = shape[0] as usize;
-            (0..te)
-                .map(|t| data[t * v..(t + 1) * v].to_vec())
-                .collect()
+            (0..te).map(|t| data[t * v..(t + 1) * v].to_vec()).collect()
         } else if shape.len() == 3 && shape[0] == 1 && shape[1] as usize == v {
             let te = shape[2] as usize;
-            (0..te).map(|t| (0..v).map(|k| data[k * te + t]).collect()).collect()
+            (0..te)
+                .map(|t| (0..v).map(|k| data[k * te + t]).collect())
+                .collect()
         } else {
             return Err(format!("странный выход CTC: {shape:?}"));
         };
         if frames.is_empty() {
-            return Ok(CtcHypothesis { text: String::new(), words: Vec::new() });
+            return Ok(CtcHypothesis {
+                text: String::new(),
+                words: Vec::new(),
+            });
         }
         let hw_clean = sanitize_hotwords(hotwords);
         let mut hw_ids = Vec::new();
@@ -517,7 +523,14 @@ impl GigaCTC {
                 hw_ids.push(ids);
             }
         }
-        Ok(decode_ctc_beam(&frames, &self.vocab, self.blank, BEAM_WIDTH, &hw_ids, HOTWORD_BONUS))
+        Ok(decode_ctc_beam(
+            &frames,
+            &self.vocab,
+            self.blank,
+            BEAM_WIDTH,
+            &hw_ids,
+            HOTWORD_BONUS,
+        ))
     }
 }
 
@@ -574,8 +587,14 @@ mod tests {
         let ctc = CtcHypothesis {
             text: "сбер банк".to_string(),
             words: vec![
-                CtcWord { text: "сбер".to_string(), confidence: 0.9 },
-                CtcWord { text: "банк".to_string(), confidence: 0.2 },
+                CtcWord {
+                    text: "сбер".to_string(),
+                    confidence: 0.9,
+                },
+                CtcWord {
+                    text: "банк".to_string(),
+                    confidence: 0.2,
+                },
             ],
         };
         let aligned = align_to_reference(

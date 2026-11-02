@@ -162,7 +162,14 @@ pub(crate) fn split_utterance_by_word_speakers(
         let (speaker, silhouette) = tree
             .assign_dominant_speaker(start, end)
             .unwrap_or_else(|| (utterance.speaker.clone(), utterance.silhouette));
-        assigned.push((word, start, end, speaker, silhouette, utterance.words.get(i).cloned()));
+        assigned.push((
+            word,
+            start,
+            end,
+            speaker,
+            silhouette,
+            utterance.words.get(i).cloned(),
+        ));
     }
 
     let mut out: Vec<Utterance> = Vec::new();

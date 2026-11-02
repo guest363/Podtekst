@@ -44,7 +44,10 @@ mod tests {
             "x".repeat(65),
             "Гiga".to_string(),
         ];
-        assert_eq!(sanitize_hotwords(&raw), vec!["Сбер".to_string(), "Гiga".to_string()]);
+        assert_eq!(
+            sanitize_hotwords(&raw),
+            vec!["Сбер".to_string(), "Гiga".to_string()]
+        );
         let many: Vec<String> = (0..600).map(|i| format!("слово{i}")).collect();
         assert_eq!(sanitize_hotwords(&many).len(), MAX_HOTWORDS);
         assert_eq!(normalize_term("Ёлка  Палка"), "елка палка");

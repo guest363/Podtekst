@@ -945,7 +945,9 @@ mod live_api_tests {
         ));
         assert_eq!(v.get("ok").and_then(|x| x.as_bool()), Some(true));
         assert_eq!(
-            v.get("prototypes").and_then(|x| x.as_array()).map(|a| a.len()),
+            v.get("prototypes")
+                .and_then(|x| x.as_array())
+                .map(|a| a.len()),
             Some(2)
         );
         let (st, v) = json(http(
@@ -975,10 +977,7 @@ mod live_api_tests {
             .cloned()
             .unwrap_or_default();
         assert_eq!(protos.len(), 1);
-        assert_eq!(
-            protos[0].get("id").and_then(|x| x.as_str()),
-            Some("p2")
-        );
+        assert_eq!(protos[0].get("id").and_then(|x| x.as_str()), Some("p2"));
 
         let (st, v) = json(http(
             port,

@@ -651,7 +651,8 @@ fn snippet_for_new_prototype(
     Some(format!("snippets/{proto_id}.wav"))
 }
 
-fn voiceprint_files() -> Vec<std::path::PathBuf> {    let mut files = vec![
+fn voiceprint_files() -> Vec<std::path::PathBuf> {
+    let mut files = vec![
         app_data_dir().join("voiceprints.json"),
         app_data_dir().join("packs/default/voiceprints.json"),
     ];
@@ -685,7 +686,11 @@ fn pack_id_of(vp_file: &Path) -> Option<String> {
 pub(super) fn serve_voiceprint_detail(request: tiny_http::Request, query: &str) {
     let name = super::query_param(query, "name").unwrap_or_default();
     if name.trim().is_empty() {
-        json_response(request, json!({"ok": false, "error": "Имя не указано"}), 400);
+        json_response(
+            request,
+            json!({"ok": false, "error": "Имя не указано"}),
+            400,
+        );
         return;
     }
     for vp_file in voiceprint_files() {
@@ -739,12 +744,19 @@ pub(super) fn serve_voiceprint_detail(request: tiny_http::Request, query: &str) 
             return;
         }
     }
-    json_response(request, json!({"ok": false, "error": "Голос не найден"}), 404);
+    json_response(
+        request,
+        json!({"ok": false, "error": "Голос не найден"}),
+        404,
+    );
 }
 
 /// Удаляет один прототип; центроид — среднее оставшихся, а не старое
 /// скользящее среднее. Пустой профиль убирается целиком вместе со сниппетом.
-fn remove_prototype(profile: &mut serde_json::Value, proto_id: &str) -> Option<(Option<String>, bool)> {
+fn remove_prototype(
+    profile: &mut serde_json::Value,
+    proto_id: &str,
+) -> Option<(Option<String>, bool)> {
     let arr = profile.get_mut("prototypes")?.as_array_mut()?;
     let pos = arr
         .iter()
@@ -757,9 +769,9 @@ fn remove_prototype(profile: &mut serde_json::Value, proto_id: &str) -> Option<(
     let remaining: Vec<Vec<f64>> = arr
         .iter()
         .filter_map(|x| {
-            x.get("embedding").and_then(|v| v.as_array()).map(|a| {
-                a.iter().filter_map(|n| n.as_f64()).collect()
-            })
+            x.get("embedding")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|n| n.as_f64()).collect())
         })
         .filter(|v: &Vec<f64>| v.len() == mr_ml::EMBEDDING_DIM)
         .collect();
@@ -798,7 +810,11 @@ pub(super) fn handle_voiceprint_sample_delete(
         .trim()
         .to_string();
     if name.is_empty() || proto_id.is_empty() {
-        json_response(request, json!({"ok": false, "error": "Нужно имя и id образца"}), 400);
+        json_response(
+            request,
+            json!({"ok": false, "error": "Нужно имя и id образца"}),
+            400,
+        );
         return;
     }
     let mut found = false;
@@ -813,9 +829,10 @@ pub(super) fn handle_voiceprint_sample_delete(
         let mut changed = false;
         let mut drop_profile = false;
         let mut snippet: Option<String> = None;
-        if let Some(p) = profiles.iter_mut().find(|p| {
-            same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), &name)
-        }) {
+        if let Some(p) = profiles
+            .iter_mut()
+            .find(|p| same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), &name))
+        {
             if let Some((sn, empty)) = remove_prototype(p, &proto_id) {
                 snippet = sn;
                 drop_profile = empty;
