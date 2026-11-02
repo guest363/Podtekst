@@ -772,6 +772,27 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 (tiny_http::Method::Post, "/api/voicepacks/import") => {
                     handle_voicepacks_import(request);
                 }
+                (tiny_http::Method::Post, "/api/voicepacks/delete") => {
+                    let body = read_body_to_json(&mut request);
+                    let pack_id = body
+                        .get("pack_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    match packs::delete_pack(&app_data_dir(), &pack_id) {
+                        Ok(true) => json_response(request, json!({"ok": true}), 200),
+                        Ok(false) => json_response(
+                            request,
+                            json!({"ok": false, "error": "Пакет не найден. Базовый пакет удалить нельзя — выключите его или удалите голоса по одному."}),
+                            400,
+                        ),
+                        Err(e) => json_response(
+                            request,
+                            json!({"ok": false, "error": e.to_string()}),
+                            400,
+                        ),
+                    }
+                }
                 (tiny_http::Method::Get, "/api/voicepacks/snippet") => {
                     serve_pack_snippet(request, &query);
                 }

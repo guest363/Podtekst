@@ -1,6 +1,6 @@
 import { isMobile, readJsonSafe } from './api'
 import type { ModelInfo, Voicepack } from './api'
-import { toast } from './toast.svelte.ts'
+import { toast, toastConfirm } from './toast.svelte.ts'
 import { loadPeople } from './people.svelte.ts'
 
 export const settings = $state({
@@ -226,6 +226,38 @@ export async function togglePack(p: Voicepack): Promise<void> {
   })
   await loadVoicePacks()
   await loadPeople()
+}
+
+export function deletePack(p: Voicepack): void {
+  if (p.id === 'default') {
+    toast('Базовый пакет удалить нельзя: выключите его или удалите голоса по одному', 'error')
+    return
+  }
+  toastConfirm(
+    `Удалить пакет «${p.name}»? Его голоса и люди пропадут из распознавания.`,
+    'Удалить',
+    () =>
+      void (async () => {
+        try {
+          const d = await readJsonSafe(
+            await fetch('/api/voicepacks/delete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ pack_id: p.id }),
+            }),
+          )
+          if (!d.ok) {
+            toast(d.error || 'Не удалось удалить пакет', 'error')
+            return
+          }
+          toast(`Пакет «${p.name}» удалён`)
+          await loadVoicePacks()
+          await loadPeople()
+        } catch (e) {
+          toast('Не удалось удалить пакет: ' + (e as Error).message, 'error')
+        }
+      })(),
+  )
 }
 
 export async function exportPack(p: Voicepack): Promise<void> {

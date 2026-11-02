@@ -978,6 +978,50 @@ mod live_api_tests {
             .unwrap_or_default();
         assert_eq!(protos.len(), 1);
         assert_eq!(protos[0].get("id").and_then(|x| x.as_str()), Some("p2"));
+        let (_, v) = json(http(port, "GET", "/api/voicepacks", &[], &[]));
+        let pack_id = v
+            .get("packs")
+            .and_then(|x| x.as_array())
+            .and_then(|a| {
+                a.iter()
+                    .find(|p| p.get("name").and_then(|x| x.as_str()) == Some("Тестовый Пакет"))
+            })
+            .and_then(|p| p.get("id"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        assert!(!pack_id.is_empty(), "импортированный пакет не в списке");
+        let (st, v) = json(http(
+            port,
+            "POST",
+            "/api/voicepacks/delete",
+            &[("Content-Type", "application/json")],
+            json!({"pack_id": pack_id}).to_string().as_bytes(),
+        ));
+        assert_eq!(
+            (st, v.get("ok").and_then(|x| x.as_bool())),
+            (200, Some(true)),
+            "voicepacks/delete: {v}"
+        );
+        let (_, v) = json(http(port, "GET", "/api/voicepacks", &[], &[]));
+        assert!(!v
+            .get("packs")
+            .and_then(|x| x.as_array())
+            .map(|a| a.iter().any(|p| p
+                .get("id")
+                .and_then(|x| x.as_str())
+                .map(|id| id == pack_id)
+                .unwrap_or(false)))
+            .unwrap_or(false));
+        let (st, v) = json(http(
+            port,
+            "POST",
+            "/api/voicepacks/delete",
+            &[("Content-Type", "application/json")],
+            json!({"pack_id": "default"}).to_string().as_bytes(),
+        ));
+        assert_eq!(st, 400);
+        assert_eq!(v.get("ok").and_then(|x| x.as_bool()), Some(false));
 
         let (st, v) = json(http(
             port,

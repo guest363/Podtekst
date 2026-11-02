@@ -4,6 +4,7 @@
   import { downloadModel, engine, ensureStream } from '../lib/transcript.svelte.ts'
   import {
     createPack,
+    deletePack,
     downloadFfmpeg,
     exportPack,
     ffmpeg,
@@ -260,6 +261,11 @@
                     <button class="btn-secondary btn-sm" onclick={() => void exportPack(p)}>
                       Экспорт
                     </button>
+                    {#if p.id !== 'default'}
+                      <button class="btn-secondary btn-sm" onclick={() => deletePack(p)}>
+                        Удалить
+                      </button>
+                    {/if}
                   </div>
                 </div>
               {/each}
