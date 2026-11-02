@@ -515,6 +515,8 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
         .unwrap_or("")
         .trim()
         .to_string();
+    // Без onnx эмбеддинг из аудио не извлекается, поэтому mut не нужен.
+    #[cfg_attr(not(feature = "onnx"), allow(unused_mut))]
     let mut emb: Vec<f64> = body
         .get("embedding")
         .and_then(|v| v.as_array())

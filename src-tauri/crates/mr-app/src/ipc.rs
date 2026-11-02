@@ -12,6 +12,8 @@ const IPC_REPLIES: &[&str] = &["STOPPED", "STARTED", "OK", "UNKNOWN"];
 
 pub(crate) fn send_ipc(cmd: &str) -> Option<String> {
     let mut stream = TcpStream::connect(format!("127.0.0.1:{IPC_PORT}")).ok()?;
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+    let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(5)));
     stream.write_all(format!("{cmd}\n").as_bytes()).ok()?;
     // Читаем до перевода строки: одиночный read() мог получить половину ответа.
     let mut buf = Vec::new();
@@ -56,14 +58,16 @@ pub(crate) fn set_ui_ipc_callback(cb: UiIpcCallback) {
     }
 }
 
-pub(crate) fn call_ui_ipc(cmd: &str) {
+pub(crate) fn call_ui_ipc(cmd: &str) -> bool {
     if let Some(slot) = UI_IPC_CALLBACK.get() {
         if let Ok(guard) = slot.lock() {
             if let Some(cb) = guard.as_ref() {
                 cb(cmd);
+                return true;
             }
         }
     }
+    false
 }
 
 pub(crate) fn handle_ipc_client(
@@ -73,6 +77,7 @@ pub(crate) fn handle_ipc_client(
 ) {
     let mut buf = Vec::new();
     let mut byte = [0u8; 1];
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
     while stream.read(&mut byte).is_ok_and(|n| n == 1) {
         if byte[0] == b'\n' || buf.len() > 256 {
             break;
@@ -98,8 +103,11 @@ pub(crate) fn handle_ipc_client(
             result_reply(&stop_recording_with_notify(&mut st), "STOPPED")
         }
         "SHOW" | "HIDE" | "QUIT" => {
-            call_ui_ipc(&cmd);
-            "OK".to_string()
+            if call_ui_ipc(&cmd) {
+                "OK".to_string()
+            } else {
+                "ERROR: окно недоступно в headless-режиме".to_string()
+            }
         }
         "PING" => "OK".to_string(),
         _ => "UNKNOWN".to_string(),

@@ -75,6 +75,13 @@ struct Cli {
 
 const DEFAULT_HTTP_PORT: u16 = 8765;
 
+fn print_ipc(resp: &str) {
+    println!("{resp}");
+    if resp.starts_with("ERROR:") {
+        std::process::exit(1);
+    }
+}
+
 fn opener_url(url: &str) {
     #[cfg(target_os = "windows")]
     {
@@ -180,21 +187,21 @@ pub fn run_cli() {
 
     if cli.toggle {
         if let Some(resp) = send_ipc("TOGGLE") {
-            println!("{resp}");
+            print_ipc(&resp);
             return;
         }
         start_on_launch = true;
     }
     if cli.start {
         if let Some(resp) = send_ipc("START") {
-            println!("{resp}");
+            print_ipc(&resp);
             return;
         }
         start_on_launch = true;
     }
     if cli.stop {
         if let Some(resp) = send_ipc("STOP") {
-            println!("{resp}");
+            print_ipc(&resp);
             return;
         }
         eprintln!("Не удалось остановить запись: запущенное приложение не найдено.");
@@ -209,7 +216,7 @@ pub fn run_cli() {
             "QUIT"
         };
         if let Some(resp) = send_ipc(cmd) {
-            println!("{resp}");
+            print_ipc(&resp);
             return;
         }
         if cli.quit {
@@ -1232,6 +1239,7 @@ mod live_api_tests {
                     }
                     #[cfg(not(feature = "onnx"))]
                     {
+                        let _ = &v;
                         assert_eq!(st, 501);
                     }
                 }

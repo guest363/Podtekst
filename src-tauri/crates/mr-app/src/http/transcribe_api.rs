@@ -1,8 +1,13 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+
+#[cfg(feature = "onnx")]
+use std::path::Path;
 
 use serde_json::json;
 
-use super::media::{inside_save_dir, is_video_path, video_supported};
+use super::media::inside_save_dir;
+#[cfg(feature = "onnx")]
+use super::media::{is_video_path, video_supported};
 use super::{json_response, query_param};
 use crate::config::{app_data_dir, save_dir};
 
@@ -277,6 +282,7 @@ pub(super) fn handle_hotwords_save(request: tiny_http::Request, body: serde_json
     );
 }
 
+#[cfg(feature = "onnx")]
 fn hotwords_from_body(body: &serde_json::Value) -> Vec<String> {
     match body.get("hotwords").and_then(|v| v.as_array()) {
         None => crate::config::configured_hotwords(),
@@ -318,6 +324,8 @@ pub(super) fn handle_models_update(request: tiny_http::Request, body: serde_json
         let app_data = app_data_dir();
         let manifest = mr_models::load_bundled_manifest();
         let res = mr_models::download_or_update_model(&app_data, &manifest, &model_id, &|ev| {
+            #[cfg(not(feature = "onnx"))]
+            let _ = &ev;
             #[cfg(feature = "onnx")]
             crate::transcribe::emit_model_event(serde_json::json!({
                 "type": "progress", "stage": "model-download", "pct": ev.pct,
