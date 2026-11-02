@@ -15,6 +15,8 @@ pub(crate) mod screen;
 mod tauri_shell;
 #[cfg(feature = "onnx")]
 pub mod transcribe;
+#[cfg(feature = "onnx")]
+pub use transcribe::{transcribe_file, TranscribeOptions};
 
 use config::{app_data_dir, cleanup_stale_files, configured_record_mode};
 use http::run_http_server;

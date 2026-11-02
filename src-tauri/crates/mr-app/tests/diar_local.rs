@@ -10,7 +10,7 @@
 
 use std::path::{Path, PathBuf};
 
-use mr_app_lib::transcribe::{transcribe_file, TranscribeOptions};
+use mr_app_lib::{transcribe_file, TranscribeOptions};
 
 #[derive(serde::Deserialize)]
 struct Case {
