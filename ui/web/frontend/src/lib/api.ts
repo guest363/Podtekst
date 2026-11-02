@@ -50,6 +50,13 @@ export interface SpeakerSample {
 
 export interface SpeakerCandidate {
   name: string
+  similarity?: number
+}
+
+export interface VoiceprintSummary {
+  name: string
+  samples_count: number
+  updated_at?: string
 }
 
 export interface SpeakerInfo {
@@ -58,6 +65,8 @@ export interface SpeakerInfo {
   channel?: number | null
   matched?: boolean
   matched_name?: string | null
+  similarity?: number
+  silhouette?: number
   candidates?: SpeakerCandidate[] | Array<[string, number]> | null
   embedding?: number[] | null
   sample?: SpeakerSample | null

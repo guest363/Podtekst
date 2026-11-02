@@ -256,9 +256,9 @@
             <span class="speaker-name">{displayName}</span>
             <span class="speaker-status {spk.matched ? 'ok' : ''}">
               {#if spk.matched}
-                Узнан: {spk.matched_name || spk.name}
+                Узнан: {spk.matched_name || spk.name}{typeof spk.similarity === 'number' ? ` • ${spk.similarity.toFixed(2)}` : ''}{(spk.utterances_count ? ` • реплик: ${spk.utterances_count}` : '') + (typeof spk.silhouette === 'number' ? ` • силуэт: ${spk.silhouette.toFixed(2)}` : '')}
               {:else}
-                {(spk.channel === 0 ? 'Микрофон' : spk.channel === 1 ? 'Собеседник' : 'Спикер') + (spk.utterances_count ? ` • реплик: ${spk.utterances_count}` : '')}
+                {(spk.channel === 0 ? 'Микрофон' : spk.channel === 1 ? 'Собеседник' : 'Спикер') + (spk.utterances_count ? ` • реплик: ${spk.utterances_count}` : '') + (typeof spk.silhouette === 'number' ? ` • силуэт: ${spk.silhouette.toFixed(2)}` : '')}
               {/if}
             </span>
           </div>
@@ -266,20 +266,27 @@
           {#if spk.candidates && spk.candidates.length > 0}
             {@const names = spk.candidates
               .slice(0, 4)
+              .map((c) => {
+                if (Array.isArray(c)) return `${String(c[0])} · ${Number(c[1]).toFixed(2)}`
+                const sim = (c as { similarity?: number }).similarity
+                return typeof sim === 'number' ? `${(c as { name: string }).name} · ${sim.toFixed(2)}` : (c as { name: string }).name
+              })}
+            {@const fullNames = spk.candidates
+              .slice(0, 4)
               .map((c) => (Array.isArray(c) ? String(c[0]) : (c as { name: string }).name))}
             <div class="assign-label">Похожие голоса:</div>
             <div class="candidates">
-              {#each names as cand (cand)}
+              {#each names as label, i (fullNames[i])}
                 <button
                   class="candidate"
                   title="Подставить это имя"
                   onclick={(e) => {
                     const card = (e.currentTarget as HTMLElement).closest('.speaker-card')
                     const inp = card?.querySelector<HTMLInputElement>('.assign-name-input')
-                    if (inp) inp.value = cand
+                    if (inp) inp.value = fullNames[i]
                   }}
                 >
-                  {cand}
+                  {label}
                 </button>
               {/each}
             </div>
