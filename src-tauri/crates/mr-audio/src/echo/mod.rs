@@ -75,7 +75,7 @@ pub fn suppress_echo(mic: &mut [f32], reference: &[f32], sample_rate: u32) -> Ec
     }
 }
 
-fn dc_block(samples: &mut [f32]) {
+pub(crate) fn dc_block(samples: &mut [f32]) {
     let (mut x_prev, mut y_prev) = (0.0f32, 0.0f32);
     for s in samples.iter_mut() {
         let x = *s;

@@ -107,4 +107,52 @@ fn live_corpus_diagnostics() {
         100.0 * near as f32 / total,
         100.0 * dbl as f32 / total,
     );
+    // Шумовой пол vs эхо: если эхо на уровне пола, AEC физически нечего снимать.
+    let mut far_mic = vec![];
+    for &(rm, rr) in &frames {
+        if rm <= tm && rr > tr {
+            far_mic.push(rm);
+        }
+    }
+    far_mic.sort_by(f32::total_cmp);
+    let far_med = far_mic.get(far_mic.len() / 2).copied().unwrap_or(0.0);
+    println!(
+        "пол RMS: микрофон={:.4} система={:.4}; медиана микрофона на far-only={:.4} (эхо+шум)",
+        floor(0),
+        floor(1),
+        far_med,
+    );
+
+    // Качество подавления на живых: маска кадров по ИСХОДНИКУ, замер по ОБРАБОТКЕ.
+    // far-only: микрофон там — почти чистое эхо, его энергия должна упасть.
+    // near-only: референс молчит, микрофон должен остаться цел.
+    let mut mic2 = mic[..n].to_vec();
+    let report = super::suppress_echo(&mut mic2, &reference[..n], 16000);
+    let (mut fb, mut fa, mut nb, mut na) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+    // dc_block фильтра меняет постоянку: «до» считаем тоже после него.
+    let mut mic_dc = mic[..n].to_vec();
+    super::dc_block(&mut mic_dc);
+    for (k, &(rm, rr)) in frames.iter().enumerate() {
+        let t = k * frame;
+        let e = (t + frame).min(n);
+        let b: f64 = mic_dc[t..e].iter().map(|v| (*v as f64).powi(2)).sum();
+        let a: f64 = mic2[t..e].iter().map(|v| (*v as f64).powi(2)).sum();
+        match (rm > tm, rr > tr) {
+            (false, true) => {
+                fb += b;
+                fa += a;
+            }
+            (true, false) => {
+                nb += b;
+                na += a;
+            }
+            _ => {}
+        }
+    }
+    println!(
+        "подавление: far-only ERLE={:.1} дБ ближняя речь={:+.1} дБ guard={:?}",
+        10.0 * (fb / fa.max(1e-12)).log10(),
+        10.0 * (na / nb.max(1e-12)).log10(),
+        if report.echo_windows > 0 { "держит" } else { "откат" },
+    );
 }
