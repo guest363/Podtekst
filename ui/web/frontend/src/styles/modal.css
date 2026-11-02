@@ -59,6 +59,9 @@ body:has(.app-drawer-overlay) {
 .app-drawer.rec-drawer {
   width: clamp(540px, 58vw, 800px);
 }
+.app-drawer.settings-drawer {
+  width: clamp(560px, 56vw, 880px);
+}
 
 @keyframes drawer-in {
   from {
