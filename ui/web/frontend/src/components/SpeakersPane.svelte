@@ -4,7 +4,8 @@
   import { toast, toastConfirm } from '../lib/toast.svelte.ts'
   import { emit, ui } from '../lib/ui.svelte.ts'
   import { loadPeople, peopleState } from '../lib/people.svelte.ts'
-  import { onDestroy } from 'svelte'
+  import { onDestroy, tick } from 'svelte'
+  import { editTranscript, transcript } from '../lib/transcript.svelte.ts'
 
   interface Props {
     speakers: SpeakerInfo[]
@@ -19,7 +20,23 @@
     const byKey = new Map<string, MergedSpeaker>()
     for (const spk of speakers) {
       const key = String(spk.matched_name || spk.name || 'Спикер').trim().toLowerCase()
-      const own = spk.samples?.length ? spk.samples : spk.sample ? [spk.sample] : []
+      let own = spk.samples?.length ? spk.samples : spk.sample ? [spk.sample] : []
+      if (own.length === 0 && transcript.utterances.length > 0) {
+        own = transcript.utterances
+          .filter((u) => (u.speaker || '') === (spk.name || ''))
+          .slice(0, 3)
+          .map((u) => {
+            const end = u.end ?? u.start
+            return {
+              start: u.start,
+              end,
+              dur: Math.max(0, end - u.start),
+              text: u.text,
+              full_text: u.text,
+              channel: u.channel,
+            }
+          })
+      }
       const cur = byKey.get(key)
       if (!cur) {
         byKey.set(key, { ...spk, key, samples: [...own] })
@@ -141,12 +158,12 @@
 
   async function saveVoiceprint(
     oldName: string,
-    input: HTMLInputElement | null,
+    nameOrInput: string | HTMLInputElement | null,
     embedding: number[] | null | undefined,
     saveBtn: HTMLButtonElement,
     sample?: { start: number; end: number; channel?: number | null },
   ): Promise<void> {
-    const finalName = (input?.value.trim() || '').trim()
+    const finalName = (typeof nameOrInput === 'string' ? nameOrInput : nameOrInput?.value.trim() || '').trim()
     if (!finalName) {
       toast('Выберите человека из списка или впишите имя')
       return
@@ -169,7 +186,7 @@
       })
       const d = await readJsonSafe(r)
       if (d.ok) {
-        if (hasEmb) {
+        if (d.voiceprint_saved || hasEmb) {
           toast(`Голос спикера «${oldName}» привязан к «${finalName}». Текст обновлён.`)
         } else {
           toast(`Спикер «${oldName}» переименован в «${finalName}». Участник сохранён.`)
@@ -208,6 +225,141 @@
       toast('Сетевая ошибка: ' + (e as Error).message, 'error')
     }
   }
+
+  async function detachSample(s: { start: number; end: number; channel?: number | null }): Promise<void> {
+    if (!ui.currentTranscriptPath) return
+    const utts = transcript.utterances
+    const idx = utts.findIndex(
+      (u) => Math.abs(u.start - s.start) < 0.05 && (s.channel == null || u.channel == null || u.channel === s.channel),
+    )
+    if (idx < 0) {
+      toast('Не удалось найти реплику для открепления', 'error')
+      return
+    }
+    const allSpeakers = new Set(utts.map((u) => u.speaker || ''))
+    let newName = 'Новый собеседник'
+    if (allSpeakers.has(newName)) {
+      let num = 2
+      while (allSpeakers.has(`Новый собеседник ${num}`)) num += 1
+      newName = `Новый собеседник ${num}`
+    }
+    try {
+      await editTranscript(ui.currentTranscriptPath, { index: idx, speaker: newName })
+      toast(`Реплика вынесена в карточку «${newName}»`)
+      await tick()
+      const cards = Array.from(document.querySelectorAll<HTMLElement>('.speaker-card'))
+      const targetCard =
+        cards.find((c) => c.querySelector('.speaker-name')?.textContent?.includes(newName)) ||
+        document.querySelector<HTMLElement>('.speaker-card:not(.matched)')
+      const input = targetCard?.querySelector<HTMLInputElement>('.assign-name-input')
+      input?.focus()
+      targetCard?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    } catch (e) {
+      toast('Не удалось вынести реплику: ' + (e as Error).message, 'error')
+    }
+  }
+
+  let inputValues = $state<Record<string, string>>({})
+
+  function getCardValue(key: string, fallback: string): string {
+    return inputValues[key] ?? fallback
+  }
+
+  function setCardValue(key: string, val: string): void {
+    inputValues[key] = val
+  }
+
+  interface DropdownState {
+    spkKey: string
+    x: number
+    y: number
+    w: number
+  }
+  let activeDropdown = $state<DropdownState | null>(null)
+  let dropdownEl = $state<HTMLElement | null>(null)
+
+  async function openDropdownFor(key: string, anchorEl: HTMLElement): Promise<void> {
+    const card = anchorEl.closest('.speaker-card') as HTMLElement | null
+    const cardRect = card?.getBoundingClientRect()
+    const rect = anchorEl.getBoundingClientRect()
+    const estW = Math.max(270, cardRect ? cardRect.right - rect.left : rect.width)
+    activeDropdown = {
+      spkKey: key,
+      x: Math.max(8, Math.min(rect.left, window.innerWidth - estW - 8)),
+      y: rect.bottom + 4,
+      w: estW,
+    }
+    await tick()
+    if (dropdownEl && activeDropdown) {
+      const r = dropdownEl.getBoundingClientRect()
+      let { x, y } = activeDropdown
+      if (r.right > window.innerWidth - 8) x = Math.max(8, x - (r.right - (window.innerWidth - 8)))
+      if (r.bottom > window.innerHeight - 8) {
+        const above = rect.top - r.height - 4
+        y = above >= 8 ? above : Math.max(8, window.innerHeight - r.height - 8)
+      }
+      activeDropdown = { ...activeDropdown, x, y }
+    }
+  }
+
+  function closeDropdown(): void {
+    activeDropdown = null
+  }
+
+  let currentInputVal = $derived.by(() => {
+    if (!activeDropdown) return ''
+    const k = activeDropdown.spkKey
+    return (inputValues[k] ?? mergedSpeakers.find((s) => s.key === k)?.matched_name ?? '').trim()
+  })
+
+  let filteredPeople = $derived.by(() => {
+    if (!activeDropdown) return []
+    const q = currentInputVal.toLowerCase()
+    if (!q) return peopleState.list
+    return peopleState.list.filter(
+      (p) => p.name.toLowerCase().includes(q) || p.role?.toLowerCase().includes(q),
+    )
+  })
+
+  let otherSpeakersInMeeting = $derived.by(() => {
+    if (!activeDropdown) return []
+    const activeKey = activeDropdown.spkKey
+    const q = currentInputVal.toLowerCase()
+    const peopleNames = new Set(peopleState.list.map((p) => p.name.toLowerCase()))
+    return mergedSpeakers
+      .filter((s) => s.key !== activeKey)
+      .filter((s) => {
+        const name = (s.matched_name || s.name || 'Спикер').trim()
+        if (peopleNames.has(name.toLowerCase())) return false
+        if (!q) return true
+        return name.toLowerCase().includes(q)
+      })
+  })
+
+  let showCreateOption = $derived.by(() => {
+    if (!activeDropdown || !currentInputVal) return false
+    const lower = currentInputVal.toLowerCase()
+    const inPeople = peopleState.list.some((p) => p.name.toLowerCase() === lower)
+    const inOther = otherSpeakersInMeeting.some((s) => (s.matched_name || s.name || '').toLowerCase() === lower)
+    return !inPeople && !inOther
+  })
+
+  function selectPerson(name: string): void {
+    if (!activeDropdown) return
+    setCardValue(activeDropdown.spkKey, name)
+    closeDropdown()
+  }
+
+  function onInputKey(e: KeyboardEvent, btn: HTMLButtonElement | null): void {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeDropdown()
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      closeDropdown()
+      btn?.click()
+    }
+  }
 </script>
 
 {#snippet sampleRow(s: { start: number; end: number; text?: string; full_text?: string; channel?: number | null }, key: string)}
@@ -233,14 +385,16 @@
     <span class="sample-text" title={s.full_text || s.text || ''}>
       {fmtClockShort(s.start)} · «{s.text || ''}»
     </span>
+    <button
+      type="button"
+      class="sample-detach-btn"
+      title="Вынести эту реплику в отдельную карточку"
+      onclick={() => void detachSample(s)}
+    >
+      Открепить
+    </button>
   </div>
 {/snippet}
-
-<datalist id="peopleNames">
-  {#each peopleState.list as p (p.name)}
-    <option value={p.name}>{p.role || ''}</option>
-  {/each}
-</datalist>
 
 <aside class="transcript-speakers">
   <div class="pane-title">Спикеры</div>
@@ -252,19 +406,25 @@
         {@const samples = [...spk.samples].sort((a, b) => a.start - b.start)}
         {@const matchedName = spk.matched_name || ''}
         {@const displayName = spk.matched_name || spk.name || 'Спикер'}
+        {@const cardVal = getCardValue(spk.key, matchedName)}
+        {@const meta = [
+          spk.utterances_count ? `реплик: ${spk.utterances_count}` : '',
+          typeof spk.silhouette === 'number' ? `силуэт: ${spk.silhouette.toFixed(2)}` : '',
+        ].filter(Boolean).join(' • ')}
         <div
           class="speaker-card {spk.matched ? 'matched' : ''}"
           style={`--spk: ${speakerColor(displayName)}; --spk-bg: ${speakerTint(displayName)}`}
         >
-          <div class="speaker-top">
-            <span class="speaker-name">{displayName}</span>
-            <span class="speaker-status {spk.matched ? 'ok' : ''}">
+          <div class="speaker-header">
+            <div class="speaker-top">
+              <span class="speaker-name">{displayName}</span>
               {#if spk.matched}
-                Узнан: {spk.matched_name || spk.name}{typeof spk.similarity === 'number' ? ` • ${spk.similarity.toFixed(2)}` : ''}{(spk.utterances_count ? ` • реплик: ${spk.utterances_count}` : '') + (typeof spk.silhouette === 'number' ? ` • силуэт: ${spk.silhouette.toFixed(2)}` : '')}
-              {:else}
-                {(spk.channel === 0 ? 'Микрофон' : spk.channel === 1 ? 'Собеседник' : 'Спикер') + (spk.utterances_count ? ` • реплик: ${spk.utterances_count}` : '') + (typeof spk.silhouette === 'number' ? ` • силуэт: ${spk.silhouette.toFixed(2)}` : '')}
+                <span class="speaker-status ok">узнан{typeof spk.similarity === 'number' ? ` · ${spk.similarity.toFixed(2)}` : ''}</span>
               {/if}
-            </span>
+            </div>
+            {#if meta}
+              <div class="speaker-meta">{meta}</div>
+            {/if}
           </div>
 
           {#if spk.candidates && spk.candidates.length > 0}
@@ -284,10 +444,9 @@
                 <button
                   class="candidate"
                   title="Подставить это имя"
-                  onclick={(e) => {
-                    const card = (e.currentTarget as HTMLElement).closest('.speaker-card')
-                    const inp = card?.querySelector<HTMLInputElement>('.assign-name-input')
-                    if (inp) inp.value = fullNames[i]
+                  onclick={() => {
+                    setCardValue(spk.key, fullNames[i])
+                    closeDropdown()
                   }}
                 >
                   {label}
@@ -305,22 +464,60 @@
           {/if}
 
           <div class="assign-row">
-            <input
-              class="assign-name-input"
-              placeholder="Имя участника"
-              list="peopleNames"
-              value={matchedName}
-              autocomplete="off"
-              aria-label="Имя человека"
-            />
+            <div class="assign-input-wrap">
+              <input
+                class="assign-name-input"
+                placeholder="Имя участника"
+                value={cardVal}
+                autocomplete="off"
+                aria-label="Имя человека"
+                oninput={(e) => {
+                  setCardValue(spk.key, e.currentTarget.value)
+                  const wrap = e.currentTarget.closest('.assign-input-wrap') as HTMLElement | null
+                  if (wrap) void openDropdownFor(spk.key, wrap)
+                }}
+                onfocus={(e) => {
+                  const wrap = e.currentTarget.closest('.assign-input-wrap') as HTMLElement | null
+                  if (wrap) void openDropdownFor(spk.key, wrap)
+                }}
+                onclick={(e) => {
+                  const wrap = e.currentTarget.closest('.assign-input-wrap') as HTMLElement | null
+                  if (wrap) void openDropdownFor(spk.key, wrap)
+                }}
+                onkeydown={(e) => {
+                  const card = (e.currentTarget as HTMLElement).closest('.speaker-card')
+                  const btn = card?.querySelector<HTMLButtonElement>('.btn-save-voiceprint') ?? null
+                  onInputKey(e, btn)
+                }}
+              />
+              <button
+                type="button"
+                class="assign-chevron-btn"
+                title="Показать список участников"
+                aria-label="Показать список участников"
+                tabindex="-1"
+                onclick={(e) => {
+                  e.stopPropagation()
+                  const wrap = (e.currentTarget as HTMLElement).closest('.assign-input-wrap') as HTMLElement | null
+                  if (activeDropdown?.spkKey === spk.key) {
+                    closeDropdown()
+                  } else if (wrap) {
+                    void openDropdownFor(spk.key, wrap)
+                  }
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </button>
+            </div>
             <button
-              class="btn-primary btn-sm"
+              class="btn-primary btn-sm btn-save-voiceprint"
               title="Сохранить голос за этим человеком и обновить текст"
               onclick={(e) => {
-                const card = (e.currentTarget as HTMLElement).closest('.speaker-card')
                 void saveVoiceprint(
                   spk.name,
-                  card?.querySelector<HTMLInputElement>('.assign-name-input') ?? null,
+                  cardVal,
                   spk.embedding ?? null,
                   e.currentTarget as HTMLButtonElement,
                   samples[0]
@@ -350,4 +547,82 @@
       {/each}
     {/if}
   </div>
+
+  {#if activeDropdown}
+    <button
+      type="button"
+      class="speaker-popover-backdrop"
+      aria-label="Закрыть список"
+      onclick={closeDropdown}
+    ></button>
+    <div
+      class="speaker-select-popover"
+      role="listbox"
+      aria-label="Выбор участника"
+      bind:this={dropdownEl}
+      style={`left: ${activeDropdown.x}px; top: ${activeDropdown.y}px; width: ${activeDropdown.w}px`}
+    >
+      {#if showCreateOption}
+        <button
+          type="button"
+          class="speaker-select-item is-create"
+          title={`Запомнить «${currentInputVal}»`}
+          onclick={() => selectPerson(currentInputVal)}
+        >
+          <span class="speaker-select-item-left">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            <span class="speaker-select-item-name">Запомнить «{currentInputVal}»</span>
+          </span>
+        </button>
+      {/if}
+
+      {#if filteredPeople.length > 0}
+        <div class="speaker-select-section-title">Люди из базы</div>
+        {#each filteredPeople as p (p.name)}
+          <button
+            type="button"
+            class="speaker-select-item"
+            title={p.role ? `${p.name} — ${p.role}` : p.name}
+            onclick={() => selectPerson(p.name)}
+          >
+            <span class="speaker-select-item-left">
+              <span class="speaker-select-item-dot" style={`background: ${speakerColor(p.name)}`}></span>
+              <span class="speaker-select-item-name">{p.name}</span>
+            </span>
+            {#if p.role}
+              <span class="speaker-select-item-sub">{p.role}</span>
+            {/if}
+          </button>
+        {/each}
+      {/if}
+
+      {#if otherSpeakersInMeeting.length > 0}
+        <div class="speaker-select-section-title">Спикеры встречи</div>
+        {#each otherSpeakersInMeeting as s (s.key)}
+          {@const sName = s.matched_name || s.name || 'Спикер'}
+          <button
+            type="button"
+            class="speaker-select-item"
+            title={s.utterances_count ? `${sName} — ${s.utterances_count} реплик` : sName}
+            onclick={() => selectPerson(sName)}
+          >
+            <span class="speaker-select-item-left">
+              <span class="speaker-select-item-dot" style={`background: ${speakerColor(sName)}`}></span>
+              <span class="speaker-select-item-name">{sName}</span>
+            </span>
+            {#if s.utterances_count}
+              <span class="speaker-select-item-sub">{s.utterances_count} репл.</span>
+            {/if}
+          </button>
+        {/each}
+      {/if}
+
+      {#if !showCreateOption && filteredPeople.length === 0 && otherSpeakersInMeeting.length === 0}
+        <div class="speaker-select-empty">Ничего не найдено</div>
+      {/if}
+    </div>
+  {/if}
 </aside>

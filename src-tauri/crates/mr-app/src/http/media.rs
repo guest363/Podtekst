@@ -94,7 +94,8 @@ fn speakers_count_cached(path: &Path, len: u64, mtime: u64) -> u64 {
                 .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
                 .map(|d| {
                     let meta = d.get("meta");
-                    meta.and_then(|m| m.get("speakers_info"))
+                    let count = meta
+                        .and_then(|m| m.get("speakers_info"))
                         .and_then(|s| s.as_array())
                         .map(|a| a.len())
                         .unwrap_or(0)
@@ -103,7 +104,21 @@ fn speakers_count_cached(path: &Path, len: u64, mtime: u64) -> u64 {
                                 .and_then(|s| s.as_array())
                                 .map(|a| a.len())
                                 .unwrap_or(0),
-                        )
+                        );
+                    if count > 0 {
+                        count
+                    } else {
+                        d.get("utterances")
+                            .and_then(|u| u.as_array())
+                            .map(|arr| {
+                                let set: std::collections::HashSet<_> = arr
+                                    .iter()
+                                    .filter_map(|x| x.get("speaker").and_then(|s| s.as_str()))
+                                    .collect();
+                                set.len()
+                            })
+                            .unwrap_or(0)
+                    }
                 })
                 .unwrap_or(0) as f64
         },
@@ -147,9 +162,22 @@ pub(super) fn recordings_list() -> Vec<serde_json::Value> {
             .unwrap_or_default();
         let jp = dir.join(format!("{stem}.transcript.json"));
         let has_transcript = jp.exists() && dir.join(format!("{stem}.md")).exists();
-        let jp_meta = jp.clone();
-        let speakers_count = if jp.exists() {
-            speakers_count_cached(&jp_meta, file_len, mtime)
+        let (jp_len, jp_mtime) = jp
+            .metadata()
+            .ok()
+            .map(|m| {
+                let len = m.len();
+                let mt = m
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                (len, mt)
+            })
+            .unwrap_or((0, 0));
+        let speakers_count = if jp_len > 0 {
+            speakers_count_cached(&jp, jp_len, jp_mtime)
         } else {
             0
         };

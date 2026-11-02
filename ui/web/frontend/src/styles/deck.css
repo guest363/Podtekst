@@ -225,14 +225,32 @@
   border: none;
   font-size: 13.5px;
   font-weight: 700;
+  line-height: 1;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   box-shadow: 0 3px 12px rgba(220, 38, 38, 0.25);
   transition: all 160ms ease;
   white-space: nowrap;
   flex-shrink: 0;
+}
+.btn-rec-icon {
+  display: inline-block;
+  flex-shrink: 0;
+}
+.btn-rec-icon.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.btn-rec-icon.square {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: currentColor;
 }
 .btn-action-round:hover {
   background: var(--accent-rec-hover);

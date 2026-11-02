@@ -29,6 +29,24 @@
   let packFileInput: HTMLInputElement | null = $state(null)
   let termInput = $state('')
 
+  const filteredHotwords = $derived.by(() => {
+    const q = termInput.trim().toLowerCase()
+    if (!q) return settings.hotwords
+    const norm = q.replace(/\s*(=>|->|=)\s*/, ' => ')
+    return settings.hotwords.filter(
+      (x) => x.toLowerCase().includes(q) || x.toLowerCase().includes(norm),
+    )
+  })
+
+  const isExactMatch = $derived.by(() => {
+    const q = termInput.trim().toLowerCase()
+    if (!q) return false
+    const norm = q.replace(/\s*(=>|->|=)\s*/, ' => ')
+    return settings.hotwords.some(
+      (x) => x.toLowerCase() === q || x.toLowerCase() === norm,
+    )
+  })
+
   async function openModelsTab(): Promise<void> {
     tab = 'models'
   }
@@ -39,8 +57,14 @@
   }
 
   async function addTerm(): Promise<void> {
-    const t = termInput.trim()
+    let t = termInput.trim()
     if (!t) return
+    // Нормализация разделителей: «было = стало» или «было -> стало» преобразуем в «было => стало»
+    if (t.includes('=')) {
+      t = t.replace(/\s*=>\s*|\s*=\s*/, ' => ')
+    } else if (t.includes('->')) {
+      t = t.replace(/\s*->\s*/, ' => ')
+    }
     if (settings.hotwords.some((x) => x.toLowerCase() === t.toLowerCase())) {
       toast(`«${t}» уже в словаре`)
       return
@@ -50,7 +74,7 @@
       return
     }
     termInput = ''
-    await saveHotwords([...settings.hotwords, t], settings.ctcEnabled)
+    await saveHotwords([t, ...settings.hotwords], settings.ctcEnabled)
   }
 
   async function removeTerm(t: string): Promise<void> {
@@ -374,50 +398,89 @@
         </div>
       {:else if tab === 'dict'}
         <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Словарь терминов">
-          <div class="card-title">Словарь терминов</div>
-          <div class="help-text">
-            Движок распознавания отдаёт предпочтение этим словам: аббревиатуры, имена, названия.
-            «Бонус» подтягивает похожее звучание. «Связка» — точная замена «услышано → правильно»:
-            клик по слову в тексте подставляет его в связку. Действует на следующие расшифровки:
-            нажмите «Повторить расшифровку».
+          <div class="dict-head">
+            <div class="card-title">Словарь терминов</div>
+            <span class="rec-meta">{settings.hotwords.length} из 500</span>
           </div>
-          <div class="row-start">
+          <div class="help-text">
+            Подсказки на слух отдают предпочтение терминам, именам и сленгу.
+            Автозамена («было = стало» или «было -> стало») исправляет частые ошибки распознавания.
+          </div>
+          <div class="dict-input-wrap">
             <input
               type="text"
-              class="input-field"
-              placeholder="Например, овердрафт"
+              class="input-field dict-input"
+              placeholder="Поиск или новый термин (напр. «Docker» или «мерши = merge»)"
               autocomplete="off"
-              aria-label="Новый термин"
+              aria-label="Поиск или новый термин"
               bind:value={termInput}
               onkeydown={(e) => {
                 if (e.key === 'Enter') void addTerm()
+                else if (e.key === 'Escape' && termInput) {
+                  e.preventDefault()
+                  termInput = ''
+                }
               }}
             />
-            <button class="btn-secondary" onclick={() => void addTerm()}>Добавить</button>
+            {#if termInput}
+              <button
+                type="button"
+                class="dict-input-clear"
+                title="Очистить поиск (Esc)"
+                aria-label="Очистить поиск"
+                onclick={() => (termInput = '')}
+              >✕</button>
+            {/if}
+            <button
+              class="btn-secondary"
+              disabled={!termInput.trim() || isExactMatch}
+              onclick={() => void addTerm()}
+            >Добавить</button>
           </div>
-          {#if settings.hotwords.length > 0}
-            <div class="dict-tags" role="list" aria-label="Термины в словаре">
-              {#each settings.hotwords as t (t)}
+
+          {#if termInput.trim() && !isExactMatch}
+            {@const preview = termInput.trim().replace(/\s*(=>|->|=)\s*/, ' → ')}
+            <div class="dict-add-bar">
+              Нажмите <strong>Enter</strong>, чтобы добавить «{preview}»
+            </div>
+          {/if}
+
+          {#if filteredHotwords.length > 0}
+            <div class="dict-list" role="list" aria-label="Термины в словаре">
+              {#each filteredHotwords as t (t)}
                 {@const isPair = t.includes(' => ')}
-                <span class="dict-tag" role="listitem">
-                  <span class="dict-badge">{isPair ? 'связка' : 'бонус'}</span>
-                  {isPair ? t.replace(' => ', ' → ') : t}
-                  <button
-                    type="button"
-                    class="dict-del"
-                    title={`Убрать «${t}» из словаря`}
-                    aria-label={`Убрать «${t}» из словаря`}
-                    onclick={() => void removeTerm(t)}
-                  >✕</button>
-                </span>
+                <div class="dict-row" role="listitem">
+                  <div class="dict-row-text">
+                    {#if isPair}
+                      {@const [src, dst] = t.split(' => ')}
+                      <span class="dict-heard">{src}</span>
+                      <span class="dict-arrow">→</span>
+                      <span class="dict-correct">{dst}</span>
+                    {:else}
+                      <span class="dict-word">{t}</span>
+                    {/if}
+                  </div>
+                  <div class="dict-row-actions">
+                    <span class="dict-kind {isPair ? 'dict-kind-sub' : 'dict-kind-word'}">
+                      {isPair ? 'замена' : 'на слух'}
+                    </span>
+                    <button
+                      type="button"
+                      class="dict-del"
+                      title={`Убрать «${t}» из словаря`}
+                      aria-label={`Убрать «${t}» из словаря`}
+                      onclick={() => void removeTerm(t)}
+                    >✕</button>
+                  </div>
+                </div>
               {/each}
             </div>
+          {:else if termInput.trim()}
+            <div class="empty-note">Ничего не найдено. Нажмите Enter или «Добавить», чтобы создать.</div>
           {:else}
             <div class="empty-note">Пока пусто. Добавьте первый термин полем выше.</div>
           {/if}
-          <div class="row-start">
-            <span class="rec-meta">Терминов: {settings.hotwords.length} из 500</span>
-          </div>
+
           <label class="setting-check">
             <input
               type="checkbox"
@@ -465,33 +528,78 @@
     text-decoration: underline; text-underline-offset: 3px;
   }
   .support-link:hover { color: var(--text-muted); }
-  .dict-tags {
-    display: flex; flex-wrap: wrap; gap: 6px;
+  .dict-head {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
   }
-  .dict-tag {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 4px 6px 4px 10px;
-    font-size: 12.5px; font-weight: 600;
-    color: var(--text-primary);
+  .dict-input-wrap {
+    position: relative; display: flex; gap: 8px; align-items: center;
+  }
+  .dict-input {
+    flex: 1; padding-right: 32px;
+  }
+  .dict-input-clear {
+    position: absolute; right: 104px; top: 50%; transform: translateY(-50%);
+    border: none; background: transparent; cursor: pointer;
+    color: var(--text-faint); font-size: 13px; line-height: 1; padding: 4px;
+    border-radius: 4px;
+  }
+  .dict-input-clear:hover { color: var(--text-primary); }
+  .dict-add-bar {
+    font-size: 12px; color: var(--accent-blue);
+    background: var(--bg-inset); border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm); padding: 7px 12px; margin-top: -4px;
+  }
+  .dict-list {
+    display: flex; flex-direction: column;
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-inner);
     background: #fff;
-    border: 1px solid var(--border-card);
-    border-radius: 999px;
+    max-height: 290px;
+    overflow-y: auto;
   }
-  .dict-badge {
-    font-size: 10px; font-weight: 800;
-    text-transform: uppercase; letter-spacing: 0.04em;
-    color: var(--text-muted);
-    border: 1px solid var(--border-card);
-    border-radius: 999px;
-    padding: 1px 6px;
+  .dict-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 7px 12px; gap: 10px; font-size: 13px;
+    border-bottom: 1px solid var(--border-soft);
+    transition: background 120ms ease;
+  }
+  .dict-row:last-child { border-bottom: none; }
+  .dict-row:hover { background: var(--bg-inset); }
+  .dict-row-text {
+    display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden;
+  }
+  .dict-word {
+    font-weight: 600; color: var(--text-primary); word-break: break-word;
+  }
+  .dict-heard {
+    color: var(--text-muted); text-decoration: line-through; text-decoration-color: var(--text-faint);
+  }
+  .dict-arrow {
+    color: var(--text-faint); font-weight: 700; user-select: none;
+  }
+  .dict-correct {
+    font-weight: 700; color: var(--text-primary); word-break: break-word;
+  }
+  .dict-row-actions {
+    display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  }
+  .dict-kind {
+    font-size: 10.5px; font-weight: 700; padding: 2px 7px;
+    border-radius: var(--radius-pill); border: 1px solid transparent; letter-spacing: 0.02em;
+  }
+  .dict-kind-word {
+    color: var(--accent-blue); background: #f0f4ff; border-color: #dbe4fe;
+  }
+  .dict-kind-sub {
+    color: var(--accent-amber); background: var(--accent-amber-bg); border-color: #f6e6be;
   }
   .dict-del {
     border: none; background: none; cursor: pointer;
-    color: var(--text-faint);
-    font-size: 12px; line-height: 1;
-    padding: 2px 4px; border-radius: 50%;
+    color: var(--text-faint); font-size: 12px; line-height: 1;
+    padding: 3px 5px; border-radius: 4px;
+    transition: color 120ms ease, background 120ms ease;
   }
-  .dict-del:hover { color: var(--text-primary); }
+  .dict-del:hover { color: var(--accent-rec); background: #fee2e2; }
   .settings-tabs {
     display: flex; gap: 4px;
     border-bottom: 1px solid var(--border-soft);
