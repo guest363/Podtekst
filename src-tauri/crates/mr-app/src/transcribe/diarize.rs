@@ -218,7 +218,7 @@ pub(crate) fn load_profiles() -> Vec<SpeakerProfile> {
 const CORE_MIN_DUR: f64 = 1.0;
 
 /// Кластеры короче 2% речи — обычно шумные короткие эмбеддинги. Клеим их
-/// к ближайшему крупному голосу (косинус ≥ 0.30), а непохожие оставляем:
+/// к ближайшему крупному голосу (косинус ≥ 0.45), а непохожие оставляем:
 /// это может быть третий человек, сказавший пару слов.
 fn merge_tiny_clusters(vecs: &[Vec<f64>], labels: &mut [usize], weights: &[f64], min_keep: usize) {
     let total: f64 = weights.iter().sum();
@@ -277,7 +277,7 @@ fn merge_tiny_clusters(vecs: &[Vec<f64>], labels: &mut [usize], weights: &[f64],
                 best = (l, sim);
             }
         }
-        if best.1 < 0.30 {
+        if best.1 < 0.45 {
             protected.insert(small);
             continue;
         }
@@ -537,7 +537,7 @@ pub(crate) fn diarize_channel(
     // один голос ≥ 0.48 (dist ≤ 0.52). Порог 0.52 предотвращает расщепление одного человека.
     let mut core_labels = agglomerative(&core_vecs, 0.52, k);
     // Короткие шумные куски часто образуют ложные «голоса». Сливаем их с
-    // ближайшим похожим голосом (косинус ≥ 0.30) как в моно, так и в стерео.
+    // ближайшим похожим голосом (косинус ≥ 0.45) как в моно, так и в стерео.
     if k.is_none() {
         let weights: Vec<f64> = core.iter().map(|&i| durs[i]).collect();
         merge_tiny_clusters(&core_vecs, &mut core_labels, &weights, min_speakers.max(1));

@@ -252,19 +252,24 @@
         {@const samples = [...spk.samples].sort((a, b) => a.start - b.start)}
         {@const matchedName = spk.matched_name || ''}
         {@const displayName = spk.matched_name || spk.name || 'Спикер'}
+        {@const meta = [
+          spk.utterances_count ? `реплик: ${spk.utterances_count}` : '',
+          typeof spk.silhouette === 'number' ? `силуэт: ${spk.silhouette.toFixed(2)}` : '',
+        ].filter(Boolean).join(' • ')}
         <div
           class="speaker-card {spk.matched ? 'matched' : ''}"
           style={`--spk: ${speakerColor(displayName)}; --spk-bg: ${speakerTint(displayName)}`}
         >
-          <div class="speaker-top">
-            <span class="speaker-name">{displayName}</span>
-            <span class="speaker-status {spk.matched ? 'ok' : ''}">
+          <div class="speaker-header">
+            <div class="speaker-top">
+              <span class="speaker-name">{displayName}</span>
               {#if spk.matched}
-                Узнан: {spk.matched_name || spk.name}{typeof spk.similarity === 'number' ? ` • ${spk.similarity.toFixed(2)}` : ''}{(spk.utterances_count ? ` • реплик: ${spk.utterances_count}` : '') + (typeof spk.silhouette === 'number' ? ` • силуэт: ${spk.silhouette.toFixed(2)}` : '')}
-              {:else}
-                {(spk.channel === 0 ? 'Микрофон' : spk.channel === 1 ? 'Собеседник' : 'Спикер') + (spk.utterances_count ? ` • реплик: ${spk.utterances_count}` : '') + (typeof spk.silhouette === 'number' ? ` • силуэт: ${spk.silhouette.toFixed(2)}` : '')}
+                <span class="speaker-status ok">узнан{typeof spk.similarity === 'number' ? ` · ${spk.similarity.toFixed(2)}` : ''}</span>
               {/if}
-            </span>
+            </div>
+            {#if meta}
+              <div class="speaker-meta">{meta}</div>
+            {/if}
           </div>
 
           {#if spk.candidates && spk.candidates.length > 0}
