@@ -417,6 +417,27 @@ fn profile_anchors(
         .collect()
 }
 
+fn fill_labels_by_time(utterances: &[Utterance], label_of: &mut HashMap<usize, usize>) {
+    let mut labeled: Vec<usize> = (0..utterances.len())
+        .filter(|&i| label_of.contains_key(&i))
+        .collect();
+    for i in 0..utterances.len() {
+        if label_of.contains_key(&i) || labeled.is_empty() {
+            continue;
+        }
+        let (start, end) = (utterances[i].start, utterances[i].end);
+        let mut best = (f64::INFINITY, 0usize);
+        for &v in &labeled {
+            let gap = interval_gap(start, end, utterances[v].start, utterances[v].end);
+            if gap < best.0 {
+                best = (gap, label_of[&v]);
+            }
+        }
+        label_of.insert(i, best.1);
+        labeled.push(i);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn diarize_channel(
     samples: &[f32],
@@ -573,20 +594,7 @@ pub(crate) fn diarize_channel(
             anchor(&mut centroids);
         }
     }
-    for i in 0..n {
-        if label_of.contains_key(&i) {
-            continue;
-        }
-        let (s0, e0) = (utterances[i].start, utterances[i].end);
-        let mut best = (f64::INFINITY, 0usize);
-        for &v in valid.iter() {
-            let g = interval_gap(s0, e0, utterances[v].start, utterances[v].end);
-            if g < best.0 {
-                best = (g, label_of[&v]);
-            }
-        }
-        label_of.insert(i, best.1);
-    }
+    fill_labels_by_time(utterances, &mut label_of);
     // Одиночный шумный кусок не должен рвать монолог на два голоса.
     // При явно заданном минимуме спикеров не сглаживаем: метки важнее.
     if channel_idx.is_none() && min_speakers == 0 {
@@ -1564,10 +1572,10 @@ pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::{
-        dedupe_cross_channel, group_segments, merge_quiet_short, merge_tiny_clusters,
-        merge_utterances, profile_anchors, read_profiles_file, reconcile_channels,
-        refresh_speaker_stats, speaker_change_cuts, split_at_pauses, split_words_by_bounds,
-        SpeakerInfo, Utterance,
+        dedupe_cross_channel, fill_labels_by_time, group_segments, merge_quiet_short,
+        merge_tiny_clusters, merge_utterances, profile_anchors, read_profiles_file,
+        reconcile_channels, refresh_speaker_stats, speaker_change_cuts, split_at_pauses,
+        split_words_by_bounds, SpeakerInfo, Utterance,
     };
 
     fn info(name: &str, ch: i32, emb: Vec<f64>, count: usize, sec: f64) -> SpeakerInfo {
@@ -2035,6 +2043,18 @@ mod tests {
         let anchors = profile_anchors(&centroids, &profiles);
         assert_eq!(anchors.len(), 1);
         assert_eq!(anchors[&0], vec![1.0, 0.0]);
+    }
+
+    #[test]
+    fn unlabelled_short_gets_nearest_time_label_without_panic() {
+        let utts = vec![
+            utt(0.0, 2.0, "A", 0, "a"),
+            utt(10.0, 12.0, "B", 0, "b"),
+            utt(9.0, 9.5, "A", 0, "short"),
+        ];
+        let mut labels = std::collections::HashMap::from([(0, 7), (1, 8)]);
+        fill_labels_by_time(&utts, &mut labels);
+        assert_eq!(labels[&2], 8);
     }
 
     #[test]
