@@ -392,7 +392,12 @@ pub(super) fn resolve_target_pack(name: &str, preferred_pack_id: Option<&str>) -
             for dir in active {
                 let pf = dir.join("people.json");
                 if let Some(list) = read_people_list(&pf) {
-                    if list.iter().any(|p| same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), clean_name)) {
+                    if list.iter().any(|p| {
+                        same_name(
+                            p.get("name").and_then(|x| x.as_str()).unwrap_or(""),
+                            clean_name,
+                        )
+                    }) {
                         if let Some(n) = dir.file_name() {
                             return n.to_string_lossy().to_string();
                         }
@@ -415,7 +420,9 @@ pub(super) fn ensure_person_in_pack(name: &str, role: Option<&str>, pack_id: &st
     if ext.len() != before_ext {
         save_external_people(&ext);
     }
-    let pf = packs::packs_root_dir(&app_data_dir()).join(pack_id).join("people.json");
+    let pf = packs::packs_root_dir(&app_data_dir())
+        .join(pack_id)
+        .join("people.json");
     let in_pack = read_people_list(&pf).unwrap_or_default().iter().any(|p| {
         p.get("name")
             .and_then(|x| x.as_str())
@@ -423,10 +430,14 @@ pub(super) fn ensure_person_in_pack(name: &str, role: Option<&str>, pack_id: &st
             .unwrap_or(false)
     });
     if !in_pack {
-        let _ = packs::add_person_to_pack(&app_data_dir(), pack_id, json!({
-            "name": clean,
-            "role": role.unwrap_or("Участник")
-        }));
+        let _ = packs::add_person_to_pack(
+            &app_data_dir(),
+            pack_id,
+            json!({
+                "name": clean,
+                "role": role.unwrap_or("Участник")
+            }),
+        );
     }
 }
 
@@ -1564,7 +1575,9 @@ mod tests {
 
     #[test]
     fn target_pack_routing_and_people_sync() {
-        let _guard = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!(
             "mr-pack-routing-{}-{}",
             std::process::id(),

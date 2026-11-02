@@ -201,7 +201,8 @@ pub fn move_person_pack(
                 }
             }
         }
-        to_profiles.retain(|p| !same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), name));
+        to_profiles
+            .retain(|p| !same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), name));
         to_profiles.push(prof);
         write_json_atomic(&to_vp_file, &voiceprints_v3(to_profiles, &to_space))?;
     }
@@ -221,7 +222,12 @@ mod tests {
         let p1 = create_pack(&app, "Отдел 1", "").unwrap();
         let p2 = create_pack(&app, "Отдел 2", "").unwrap();
 
-        add_person_to_pack(&app, &p1.id, json!({"name": "Инженер 1", "role": "Разработчик"})).unwrap();
+        add_person_to_pack(
+            &app,
+            &p1.id,
+            json!({"name": "Инженер 1", "role": "Разработчик"}),
+        )
+        .unwrap();
 
         let pf1 = app.join("packs").join(&p1.id).join("people.json");
         let t1 = fs::read_to_string(&pf1).unwrap();

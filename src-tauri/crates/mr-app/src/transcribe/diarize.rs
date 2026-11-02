@@ -197,7 +197,11 @@ pub(crate) fn load_profiles() -> Vec<SpeakerProfile> {
     let mut files: Vec<(std::path::PathBuf, String, String)> = vec![];
     let root_vp = app.join("voiceprints.json");
     if root_vp.is_file() {
-        files.push((root_vp, "default".to_string(), "Основной профиль".to_string()));
+        files.push((
+            root_vp,
+            "default".to_string(),
+            "Основной профиль".to_string(),
+        ));
     }
     if let Ok(active) = packs::get_active_packs(&app) {
         for dir in active {
