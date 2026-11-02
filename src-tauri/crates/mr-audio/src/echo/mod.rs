@@ -53,6 +53,7 @@ pub fn suppress_echo(mic: &mut [f32], reference: &[f32], sample_rate: u32) -> Ec
             filter.process(&mut scratch, &ref_block, 1.0);
             t += filter::BLOCK;
         }
+        filter.reset_state();
         let mut line = DelayLine::new(reference);
         let mut t = 0usize;
         while t + filter::BLOCK <= n {

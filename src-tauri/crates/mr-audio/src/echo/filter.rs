@@ -60,6 +60,20 @@ impl EchoFilter {
         }
     }
 
+    pub(crate) fn reset_state(&mut self) {
+        self.x_ring.iter_mut().for_each(|x| *x = Cx::default());
+        self.ring_head = 0;
+        self.p_ref.fill(0.0);
+        self.ref_hist.fill(0.0);
+        self.d_hist.fill(0.0);
+        self.e_hist.fill(0.0);
+        self.work.iter_mut().for_each(|x| *x = Cx::default());
+        self.e_spec.iter_mut().for_each(|x| *x = Cx::default());
+        self.y_spec.iter_mut().for_each(|x| *x = Cx::default());
+        self.y_time.fill(0.0);
+        self.bg_lost = 0;
+    }
+
     pub(crate) fn process(&mut self, d: &mut [f32], ref_block: &[f32], mu_mult: f32) -> BlockStats {
         debug_assert_eq!(d.len(), BLOCK);
         debug_assert_eq!(ref_block.len(), BLOCK);
@@ -108,27 +122,37 @@ impl EchoFilter {
         let mut mic_power = 0.0f32;
         let mut echo_power = 0.0f32;
         let mut see_fg = 0.0f32;
-        for (i, x) in d.iter_mut().enumerate() {
+        for (i, &x) in d.iter().enumerate() {
             let y = self.y_time[FFT_LEN - BLOCK + i];
             echo_power += y * y;
-            mic_power += *x * *x;
-            see_fg += (*x - y) * (*x - y);
-            self.e_hist.push(*x - y);
-            *x -= y;
+            mic_power += x * x;
+            see_fg += (x - y) * (x - y);
         }
         let norm = BLOCK as f32;
         mic_power /= norm;
         echo_power /= norm;
         see_fg /= norm;
 
-        if see_fg > 20.0 * mic_power + 1e-9 {
+        if see_fg > 2.0 * mic_power + 1e-9 {
             self.bg_lost += 1;
-            if self.bg_lost > 62 {
+            if self.bg_lost > 16 {
                 self.w.iter_mut().for_each(|x| *x = Cx::default());
                 self.bg_lost = 0;
             }
         } else {
             self.bg_lost = 0;
+        }
+
+        if see_fg >= mic_power {
+            for &x in d.iter() {
+                self.e_hist.push(x);
+            }
+        } else {
+            for (i, x) in d.iter_mut().enumerate() {
+                let y = self.y_time[FFT_LEN - BLOCK + i];
+                self.e_hist.push(*x - y);
+                *x -= y;
+            }
         }
 
         for (i, slot) in self.work.iter_mut().enumerate() {
