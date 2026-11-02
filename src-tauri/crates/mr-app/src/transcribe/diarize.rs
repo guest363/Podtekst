@@ -395,6 +395,33 @@ fn rms_quality(chunk: &[f32]) -> f64 {
     (rms / 0.05).clamp(0.3, 1.5)
 }
 
+/// Узнанный профиль фиксирует центроид своего кластера: короткие реплики
+/// не должны утаскивать его к случайному «среднему» голосу.
+fn profile_anchors(
+    centroids: &HashMap<usize, Vec<f64>>,
+    profiles: &[SpeakerProfile],
+) -> HashMap<usize, Vec<f64>> {
+    if profiles.is_empty() {
+        return HashMap::new();
+    }
+    centroids
+        .iter()
+        .filter_map(|(&label, centroid)| {
+            profiles
+                .iter()
+                .map(|profile| {
+                    (
+                        profile,
+                        mr_ml::cosine_similarity(centroid, &profile.embedding),
+                    )
+                })
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+                .filter(|(_, similarity)| *similarity >= 0.65)
+                .map(|(profile, _)| (label, profile.embedding.clone()))
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn diarize_channel(
     samples: &[f32],
@@ -527,6 +554,15 @@ pub(crate) fn diarize_channel(
             .collect()
     };
     let mut centroids = recompute(&label_of);
+    let anchors = profile_anchors(&centroids, profiles);
+    let anchor = |centroids: &mut HashMap<usize, Vec<f64>>| {
+        for (label, vector) in &anchors {
+            if let Some(centroid) = centroids.get_mut(label) {
+                *centroid = vector.clone();
+            }
+        }
+    };
+    anchor(&mut centroids);
     for &si in valid.iter().filter(|i| !core.contains(i)) {
         let se = embs[si].clone().unwrap();
         let mut best = (f64::NEG_INFINITY, 0usize);
@@ -539,6 +575,7 @@ pub(crate) fn diarize_channel(
         if best.0 >= 0.65 {
             label_of.insert(si, best.1);
             centroids = recompute(&label_of);
+            anchor(&mut centroids);
         }
     }
     for i in 0..n {
@@ -1536,8 +1573,9 @@ pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<Strin
 mod tests {
     use super::{
         dedupe_cross_channel, group_segments, merge_quiet_short, merge_tiny_clusters,
-        merge_utterances, read_profiles_file, reconcile_channels, refresh_speaker_stats,
-        speaker_change_cuts, split_at_pauses, split_words_by_bounds, SpeakerInfo, Utterance,
+        merge_utterances, profile_anchors, read_profiles_file, reconcile_channels,
+        refresh_speaker_stats, speaker_change_cuts, split_at_pauses, split_words_by_bounds,
+        SpeakerInfo, Utterance,
     };
 
     fn info(name: &str, ch: i32, emb: Vec<f64>, count: usize, sec: f64) -> SpeakerInfo {
@@ -1989,6 +2027,22 @@ mod tests {
         merge_tiny_clusters(&vecs, &mut labels, &weights, 1);
         assert_eq!(labels[3], 1);
         assert_eq!(labels[4], 1);
+    }
+
+    #[test]
+    fn recognized_profile_anchors_only_its_cluster() {
+        let centroids =
+            std::collections::HashMap::from([(0usize, vec![0.9, 0.1]), (1, vec![0.2, 0.9])]);
+        let profiles = vec![mr_ml::SpeakerProfile {
+            name: "A".to_string(),
+            embedding: vec![1.0, 0.0],
+            samples_count: 1,
+            updated_at: String::new(),
+            prototypes: vec![],
+        }];
+        let anchors = profile_anchors(&centroids, &profiles);
+        assert_eq!(anchors.len(), 1);
+        assert_eq!(anchors[&0], vec![1.0, 0.0]);
     }
 
     #[test]
