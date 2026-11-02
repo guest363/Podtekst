@@ -237,6 +237,28 @@
     void assignSpeaker(`Спикер ${n}`)
   }
 
+  async function detachSpeaker(index: number): Promise<void> {
+    if (!file || saving || index < 0 || index >= utterances.length) return
+    const allSpeakers = new Set(utterances.map((u) => u.speaker || ''))
+    let newName = 'Новый собеседник'
+    if (allSpeakers.has(newName)) {
+      let num = 2
+      while (allSpeakers.has(`Новый собеседник ${num}`)) num += 1
+      newName = `Новый собеседник ${num}`
+    }
+    if (await applyChange({ index, speaker: newName })) {
+      toast(`Реплика вынесена в карточку «${newName}»`)
+      await tick()
+      const cards = Array.from(document.querySelectorAll<HTMLElement>('.speaker-card'))
+      const targetCard =
+        cards.find((c) => c.querySelector('.speaker-name')?.textContent?.includes(newName)) ||
+        document.querySelector<HTMLElement>('.speaker-card:not(.matched)')
+      const input = targetCard?.querySelector<HTMLInputElement>('.assign-name-input')
+      input?.focus()
+      targetCard?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }
+
   async function onUttTextClick(e: MouseEvent, index: number): Promise<void> {
     const t = (e.target as HTMLElement).closest?.('[data-w]') as HTMLElement | null
     if (t && index >= 0) {
@@ -499,18 +521,28 @@
             >
               {(b as Block).speaker}
             </button>
-            {#if (b as Block).index >= 0}
-              <button
-                type="button"
-                class="utt-edit-btn"
-                title="Редактировать реплику"
-                aria-label="Редактировать реплику"
-                onclick={() => void startEdit((b as Block).index)}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path>
-                </svg>
-              </button>
+            {#if (b as Block).index >= 0 && editingIndex !== (b as Block).index}
+              <div class="utt-actions">
+                <button
+                  type="button"
+                  class="utt-detach-btn"
+                  title="Вынести реплику в отдельного спикера"
+                  onclick={() => void detachSpeaker((b as Block).index)}
+                >
+                  Другой спикер
+                </button>
+                <button
+                  type="button"
+                  class="utt-edit-btn"
+                  title="Редактировать реплику"
+                  aria-label="Редактировать реплику"
+                  onclick={() => void startEdit((b as Block).index)}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path>
+                  </svg>
+                </button>
+              </div>
             {/if}
             {#if editingIndex === (b as Block).index}
               <div
@@ -671,10 +703,45 @@
   :global(.w.low) {
     border-bottom: 1px dotted #b08d2e;
   }
-  .utt-edit-btn {
+  .utt-actions {
     position: absolute;
-    top: 4px;
-    right: 6px;
+    top: 5px;
+    right: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+    z-index: 2;
+  }
+  .utterance:hover .utt-actions,
+  .utt-actions:focus-within {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .utt-detach-btn {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 7px;
+    font-size: 11px;
+    font-weight: 500;
+    border: 1px solid rgba(15, 30, 51, 0.14);
+    border-radius: 4px;
+    background: #fff;
+    color: var(--text-muted, #555);
+    cursor: pointer;
+    line-height: 1.3;
+    white-space: nowrap;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+  }
+  .utt-detach-btn:hover {
+    color: var(--text-primary, #111);
+    border-color: rgba(15, 30, 51, 0.3);
+    background: #f8fafc;
+  }
+  .utt-edit-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -684,23 +751,19 @@
     border: 0;
     border-radius: 4px;
     background: transparent;
-    color: #b5b5b5;
+    color: #999;
     cursor: pointer;
-    opacity: 0;
-  }
-  .utterance:hover .utt-edit-btn,
-  .utt-edit-btn:focus-visible {
-    opacity: 0.85;
+    transition: color 120ms ease, background 120ms ease;
   }
   .utt-edit-btn:hover {
-    opacity: 1;
-    background: #f1efe9;
-    color: #666;
+    background: #edece8;
+    color: #444;
     outline: none;
   }
   @media (hover: none) {
-    .utt-edit-btn {
-      opacity: 0.55;
+    .utt-actions {
+      opacity: 0.65;
+      pointer-events: auto;
     }
   }
 </style>

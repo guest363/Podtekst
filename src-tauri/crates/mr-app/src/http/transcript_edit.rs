@@ -183,18 +183,54 @@ fn apply_edit(data: &mut Value, body: &Value) -> Result<(), String> {
     }
     for info in speakers_info {
         let name = info["name"].as_str().unwrap_or("");
-        let matching = utterances
+        let matching: Vec<&Value> = utterances
             .iter()
-            .filter(|u| u["speaker"].as_str() == Some(name));
-        let mut count = 0;
-        let mut speech = 0.0;
-        for utterance in matching {
-            count += 1;
-            let start = utterance["start"].as_f64().unwrap_or(0.0);
-            speech += (utterance["end"].as_f64().unwrap_or(start) - start).max(0.0);
-        }
+            .filter(|u| u["speaker"].as_str() == Some(name))
+            .collect();
+        let count = matching.len();
+        let speech: f64 = matching
+            .iter()
+            .map(|u| {
+                let start = u["start"].as_f64().unwrap_or(0.0);
+                (u["end"].as_f64().unwrap_or(start) - start).max(0.0)
+            })
+            .sum();
         info["utterances_count"] = json!(count);
         info["total_speech_sec"] = json!(speech);
+
+        // У откреплённого спикера генерируем сэмплы из его реплик для прослушивания и биометрии
+        let has_samples = info
+            .get("samples")
+            .and_then(|s| s.as_array())
+            .is_some_and(|a| !a.is_empty())
+            || info.get("sample").is_some();
+        if !has_samples && !matching.is_empty() {
+            let samples: Vec<Value> = matching
+                .iter()
+                .take(3)
+                .map(|u| {
+                    let start = u["start"].as_f64().unwrap_or(0.0);
+                    let end = u["end"].as_f64().unwrap_or(start);
+                    let dur = (end - start).max(0.0);
+                    let text = u["text"].as_str().unwrap_or("");
+                    let ch = u.get("channel").and_then(|c| c.as_i64());
+                    json!({
+                        "start": start,
+                        "end": end,
+                        "dur": dur,
+                        "text": text,
+                        "full_text": text,
+                        "channel": ch,
+                    })
+                })
+                .collect();
+            if !samples.is_empty() {
+                if info.get("sample").is_none() {
+                    info["sample"] = samples[0].clone();
+                }
+                info["samples"] = json!(samples);
+            }
+        }
     }
     data["stats"]["segments"] = json!(utterances.len());
     data["stats"]["words"] = json!(words);

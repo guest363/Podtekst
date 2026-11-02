@@ -497,7 +497,7 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
         .unwrap_or("")
         .trim()
         .to_string();
-    let emb: Vec<f64> = body
+    let mut emb: Vec<f64> = body
         .get("embedding")
         .and_then(|v| v.as_array())
         .map(|a| a.iter().filter_map(|x| x.as_f64()).collect())
@@ -519,6 +519,26 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
         .get("sample_channel")
         .and_then(|v| v.as_u64())
         .map(|v| v as usize);
+
+    #[cfg(feature = "onnx")]
+    if emb.is_empty() && !audio_file.is_empty() {
+        if let (Some(start), Some(end)) = (sample_start, sample_end) {
+            let audio_p = Path::new(&audio_file);
+            let full_p = if audio_p.is_absolute() {
+                audio_p.to_path_buf()
+            } else {
+                save_dir().join(audio_p)
+            };
+            if inside_save_dir(&full_p) {
+                let channel_i32 = sample_channel.map(|c| c as i32);
+                if let Ok(e) =
+                    crate::transcribe::extract_utterance_embedding(&full_p, start, end, channel_i32)
+                {
+                    emb = e;
+                }
+            }
+        }
+    }
     if name.is_empty() {
         json_response(
             request,
@@ -571,7 +591,11 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
             );
         }
     }
-    json_response(request, json!({"ok": true}), 200);
+    json_response(
+        request,
+        json!({"ok": true, "voiceprint_saved": !emb.is_empty()}),
+        200,
+    );
 }
 
 pub(super) fn handle_voiceprint_learn_sample(request: tiny_http::Request, body: serde_json::Value) {
@@ -706,7 +730,11 @@ pub(super) fn handle_voiceprint_learn_sample(request: tiny_http::Request, body: 
         channel.map(|c| c.max(0) as usize),
     );
     ensure_person_in_list(&name, Some("Участник"));
-    json_response(request, json!({"ok": true}), 200);
+    json_response(
+        request,
+        json!({"ok": true, "voiceprint_saved": !emb.is_empty()}),
+        200,
+    );
 }
 
 pub(super) fn handle_voiceprint_delete(request: tiny_http::Request, body: serde_json::Value) {

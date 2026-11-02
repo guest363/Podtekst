@@ -4,7 +4,8 @@
   import { toast, toastConfirm } from '../lib/toast.svelte.ts'
   import { emit, ui } from '../lib/ui.svelte.ts'
   import { loadPeople, peopleState } from '../lib/people.svelte.ts'
-  import { onDestroy } from 'svelte'
+  import { onDestroy, tick } from 'svelte'
+  import { editTranscript, transcript } from '../lib/transcript.svelte.ts'
 
   interface Props {
     speakers: SpeakerInfo[]
@@ -19,7 +20,23 @@
     const byKey = new Map<string, MergedSpeaker>()
     for (const spk of speakers) {
       const key = String(spk.matched_name || spk.name || 'Спикер').trim().toLowerCase()
-      const own = spk.samples?.length ? spk.samples : spk.sample ? [spk.sample] : []
+      let own = spk.samples?.length ? spk.samples : spk.sample ? [spk.sample] : []
+      if (own.length === 0 && transcript.utterances.length > 0) {
+        own = transcript.utterances
+          .filter((u) => (u.speaker || '') === (spk.name || ''))
+          .slice(0, 3)
+          .map((u) => {
+            const end = u.end ?? u.start
+            return {
+              start: u.start,
+              end,
+              dur: Math.max(0, end - u.start),
+              text: u.text,
+              full_text: u.text,
+              channel: u.channel,
+            }
+          })
+      }
       const cur = byKey.get(key)
       if (!cur) {
         byKey.set(key, { ...spk, key, samples: [...own] })
@@ -169,7 +186,7 @@
       })
       const d = await readJsonSafe(r)
       if (d.ok) {
-        if (hasEmb) {
+        if (d.voiceprint_saved || hasEmb) {
           toast(`Голос спикера «${oldName}» привязан к «${finalName}». Текст обновлён.`)
         } else {
           toast(`Спикер «${oldName}» переименован в «${finalName}». Участник сохранён.`)
@@ -208,6 +225,39 @@
       toast('Сетевая ошибка: ' + (e as Error).message, 'error')
     }
   }
+
+  async function detachSample(s: { start: number; end: number; channel?: number | null }): Promise<void> {
+    if (!ui.currentTranscriptPath) return
+    const utts = transcript.utterances
+    const idx = utts.findIndex(
+      (u) => Math.abs(u.start - s.start) < 0.05 && (s.channel == null || u.channel == null || u.channel === s.channel),
+    )
+    if (idx < 0) {
+      toast('Не удалось найти реплику для открепления', 'error')
+      return
+    }
+    const allSpeakers = new Set(utts.map((u) => u.speaker || ''))
+    let newName = 'Новый собеседник'
+    if (allSpeakers.has(newName)) {
+      let num = 2
+      while (allSpeakers.has(`Новый собеседник ${num}`)) num += 1
+      newName = `Новый собеседник ${num}`
+    }
+    try {
+      await editTranscript(ui.currentTranscriptPath, { index: idx, speaker: newName })
+      toast(`Реплика вынесена в карточку «${newName}»`)
+      await tick()
+      const cards = Array.from(document.querySelectorAll<HTMLElement>('.speaker-card'))
+      const targetCard =
+        cards.find((c) => c.querySelector('.speaker-name')?.textContent?.includes(newName)) ||
+        document.querySelector<HTMLElement>('.speaker-card:not(.matched)')
+      const input = targetCard?.querySelector<HTMLInputElement>('.assign-name-input')
+      input?.focus()
+      targetCard?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    } catch (e) {
+      toast('Не удалось вынести реплику: ' + (e as Error).message, 'error')
+    }
+  }
 </script>
 
 {#snippet sampleRow(s: { start: number; end: number; text?: string; full_text?: string; channel?: number | null }, key: string)}
@@ -233,6 +283,14 @@
     <span class="sample-text" title={s.full_text || s.text || ''}>
       {fmtClockShort(s.start)} · «{s.text || ''}»
     </span>
+    <button
+      type="button"
+      class="sample-detach-btn"
+      title="Вынести эту реплику в отдельную карточку"
+      onclick={() => void detachSample(s)}
+    >
+      Открепить
+    </button>
   </div>
 {/snippet}
 
