@@ -43,6 +43,12 @@ cargo clippy -p mr-app --features tauri-ui --all-targets --locked --manifest-pat
 cd ui/web/frontend && yarn check && yarn build
 ```
 
+# 5. P11-аудит комментариев (всегда, до коммита)
+./scripts/p11-diff.sh
+# Каждая показанная строка обязана быть «зачем» (ограничение платформы,
+# контракт формата, калибровка порога), SAFETY:/shortcut: или ссылкой на
+# правило (P3/P9…); пересказ кода — удалить, а не перефразировать.
+
 ---
 
 ## 3. Протокол безопасности данных (Zero-Leak)
