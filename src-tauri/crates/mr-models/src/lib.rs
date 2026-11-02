@@ -107,7 +107,7 @@ pub fn models_dir(app_data: &Path) -> PathBuf {
     d
 }
 
-/// Встроенный манифест: `include_str!` кладёт JSON в бинарник, поиска рядом с ним нет.
+/// Манифест вшит, чтобы не зависеть от файлов рядом с бинарником.
 pub fn load_bundled_manifest() -> ModelsManifest {
     const BUNDLED: &str = include_str!("../models-manifest.json");
     serde_json::from_str(BUNDLED).unwrap_or(ModelsManifest {
@@ -323,7 +323,6 @@ fn range_request(agent: &ureq::Agent, url: &str, already: u64) -> ureq::Request 
     }
 }
 
-/// Начало диапазона из `Content-Range: bytes 100-499/1000`.
 fn content_range_start(value: &str) -> Option<u64> {
     value
         .strip_prefix("bytes ")?
@@ -334,7 +333,6 @@ fn content_range_start(value: &str) -> Option<u64> {
         .ok()
 }
 
-/// Полный размер файла из `Content-Range: bytes 100-499/1000`.
 fn content_range_total(value: &str) -> Option<u64> {
     let (_, total) = value.rsplit_once('/')?;
     total.trim().parse().ok()

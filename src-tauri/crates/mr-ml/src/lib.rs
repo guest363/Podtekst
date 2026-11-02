@@ -23,8 +23,8 @@ pub const EMBEDDING_DIM: usize = 192;
 /// (фрагменты от 1.5 с); у самой модели в карточке порог 0.365.
 pub const DEFAULT_MATCH_THRESHOLD: f64 = 0.45;
 pub const DEFAULT_MIN_MARGIN: f64 = 0.06;
-/// Эмпирический пол отрыва лидера: ниже него два кандидата неразличимы по
-/// точности эмбеддинга, и автоматическое назначение имени чаще вредит.
+/// shortcut: 0.03 — эмпирический пол без опубликованного замера; перепроверить
+/// на размеченном наборе при смене модели.
 const MIN_MATCH_MARGIN_FLOOR: f64 = 0.03;
 pub const HIGH_CONFIDENCE_THRESHOLD: f64 = 0.78;
 pub const SAME_SPEAKER_MERGE_SIM: f64 = 0.55;

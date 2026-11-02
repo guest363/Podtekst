@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
-/// Атомарная замена файла: временный файл в том же каталоге, fsync, rename.
+/// fsync до rename: иначе после сбоя питания можно получить пустой или битый файл.
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent)?;

@@ -1,4 +1,4 @@
-//! GigaAM-v3 e2e RNNT (ONNX int8): encoder + LSTM-decoder + joint, greedy decode.
+//! Контракт ONNX-файлов `istupakov/gigaam-v3-onnx`; менять только вместе с весами.
 //!
 //! Формат файлов `istupakov/gigaam-v3-onnx` (NeMo/sherpa-style):
 //! * encoder: `audio_signal` [1, 64, T] f32 (64-полосный mel, см.

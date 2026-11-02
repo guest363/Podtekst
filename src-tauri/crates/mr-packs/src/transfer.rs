@@ -17,8 +17,7 @@ const MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 /// Защита от архива из миллионов пустых записей.
 const MAX_ENTRIES: usize = 4096;
 
-/// Прочитать JSON пакета: нет файла — пустое значение, битый файл — ошибка
-/// (молчаливая подмена пустотой потеряла бы данные при экспорте).
+/// Битый JSON — ошибка, а не пустое значение: иначе экспорт молча потеряет данные.
 fn read_json_or_empty(path: &Path, empty: Value) -> Result<Value> {
     match fs::read_to_string(path) {
         Ok(text) => Ok(serde_json::from_str(&text)?),
@@ -391,8 +390,7 @@ fn merge_people(target_dir: &Path, new_people: &Value) -> Result<()> {
     Ok(())
 }
 
-/// Приводит отпечатки к v3, сохраняя своё пространство признаков (иначе импорт
-/// теряет привязку векторов); запасное подставляем только когда своего нет.
+/// Чужое пространство сохраняем: иначе импорт теряет привязку векторов.
 fn normalize_voiceprints(vp: Value, embedding_space: &str) -> Value {
     let profiles = match &vp {
         // Массив — legacy/повреждённый формат: не доверяем ему, начинаем с пустого.
@@ -417,9 +415,8 @@ fn profile_key(profile: &Value) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
-/// Слияние отпечатков: профиль с тем же именем остаётся существующим (та же
-/// политика, что в `merge_people`), новые добавляются; результат всегда v3
-/// с пространством целевого пакета.
+/// Существующий профиль важнее импортированного: импорт не должен затирать
+/// накопленную биометрию.
 fn merge_voiceprints(target_dir: &Path, new_vp: &Value, embedding_space: &str) -> Result<()> {
     let vp_file = target_dir.join("voiceprints.json");
     let existing: Value = match fs::read_to_string(&vp_file) {

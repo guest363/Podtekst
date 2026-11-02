@@ -183,8 +183,7 @@ type PaSourceInfoCb = unsafe extern "C" fn(*mut c_void, *const PaSourceInfo, c_i
 type PaSinkInfoCb = unsafe extern "C" fn(*mut c_void, *const PaSinkInfo, c_int, *mut c_void);
 type PaServerInfoCb = unsafe extern "C" fn(*mut c_void, *const PaServerInfo, *mut c_void);
 
-/// Владелец `dlopen`-хендла: закрывает библиотеку и при ошибке загрузки
-/// (не хватило символа), и при уничтожении `PulseLib`.
+/// Закрывает библиотеку и при ошибке загрузки, и при Drop: иначе хендл утекает.
 struct DlHandle(*mut c_void);
 
 impl Drop for DlHandle {
@@ -198,7 +197,7 @@ impl Drop for DlHandle {
 /// Загруженная библиотека PulseAudio: основной API из `libpulse.so.0`,
 /// простой потоковый API `pa_simple_*` — из `libpulse-simple.so.0`.
 pub struct PulseLib {
-    // simple закрывается первым — так же, как ручной Drop до правки.
+    // simple закрывается первым: он зависит от основного handle.
     _simple_handle: DlHandle,
     _handle: DlHandle,
     simple_new: PaSimpleNew,

@@ -150,13 +150,12 @@ pub fn set_pack_enabled(app_data: &Path, pack_id: &str, enabled: bool) -> Result
     Ok(true)
 }
 
-/// Новый пакет без известного пространства отпечатков: файл сразу v3, поле
-/// `embedding_space` появится при первом сохранённом профиле.
+/// `""` — пространство неизвестно; чужое не подставляем, иначе профили отбросятся.
 pub fn create_pack(app_data: &Path, name: &str, description: &str) -> Result<PackInfo> {
     create_pack_with_space(app_data, name, description, "")
 }
 
-/// Новый пакет с явно известным пространством отпечатков (`""` — неизвестно).
+/// Пространство нужно вызывающему, чтобы новые отпечатки не смешались с чужими.
 pub fn create_pack_with_space(
     app_data: &Path,
     name: &str,
