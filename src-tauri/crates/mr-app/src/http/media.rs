@@ -464,9 +464,7 @@ pub(super) fn build_wav_snippet(
     let got = file.read(&mut head).unwrap_or(0);
     head.truncate(got);
     let info = parse_wav_header(&head)?;
-    if channel.is_some_and(|ch| ch >= info.channels as usize) {
-        return None;
-    }
+    let channel = channel.filter(|ch| *ch < info.channels as usize);
     let file_len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let data_available = info.data_len.min(file_len.saturating_sub(info.data_offset));
     let block = u64::from(info.channels) * u64::from(info.bits) / 8;
@@ -527,9 +525,47 @@ pub(super) fn serve_media_snippet(request: tiny_http::Request, query: &str) {
     }
     match build_wav_snippet(&path, start, end, channel) {
         Some(body) => {
-            let resp = tiny_http::Response::from_data(body)
-                .with_header(hdr("Content-Type: audio/wav"))
-                .with_header(hdr("Cache-Control: no-store"));
+            // macOS AVFoundation требует 206 на Range, иначе роняет <audio>.
+            let size = body.len() as u64;
+            let range = header_value(&request, "Range").unwrap_or_default();
+            if range.starts_with("bytes=") {
+                if let Some((s, e)) = parse_byte_range(&range, size) {
+                    let len = e - s + 1;
+                    let chunk = body[s as usize..=(e as usize)].to_vec();
+                    let resp = tiny_http::Response::new(
+                        206.into(),
+                        vec![
+                            hdr("Content-Type: audio/wav"),
+                            hdr(&format!("Content-Range: bytes {s}-{e}/{size}")),
+                            hdr(&format!("Content-Length: {len}")),
+                            hdr("Accept-Ranges: bytes"),
+                        ],
+                        std::io::Cursor::new(chunk),
+                        Some(len as usize),
+                        None,
+                    )
+                    .with_chunked_threshold(usize::MAX);
+                    let _ = request.respond(resp);
+                    return;
+                }
+                let resp = tiny_http::Response::empty(416)
+                    .with_header(hdr(&format!("Content-Range: bytes */{size}")))
+                    .with_header(hdr("Accept-Ranges: bytes"));
+                let _ = request.respond(resp);
+                return;
+            }
+            let resp = tiny_http::Response::new(
+                200.into(),
+                vec![
+                    hdr("Content-Type: audio/wav"),
+                    hdr(&format!("Content-Length: {size}")),
+                    hdr("Accept-Ranges: bytes"),
+                ],
+                std::io::Cursor::new(body),
+                Some(size as usize),
+                None,
+            )
+            .with_chunked_threshold(usize::MAX);
             let _ = request.respond(resp);
         }
         None => bad(request, "Bad time range", 400),
@@ -670,6 +706,10 @@ mod tests {
         assert_eq!(&body[0..4], b"RIFF");
         assert!(build_wav_snippet(&wav, 1.0, 1.0, None).is_none());
         assert!(build_wav_snippet(&wav, -1.0, 1.0, None).is_none());
+        let mono = dir.join("m.wav");
+        mr_audio::write_mono_wav(&mono, &zeros, 16000).unwrap();
+        let body = build_wav_snippet(&mono, 0.0, 1.0, Some(1)).expect("фолбэк на моно");
+        assert_eq!(parse_wav_header(&body[..44]).expect("заголовок").channels, 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
