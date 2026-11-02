@@ -144,6 +144,7 @@
     input: HTMLInputElement | null,
     embedding: number[] | null | undefined,
     saveBtn: HTMLButtonElement,
+    sample?: { start: number; end: number; channel?: number | null },
   ): Promise<void> {
     const finalName = (input?.value.trim() || '').trim()
     if (!finalName) {
@@ -161,6 +162,9 @@
           embedding: hasEmb ? embedding : null,
           audio_file: ui.currentTranscriptPath,
           old_name: oldName,
+          sample_start: sample?.start,
+          sample_end: sample ? Math.max(sample.start, sample.end) : undefined,
+          sample_channel: sample?.channel,
         }),
       })
       const d = await readJsonSafe(r)
@@ -319,6 +323,9 @@
                   card?.querySelector<HTMLInputElement>('.assign-name-input') ?? null,
                   spk.embedding ?? null,
                   e.currentTarget as HTMLButtonElement,
+                  samples[0]
+                    ? { start: samples[0].start, end: samples[0].end, channel: samples[0].channel }
+                    : undefined,
                 )
               }}
             >

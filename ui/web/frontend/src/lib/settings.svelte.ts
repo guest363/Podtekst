@@ -242,6 +242,33 @@ export async function exportPack(p: Voicepack): Promise<void> {
   }
 }
 
+export async function importPack(file: File): Promise<boolean> {
+  const name = file.name || 'pack.voicepack.zip'
+  if (!/\.zip$|\.json$/i.test(name)) {
+    toast('Нужен .voicepack.zip или .voicepack.json', 'error')
+    return false
+  }
+  try {
+    const r = await fetch('/api/voicepacks/import', {
+      method: 'POST',
+      headers: { 'X-Filename': encodeURIComponent(name) },
+      body: file,
+    })
+    const d = await readJsonSafe(r)
+    if (!d.ok) {
+      toast(d.error || 'Не удалось импортировать пакет', 'error')
+      return false
+    }
+    toast(`Пакет «${d.pack?.name || name}» импортирован`)
+    await loadVoicePacks()
+    await loadPeople()
+    return true
+  } catch (e) {
+    toast('Не удалось импортировать: ' + (e as Error).message, 'error')
+    return false
+  }
+}
+
 export async function createPack(): Promise<void> {
   const name = settings.newPackName.trim()
   if (!name) {

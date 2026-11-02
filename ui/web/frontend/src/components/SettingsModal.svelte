@@ -8,6 +8,7 @@
     exportPack,
     ffmpeg,
     hasSystemAudio,
+    importPack,
     loadFfmpeg,
     loadHotwords,
     loadModels,
@@ -24,6 +25,7 @@
   import People from './People.svelte'
 
   let tab = $state<'record' | 'people' | 'voices' | 'dict' | 'models'>('record')
+  let packFileInput: HTMLInputElement | null = $state(null)
   let hotwordsDraft = $state('')
   let hotwordsSaving = $state(false)
 
@@ -204,8 +206,9 @@
         <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Голосовые пакеты">
           <div class="card-title">Голосовые пакеты</div>
           <div class="help-text">
-            Базы голосов команд: личные, рабочие, гостевые. Отключённый пакет исключается из
-            распознавания.
+            Переносимые базы голосов: личные, рабочие, гостевые. Отключённый пакет исключается из
+            распознавания. Имена людей живут во вкладке «Участники», здесь — только голоса.
+            Экспорт складывает пакет в папку записей, импорт принимает .voicepack.zip/.json.
           </div>
           <div class="row-start">
             <input
@@ -220,6 +223,19 @@
               }}
             />
             <button class="btn-secondary" onclick={() => void createPack()}>Создать пакет</button>
+            <button class="btn-secondary" onclick={() => packFileInput?.click()}>Импортировать</button>
+            <input
+              type="file"
+              accept=".zip,.json"
+              hidden
+              aria-label="Выбрать файл пакета для импорта"
+              bind:this={packFileInput}
+              onchange={(e) => {
+                const f = e.currentTarget.files?.[0]
+                e.currentTarget.value = ''
+                if (f) void importPack(f)
+              }}
+            />
           </div>
           <div class="recordings-list" id="packsListSettings">
             {#if settings.packs.length === 0}

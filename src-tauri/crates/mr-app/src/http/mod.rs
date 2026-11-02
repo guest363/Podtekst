@@ -20,8 +20,9 @@ use self::files::{
 };
 use self::media::{local_request_allowed, recordings_list, serve_audio_file, serve_media_snippet};
 use self::people::{
-    handle_voiceprint_delete, handle_voiceprint_save, load_all_voiceprints, load_external_people,
-    people_json_files, read_people_list, remove_person, save_external_people, update_people,
+    handle_voiceprint_delete, handle_voiceprint_sample_delete, handle_voiceprint_save,
+    load_all_voiceprints, load_external_people, people_json_files, read_people_list, remove_person,
+    save_external_people, serve_voiceprint_detail, update_people,
 };
 use self::transcribe_api::{
     handle_hotwords_save, handle_models_update, handle_transcribe_start, serve_hotwords,
@@ -169,6 +170,144 @@ fn query_param(query: &str, key: &str) -> Option<String> {
         let (k, v) = pair.split_once('=')?;
         (k == key).then(|| percent_decode(v))
     })
+}
+
+/// Импорт из .voicepack.zip/.json отдельным пакетом: чужой импорт не должен затирать свои голоса.
+fn handle_voicepacks_import(mut request: tiny_http::Request) {
+    const MAX_PACK: u64 = 256 * 1024 * 1024;
+    if let Some(cl) = media::header_value(&request, "Content-Length") {
+        if cl
+            .trim()
+            .parse::<u64>()
+            .map(|n| n > MAX_PACK)
+            .unwrap_or(false)
+        {
+            json_response(
+                request,
+                json!({"ok": false, "error": "Пакет больше 256 МБ"}),
+                413,
+            );
+            return;
+        }
+    }
+    let raw = media::header_value(&request, "X-Filename").unwrap_or_else(|| "pack.voicepack.zip".to_string());
+    let ext = if raw.to_lowercase().ends_with(".json") {
+        "json"
+    } else if raw.to_lowercase().ends_with(".zip") {
+        "zip"
+    } else {
+        json_response(
+            request,
+            json!({"ok": false, "error": "Нужен .voicepack.zip или .voicepack.json"}),
+            400,
+        );
+        return;
+    };
+    let part = mr_packs::packs_root_dir(&app_data_dir())
+        .join(format!(".import-{}.{ext}", std::process::id()));
+    let mut out = match std::fs::File::create(&part) {
+        Ok(f) => f,
+        Err(e) => {
+            json_response(
+                request,
+                json!({"ok": false, "error": format!("Не удалось принять файл: {e}")}),
+                500,
+            );
+            return;
+        }
+    };
+    let mut reader = request.as_reader();
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut total: u64 = 0;
+    loop {
+        match std::io::Read::read(&mut reader, &mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                total += n as u64;
+                if total > MAX_PACK {
+                    drop(out);
+                    let _ = std::fs::remove_file(&part);
+                    json_response(
+                        request,
+                        json!({"ok": false, "error": "Пакет больше 256 МБ"}),
+                        413,
+                    );
+                    return;
+                }
+                if std::io::Write::write_all(&mut out, &buf[..n]).is_err() {
+                    let _ = std::fs::remove_file(&part);
+                    json_response(
+                        request,
+                        json!({"ok": false, "error": "Не удалось записать файл"}),
+                        500,
+                    );
+                    return;
+                }
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&part);
+                json_response(
+                    request,
+                    json!({"ok": false, "error": format!("Ошибка чтения: {e}")}),
+                    400,
+                );
+                return;
+            }
+        }
+    }
+    drop(out);
+    match packs::import_pack(&app_data_dir(), &part, false) {
+        Ok(info) => {
+            let _ = std::fs::remove_file(&part);
+            json_response(request, json!({"ok": true, "pack": info}), 200);
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&part);
+            json_response(
+                request,
+                json!({"ok": false, "error": format!("Не удалось импортировать пакет: {e}")}),
+                400,
+            );
+        }
+    }
+}
+
+/// Пути строит сервер из pack_id и имени файла, `..` невозможны.
+fn serve_pack_snippet(request: tiny_http::Request, query: &str) {
+    let pack_id = query_param(query, "pack_id").unwrap_or_default();
+    let file = query_param(query, "file").unwrap_or_default();
+    if !pack_id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        json_response(request, json!({"ok": false, "error": "Bad pack_id"}), 400);
+        return;
+    }
+    if file.contains('/') || file.contains('\\') || !file.ends_with(".wav") {
+        json_response(request, json!({"ok": false, "error": "Bad file"}), 400);
+        return;
+    }
+    let dir = if pack_id.is_empty() {
+        app_data_dir()
+    } else {
+        mr_packs::packs_root_dir(&app_data_dir()).join(&pack_id)
+    };
+    let path = dir.join("snippets").join(&file);
+    if !path.is_file() {
+        json_response(request, json!({"ok": false, "error": "Сниппет не найден"}), 404);
+        return;
+    }
+    match std::fs::read(&path) {
+        Ok(body) => {
+            let resp = tiny_http::Response::from_data(body)
+                .with_header(hdr("Content-Type: audio/wav"))
+                .with_header(hdr("Cache-Control: no-store"));
+            let _ = request.respond(resp);
+        }
+        Err(_) => {
+            json_response(request, json!({"ok": false, "error": "Read error"}), 500);
+        }
+    }
 }
 
 pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
@@ -617,6 +756,19 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 (tiny_http::Method::Post, "/api/voiceprints/delete") => {
                     let body = read_body_to_json(&mut request);
                     handle_voiceprint_delete(request, body);
+                }
+                (tiny_http::Method::Get, "/api/voiceprints/detail") => {
+                    serve_voiceprint_detail(request, &query);
+                }
+                (tiny_http::Method::Post, "/api/voiceprints/delete_sample") => {
+                    let body = read_body_to_json(&mut request);
+                    handle_voiceprint_sample_delete(request, body);
+                }
+                (tiny_http::Method::Post, "/api/voicepacks/import") => {
+                    handle_voicepacks_import(request);
+                }
+                (tiny_http::Method::Get, "/api/voicepacks/snippet") => {
+                    serve_pack_snippet(request, &query);
                 }
                 (tiny_http::Method::Post, "/api/voicepacks/toggle") => {
                     let body = read_body_to_json(&mut request);

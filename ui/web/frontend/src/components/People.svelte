@@ -1,6 +1,14 @@
 <script lang="ts">
   import { readJsonSafe } from '../lib/api'
-  import { hasVoiceprint, loadPeople, peopleState, voiceprintCount } from '../lib/people.svelte.ts'
+  import {
+    deleteVoiceSample,
+    hasVoiceprint,
+    loadPeople,
+    loadVoiceDetail,
+    peopleState,
+    snippetUrl,
+    voiceprintCount,
+  } from '../lib/people.svelte.ts'
   import { toast, toastConfirm } from '../lib/toast.svelte.ts'
   import type { Person } from '../lib/api'
 
@@ -22,6 +30,8 @@
     name = ''
     role = ''
     formOpen = true
+    peopleState.voiceDetail = null
+    peopleState.voiceDetailName = ''
   }
 
   function startEdit(p: Person): void {
@@ -29,6 +39,9 @@
     name = p.name || ''
     role = p.role || ''
     formOpen = true
+    peopleState.voiceDetail = null
+    peopleState.voiceDetailName = ''
+    if (p.name && hasVoiceprint(p.name)) void loadVoiceDetail(p.name)
   }
 
   function closeForm(): void {
@@ -36,6 +49,9 @@
     editingPerson = null
     name = ''
     role = ''
+    stopVoice()
+    peopleState.voiceDetail = null
+    peopleState.voiceDetailName = ''
   }
 
   async function savePerson(): Promise<void> {
@@ -68,8 +84,49 @@
     }
   }
 
-  async function removePerson(name: string): Promise<void> {
+  let voiceAudio: HTMLAudioElement | null = $state(null)
+  let playingProto = $state('')
+
+  function stopVoice(): void {
+    voiceAudio?.pause()
+    voiceAudio = null
+    playingProto = ''
+  }
+
+  function playVoice(packId: string, protoId: string): void {
+    if (playingProto === protoId) {
+      stopVoice()
+      return
+    }
+    stopVoice()
+    const audio = new Audio(snippetUrl(packId, protoId))
+    voiceAudio = audio
+    playingProto = protoId
+    audio.onended = () => {
+      if (playingProto === protoId) stopVoice()
+    }
+    audio.onerror = () => {
+      if (playingProto === protoId) stopVoice()
+      toast('Не удалось воспроизвести образец', 'error')
+    }
+    void audio.play().catch(() => {
+      stopVoice()
+      toast('Не удалось воспроизвести образец', 'error')
+    })
+  }
+
+  function fmtVoiceDate(iso: unknown): string {
+    if (typeof iso !== 'string' || !iso) return ''
+    const t = Date.parse(iso)
+    if (Number.isNaN(t)) return ''
     try {
+      return new Date(t).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })
+    } catch {
+      return ''
+    }
+  }
+
+  async function removePerson(name: string): Promise<void> {    try {
       const r = await fetch('/api/people/remove', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -141,6 +198,54 @@
           />
         </div>
       </div>
+      {#if editingPerson && editingPerson.name && peopleState.voiceDetailName === editingPerson.name}
+        <div class="voice-list">
+          <div class="voice-list-title">
+            Голоса в базе: {peopleState.voiceDetail?.prototypes?.length || 0}
+          </div>
+          {#if !peopleState.voiceDetail}
+            <div class="empty-note">Загружаю образцы…</div>
+          {:else if !(peopleState.voiceDetail.prototypes?.length || 0)}
+            <div class="empty-note">Образцов нет — голос запомнится из расшифровки кнопкой «Запомнить».</div>
+          {:else}
+            {#each peopleState.voiceDetail.prototypes || [] as proto, i (proto.id || i)}
+              {@const pid = String(proto.id || '')}
+              <div class="voice-row">
+                <span class="voice-name">
+                  Голос {i + 1}{fmtVoiceDate(proto.created_at) ? ` · ${fmtVoiceDate(proto.created_at)}` : ''}{typeof proto.duration_sec === 'number' ? ` · ${proto.duration_sec.toFixed(1)} c` : ''}
+                </span>
+                <span class="voice-actions">
+                  {#if proto.has_snippet && pid}
+                    <button
+                      type="button"
+                      class="btn-secondary btn-sm"
+                      title="Прослушать образец"
+                      aria-label={`Прослушать голос ${i + 1}`}
+                      onclick={() => playVoice(String(peopleState.voiceDetail?.pack_id || ''), pid)}
+                    >
+                      {playingProto === pid ? '■' : '▶'}
+                    </button>
+                  {/if}
+                  <button
+                    type="button"
+                    class="btn-secondary btn-sm"
+                    title="Удалить этот образец"
+                    aria-label={`Удалить голос ${i + 1}`}
+                    onclick={() =>
+                      toastConfirm(
+                        `Удалить образец «Голос ${i + 1}» у «${editingPerson?.name}»? Остальные голоса сохранятся.`,
+                        'Удалить',
+                        () => void deleteVoiceSample(String(editingPerson?.name || ''), pid),
+                      )}
+                  >
+                    ✕
+                  </button>
+                </span>
+              </div>
+            {/each}
+          {/if}
+        </div>
+      {/if}
       <div class="row-end form-actions">
         <button class="btn-secondary btn-sm" onclick={closeForm}>Отмена</button>
         <button
@@ -155,7 +260,9 @@
   {/if}
 
   <div class="help-text">
-    Каталог участников и сохранённые голосовые профили. При расшифровке аудио сопоставляется с этими людьми.
+    Каталог людей: имена и роли. Голоса хранятся отдельно, во вкладке «Голоса»,
+    и привязываются к участникам при расшифровке кнопкой «Запомнить».
+    Нажмите карандаш — там видно все образцы голоса человека.
   </div>
   <div class="row-start">
     <input
@@ -244,5 +351,33 @@
   .form-actions {
     gap: 8px;
     margin-top: 4px;
+  }
+  .voice-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    background: var(--bg-inset);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-inner);
+  }
+  .voice-list-title {
+    font-size: 12.5px;
+    font-weight: 800;
+    color: var(--text-primary);
+  }
+  .voice-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .voice-name {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+  }
+  .voice-actions {
+    display: flex;
+    gap: 6px;
   }
 </style>

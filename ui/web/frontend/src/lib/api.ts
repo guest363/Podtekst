@@ -59,6 +59,21 @@ export interface VoiceprintSummary {
   updated_at?: string
 }
 
+export interface VoicePrototype {
+  id?: string | null
+  created_at?: string | null
+  duration_sec?: number | null
+  quality?: number | null
+  has_snippet?: boolean
+}
+
+export interface VoiceDetail {
+  name?: string | null
+  pack_id?: string
+  samples_count?: number | null
+  prototypes?: VoicePrototype[]
+}
+
 export interface SpeakerInfo {
   id?: string
   name: string

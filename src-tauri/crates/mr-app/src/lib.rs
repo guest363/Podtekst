@@ -897,6 +897,89 @@ mod live_api_tests {
             Some(false)
         );
 
+        // Импорт пакета JSON-бандлом + деталка + поштучное удаление образца.
+        let emb1: Vec<serde_json::Value> = (0..mr_ml::EMBEDDING_DIM)
+            .map(|i| json!((i as f64 + 1.0) / mr_ml::EMBEDDING_DIM as f64))
+            .collect();
+        let emb2: Vec<serde_json::Value> = (0..mr_ml::EMBEDDING_DIM)
+            .map(|i| json!(1.0 - (i as f64) / mr_ml::EMBEDDING_DIM as f64))
+            .collect();
+        let bundle = json!({
+            "format": "meeting-recorder-voicepack-v2",
+            "manifest": {"id": "test-pack", "name": "Тестовый Пакет"},
+            "people": [{"name": "TestVoice1"}],
+            "voiceprints": {"version": 3, "profiles": [{
+                "name": "TestVoice1", "embedding": emb1,
+                "samples_count": 2, "updated_at": "",
+                "prototypes": [
+                    {"id": "p1", "embedding": emb1, "duration_sec": 1.0,
+                     "quality": 1.0, "created_at": "2026-01-01T00:00:00Z",
+                     "snippet_relpath": null},
+                    {"id": "p2", "embedding": emb2, "duration_sec": 2.0,
+                     "quality": 1.0, "created_at": "2026-01-02T00:00:00Z",
+                     "snippet_relpath": null},
+                ],
+            }]},
+        });
+        let (st, v) = json(http(
+            port,
+            "POST",
+            "/api/voicepacks/import",
+            &[
+                ("Content-Type", "application/octet-stream"),
+                ("X-Filename", "test.voicepack.json"),
+            ],
+            &serde_json::to_vec(&bundle).unwrap(),
+        ));
+        assert_eq!(
+            (st, v.get("ok").and_then(|x| x.as_bool())),
+            (200, Some(true)),
+            "voicepacks/import: {v}"
+        );
+        let (_, v) = json(http(
+            port,
+            "GET",
+            "/api/voiceprints/detail?name=TestVoice1",
+            &[],
+            &[],
+        ));
+        assert_eq!(v.get("ok").and_then(|x| x.as_bool()), Some(true));
+        assert_eq!(
+            v.get("prototypes").and_then(|x| x.as_array()).map(|a| a.len()),
+            Some(2)
+        );
+        let (st, v) = json(http(
+            port,
+            "POST",
+            "/api/voiceprints/delete_sample",
+            &[("Content-Type", "application/json")],
+            json!({"name": "TestVoice1", "prototype_id": "p1"})
+                .to_string()
+                .as_bytes(),
+        ));
+        assert_eq!(
+            (st, v.get("ok").and_then(|x| x.as_bool())),
+            (200, Some(true)),
+            "delete_sample: {v}"
+        );
+        let (_, v) = json(http(
+            port,
+            "GET",
+            "/api/voiceprints/detail?name=TestVoice1",
+            &[],
+            &[],
+        ));
+        let protos = v
+            .get("prototypes")
+            .and_then(|x| x.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(protos.len(), 1);
+        assert_eq!(
+            protos[0].get("id").and_then(|x| x.as_str()),
+            Some("p2")
+        );
+
         let (st, v) = json(http(
             port,
             "POST",

@@ -448,6 +448,49 @@ fn wav_header_bytes(info: &WavInfo, data_bytes: u32) -> Vec<u8> {
 /// Верхний потолок фрагмента: локальный UI, но память ответа ограничиваем.
 const MAX_SNIPPET_SEC: f64 = 300.0;
 
+/// Общая нарезка для HTTP-фрагментов и сниппетов: две реализации разъедутся на границах.
+pub(super) fn build_wav_snippet(
+    path: &Path,
+    start: f64,
+    end: f64,
+    channel: Option<usize>,
+) -> Option<Vec<u8>> {
+    if !(0.0..=MAX_SNIPPET_SEC).contains(&(end - start)) || start < 0.0 {
+        return None;
+    }
+    let mut file = std::fs::File::open(path).ok()?;
+    use std::io::{Read, Seek, SeekFrom};
+    let mut head = vec![0u8; 4096];
+    let got = file.read(&mut head).unwrap_or(0);
+    head.truncate(got);
+    let info = parse_wav_header(&head)?;
+    if channel.is_some_and(|ch| ch >= info.channels as usize) {
+        return None;
+    }
+    let file_len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let data_available = info.data_len.min(file_len.saturating_sub(info.data_offset));
+    let block = u64::from(info.channels) * u64::from(info.bits) / 8;
+    let frames = data_available / block.max(1);
+    let first = ((start * info.rate as f64).floor() as u64).min(frames);
+    let last =
+        (((end - start).min(MAX_SNIPPET_SEC) * info.rate as f64).ceil() as u64 + first).min(frames);
+    if last <= first {
+        return None;
+    }
+    let n_bytes = (last - first) * block;
+    file.seek(SeekFrom::Start(info.data_offset + first * block)).ok()?;
+    let mut pcm = vec![0u8; n_bytes as usize];
+    file.read_exact(&mut pcm).ok()?;
+    match channel {
+        Some(ch) => mono_channel_snippet(&info, &pcm, ch),
+        None => {
+            let mut b = wav_header_bytes(&info, n_bytes as u32);
+            b.extend_from_slice(&pcm);
+            Some(b)
+        }
+    }
+}
+
 /// маленький WAV, нарезанный байтовым срезом PCM — без декодирования, поэтому
 /// мгновенно даже на часовом файле. Клиентский `#t=`-seek по гигабайтному WAV
 /// вешал WebView (он буферизовал весь файл), фрагмент решает это в корне.
@@ -467,10 +510,6 @@ pub(super) fn serve_media_snippet(request: tiny_http::Request, query: &str) {
         .and_then(|v| v.parse::<f64>().ok())
         .unwrap_or(0.0);
     let channel = super::query_param(query, "channel").and_then(|v| v.parse::<usize>().ok());
-    if !(0.0..=MAX_SNIPPET_SEC).contains(&(end - start)) || start < 0.0 {
-        bad(request, "Bad time range", 400);
-        return;
-    }
     let safe = safe_file_name(&f);
     let path = save_dir().join(&safe);
     if !inside_save_dir(&path) || !path.is_file() {
@@ -485,69 +524,15 @@ pub(super) fn serve_media_snippet(request: tiny_http::Request, query: &str) {
         bad(request, "Snippet supports WAV only", 415);
         return;
     }
-    let mut file = match std::fs::File::open(&path) {
-        Ok(f) => f,
-        Err(_) => {
-            bad(request, "Read error", 500);
-            return;
+    match build_wav_snippet(&path, start, end, channel) {
+        Some(body) => {
+            let resp = tiny_http::Response::from_data(body)
+                .with_header(hdr("Content-Type: audio/wav"))
+                .with_header(hdr("Cache-Control: no-store"));
+            let _ = request.respond(resp);
         }
-    };
-    use std::io::{Read, Seek, SeekFrom};
-    let mut head = vec![0u8; 4096];
-    let got = file.read(&mut head).unwrap_or(0);
-    head.truncate(got);
-    let Some(info) = parse_wav_header(&head) else {
-        bad(request, "Not a RIFF/WAVE file", 415);
-        return;
-    };
-    if let Some(ch) = channel {
-        if ch >= info.channels as usize {
-            bad(request, "Bad channel", 400);
-            return;
-        }
+        None => bad(request, "Bad time range", 400),
     }
-    let file_len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-    let data_available = info.data_len.min(file_len.saturating_sub(info.data_offset));
-    let block = u64::from(info.channels) * u64::from(info.bits) / 8;
-    let frames = data_available / block.max(1);
-    let first = ((start * info.rate as f64).floor() as u64).min(frames);
-    let last =
-        (((end - start).min(MAX_SNIPPET_SEC) * info.rate as f64).ceil() as u64 + first).min(frames);
-    if last <= first {
-        bad(request, "Empty fragment", 400);
-        return;
-    }
-    let n_bytes = (last - first) * block;
-    if file
-        .seek(SeekFrom::Start(info.data_offset + first * block))
-        .is_err()
-    {
-        bad(request, "Read error", 500);
-        return;
-    }
-    let mut pcm = vec![0u8; n_bytes as usize];
-    if file.read_exact(&mut pcm).is_err() {
-        bad(request, "Read error", 500);
-        return;
-    }
-    let body = match channel {
-        Some(ch) => match mono_channel_snippet(&info, &pcm, ch) {
-            Some(b) => b,
-            None => {
-                bad(request, "Bad channel", 400);
-                return;
-            }
-        },
-        None => {
-            let mut b = wav_header_bytes(&info, n_bytes as u32);
-            b.extend_from_slice(&pcm);
-            b
-        }
-    };
-    let resp = tiny_http::Response::from_data(body)
-        .with_header(hdr("Content-Type: audio/wav"))
-        .with_header(hdr("Cache-Control: no-store"));
-    let _ = request.respond(resp);
 }
 
 /// Моно-фрагмент выбранного канала: для split-записей фрагмент спикера не
@@ -668,5 +653,22 @@ mod tests {
         assert_eq!(parse_byte_range("bytes=50-40", 100), None);
         assert_eq!(parse_byte_range("invalid", 100), None);
         assert_eq!(parse_byte_range("bytes=0-10", 0), None);
+    }
+
+    #[test]
+    fn snippet_builder_cuts_mono_wav() {
+        let dir = std::env::temp_dir().join(format!("mr-snip-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let wav = dir.join("s.wav");
+        let zeros = vec![0.0f32; 16000 * 2];
+        mr_audio::write_stereo_wav(&wav, &zeros, &zeros, 16000).unwrap();
+        let body = build_wav_snippet(&wav, 0.0, 1.0, Some(0)).expect("моно-фрагмент");
+        let parsed = parse_wav_header(&body[..44.min(body.len())]).expect("заголовок");
+        assert_eq!(parsed.channels, 1);
+        assert_eq!(parsed.data_len, 16000 * 2);
+        assert_eq!(&body[0..4], b"RIFF");
+        assert!(build_wav_snippet(&wav, 1.0, 1.0, None).is_none());
+        assert!(build_wav_snippet(&wav, -1.0, 1.0, None).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

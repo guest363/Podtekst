@@ -380,6 +380,13 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    // Границы образца для сниппета «как звучит»: берутся из карточки спикера.
+    let sample_start = body.get("sample_start").and_then(|v| v.as_f64());
+    let sample_end = body.get("sample_end").and_then(|v| v.as_f64());
+    let sample_channel = body
+        .get("sample_channel")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize);
     if name.is_empty() {
         json_response(
             request,
@@ -472,13 +479,22 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
                     .unwrap_or(false)
             });
             if !duplicate {
+                let new_id = format!("p{now}-{}", protos.len() + 1);
+                let snippet_rel = snippet_for_new_prototype(
+                    &audio_file,
+                    &new_id,
+                    sample_start,
+                    sample_end,
+                    sample_channel,
+                    vp_file.parent(),
+                );
                 protos.push(json!({
-                    "id": format!("p{now}-{}", protos.len() + 1),
+                    "id": new_id,
                     "embedding": norm,
                     "duration_sec": 4.0,
                     "quality": 1.0,
                     "created_at": now_iso.clone(),
-                    "snippet_relpath": null,
+                    "snippet_relpath": snippet_rel,
                 }));
                 p["embedding"] = json!(merged);
                 p["samples_count"] = json!(cnt as u64 + 1);
@@ -491,18 +507,27 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
             p["prototypes"] = json!(protos);
             p["updated_at"] = json!(now_iso.clone());
         } else {
+            let new_id = format!("p{now}-1");
+            let snippet_rel = snippet_for_new_prototype(
+                &audio_file,
+                &new_id,
+                sample_start,
+                sample_end,
+                sample_channel,
+                vp_file.parent(),
+            );
             profiles.push(json!({
                 "name": name.clone(),
                 "embedding": norm.clone(),
                 "samples_count": 1,
                 "updated_at": now_iso.clone(),
                 "prototypes": [{
-                    "id": format!("p{now}-1"),
+                    "id": new_id,
                     "embedding": norm,
                     "duration_sec": 4.0,
                     "quality": 1.0,
                     "created_at": now_iso,
-                    "snippet_relpath": null,
+                    "snippet_relpath": snippet_rel,
                 }],
             }));
         }
@@ -592,6 +617,226 @@ pub(super) fn handle_voiceprint_delete(request: tiny_http::Request, body: serde_
     }
     if found && !audio_file.is_empty() {
         clear_matched_in_transcript(Path::new(&audio_file), &name);
+    }
+    json_response(request, json!({"ok": found}), 200);
+}
+
+/// Сниппет нового прототипа: образец нужен, чтобы голос можно было узнать на слух.
+fn snippet_for_new_prototype(
+    audio_file: &str,
+    proto_id: &str,
+    start: Option<f64>,
+    end: Option<f64>,
+    channel: Option<usize>,
+    pack_dir: Option<&Path>,
+) -> Option<String> {
+    let (s, e) = match (start, end) {
+        (Some(s), Some(e)) if s >= 0.0 && e - s > 0.0 && e - s <= 30.0 => (s, e),
+        _ => return None,
+    };
+    let audio = Path::new(audio_file);
+    if !inside_save_dir(audio) || !audio.is_file() {
+        return None;
+    }
+    if !audio
+        .extension()
+        .is_some_and(|x| x.eq_ignore_ascii_case("wav"))
+    {
+        return None;
+    }
+    let bytes = super::media::build_wav_snippet(audio, s, e, channel)?;
+    let dir = pack_dir?;
+    std::fs::create_dir_all(dir.join("snippets")).ok()?;
+    std::fs::write(dir.join("snippets").join(format!("{proto_id}.wav")), bytes).ok()?;
+    Some(format!("snippets/{proto_id}.wav"))
+}
+
+fn voiceprint_files() -> Vec<std::path::PathBuf> {    let mut files = vec![
+        app_data_dir().join("voiceprints.json"),
+        app_data_dir().join("packs/default/voiceprints.json"),
+    ];
+    if let Ok(packs) = packs::get_active_packs(&app_data_dir()) {
+        for dir in packs {
+            let f = dir.join("voiceprints.json");
+            if !files.contains(&f) {
+                files.push(f);
+            }
+        }
+    }
+    files
+}
+
+/// pack_id для URL сниппета: "" — корень app_data, иначе имя папки пакета.
+fn pack_id_of(vp_file: &Path) -> Option<String> {
+    if vp_file == app_data_dir().join("voiceprints.json") {
+        return Some(String::new());
+    }
+    let root = mr_packs::packs_root_dir(&app_data_dir());
+    let rel = vp_file.strip_prefix(&root).ok()?;
+    if rel.components().count() == 2 {
+        rel.components()
+            .next()
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+    } else {
+        None
+    }
+}
+
+pub(super) fn serve_voiceprint_detail(request: tiny_http::Request, query: &str) {
+    let name = super::query_param(query, "name").unwrap_or_default();
+    if name.trim().is_empty() {
+        json_response(request, json!({"ok": false, "error": "Имя не указано"}), 400);
+        return;
+    }
+    for vp_file in voiceprint_files() {
+        let Ok(t) = std::fs::read_to_string(&vp_file) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) else {
+            continue;
+        };
+        let found = parse_profiles(&v)
+            .into_iter()
+            .find(|p| same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), &name));
+        if let Some(p) = found {
+            let pack_id = pack_id_of(&vp_file).unwrap_or_default();
+            let protos: Vec<serde_json::Value> = p
+                .get("prototypes")
+                .and_then(|x| x.as_array())
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|x| {
+                    let rel = x.get("snippet_relpath").and_then(|s| s.as_str());
+                    let playable = rel.is_some_and(|r| {
+                        let base = if pack_id.is_empty() {
+                            app_data_dir()
+                        } else {
+                            mr_packs::packs_root_dir(&app_data_dir()).join(&pack_id)
+                        };
+                        base.join(r).is_file()
+                    });
+                    json!({
+                        "id": x.get("id"),
+                        "created_at": x.get("created_at"),
+                        "duration_sec": x.get("duration_sec"),
+                        "quality": x.get("quality"),
+                        "has_snippet": playable,
+                    })
+                })
+                .collect();
+            json_response(
+                request,
+                json!({
+                    "ok": true,
+                    "name": p.get("name"),
+                    "pack_id": pack_id,
+                    "samples_count": p.get("samples_count"),
+                    "prototypes": protos,
+                }),
+                200,
+            );
+            return;
+        }
+    }
+    json_response(request, json!({"ok": false, "error": "Голос не найден"}), 404);
+}
+
+/// Удаляет один прототип; центроид — среднее оставшихся, а не старое
+/// скользящее среднее. Пустой профиль убирается целиком вместе со сниппетом.
+fn remove_prototype(profile: &mut serde_json::Value, proto_id: &str) -> Option<(Option<String>, bool)> {
+    let arr = profile.get_mut("prototypes")?.as_array_mut()?;
+    let pos = arr
+        .iter()
+        .position(|x| x.get("id").and_then(|v| v.as_str()) == Some(proto_id))?;
+    let gone = arr.remove(pos);
+    let snippet = gone
+        .get("snippet_relpath")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let remaining: Vec<Vec<f64>> = arr
+        .iter()
+        .filter_map(|x| {
+            x.get("embedding").and_then(|v| v.as_array()).map(|a| {
+                a.iter().filter_map(|n| n.as_f64()).collect()
+            })
+        })
+        .filter(|v: &Vec<f64>| v.len() == mr_ml::EMBEDDING_DIM)
+        .collect();
+    if remaining.is_empty() {
+        return Some((snippet, true));
+    }
+    let mut mean = vec![0.0; mr_ml::EMBEDDING_DIM];
+    for v in &remaining {
+        for (i, x) in v.iter().enumerate() {
+            mean[i] += x;
+        }
+    }
+    let n = remaining.len() as f64;
+    for x in mean.iter_mut() {
+        *x /= n;
+    }
+    profile["embedding"] = json!(l2_normalize(&mean));
+    profile["samples_count"] = json!(remaining.len() as u64);
+    Some((snippet, false))
+}
+
+pub(super) fn handle_voiceprint_sample_delete(
+    request: tiny_http::Request,
+    body: serde_json::Value,
+) {
+    let name = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let proto_id = body
+        .get("prototype_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if name.is_empty() || proto_id.is_empty() {
+        json_response(request, json!({"ok": false, "error": "Нужно имя и id образца"}), 400);
+        return;
+    }
+    let mut found = false;
+    for vp_file in voiceprint_files() {
+        let Ok(t) = std::fs::read_to_string(&vp_file) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) else {
+            continue;
+        };
+        let mut profiles = parse_profiles(&v);
+        let mut changed = false;
+        let mut drop_profile = false;
+        let mut snippet: Option<String> = None;
+        if let Some(p) = profiles.iter_mut().find(|p| {
+            same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), &name)
+        }) {
+            if let Some((sn, empty)) = remove_prototype(p, &proto_id) {
+                snippet = sn;
+                drop_profile = empty;
+                changed = true;
+                found = true;
+            }
+        }
+        if drop_profile {
+            profiles.retain(|p| {
+                !same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), &name)
+            });
+        }
+        if changed {
+            let _ = std::fs::write(
+                &vp_file,
+                serde_json::to_string_pretty(&vp_v3(profiles)).unwrap_or_default(),
+            );
+            if let (Some(rel), Some(parent)) = (snippet, vp_file.parent()) {
+                let _ = std::fs::remove_file(parent.join(&rel));
+            }
+        }
     }
     json_response(request, json!({"ok": found}), 200);
 }
@@ -761,5 +1006,53 @@ fn rename_speaker_in_files(audio: &Path, new_name: &str, old_name: Option<&str>)
                 let _ = std::fs::write(&txt_p, patched);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn profile_with(two: bool) -> serde_json::Value {
+        let a: Vec<f64> = (0..mr_ml::EMBEDDING_DIM).map(|_| 1.0).collect();
+        let b: Vec<f64> = (0..mr_ml::EMBEDDING_DIM).map(|_| 0.5).collect();
+        let mut protos = vec![json!({
+            "id": "p1", "embedding": a, "duration_sec": 1.0,
+            "quality": 1.0, "created_at": "", "snippet_relpath": null,
+        })];
+        if two {
+            protos.push(json!({
+                "id": "p2", "embedding": b, "duration_sec": 2.0,
+                "quality": 1.0, "created_at": "", "snippet_relpath": null,
+            }));
+        }
+        json!({"name": "Тест-Голос", "embedding": a_fallback(), "samples_count": 2, "prototypes": protos})
+    }
+
+    fn a_fallback() -> Vec<f64> {
+        (0..mr_ml::EMBEDDING_DIM).map(|_| 0.1).collect()
+    }
+
+    #[test]
+    fn remove_prototype_recomputes_centroid() {
+        let mut p = profile_with(true);
+        let (sn, empty) = remove_prototype(&mut p, "p1").expect("p1 обязан найтись");
+        assert!(sn.is_none());
+        assert!(!empty);
+        assert_eq!(p["samples_count"], 1);
+        let emb: Vec<f64> = serde_json::from_value(p["embedding"].clone()).unwrap();
+        assert_eq!(emb.len(), mr_ml::EMBEDDING_DIM);
+        // Остался один прототип из 0.5: центроид — его нормаль, а не старое среднее.
+        let norm: f64 = emb.iter().map(|x| x * x).sum::<f64>().sqrt();
+        assert!((norm - 1.0).abs() < 1e-9);
+        assert!((emb[0] - emb[100]).abs() < 1e-12);
+    }
+
+    #[test]
+    fn remove_last_prototype_empties_profile() {
+        let mut p = profile_with(false);
+        let (_, empty) = remove_prototype(&mut p, "p1").expect("p1 обязан найтись");
+        assert!(empty);
+        assert!(remove_prototype(&mut p, "nope").is_none());
     }
 }
