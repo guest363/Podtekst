@@ -3,7 +3,6 @@
 Все заметные изменения проекта. Формат - [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии - [Semantic Versioning](https://semver.org/lang/ru/).
 
-<<<<<<< HEAD
 ## [0.2.0] - 2026-10-31
 
 ### Добавлено
