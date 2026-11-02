@@ -139,7 +139,6 @@ impl DiarIntervalTree {
             })
     }
 
-    /// Границы реплик диаризации — это паузы, по которым резалась речь.
     fn snap_to_pause(&self, time: f64, window: f64) -> Option<f64> {
         let mut best: Option<(f64, f64)> = None;
         for segment in &self.segments {
