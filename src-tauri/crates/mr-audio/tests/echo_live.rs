@@ -1,7 +1,3 @@
-//! Живой прогон подавления эха на реальной стерео-записи (паттерн onnx_real).
-//! Запуск: MR_ECHO_TEST_WAV=<стерео WAV 16 кГц> cargo test -p mr-audio --release
-//! --test echo_live -- --nocapture. Без переменной тест пропускается.
-
 use hound::{SampleFormat, WavReader};
 
 #[test]
