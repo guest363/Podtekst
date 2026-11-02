@@ -33,7 +33,8 @@
   let renameValue = $state('')
   let menuInput: HTMLInputElement | null = $state(null)
   let wordMenu = $state<{ index: number; word: string; x: number; y: number } | null>(null)
-  let wordValue = $state('')
+  let heardValue = $state('')
+  let correctValue = $state('')
   let menuWordInput: HTMLInputElement | null = $state(null)
   let speakerNames = $derived(
     [...new Set([...speakers.map((s) => s.name), ...utterances.map((u) => u.speaker || 'Спикер')])].filter(Boolean),
@@ -202,17 +203,21 @@
       index,
       word,
       x: Math.max(8, Math.min(rect.left, window.innerWidth - 270)),
-      y: Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - 200)),
+      y: Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - 240)),
     }
-    wordValue = word
+    heardValue = word
+    correctValue = ''
     await tick()
     menuWordInput?.focus()
-    menuWordInput?.select()
   }
 
   async function saveWord(): Promise<void> {
-    if (!wordMenu || !wordValue.trim()) return
-    if (await addHotword(wordValue.trim())) wordMenu = null
+    if (!wordMenu) return
+    const heard = heardValue.trim()
+    const correct = correctValue.trim()
+    if (!heard) return
+    const entry = correct && correct.toLowerCase() !== heard.toLowerCase() ? `${heard} => ${correct}` : heard
+    if (await addHotword(entry)) wordMenu = null
   }
 
   function onWordMenuKey(e: KeyboardEvent): void {
@@ -545,10 +550,20 @@
       onkeydown={onWordMenuKey}
     >
       <label class="speaker-rename-label">
-        Реальное значение для словаря
-        <input class="speaker-rename-input" bind:this={menuWordInput} bind:value={wordValue} maxlength="64" />
+        Услышано
+        <input class="speaker-rename-input" bind:this={menuWordInput} bind:value={heardValue} maxlength="64" />
       </label>
-      <div class="help-text">Следующие расшифровки получат бонус на этот термин.</div>
+      <label class="speaker-rename-label">
+        Правильно (пусто — просто бонус этому слову)
+        <input
+          class="speaker-rename-input"
+          bind:value={correctValue}
+          maxlength="64"
+          placeholder="Например, фикс багов"
+          aria-label="Правильное написание"
+        />
+      </label>
+      <div class="help-text">Связка «услышано → правильно» исправляет текст точно. Без второго поля — только бонус.</div>
       <button type="button" class="btn-secondary btn-sm" onclick={() => void saveWord()}>
         В словарь
       </button>

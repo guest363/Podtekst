@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use super::session::OrtSession;
-use crate::hotwords::{normalize_term, sanitize_hotwords};
+use crate::hotwords::{normalize_term, parse_hotwords};
 
 pub use crate::hotwords::{DEFAULT_CONFIDENCE_THRESHOLD, MAX_HOTWORDS, MAX_HOTWORD_CHARS};
 
@@ -329,8 +329,11 @@ pub fn align_to_reference(
     hotwords: &[String],
     threshold: f64,
 ) -> Vec<AlignedWord> {
-    let clean = sanitize_hotwords(hotwords);
-    let full: HashMap<String, &str> = clean.iter().map(|h| (cmp_norm(h), h.trim())).collect();
+    let entries = parse_hotwords(hotwords);
+    let full: HashMap<String, &str> = entries
+        .iter()
+        .map(|e| (cmp_norm(&e.boost), e.to_display.as_str()))
+        .collect();
     let in_dict = |w: &str| -> bool {
         let n = cmp_norm(w);
         full.contains_key(&n)
@@ -342,7 +345,7 @@ pub fn align_to_reference(
     let a: Vec<String> = rwords.iter().map(|w| cmp_norm(w)).collect();
     let b: Vec<String> = ctc.words.iter().map(|w| cmp_norm(&w.text)).collect();
     let src_of = align_map(&a, &b);
-    rwords
+    let out: Vec<AlignedWord> = rwords
         .into_iter()
         .enumerate()
         .map(|(i, w)| {
@@ -368,7 +371,53 @@ pub fn align_to_reference(
                 needs_review,
             }
         })
-        .collect()
+        .collect();
+    let mut pairs: Vec<(Vec<String>, Vec<String>)> = Vec::new();
+    for e in &entries {
+        if let Some(from) = &e.from {
+            let to: Vec<String> = e
+                .to_display
+                .split_whitespace()
+                .map(str::to_string)
+                .collect();
+            if !to.is_empty() {
+                pairs.push((from.clone(), to));
+            }
+        }
+    }
+    pairs.sort_by_key(|x| std::cmp::Reverse(x.0.len()));
+    if pairs.is_empty() {
+        return out;
+    }
+    let mut res = Vec::with_capacity(out.len());
+    let mut i = 0;
+    while i < out.len() {
+        let mut hit: Option<(&Vec<String>, usize)> = None;
+        for (from, to) in &pairs {
+            if out.len() - i >= from.len()
+                && out[i..i + from.len()]
+                    .iter()
+                    .zip(from)
+                    .all(|(w, f)| cmp_norm(&w.text) == *f)
+            {
+                hit = Some((to, from.len()));
+                break;
+            }
+        }
+        if let Some((to, n)) = hit {
+            let conf = out[i..i + n].iter().map(|w| w.confidence).sum::<f64>() / n as f64;
+            res.extend(to.iter().map(|t| AlignedWord {
+                text: t.clone(),
+                confidence: conf,
+                needs_review: false,
+            }));
+            i += n;
+        } else {
+            res.push(out[i].clone());
+            i += 1;
+        }
+    }
+    res
 }
 
 pub struct GigaCTC {
@@ -516,10 +565,9 @@ impl GigaCTC {
                 words: Vec::new(),
             });
         }
-        let hw_clean = sanitize_hotwords(hotwords);
         let mut hw_ids = Vec::new();
-        for h in &hw_clean {
-            if let Some(ids) = tokenize_term(h, &self.vocab) {
+        for e in parse_hotwords(hotwords) {
+            if let Some(ids) = tokenize_term(&e.boost, &self.vocab) {
                 hw_ids.push(ids);
             }
         }
@@ -607,5 +655,34 @@ mod tests {
         assert_eq!(aligned[0].text, "Сбер");
         assert!(!aligned[0].needs_review);
         assert!(aligned[1].needs_review);
+    }
+
+    #[test]
+    fn align_applies_heard_to_correct_pairs() {
+        let ctc = CtcHypothesis {
+            text: "секс баг".to_string(),
+            words: vec![
+                CtcWord {
+                    text: "секс".to_string(),
+                    confidence: 0.4,
+                },
+                CtcWord {
+                    text: "баг".to_string(),
+                    confidence: 0.3,
+                },
+            ],
+        };
+        let aligned = align_to_reference(
+            "секс-баг вылез",
+            &ctc,
+            &["секс-баг => фикс багов".to_string()],
+            DEFAULT_CONFIDENCE_THRESHOLD,
+        );
+        assert_eq!(aligned.len(), 3);
+        assert_eq!(aligned[0].text, "фикс");
+        assert_eq!(aligned[1].text, "багов");
+        assert!(!aligned[0].needs_review);
+        assert!(!aligned[1].needs_review);
+        assert_eq!(aligned[2].text, "вылез");
     }
 }
