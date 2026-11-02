@@ -1,9 +1,8 @@
 <script lang="ts">
   import { tick } from 'svelte'
-  import { fmtClockShort, readJsonSafe, speakerColor, speakerTint } from '../lib/api'
+  import { fmtClockShort, speakerColor, speakerTint } from '../lib/api'
   import type { SpeakerInfo, Utterance } from '../lib/api'
   import { editTranscript } from '../lib/transcript.svelte.ts'
-  import { emit } from '../lib/ui.svelte.ts'
   import { addHotword } from '../lib/settings.svelte.ts'
   import { toast } from '../lib/toast.svelte.ts'
 
@@ -32,9 +31,7 @@
   let saving = $state(false)
   let speakerMenu = $state<{ index: number; x: number; y: number } | null>(null)
   let renameValue = $state('')
-  let assignValue = $state('')
   let menuInput: HTMLInputElement | null = $state(null)
-  let assignInput: HTMLInputElement | null = $state(null)
   let wordMenu = $state<{ index: number; word: string; x: number; y: number } | null>(null)
   let heardValue = $state('')
   let correctValue = $state('')
@@ -57,9 +54,6 @@
     }
     return { x, y }
   }
-  let speakerNames = $derived(
-    [...new Set([...speakers.map((s) => s.name), ...utterances.map((u) => u.speaker || 'Спикер')])].filter(Boolean),
-  )
   let menuSpeaker = $derived(speakerMenu ? utterances[speakerMenu.index]?.speaker || 'Спикер' : '')
   let activeIndex = $derived.by(() => {
     if (currentTime <= 0 || !utterances.length) return -1
@@ -181,60 +175,25 @@
       return
     }
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    const estW = 250
+    const estW = 270
     speakerMenu = {
       index,
       x: Math.max(8, Math.min(rect.left, window.innerWidth - estW - 8)),
       y: rect.bottom + 6,
     }
     renameValue = utterances[index]?.speaker || 'Спикер'
-    assignValue = ''
     await tick()
     if (speakerMenu) {
       const fitted = fitIntoView(speakerMenuEl, { x: speakerMenu.x, y: speakerMenu.y }, rect)
       speakerMenu = { ...speakerMenu, ...fitted }
     }
     menuInput?.focus()
+    menuInput?.select()
   }
 
   async function renameSpeaker(): Promise<void> {
     if (!speakerMenu || !renameValue.trim()) return
     if (await applyChange({ old_speaker: menuSpeaker, speaker: renameValue.trim() })) speakerMenu = null
-  }
-
-  async function assignSpeaker(name: string): Promise<void> {
-    if (!speakerMenu) return
-    if (await applyChange({ index: speakerMenu.index, speaker: name })) speakerMenu = null
-  }
-
-  async function learnVoice(): Promise<void> {
-    if (!speakerMenu || !file || saving) return
-    const name = assignValue.trim()
-    if (!name) return
-    if (!(await applyChange({ index: speakerMenu.index, speaker: name }))) return
-    saving = true
-    try {
-      const r = await fetch('/api/voiceprints/learn_sample', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file, index: speakerMenu.index, name }),
-      })
-      const d = await readJsonSafe(r)
-      if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`)
-      speakerMenu = null
-      toast(`Голос «${name}» запомнен`)
-      emit('voiceprints-changed')
-    } catch (e) {
-      toast('Не удалось запомнить голос: ' + (e as Error).message, 'error')
-    } finally {
-      saving = false
-    }
-  }
-
-  function addSpeaker(): void {
-    let n = 1
-    while (speakerNames.includes(`Спикер ${n}`)) n += 1
-    void assignSpeaker(`Спикер ${n}`)
   }
 
   async function detachSpeaker(index: number): Promise<void> {
@@ -312,10 +271,9 @@
       e.preventDefault()
       e.stopPropagation()
       speakerMenu = null
-    } else if (e.key === 'Enter' && e.target instanceof HTMLInputElement) {
+    } else if (e.key === 'Enter') {
       e.preventDefault()
-      if (e.target === menuInput) void renameSpeaker()
-      else if (e.target === assignInput && assignValue.trim()) void assignSpeaker(assignValue.trim())
+      void renameSpeaker()
     }
   }
 
@@ -529,7 +487,13 @@
                   title="Вынести реплику в отдельного спикера"
                   onclick={() => void detachSpeaker((b as Block).index)}
                 >
-                  Другой спикер
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                    <circle cx="9" cy="7" r="4"/>
+                    <line x1="19" y1="8" x2="19" y2="14"/>
+                    <line x1="22" y1="11" x2="16" y2="11"/>
+                  </svg>
+                  <span>Другой спикер</span>
                 </button>
                 <button
                   type="button"
@@ -612,49 +576,33 @@
   {#if speakerMenu}
     <button type="button" class="speaker-popover-backdrop" aria-label="Закрыть меню спикера" onclick={() => (speakerMenu = null)}></button>
     <div
-      class="speaker-popover"
+      class="speaker-popover speaker-rename-popover"
       role="dialog"
-      aria-label="Управление спикером"
+      aria-label="Переименовать спикера"
       tabindex="-1"
       bind:this={speakerMenuEl}
       style={`left: ${speakerMenu.x}px; top: ${speakerMenu.y}px`}
       onkeydown={onMenuKey}
     >
-      <label class="speaker-rename-label">
-        Имя во всей встрече
-        <input class="speaker-rename-input" bind:this={menuInput} bind:value={renameValue} maxlength="200" />
-      </label>
-      <button type="button" class="btn-secondary btn-sm" disabled={saving || !renameValue.trim()} onclick={() => void renameSpeaker()}>
-        Переименовать везде
-      </button>
-      <div class="speaker-menu-title">Спикер этой реплики</div>
-      <div class="speaker-menu-list">
-        {#each speakerNames as name (name)}
-          <button type="button" class="speaker-menu-item" disabled={saving || name === menuSpeaker} onclick={() => void assignSpeaker(name)}>
-            {name}
-          </button>
-        {/each}
-      </div>
-      <button type="button" class="speaker-menu-item speaker-menu-add" disabled={saving} onclick={addSpeaker}>
-        + Спикер
-      </button>
-      <label class="speaker-rename-label">
-        Новое имя этой реплике
+      <div class="speaker-rename-title">Переименовать во всей встрече</div>
+      <div class="speaker-rename-row">
         <input
           class="speaker-rename-input"
-          bind:this={assignInput}
-          bind:value={assignValue}
+          bind:this={menuInput}
+          bind:value={renameValue}
           maxlength="200"
-          placeholder="Например, Миша"
-          aria-label="Новое имя этой реплике"
+          placeholder="Имя спикера"
+          aria-label="Новое имя спикера"
         />
-      </label>
-      <button type="button" class="btn-secondary btn-sm" disabled={saving || !assignValue.trim()} onclick={() => void assignSpeaker(assignValue.trim())}>
-        Присвоить этой реплике
-      </button>
-      <button type="button" class="btn-secondary btn-sm" disabled={saving || !assignValue.trim()} onclick={() => void learnVoice()}>
-        Присвоить и запомнить голос
-      </button>
+        <button
+          type="button"
+          class="btn-primary btn-sm"
+          disabled={saving || !renameValue.trim() || renameValue.trim() === menuSpeaker}
+          onclick={() => void renameSpeaker()}
+        >
+          Готово
+        </button>
+      </div>
     </div>
   {/if}
   {#if wordMenu}
@@ -709,10 +657,10 @@
     right: 8px;
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 120ms ease;
+    transition: opacity 140ms ease;
     z-index: 2;
   }
   .utterance:hover .utt-actions,
@@ -723,23 +671,33 @@
   .utt-detach-btn {
     display: inline-flex;
     align-items: center;
-    padding: 2px 7px;
+    gap: 4px;
+    padding: 3px 8px;
     font-size: 11px;
-    font-weight: 500;
-    border: 1px solid rgba(15, 30, 51, 0.14);
-    border-radius: 4px;
-    background: #fff;
-    color: var(--text-muted, #555);
+    font-weight: 600;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-pill);
+    background: rgba(255, 255, 255, 0.92);
+    color: var(--text-muted);
     cursor: pointer;
     line-height: 1.3;
     white-space: nowrap;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-    transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+    box-shadow: 0 1px 3px rgba(15, 30, 51, 0.05);
+    backdrop-filter: blur(4px);
+    transition: all 140ms ease;
+  }
+  .utt-detach-btn svg {
+    color: var(--text-faint);
+    transition: color 140ms ease;
   }
   .utt-detach-btn:hover {
-    color: var(--text-primary, #111);
-    border-color: rgba(15, 30, 51, 0.3);
-    background: #f8fafc;
+    background: #fff;
+    color: var(--accent-blue);
+    border-color: rgba(36, 86, 198, 0.3);
+    box-shadow: 0 2px 8px rgba(36, 86, 198, 0.12);
+  }
+  .utt-detach-btn:hover svg {
+    color: var(--accent-blue);
   }
   .utt-edit-btn {
     display: inline-flex;
@@ -753,7 +711,7 @@
     background: transparent;
     color: #999;
     cursor: pointer;
-    transition: color 120ms ease, background 120ms ease;
+    transition: color 140ms ease, background 140ms ease;
   }
   .utt-edit-btn:hover {
     background: #edece8;

@@ -308,7 +308,13 @@
           onclick={toggleRecord}
           type="button"
         >
-          <span>{isRecording ? '■ Остановить' : '● Начать запись'}</span>
+          {#if isRecording}
+            <span class="btn-rec-icon square" aria-hidden="true"></span>
+            <span>Остановить</span>
+          {:else}
+            <span class="btn-rec-icon dot" aria-hidden="true"></span>
+            <span>Начать запись</span>
+          {/if}
         </button>
       </div>
     </div>
