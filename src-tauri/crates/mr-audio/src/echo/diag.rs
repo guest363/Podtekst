@@ -3,13 +3,13 @@ use super::delay;
 const MAX_DELAY: usize = 8000;
 const ECHO_MIN_PROMINENCE: f32 = 4.5;
 
-// Зачем: живая донастройка AEC вслепую невозможна — сначала цифры по реальным
+// Зачем: живая донастройка AEC вслепую невозможна - сначала цифры по реальным
 // стерео-записям (задержка/дрейф/double-talk). Только тест-харнесс, в прод-коде
-// ни строки. Выход — одни числа, без аудио.
+// ни строки. Выход - одни числа, без аудио.
 #[test]
 fn live_corpus_diagnostics() {
     let Ok(path) = std::env::var("MR_DIAG_WAV") else {
-        eprintln!("MR_DIAG_WAV не задан — пропуск");
+        eprintln!("MR_DIAG_WAV не задан - пропуск");
         return;
     };
     let mut reader = hound::WavReader::open(&path).expect("WAV читается");
@@ -59,7 +59,7 @@ fn live_corpus_diagnostics() {
     } else {
         delays.sort();
         println!(
-            "уверенных окон {}/{} задержка мин={} мед={} макс={} (разброс — джиттер/дрейф)",
+            "уверенных окон {}/{} задержка мин={} мед={} макс={} (разброс - джиттер/дрейф)",
             delays.len(),
             windows,
             delays[0],
@@ -101,7 +101,7 @@ fn live_corpus_diagnostics() {
     let total = (sil + far + near + dbl).max(1) as f32;
     echo_ratios.sort_by(f32::total_cmp);
     let att = if echo_ratios.is_empty() {
-        "—".to_string()
+        "-".to_string()
     } else {
         format!("{:.1} дБ", -10.0 * echo_ratios[echo_ratios.len() / 2].max(1e-9).log10())
     };
