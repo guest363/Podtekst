@@ -155,6 +155,10 @@ fn device_muted(device: AudioDeviceId) -> bool {
     get_u32(device, DEVICE_PROPERTY_MUTE, OBJECT_SCOPE_INPUT).is_some_and(|v| v != 0)
 }
 
+/// Псевдо-устройство: системный звук через ScreenCaptureKit, без драйвера.
+pub(super) const NATIVE_SYSTEM_ID: &str = "sck";
+const NATIVE_SYSTEM_NAME: &str = "Системный звук (ScreenCaptureKit)";
+
 /// Виртуальный loopback-драйвер (BlackHole/Loopback/Soundflower): для CoreAudio
 /// это обычный вход, но по смыслу — системный звук.
 fn is_loopback(name: &str) -> bool {
@@ -173,6 +177,14 @@ fn is_loopback(name: &str) -> bool {
 pub fn devices() -> DeviceCatalog {
     let mut catalog = DeviceCatalog {
         platform: "darwin".to_string(),
+        // Нативный системный звук — первым и по умолчанию; BlackHole-устройства
+        // остаются ниже как явный выбор пользователя.
+        system: vec![DeviceInfo {
+            id: NATIVE_SYSTEM_ID.to_string(),
+            name: NATIVE_SYSTEM_NAME.to_string(),
+            muted: false,
+            system: true,
+        }],
         ..Default::default()
     };
     let ids = device_ids();
@@ -225,6 +237,11 @@ pub(super) fn resolve_device(device: Option<&str>) -> Result<AudioDeviceId> {
 /// Адрес источника системного звука: loopback-устройство, иначе — понятная
 /// ошибка с подсказкой про BlackHole.
 pub(super) fn resolve_system_device(device: Option<&str>) -> Result<AudioDeviceId> {
+    if device == Some(NATIVE_SYSTEM_ID) {
+        return Err(AudioError::Other(
+            "ScreenCaptureKit запускается напрямую, а не через CoreAudio".to_string(),
+        ));
+    }
     if let Some(id) = device.and_then(|s| s.parse::<u32>().ok()) {
         if input_channels(id) > 0 {
             return Ok(id);
