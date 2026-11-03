@@ -23,7 +23,8 @@ jobs:
             args: "--features tauri-ui --bundles appimage"
           - os: macos-26
             # pyke не поставляет x86_64 ONNX Runtime, поэтому macOS — arm64.
-            args: "--features tauri-ui --target aarch64-apple-darwin --bundles dmg"
+            # app нужен для updater-архива .app.tar.gz: с одним dmg его не создают.
+            args: "--features tauri-ui --target aarch64-apple-darwin --bundles app,dmg"
           - os: windows-latest
             args: "--features tauri-ui --bundles nsis"
     runs-on: ${{ matrix.os }}
@@ -252,6 +253,10 @@ jobs:
                       "signature": sig.read_text().strip(),
                   }
           if platforms:
+              expected = {"linux-x86_64", "darwin-aarch64", "windows-x86_64"}
+              missing = expected - set(platforms)
+              if missing:
+                  sys.exit("latest.json неполный, нет платформ: " + ", ".join(sorted(missing)))
               out = root / "updater"
               out.mkdir(exist_ok=True)
               (out / "latest.json").write_text(
