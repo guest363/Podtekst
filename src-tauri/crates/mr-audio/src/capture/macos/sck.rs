@@ -45,8 +45,9 @@ impl AudioSink {
         }
         if let Some(last) = self.last_end_pts {
             let gap = pts - last;
-            // Отрицательный скачок — новый клок после переподключения, не паддим.
-            if gap < 0.0 {
+            // Отрицательный скачок или разрыв больше 10 минут — новый клок
+            // после переподключения/сна, не паддим.
+            if gap < 0.0 || gap > 600.0 {
                 self.last_end_pts = None;
             } else if gap > 0.01 {
                 self.write_silence((gap * self.out_rate as f64) as usize);
