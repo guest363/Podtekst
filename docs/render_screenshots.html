@@ -233,7 +233,7 @@
                   </button>
                   <div class="clean-chip static">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
-                    <span class="mic-name-text">Raptor Lake-P/U/H cAVS Digital Microphone</span>
+                    <span class="mic-name-text">Встроенный микрофон</span>
                   </div>
                 </div>
               </div>
@@ -325,7 +325,7 @@
                 <span>Спикеры · 3</span>
                 <span class="spk-notify-dot ok"></span>
               </button>
-              <button class="btn-primary btn-sm btn-transcribe-header">Запустить расшифровку</button>
+              <button class="btn-primary btn-sm btn-transcribe-header">Повторить расшифровку</button>
               <button class="btn-secondary btn-sm">DOCX</button>
               <button class="btn-secondary btn-sm">PDF</button>
               <button class="btn-secondary btn-sm">Копировать текст</button>
@@ -334,8 +334,8 @@
           <div class="transcript-sub-player is-expanded">
             <div class="video-player-container">
               <div class="mock-video-slide">
-                <h3>Подтекст (Podtekst) — Локальная архитектура v0.1.6</h3>
-                <p>GigaAM RNNT int8 • Silero VAD • ERes2NetV2 192-dim • Tauri v2 • PipeWire</p>
+                <h3>Подтекст (Podtekst) — Локальная архитектура v0.4.0</h3>
+                <p>GigaAM RNNT int8 • CTC Hotwords • Silero VAD • ERes2NetV2 192-dim • Tauri v2</p>
                 <div class="play-overlay-badge">▶ 00:18 / 14:22 • Слайд 3: Модули диаризации</div>
               </div>
               <button type="button" class="btn-video-expand">
@@ -351,18 +351,18 @@
             <div class="transcript-speakers">
               <div class="speakers-deck">
                 <div class="speaker-card matched" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.05);">
-                  <div class="speaker-top"><span class="speaker-name">Алексей Смирнов</span><span class="speaker-status ok">Микрофон · 6</span></div>
-                  <div class="speaker-samples"><div class="sample-row"><button class="sample-play">▶</button><span class="sample-text">«Я тогда слать тебе…»</span></div></div>
+                  <div class="speaker-top"><span class="speaker-name">Алексей Смирнов</span><span class="speaker-status ok">узнан · Команда · 0.94</span></div>
+                  <div class="speaker-samples"><div class="sample-row"><button class="sample-play">▶</button><span class="sample-text">00:02 · «Всем привет! Сверяемся по…»</span><button class="sample-detach-btn">Открепить</button></div></div>
                   <div class="assign-row"><input class="input-field" value="Алексей Смирнов (Team Lead)" /><button class="btn-secondary btn-sm">Запомнить</button></div>
                 </div>
                 <div class="speaker-card matched" style="--spk: #0e7a55; --spk-bg: rgba(14, 122, 85, 0.05);">
-                  <div class="speaker-top"><span class="speaker-name">Иван Петров</span><span class="speaker-status ok">Собеседник · 38</span></div>
-                  <div class="speaker-samples"><div class="sample-row"><button class="sample-play">▶</button><span class="sample-text">«GigaAM RNNT в int8…»</span></div></div>
+                  <div class="speaker-top"><span class="speaker-name">Иван Петров</span><span class="speaker-status ok">узнан · Команда · 0.91</span></div>
+                  <div class="speaker-samples"><div class="sample-row"><button class="sample-play">▶</button><span class="sample-text">00:09 · «GigaAM RNNT в int8…»</span><button class="sample-detach-btn">Открепить</button></div></div>
                   <div class="assign-row"><input class="input-field" value="Иван Петров (Backend Lead)" /><button class="btn-secondary btn-sm">Запомнить</button></div>
                 </div>
                 <div class="speaker-card matched" style="--spk: #d97706; --spk-bg: rgba(217, 119, 6, 0.05);">
-                  <div class="speaker-top"><span class="speaker-name">Мария Сидорова</span><span class="speaker-status ok">Собеседник · 34</span></div>
-                  <div class="speaker-samples"><div class="sample-row"><button class="sample-play">▶</button><span class="sample-text">«Проверили диаризацию…»</span></div></div>
+                  <div class="speaker-top"><span class="speaker-name">Мария Сидорова</span><span class="speaker-status ok">узнан · Команда · 0.89</span></div>
+                  <div class="speaker-samples"><div class="sample-row"><button class="sample-play">▶</button><span class="sample-text">00:18 · «Проверили диаризацию…»</span><button class="sample-detach-btn">Открепить</button></div></div>
                   <div class="assign-row"><input class="input-field" value="Мария Сидорова (QA Lead)" /><button class="btn-secondary btn-sm">Запомнить</button></div>
                 </div>
               </div>
@@ -379,12 +379,12 @@
                 </div>
               </div>
               <div class="markdown-body">
-                <div class="utt utterance" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.06);"><button class="utt-time-btn">00:02</button><div class="utt-body"><div class="utt-speaker">Алексей Смирнов (Team Lead)</div><div class="utt-text">Всем привет! Сверяемся по архитектуре локального распознавания и релизу версии 0.1.6.</div></div></div>
-                <div class="utt utterance" style="--spk: #0e7a55; --spk-bg: rgba(14, 122, 85, 0.06);"><button class="utt-time-btn">00:09</button><div class="utt-body"><div class="utt-speaker">Иван Петров (Backend Lead)</div><div class="utt-text">GigaAM RNNT в int8 готов. Потребление памяти снизили до 226 МБ, инференс полностью на CPU без дискретной видеокарты.</div></div></div>
+                <div class="utt utterance" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.06);"><button class="utt-time-btn">00:02</button><div class="utt-body"><div class="utt-speaker">Алексей Смирнов (Team Lead)</div><div class="utt-text">Всем привет! Сверяемся по архитектуре локального распознавания и релизу версии 0.4.0.</div></div></div>
+                <div class="utt utterance" style="--spk: #0e7a55; --spk-bg: rgba(14, 122, 85, 0.06);"><button class="utt-time-btn">00:09</button><div class="utt-body"><div class="utt-speaker">Иван Петров (Backend Lead)</div><div class="utt-text">GigaAM RNNT в int8 готов. Второй проход CTC со словарём терминов даёт точные названия и уверенность каждого слова. Инференс полностью на CPU.</div></div></div>
                 <div class="utt utterance active" style="--spk: #d97706; --spk-bg: rgba(217, 119, 6, 0.06);"><button class="utt-time-btn">00:18</button><div class="utt-body"><div class="utt-speaker">Мария Сидорова (QA Lead)</div><div class="utt-text">Проверили диаризацию на стереозаписях: ERes2NetV2 разделяет спикеров без ошибок даже при наложении фраз.</div></div></div>
                 <div class="utt utterance" style="--spk: #0e7a55; --spk-bg: rgba(14, 122, 85, 0.06);"><button class="utt-time-btn">00:27</button><div class="utt-body"><div class="utt-speaker">Иван Петров (Backend Lead)</div><div class="utt-text">Мульти-прототипные отпечатки устойчивы. Голосовые пакеты можно подключать и переносить между машинами через Voice Packs.</div></div></div>
                 <div class="utt utterance" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.06);"><button class="utt-time-btn">00:36</button><div class="utt-body"><div class="utt-speaker">Алексей Смирнов (Team Lead)</div><div class="utt-text">Отлично. Главное — 100% приватность: ни один байт аудио или текста не уходит в облако. Экспорт в Markdown сохраняется прямо в папку встречи.</div></div></div>
-                <div class="utt utterance" style="--spk: #d97706; --spk-bg: rgba(217, 119, 6, 0.06);"><button class="utt-time-btn">00:45</button><div class="utt-body"><div class="utt-speaker">Мария Сидорова (QA Lead)</div><div class="utt-text">Все автотесты в CI зелёные. Можем открывать релиз и публиковать документацию.</div></div></div>
+                <div class="utt utterance" style="--spk: #d97706; --spk-bg: rgba(217, 119, 6, 0.06);"><button class="utt-time-btn">00:45</button><div class="utt-body"><div class="utt-speaker">Мария Сидорова (QA Lead)</div><div class="utt-text">Все автотесты в CI зелёные на Linux, macOS и Windows. Можем открывать релиз и публиковать документацию.</div></div></div>
               </div>
             </div>
           </main>
@@ -405,7 +405,7 @@
         <div class="app-drawer-top">
           <div class="settings-heading">
             <h2 class="modal-title">Настройки</h2>
-            <div class="settings-version">Версия 0.1.6 · <a href="#check" style="color: var(--accent-blue); text-decoration: none;">Проверить обновления</a></div>
+            <div class="settings-version">Версия 0.4.0 · <a href="#check" style="color: var(--accent-blue); text-decoration: none;">Проверить обновления</a></div>
           </div>
           <button class="icon-btn">✕</button>
         </div>
@@ -413,29 +413,38 @@
           <button class="settings-tab">Запись</button>
           <button class="settings-tab">Участники</button>
           <button class="settings-tab">Голоса</button>
-          <button class="settings-tab active">Модели</button>
+          <button class="settings-tab">Словарь</button>
+          <button class="settings-tab active">Компоненты</button>
         </div>
         <div class="app-drawer-body">
           <div>
-            <div class="card-title" style="margin-bottom: 6px;">Модели ИИ</div>
-            <div class="help-text">Локальные модели для распознавания речи: GigaAM (русский язык), Whisper (30+ языков), Silero VAD (детектор речи) и ERes2NetV2 (разделение голосов). Для первой расшифровки скачайте Silero VAD и одну модель распознавания.</div>
+            <div class="card-title" style="margin-bottom: 6px;">Компоненты</div>
+            <div class="help-text">Локальные модели для распознавания речи: GigaAM (русский язык), Whisper (30+ языков), Silero VAD (детектор речи) и ERes2NetV2 (разделение голосов). Там же можно скачать ffmpeg для записи экрана.</div>
           </div>
-          <div class="models-list" style="display: flex; flex-direction: column; gap: 14px;">
-            <div class="model-item" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 12px 14px; background: var(--bg-inset); border-radius: var(--radius-inner);">
-              <div style="flex: 1;"><div style="font-weight: 700; font-size: 13.5px; margin-bottom: 3px;">Silero VAD v6.2 (детектор речи)</div><div style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">Стриминговый детектор речи Silero v6.2.3, окно 32 мс, контекст 64 сэмпла, состояние [2,1,128]. Повышенная чувствительность к тихому и приглушённому голосу.<br>Лицензия: MIT</div></div>
-              <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;"><span class="status-chip ok" style="font-size: 11.5px; padding: 3px 8px; border-radius: 999px; background: rgba(14, 122, 85, 0.1); color: var(--accent-ok); font-weight: 600;">● Скачана v6.2.3</span><button class="btn-secondary btn-sm">Обновить</button></div>
+          <div class="models-list" style="display: flex; flex-direction: column; gap: 10px;">
+            <div class="model-item" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 10px 14px; background: var(--bg-inset); border-radius: var(--radius-inner);">
+              <div style="flex: 1;"><div style="font-weight: 700; font-size: 13px; margin-bottom: 2px;">ffmpeg (обработка видео)</div><div style="font-size: 11.5px; color: var(--text-muted); line-height: 1.35;">Нужен для записи экрана, импорта видео (MP4, MKV, MOV, WEBM) и экспорта MP3. Для записи звука и расшифровки не требуется.<br>Лицензия: LGPL-2.1+</div></div>
+              <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;"><span class="status-chip ok" style="font-size: 11px; padding: 3px 8px; border-radius: 999px; background: rgba(14, 122, 85, 0.1); color: var(--accent-ok); font-weight: 600;">● Установлен</span><button class="btn-secondary btn-sm">Проверить</button></div>
             </div>
-            <div class="model-item" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 12px 14px; background: var(--bg-inset); border-radius: var(--radius-inner);">
-              <div style="flex: 1;"><div style="font-weight: 700; font-size: 13.5px; margin-bottom: 3px;">GigaAM-v3 e2e RNNT int8 (русский язык, SOTA)</div><div style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">Conformer-трансдьюсер 242M, жадный RNNT-декодинг. Проверен живым прогоном на русской речи.<br>Лицензия: MIT</div></div>
-              <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;"><span class="status-chip ok" style="font-size: 11.5px; padding: 3px 8px; border-radius: 999px; background: rgba(14, 122, 85, 0.1); color: var(--accent-ok); font-weight: 600;">● Скачана v3.1.0</span><button class="btn-secondary btn-sm">Обновить</button></div>
+            <div class="model-item" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 10px 14px; background: var(--bg-inset); border-radius: var(--radius-inner);">
+              <div style="flex: 1;"><div style="font-weight: 700; font-size: 13px; margin-bottom: 2px;">Silero VAD v6.2 (детектор речи)</div><div style="font-size: 11.5px; color: var(--text-muted); line-height: 1.35;">Стриминговый детектор речи Silero v6.2.3: находит речь в реальном времени. Повышенная чувствительность к тихому и приглушённому голосу.<br>Лицензия: MIT</div></div>
+              <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;"><span class="status-chip ok" style="font-size: 11px; padding: 3px 8px; border-radius: 999px; background: rgba(14, 122, 85, 0.1); color: var(--accent-ok); font-weight: 600;">● Скачана v6.2.3</span><button class="btn-secondary btn-sm">Обновить</button></div>
             </div>
-            <div class="model-item" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 12px 14px; background: var(--bg-inset); border-radius: var(--radius-inner);">
-              <div style="flex: 1;"><div style="font-weight: 700; font-size: 13.5px; margin-bottom: 3px;">Whisper large-v3-turbo (мультиязычный fallback, 30+ языков)</div><div style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">Merged-decoder с KV-кэшем, greedy-декодинг. Проверен живым прогоном на русской речи.<br>Лицензия: MIT</div></div>
-              <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;"><span class="status-chip info" style="font-size: 11.5px; padding: 3px 8px; border-radius: 999px; background: rgba(37, 99, 235, 0.1); color: var(--accent-blue); font-weight: 600;">● 1037 МБ</span><button class="btn-primary btn-sm">Скачать</button></div>
+            <div class="model-item" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 10px 14px; background: var(--bg-inset); border-radius: var(--radius-inner);">
+              <div style="flex: 1;"><div style="font-weight: 700; font-size: 13px; margin-bottom: 2px;">GigaAM-v3 e2e RNNT int8 (русский язык, SOTA)</div><div style="font-size: 11.5px; color: var(--text-muted); line-height: 1.35;">Офлайн-распознавание русской речи на процессоре. Проверен живым прогоном на русской речи.<br>Лицензия: MIT</div></div>
+              <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;"><span class="status-chip ok" style="font-size: 11px; padding: 3px 8px; border-radius: 999px; background: rgba(14, 122, 85, 0.1); color: var(--accent-ok); font-weight: 600;">● Скачана v3.1.0</span><button class="btn-secondary btn-sm">Обновить</button></div>
             </div>
-            <div class="model-item" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 12px 14px; background: var(--bg-inset); border-radius: var(--radius-inner);">
-              <div style="flex: 1;"><div style="font-weight: 700; font-size: 13.5px; margin-bottom: 3px;">ERes2NetV2 192-dim (SOTA голосовые отпечатки)</div><div style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">3D-Speaker ERes2NetV2: fbank [B,T,80] → 192-dim. Проверен: косинус 1.0 с официальным чекпоинтом; кросс-спикерные пары ≤ 0.22, свой голос ≥ 0.48.<br>Лицензия: Apache-2.0</div></div>
-              <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;"><span class="status-chip ok" style="font-size: 11.5px; padding: 3px 8px; border-radius: 999px; background: rgba(14, 122, 85, 0.1); color: var(--accent-ok); font-weight: 600;">● Скачана v2.0.0</span><button class="btn-secondary btn-sm">Обновить</button></div>
+            <div class="model-item" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 10px 14px; background: var(--bg-inset); border-radius: var(--radius-inner);">
+              <div style="flex: 1;"><div style="font-weight: 700; font-size: 13px; margin-bottom: 2px;">GigaAM-v3 e2e CTC int8 (словарь терминов + уверенность слов)</div><div style="font-size: 11.5px; color: var(--text-muted); line-height: 1.35;">Второй проход поверх RNNT: бонус словам из словаря терминов и уверенность каждого слова. Необязателен.<br>Лицензия: MIT</div></div>
+              <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;"><span class="status-chip ok" style="font-size: 11px; padding: 3px 8px; border-radius: 999px; background: rgba(14, 122, 85, 0.1); color: var(--accent-ok); font-weight: 600;">● Скачана v3.1.0</span><button class="btn-secondary btn-sm">Обновить</button></div>
+            </div>
+            <div class="model-item" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 10px 14px; background: var(--bg-inset); border-radius: var(--radius-inner);">
+              <div style="flex: 1;"><div style="font-weight: 700; font-size: 13px; margin-bottom: 2px;">Whisper large-v3-turbo (мультиязычный fallback, 30+ языков)</div><div style="font-size: 11.5px; color: var(--text-muted); line-height: 1.35;">30+ языков, сжатый 4-слойный декодер, быстрый инференс на процессоре.<br>Лицензия: MIT</div></div>
+              <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;"><span class="status-chip info" style="font-size: 11px; padding: 3px 8px; border-radius: 999px; background: rgba(37, 99, 235, 0.1); color: var(--accent-blue); font-weight: 600;">● 1037 МБ</span><button class="btn-primary btn-sm">Скачать</button></div>
+            </div>
+            <div class="model-item" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 10px 14px; background: var(--bg-inset); border-radius: var(--radius-inner);">
+              <div style="flex: 1;"><div style="font-weight: 700; font-size: 13px; margin-bottom: 2px;">ERes2NetV2 192-dim (SOTA голосовые отпечатки)</div><div style="font-size: 11.5px; color: var(--text-muted); line-height: 1.35;">3D-Speaker ERes2NetV2: 192-мерные L2-векторы для разделения и узнавания спикеров.<br>Лицензия: Apache-2.0</div></div>
+              <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;"><span class="status-chip ok" style="font-size: 11px; padding: 3px 8px; border-radius: 999px; background: rgba(14, 122, 85, 0.1); color: var(--accent-ok); font-weight: 600;">● Скачана v2.0.0</span><button class="btn-secondary btn-sm">Обновить</button></div>
             </div>
           </div>
         </div>
@@ -623,7 +632,7 @@
 
           <main class="transcript-content" style="overflow-y: auto; padding-right: 4px;">
             <div class="markdown-body" style="font-size: 12.5px;">
-              <div class="utt utterance" id="wt-utt-1" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.06); padding: 7px 10px; margin-bottom: 6px;"><button class="utt-time-btn">00:02</button><div class="utt-body"><div class="utt-speaker">Алексей Смирнов (Team Lead)</div><div class="utt-text">Всем привет! Сверяемся по архитектуре локального распознавания и релизу версии 0.1.6.</div></div></div>
+              <div class="utt utterance" id="wt-utt-1" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.06); padding: 7px 10px; margin-bottom: 6px;"><button class="utt-time-btn">00:02</button><div class="utt-body"><div class="utt-speaker">Алексей Смирнов (Team Lead)</div><div class="utt-text">Всем привет! Сверяемся по архитектуре локального распознавания и релизу версии 0.4.0.</div></div></div>
               <div class="utt utterance active" id="wt-utt-2" style="--spk: #0e7a55; --spk-bg: rgba(14, 122, 85, 0.06); padding: 7px 10px; margin-bottom: 6px;"><button class="utt-time-btn">00:09</button><div class="utt-body"><div class="utt-speaker">Иван Петров (Backend Lead)</div><div class="utt-text">GigaAM RNNT в int8 готов. Потребление памяти снизили до 226 МБ, инференс полностью на CPU без дискретной видеокарты.</div></div></div>
               <div class="utt utterance" id="wt-utt-3" style="--spk: #d97706; --spk-bg: rgba(217, 119, 6, 0.06); padding: 7px 10px; margin-bottom: 6px;"><button class="utt-time-btn">00:18</button><div class="utt-body"><div class="utt-speaker">Мария Сидорова (QA Lead)</div><div class="utt-text">Проверили диаризацию на стереозаписях: ERes2NetV2 разделяет спикеров без ошибок даже при наложении фраз.</div></div></div>
               <div class="utt utterance" id="wt-utt-4" style="--spk: #0e7a55; --spk-bg: rgba(14, 122, 85, 0.06); padding: 7px 10px; margin-bottom: 6px;"><button class="utt-time-btn">00:27</button><div class="utt-body"><div class="utt-speaker">Иван Петров (Backend Lead)</div><div class="utt-text">Мульти-прототипные отпечатки устойчивы. Голосовые пакеты можно подключать и переносить между машинами через Voice Packs.</div></div></div>
@@ -644,7 +653,7 @@
           <div class="app-drawer-top">
             <div class="settings-heading">
               <h2 class="modal-title">Настройки</h2>
-              <div class="settings-version">Версия 0.1.6 · <a href="#check" style="color: var(--accent-blue); text-decoration: none;">Проверить обновления</a></div>
+              <div class="settings-version">Версия 0.4.0 · <a href="#check" style="color: var(--accent-blue); text-decoration: none;">Проверить обновления</a></div>
             </div>
             <button class="icon-btn">✕</button>
           </div>
@@ -652,11 +661,12 @@
             <button class="settings-tab">Запись</button>
             <button class="settings-tab">Участники</button>
             <button class="settings-tab">Голоса</button>
-            <button class="settings-tab active">Модели</button>
+            <button class="settings-tab">Словарь</button>
+            <button class="settings-tab active">Компоненты</button>
           </div>
           <div class="app-drawer-body" style="padding: 16px 20px; overflow-y: auto; flex: 1;">
             <div>
-              <div class="card-title" style="margin-bottom: 4px; font-size: 14px;">Модели ИИ</div>
+              <div class="card-title" style="margin-bottom: 4px; font-size: 14px;">Компоненты</div>
               <div class="help-text" style="font-size: 11.5px; margin-bottom: 12px;">Локальные модели для распознавания речи: GigaAM (русский язык), Whisper (30+ языков), Silero VAD (детектор речи) и ERes2NetV2 (разделение голосов).</div>
             </div>
             <div class="models-list" style="display: flex; flex-direction: column; gap: 9px;">
