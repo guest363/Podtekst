@@ -301,6 +301,13 @@ impl ScreenCaptureSession {
         Err("Запись экрана не поддерживается на этой платформе".to_string())
     }
 
+    // start здесь всегда возвращает ошибку, но вызывающий код компилирует stop
+    // на всех платформах: без заглушки Android и iOS не собираются.
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    pub(crate) fn stop(self) -> Result<PathBuf, String> {
+        Err("Запись экрана не поддерживается на этой платформе".to_string())
+    }
+
     // ffmpeg выходит по 'q' из stdin — аналога EOF-сигнала хелпера Linux.
     #[cfg(any(windows, target_os = "macos"))]
     pub(crate) fn stop(mut self) -> Result<PathBuf, String> {
