@@ -18,6 +18,8 @@ fn sanitize_shell_text(value: &str) -> String {
 pub(crate) fn pick_save_path(default_name: &str, filter_pattern: &str) -> Option<PathBuf> {
     let default_name = sanitize_shell_text(default_name);
     let initial_path = save_dir().join(&default_name);
+    #[cfg(target_os = "macos")]
+    let _ = (filter_pattern, &initial_path);
 
     #[cfg(target_os = "linux")]
     {
