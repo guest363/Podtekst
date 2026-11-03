@@ -21,7 +21,7 @@ jobs:
         include:
           - os: ubuntu-24.04
             args: "--features tauri-ui --bundles appimage"
-          - os: macos-15
+          - os: macos-26
             # pyke не поставляет x86_64 ONNX Runtime, поэтому macOS — arm64.
             args: "--features tauri-ui --target aarch64-apple-darwin --bundles dmg"
           - os: windows-latest

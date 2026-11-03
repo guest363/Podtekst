@@ -60,7 +60,7 @@ jobs:
           cargo clippy -p mr-app --features tauri-ui --all-targets --locked -- -D warnings
 
   macos:
-    runs-on: macos-15
+    runs-on: macos-26
     defaults:
       run:
         working-directory: src-tauri
