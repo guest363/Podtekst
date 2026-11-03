@@ -21,20 +21,27 @@ DOCS_DIR = os.path.join(ROOT_DIR, "docs")
 SCREENSHOTS_DIR = os.path.join(DOCS_DIR, "screenshots")
 HTML_URL = f"file://{DOCS_DIR}/render_screenshots.html"
 
-CDP_PORT = 9222
+import socket
 
+def find_free_port():
+    with socket.socket() as s:
+        s.bind(('', 0))
+        return s.getsockname()[1]
 
 class ChromeRunner:
-    def __init__(self, port=CDP_PORT):
-        self.port = port
+    def __init__(self, port=None):
+        self.port = port or find_free_port()
         self.proc = None
+        self.profile_dir = tempfile.mkdtemp(prefix="chrome_shot_")
 
     def start(self):
         cmd = [
             "google-chrome",
-            "--headless=new",
+            "--headless",
             "--disable-gpu",
             "--no-sandbox",
+            "--disable-dev-shm-usage",
+            f"--user-data-dir={self.profile_dir}",
             f"--remote-debugging-port={self.port}",
             "--window-size=1240,820",
             "--hide-scrollbars",
@@ -43,10 +50,10 @@ class ChromeRunner:
         self.proc = subprocess.Popen(
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
-        for _ in range(30):
+        for _ in range(40):
             time.sleep(0.1)
             try:
-                req = urllib.request.urlopen(f"http://127.0.0.1:{self.port}/json")
+                req = urllib.request.urlopen(f"http://127.0.0.1:{self.port}/json", timeout=1)
                 tabs = json.loads(req.read().decode())
                 if tabs and "webSocketDebuggerUrl" in tabs[0]:
                     return tabs[0]["webSocketDebuggerUrl"]
@@ -62,6 +69,8 @@ class ChromeRunner:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
             self.proc = None
+        if os.path.exists(self.profile_dir):
+            shutil.rmtree(self.profile_dir, ignore_errors=True)
 
 
 class CdpClient:
