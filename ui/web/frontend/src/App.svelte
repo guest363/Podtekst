@@ -26,13 +26,11 @@
   import SettingsModal from './components/SettingsModal.svelte'
   import DonateModal from './components/DonateModal.svelte'
   import Toasts from './components/Toasts.svelte'
-  import { isMobile, remainingMb } from './lib/api'
+  import { isMobile, isCoreModel, remainingMb } from './lib/api'
 
   let introOpen = $state(false)
 
-  const coreModels = $derived(
-    settings.models.filter((m) => !m.id.toLowerCase().includes('whisper'))
-  )
+  const coreModels = $derived(settings.models.filter(isCoreModel))
   const coreInstalled = $derived(
     coreModels.length > 0 && coreModels.every((m) => m.is_installed)
   )
@@ -217,7 +215,7 @@
           <span class="intro-models-title">Локальные модели ИИ</span>
           <span class="intro-models-sub">
             Для локального распознавания русской речи и разделения спикеров скачайте базовые модели (~{coreLeftMb} МБ).
-            Whisper (1.1 ГБ) можно установить позже в Настройках.
+            Whisper и CTC (словарь и уверенность слов) можно установить позже в Настройках.
           </span>
         </div>
 
