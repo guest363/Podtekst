@@ -192,12 +192,6 @@ impl SckCapture {
 
 pub fn start_stream(path: &Path, rate: u32) -> Result<CaptureStream> {
     let rate = if rate == 0 { 16_000 } else { rate };
-    if !super::permission::screen_recording_granted() {
-        return Err(AudioError::Record(
-            "системный звук macOS: разрешите «Запись экрана и системного аудио» в «Системные настройки → Конфиденциальность и безопасность» и перезапустите приложение"
-                .to_string(),
-        ));
-    }
     let path = path.to_path_buf();
     let (start_tx, start_rx) = sync_channel::<std::result::Result<(), String>>(1);
     let stream = CaptureStream::spawn(
@@ -212,7 +206,9 @@ pub fn start_stream(path: &Path, rate: u32) -> Result<CaptureStream> {
             }
         },
     )?;
-    match start_rx.recv_timeout(Duration::from_secs(3)) {
+    // 60 секунд: первый `SCShareableContent::get()` показывает системный запрос
+    // на запись экрана и ждёт ответа пользователя.
+    match start_rx.recv_timeout(Duration::from_secs(60)) {
         Ok(Ok(())) => Ok(stream),
         Ok(Err(e)) => {
             drop(stream);
@@ -221,7 +217,7 @@ pub fn start_stream(path: &Path, rate: u32) -> Result<CaptureStream> {
         Err(_) => {
             drop(stream);
             Err(AudioError::Record(
-                "ScreenCaptureKit не подтвердил запуск записи за 3 секунды".to_string(),
+                "ScreenCaptureKit не подтвердил запуск записи за 60 секунд".to_string(),
             ))
         }
     }
