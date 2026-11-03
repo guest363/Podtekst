@@ -281,7 +281,7 @@ impl SckCapture {
         drop(stream);
         if let Ok(mut sink) = sink.lock() {
             let _ = sink.writer.flush();
-        }
+        };
     }
 }
 
