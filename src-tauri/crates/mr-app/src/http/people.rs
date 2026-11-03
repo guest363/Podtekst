@@ -188,7 +188,9 @@ pub(super) fn update_people(
             .unwrap_or_else(|| resolve_target_pack(old, None));
         if from_pack != target_id {
             if let Err(e) = packs::move_person_pack(&app_data_dir(), old, &from_pack, target_id) {
-                eprintln!("[warn] move_person_pack {old} from {from_pack} to {target_id}: {e:?}");
+                crate::note!(
+                    "[warn] move_person_pack {old} from {from_pack} to {target_id}: {e:?}"
+                );
             }
             // Гарантируем отсутствие дублей в остальных пакетах
             if let Ok(all_packs) = packs::list_packs(&app_data_dir()) {

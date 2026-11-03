@@ -54,7 +54,7 @@ impl WavCheckpoint {
                         std::thread::sleep(Duration::from_secs(1));
                     }
                     if let Err(e) = writer.append_and_flush() {
-                        eprintln!("Ошибка чекпоинта WAV: {e}");
+                        crate::note!("Ошибка чекпоинта WAV: {e}");
                         break;
                     }
                     if stop.load(Ordering::Relaxed) {
@@ -363,7 +363,7 @@ pub(crate) fn start_recording_inner(
             Ok(sess) => Some(std::sync::Arc::new(Mutex::new(Some(sess)))),
             Err(e) => {
                 // Сбой захвата экрана не должен отнимать запись звука встречи.
-                eprintln!("[SCREEN] Запись экрана не запустилась, пишу только звук: {e}");
+                crate::note!("[SCREEN] Запись экрана не запустилась, пишу только звук: {e}");
                 screen_error = Some(format!("Ошибка запуска записи экрана: {e}"));
                 None
             }
@@ -533,12 +533,12 @@ pub(crate) fn stop_recording_inner(
                                 is_video = true;
                             }
                             Err(e) => {
-                                eprintln!("[SCREEN] Ошибка склейки видео с аудио: {e}");
+                                crate::note!("[SCREEN] Ошибка склейки видео с аудио: {e}");
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("[SCREEN] Ошибка остановки захвата экрана: {e}");
+                        crate::note!("[SCREEN] Ошибка остановки захвата экрана: {e}");
                     }
                 }
             }
@@ -665,7 +665,7 @@ pub(crate) mod shutdown {
         }
         std::thread::spawn(move || loop {
             if PENDING.load(Ordering::SeqCst) {
-                eprintln!("\nЗавершение по сигналу: финализирую запись…");
+                crate::note!("\nЗавершение по сигналу: финализирую запись…");
                 let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
                 if st.is_recording {
                     let _ = super::stop_recording_inner(&mut st, false);

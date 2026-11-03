@@ -553,7 +553,7 @@ pub fn transcribe_file(
                 .and_then(|model| match model.segment(samples) {
                     Ok(result) => Some(result),
                     Err(error) => {
-                        eprintln!("PyAnnote segmentation недоступна: {error}");
+                        crate::note!("PyAnnote segmentation недоступна: {error}");
                         None
                     }
                 })

@@ -29,6 +29,31 @@
   let tab = $state<'record' | 'people' | 'voices' | 'dict' | 'models'>('record')
   let packFileInput: HTMLInputElement | null = $state(null)
   let termInput = $state('')
+  let diagBusy = $state(false)
+  let diagPath = $state('')
+
+  async function collectDiagnostics() {
+    diagBusy = true
+    try {
+      const d = await readJsonSafe(await fetch('/api/diagnostics', { method: 'POST' }))
+      if (!d.ok) throw new Error(d.error || 'Не удалось собрать отчёт')
+      diagPath = String(d.path || '')
+      toast('Отчёт диагностики сохранён')
+    } catch (e) {
+      toast('Отчёт не собрался: ' + (e as Error).message, 'error')
+    } finally {
+      diagBusy = false
+    }
+  }
+
+  async function openDiagnostics() {
+    try {
+      const d = await readJsonSafe(await fetch('/api/diagnostics/open', { method: 'POST' }))
+      if (!d.ok) throw new Error(d.error || 'Не удалось открыть папку')
+    } catch (e) {
+      toast('Папка не открылась: ' + (e as Error).message, 'error')
+    }
+  }
 
   const filteredHotwords = $derived.by(() => {
     const q = termInput.trim().toLowerCase()
@@ -410,6 +435,33 @@
           <div class="row-start">
             <button class="btn-secondary" onclick={() => void loadModels()}>Обновить список</button>
           </div>
+          {#if !isMobile}
+            <div class="rec-item">
+              <div class="rec-info">
+                <span class="rec-name">Диагностика</span>
+                <span class="rec-meta">
+                  Версия, разрешения, устройства и последние строки лога. Без записей и расшифровок.
+                </span>
+                {#if diagPath}
+                  <span class="rec-meta">{diagPath}</span>
+                {/if}
+              </div>
+              <div class="rec-actions">
+                <button
+                  class="btn-secondary btn-sm"
+                  disabled={diagBusy}
+                  onclick={() => void collectDiagnostics()}
+                >
+                  {diagBusy ? 'Собираю…' : 'Собрать отчёт'}
+                </button>
+                {#if diagPath}
+                  <button class="btn-secondary btn-sm" onclick={() => void openDiagnostics()}>
+                    Открыть папку
+                  </button>
+                {/if}
+              </div>
+            </div>
+          {/if}
         </div>
       {:else if tab === 'dict'}
         <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Словарь терминов">

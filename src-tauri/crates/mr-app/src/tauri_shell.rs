@@ -150,7 +150,7 @@ fn setup_gnome_shortcut() -> Result<(), String> {
     if !existed || binding.trim_matches('\'').is_empty() {
         gsettings(&["set", &schema, "binding", "<Control><Shift>r"])?;
     }
-    eprintln!("глобальная клавиша GNOME: Ctrl+Shift+R");
+    crate::note!("глобальная клавиша GNOME: Ctrl+Shift+R");
     Ok(())
 }
 
@@ -162,15 +162,15 @@ fn setup_global_shortcut(app: &tauri::AppHandle<tauri::Wry>) {
     #[cfg(target_os = "linux")]
     if is_wayland() && is_gnome() {
         if let Err(e) = setup_gnome_shortcut() {
-            eprintln!("глобальная клавиша GNOME: {e}");
+            crate::note!("глобальная клавиша GNOME: {e}");
             if let Err(e) = register_tauri_shortcut(app) {
-                eprintln!("глобальная клавиша: резервная регистрация не удалась: {e}");
+                crate::note!("глобальная клавиша: резервная регистрация не удалась: {e}");
             }
         }
         return;
     }
     if let Err(e) = register_tauri_shortcut(app) {
-        eprintln!("глобальная клавиша: {e}");
+        crate::note!("глобальная клавиша: {e}");
     }
 }
 
@@ -380,12 +380,12 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
                         tauri::webview::NewWindowResponse::Deny
                     })
                     .on_permission_request(|_, kind| {
-                        eprintln!("[PERMISSION_REQUEST] Разрешено: kind={kind:?}");
+                        crate::note!("[PERMISSION_REQUEST] Разрешено: kind={kind:?}");
                         tauri::webview::PermissionResponse::Allow
                     })
                     .build()
             {
-                eprintln!("не удалось создать окно: {e}");
+                crate::note!("не удалось создать окно: {e}");
             }
             // Android: без foreground service микрофон глушится при погасшем
             // экране. Регистрируем JNI-мост заранее — им пользуются запись и
@@ -421,7 +421,7 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
         })
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
-            eprintln!("ошибка запуска Tauri-окна: {e}");
+            crate::note!("ошибка запуска Tauri-окна: {e}");
             std::process::exit(1);
         });
     app.run_return(|app_handle, event| {
