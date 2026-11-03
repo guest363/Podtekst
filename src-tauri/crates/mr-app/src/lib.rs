@@ -71,6 +71,8 @@ struct Cli {
     speaker_l: String,
     #[arg(long, default_value = "Собеседник")]
     speaker_r: String,
+    #[arg(long, hide = true)]
+    macos_selftest: bool,
 }
 
 const DEFAULT_HTTP_PORT: u16 = 8765;
@@ -111,8 +113,61 @@ pub fn mobile_main() {
     std::process::exit(code);
 }
 
+/// Диагностика на арендованном Mac: 5 секунд системного захвата, затем
+/// печатает объём и уровень записи. Нужна, потому что разрешения Screen
+/// Recording и наличие виртуального драйвера иначе проверяются только руками.
+#[cfg(target_os = "macos")]
+fn macos_selftest() -> i32 {
+    let dir = std::env::temp_dir().join(format!("podtekst-selftest-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("Не создана временная папка: {e}");
+        return 1;
+    }
+    let system_path = dir.join("sys.f32");
+    let request = mr_audio::capture::CaptureRequest {
+        rate: 16000,
+        mic: None,
+        system: Some("sck".into()),
+        mic_path: dir.join("mic.f32"),
+        system_path: system_path.clone(),
+    };
+    let mut session = match mr_audio::capture::start_capture(&request) {
+        Ok(session) => session,
+        Err(e) => {
+            eprintln!("Захват не стартовал: {e}");
+            let _ = std::fs::remove_dir_all(&dir);
+            return 1;
+        }
+    };
+    std::thread::sleep(std::time::Duration::from_secs(5));
+    session.stop();
+    let samples = mr_audio::capture::read_raw_f32(&system_path).unwrap_or_default();
+    let rms = if samples.is_empty() {
+        0.0
+    } else {
+        (samples.iter().map(|x| x * x).sum::<f32>() / samples.len() as f32).sqrt()
+    };
+    println!("samples={} rms={rms:.4}", samples.len());
+    let _ = std::fs::remove_dir_all(&dir);
+    if samples.is_empty() {
+        1
+    } else {
+        0
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_selftest() -> i32 {
+    eprintln!("--macos-selftest: только macOS");
+    2
+}
+
 pub fn run_cli() {
     let cli = Cli::parse();
+    if cli.macos_selftest {
+        std::process::exit(macos_selftest());
+    }
 
     // Повторная регистрация в tauri-сетапе: на мобильных env папки данных
     // известен только после инициализации Tauri.

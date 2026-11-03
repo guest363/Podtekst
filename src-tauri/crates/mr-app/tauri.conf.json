@@ -40,7 +40,8 @@
     "shortDescription": "Подтекст — локальная запись созвонов и экрана с ИИ-расшифровкой",
     "longDescription": "Подтекст — 100% локальная запись созвонов, видео экрана и расшифровка (GigaAM-v3 + Whisper) с диаризацией и голосовыми пакетами. Без облаков.",
     "macOS": {
-      "minimumSystemVersion": "13.4"
+      "minimumSystemVersion": "13.4",
+      "entitlements": "Entitlements.plist"
     },
     "windows": {
       "nsis": {

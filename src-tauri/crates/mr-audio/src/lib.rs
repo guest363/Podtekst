@@ -140,10 +140,19 @@ pub fn write_stereo_wav(
     };
     let mut writer =
         hound::WavWriter::create(path, spec).map_err(|e| AudioError::Record(e.to_string()))?;
-    let n = left.len().min(right.len());
+    // Каналы живут в независимых потоках и расходятся по длине: общий хвост
+    // обрезаем по длинному каналу, короткий добиваем тишиной.
+    // shortcut: разрыв больше 10 мин при 16 кГц — признак сбоя одного канала;
+    // обрезаем до min + cap, чтобы не раздувать WAV нулями. Апгрейд: чинить
+    // рассинхрон в захвате, если декодирование начнёт терять такой хвост.
+    const PAD_CAP_SAMPLES: usize = 10 * 60 * 16_000;
+    let n = left
+        .len()
+        .max(right.len())
+        .min(left.len().min(right.len()) + PAD_CAP_SAMPLES);
     for i in 0..n {
-        let l = (left[i].clamp(-1.0, 1.0) * 32767.0) as i16;
-        let r = (right[i].clamp(-1.0, 1.0) * 32767.0) as i16;
+        let l = (left.get(i).copied().unwrap_or(0.0).clamp(-1.0, 1.0) * 32767.0) as i16;
+        let r = (right.get(i).copied().unwrap_or(0.0).clamp(-1.0, 1.0) * 32767.0) as i16;
         writer
             .write_sample(l)
             .map_err(|e| AudioError::Record(e.to_string()))?;
@@ -203,6 +212,30 @@ mod tests {
         write_mono_wav(&m, &[0.0, 0.5, -0.5], 16000).unwrap();
         let reader = hound::WavReader::open(&m).unwrap();
         assert_eq!(reader.spec().channels, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stereo_pads_shorter_channel_with_zeros() {
+        let dir = std::env::temp_dir().join(format!("mr-audio-pad-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let p = dir.join("pad.wav");
+        let left = [0.25, -0.25, 0.5];
+        let right = [0.1, -0.1, 0.2, 0.3, -0.4];
+        write_stereo_wav(&p, &left, &right, 16000).unwrap();
+        let mut reader = hound::WavReader::open(&p).unwrap();
+        assert_eq!(reader.spec().channels, 2);
+        let samples: Vec<i16> = reader.samples::<i16>().map(|s| s.unwrap()).collect();
+        assert_eq!(samples.len(), right.len() * 2, "длина по длинному каналу");
+        for (i, &x) in right.iter().enumerate() {
+            assert_eq!(samples[i * 2 + 1], (x * 32767.0) as i16, "правый кадр {i}");
+        }
+        let left_tail: Vec<i16> = samples[left.len() * 2..]
+            .iter()
+            .step_by(2)
+            .copied()
+            .collect();
+        assert_eq!(left_tail, [0, 0], "левый хвост должен быть тишиной");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
