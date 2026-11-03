@@ -195,7 +195,7 @@ jobs:
             find src-tauri/crates/mr-app/gen/android -name '*.apk' || true
             exit 1
           fi
-          cp "$apk" bundle-pkg/meeting-recorder-android-arm64.apk
+          cp "$apk" bundle-pkg/Podtekst-android-arm64.apk
           ls -la bundle-pkg/
       - name: Upload Android APK as workflow artifact
         uses: actions/upload-artifact@v7
