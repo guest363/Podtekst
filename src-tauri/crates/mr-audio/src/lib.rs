@@ -188,8 +188,9 @@ mod tests {
         if info.source.is_empty() {
             return; // нет аудиосервера — зондировать нечего
         }
-        // На macOS системный канал требует BlackHole/Loopback, на Linux —
-        // монитор выхода PulseAudio. Флаг и устройство должны совпадать.
+        // На macOS флаг системного звука — это наличие loopback-входа в CoreAudio
+        // (нативный SCK живёт вне CoreAudio), на Linux — монитор выхода PulseAudio.
+        // Флаг и устройство должны совпадать.
         assert_eq!(info.has_system_audio, info.sink_monitor.is_some());
         #[cfg(target_os = "linux")]
         assert!(info.has_system_audio);
