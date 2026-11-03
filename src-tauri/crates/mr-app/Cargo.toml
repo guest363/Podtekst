@@ -40,7 +40,7 @@ libc.workspace = true
 
 # Нативный D-Bus (GNOME Shell Screencast) вместо внешнего интерпретатора python3-dbus.
 [target.'cfg(target_os = "linux")'.dependencies]
-zbus = "5"
+zbus = "6"
 
 # Доступная оперативная память для предохранителя длинных записей.
 [target.'cfg(windows)'.dependencies]
