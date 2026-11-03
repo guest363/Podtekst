@@ -233,9 +233,10 @@ jobs:
       - name: Updater manifest
         run: |
           python3 - "$GITHUB_REF_NAME" <<'PY'
-          import json, pathlib, sys
+          import json, os, pathlib, sys
 
           tag, root = sys.argv[1], pathlib.Path("artifacts")
+          repo = os.environ["GITHUB_REPOSITORY"]
           kinds = {
               ".AppImage": "linux-x86_64",
               ".app.tar.gz": "darwin-aarch64",
@@ -247,7 +248,7 @@ jobs:
               key = next((v for k, v in kinds.items() if name.endswith(k)), None)
               if key:
                   platforms[key] = {
-                      "url": f"https://github.com/guest363/meeting-record/releases/download/{tag}/{name}",
+                      "url": f"https://github.com/{repo}/releases/download/{tag}/{name}",
                       "signature": sig.read_text().strip(),
                   }
           if platforms:
