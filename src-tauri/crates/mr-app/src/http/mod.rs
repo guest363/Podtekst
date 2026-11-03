@@ -380,7 +380,7 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
     let server = match tiny_http::Server::http(format!("127.0.0.1:{port}")) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("Не удалось занять порт {port}: {e}");
+            crate::note!("Не удалось занять порт {port}: {e}");
             return;
         }
     };
@@ -554,7 +554,7 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                         .as_reader()
                         .take(MAX_JSON_BODY)
                         .read_to_string(&mut s);
-                    eprintln!("[UI_LOG] {s}");
+                    crate::note!("[UI_LOG] {s}");
                     json_response(request, json!({"ok": true}), 200);
                 }
                 (tiny_http::Method::Get, "/api/transcribe/auto") => {
@@ -701,6 +701,26 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     let manifest = mr_models::load_bundled_manifest();
                     let status = mr_models::get_models_status(&app, &manifest);
                     json_response(request, json!({"ok": true, "models": status}), 200);
+                }
+                (tiny_http::Method::Post, "/api/diagnostics") => {
+                    let mut body = Vec::new();
+                    let _ = request.as_reader().read_to_end(&mut body);
+                    match crate::diagnostics::collect() {
+                        Ok(path) => json_response(
+                            request,
+                            json!({"ok": true, "path": path.to_string_lossy()}),
+                            200,
+                        ),
+                        Err(e) => json_response(request, json!({"ok": false, "error": e}), 500),
+                    }
+                }
+                (tiny_http::Method::Post, "/api/diagnostics/open") => {
+                    let mut body = Vec::new();
+                    let _ = request.as_reader().read_to_end(&mut body);
+                    let dir = crate::diagnostics::output_dir();
+                    let _ = std::fs::create_dir_all(&dir);
+                    crate::opener_url(&dir.to_string_lossy());
+                    json_response(request, json!({"ok": true}), 200);
                 }
                 (tiny_http::Method::Get, "/api/support/info") => {
                     let cfg_path = app_data_dir().join("config.json");

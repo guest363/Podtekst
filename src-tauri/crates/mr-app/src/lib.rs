@@ -5,11 +5,13 @@ use std::sync::{Arc, Mutex};
 
 mod config;
 mod desktop;
+mod diagnostics;
 mod ffmpeg_dl;
 mod fsutil;
 mod hotwords;
 mod http;
 mod ipc;
+mod logging;
 mod media_registry;
 mod recording;
 pub(crate) mod screen;
@@ -73,6 +75,8 @@ struct Cli {
     speaker_r: String,
     #[arg(long, hide = true)]
     macos_selftest: bool,
+    #[arg(long, help = "Собрать отчёт диагностики и выйти")]
+    diagnostics: bool,
 }
 
 const DEFAULT_HTTP_PORT: u16 = 8765;
@@ -84,7 +88,7 @@ fn print_ipc(resp: &str) {
     }
 }
 
-fn opener_url(url: &str) {
+pub(crate) fn opener_url(url: &str) {
     #[cfg(target_os = "windows")]
     {
         // explorer.exe — GUI-процесс без консоли; URL уходит одним аргументом,
@@ -119,7 +123,7 @@ fn macos_selftest() -> i32 {
     let dir = std::env::temp_dir().join(format!("podtekst-selftest-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        eprintln!("Не создана временная папка: {e}");
+        crate::note!("Не создана временная папка: {e}");
         return 1;
     }
     let system_path = dir.join("sys.f32");
@@ -133,7 +137,7 @@ fn macos_selftest() -> i32 {
     let mut session = match mr_audio::capture::start_capture(&request) {
         Ok(session) => session,
         Err(e) => {
-            eprintln!("Захват не стартовал: {e}");
+            crate::note!("Захват не стартовал: {e}");
             let _ = std::fs::remove_dir_all(&dir);
             return 1;
         }
@@ -157,12 +161,23 @@ fn macos_selftest() -> i32 {
 
 #[cfg(not(target_os = "macos"))]
 fn macos_selftest() -> i32 {
-    eprintln!("--macos-selftest: только macOS");
+    crate::note!("--macos-selftest: только macOS");
     2
 }
 
 pub fn run_cli() {
     let cli = Cli::parse();
+    logging::init();
+    if cli.diagnostics {
+        match diagnostics::collect() {
+            Ok(path) => println!("{}", path.display()),
+            Err(e) => {
+                crate::note!("Отчёт диагностики не собрался: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if cli.macos_selftest {
         std::process::exit(macos_selftest());
     }
@@ -210,7 +225,7 @@ pub fn run_cli() {
     }
     #[cfg(not(feature = "onnx"))]
     if cli.transcribe.is_some() {
-        eprintln!("Пересоберите с --features onnx для локальной расшифровки");
+        crate::note!("Пересоберите с --features onnx для локальной расшифровки");
         std::process::exit(2);
     }
 
@@ -220,7 +235,7 @@ pub fn run_cli() {
             .unwrap_or_else(|_| "podtekst".to_string());
         match desktop::install_autostart(&exe) {
             Ok(()) => println!("Автозапуск включён."),
-            Err(e) => eprintln!("Не удалось включить автозапуск: {e}"),
+            Err(e) => crate::note!("Не удалось включить автозапуск: {e}"),
         }
         return;
     }
@@ -228,7 +243,7 @@ pub fn run_cli() {
         match desktop::uninstall_autostart() {
             Ok(true) => println!("Автозапуск выключён."),
             Ok(false) => println!("Автозапуск и так выключён."),
-            Err(e) => eprintln!("Не удалось выключить автозапуск: {e}"),
+            Err(e) => crate::note!("Не удалось выключить автозапуск: {e}"),
         }
         return;
     }
@@ -257,7 +272,7 @@ pub fn run_cli() {
             print_ipc(&resp);
             return;
         }
-        eprintln!("Не удалось остановить запись: запущенное приложение не найдено.");
+        crate::note!("Не удалось остановить запись: запущенное приложение не найдено.");
         std::process::exit(1);
     }
     if cli.show || cli.hide || cli.quit {
@@ -330,7 +345,7 @@ pub fn run_cli() {
     }) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("Подтекст уже запущен (lock {}): {e}", lock_path.display());
+            crate::note!("Подтекст уже запущен (lock {}): {e}", lock_path.display());
             std::process::exit(1);
         }
     };
@@ -341,7 +356,7 @@ pub fn run_cli() {
         let res = start_recording_with_notify(&mut st);
         if res.get("ok").and_then(|x| x.as_bool()) != Some(true) {
             if let Some(err) = res.get("error").and_then(|x| x.as_str()) {
-                eprintln!("{err}");
+                crate::note!("{err}");
             }
         }
     }

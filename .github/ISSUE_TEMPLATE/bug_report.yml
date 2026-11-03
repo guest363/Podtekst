@@ -5,6 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
+        Сначала проверьте [справочник проблем](https://github.com/guest363/podtekst/blob/main/docs/TROUBLESHOOTING.md).
         Не прикладывайте личные записи, расшифровки и `voiceprints.json`.
         Для уязвимостей используйте SECURITY.md, а не публичный issue.
   - type: input
@@ -40,6 +41,14 @@ body:
       label: Ожидаемое поведение
     validations:
       required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Отчёт диагностики
+      description: |
+        «Настройки» → «Компоненты» → «Собрать отчёт». Приложите zip: в нём версия,
+        разрешения, устройства и последние строки лога; аудио и расшифровок нет.
+      placeholder: podtekst-diagnostics-....zip
   - type: textarea
     id: logs
     attributes:

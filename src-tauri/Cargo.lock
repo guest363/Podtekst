@@ -2413,6 +2413,7 @@ dependencies = [
  "ureq 2.12.1",
  "windows-sys 0.61.2",
  "zbus",
+ "zip 4.6.1",
 ]
 
 [[package]]

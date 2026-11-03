@@ -32,6 +32,7 @@ mr-ml = { path = "../mr-ml" }
 mr-models = { path = "../mr-models" }
 mr-audio = { path = "../mr-audio" }
 ureq.workspace = true
+zip.workspace = true
 
 # SIGINT/SIGTERM-финализация записи (unix).
 [target.'cfg(unix)'.dependencies]

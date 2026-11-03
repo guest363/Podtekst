@@ -100,3 +100,34 @@ jobs:
           expected="$(cd "$root" && find ui/web/frontend/src ui/web/frontend/index.html ui/web/frontend/package.json ui/web/frontend/yarn.lock ui/web/frontend/vite.config.ts -type f -print | LC_ALL=C sort | while IFS= read -r f; do sha256sum "$f"; done | sha256sum | cut -d' ' -f1)"
           test "$(cat "$root/ui/web/static/.mr-stamp")" = "$expected"
           git -C "$root" diff --exit-code -- ui/web/static
+
+  android:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99"
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Android NDK
+        run: |
+          ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          NDK_HOME="$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | sort -V | tail -n 1)"
+          if [ -z "$NDK_HOME" ]; then
+            echo "Android NDK не найден"
+            exit 1
+          fi
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$NDK_HOME" >> "$GITHUB_ENV"
+      - name: Check Android target
+        working-directory: src-tauri
+        run: |
+          toolchain="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export PATH="$toolchain:$PATH"
+          export CC_aarch64_linux_android="$toolchain/aarch64-linux-android24-clang"
+          export AR_aarch64_linux_android="$toolchain/llvm-ar"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$toolchain/aarch64-linux-android24-clang"
+          cargo check -p mr-app --target aarch64-linux-android --features tauri-ui --locked

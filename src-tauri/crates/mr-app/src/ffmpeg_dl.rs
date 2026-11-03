@@ -150,14 +150,14 @@ fn download_and_install() -> Option<String> {
         }
         let mut installed = false;
         for url in group.urls {
-            eprintln!("[FFMPEG] Пробую источник: {url}");
+            crate::note!("[FFMPEG] Пробую источник: {url}");
             match try_install(url, &wanted, &dest_bin) {
                 Ok(names) => {
                     installed = !names.is_empty();
                     break;
                 }
                 Err(e) => {
-                    eprintln!("[FFMPEG] Источник не сработал: {e}");
+                    crate::note!("[FFMPEG] Источник не сработал: {e}");
                     last = e;
                 }
             }
@@ -239,7 +239,7 @@ fn try_install(url: &str, wanted: &[&str], dest_bin: &Path) -> Result<Vec<String
 
     let _ = std::fs::remove_file(&tmp_zip);
     let _ = std::fs::remove_dir_all(&tmp_dir);
-    eprintln!(
+    crate::note!(
         "[FFMPEG] Установлено в {}: {}",
         dest_bin.display(),
         installed.join(", ")

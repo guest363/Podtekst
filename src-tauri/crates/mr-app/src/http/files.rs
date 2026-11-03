@@ -575,7 +575,7 @@ pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
 
     if total < 250 {
         let _ = std::fs::remove_file(&temp_video);
-        eprintln!("[ATTACH_VIDEO] Видеопоток слишком мал ({total} байт), отклонён как пустой");
+        crate::note!("[ATTACH_VIDEO] Видеопоток слишком мал ({total} байт), отклонён как пустой");
         json_response(
             request,
             json!({"ok": false, "error": "Видеопоток пуст или не содержит видеокадров"}),
@@ -584,7 +584,7 @@ pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
         return;
     }
 
-    eprintln!("[ATTACH_VIDEO] Получен видеопоток: {total} байт для аудио {audio_path:?}");
+    crate::note!("[ATTACH_VIDEO] Получен видеопоток: {total} байт для аудио {audio_path:?}");
 
     let final_video = crate::recording::unique_media_path(&dir, &format!("{stem}.{video_ext}"));
     let ffmpeg_available = mr_audio::tools::ffmpeg_available();
@@ -644,11 +644,11 @@ pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
                 .chars()
                 .take(300)
                 .collect::<String>();
-            eprintln!("ffmpeg copy mux failed: {}", last_err.trim());
+            crate::note!("ffmpeg copy mux failed: {}", last_err.trim());
         }
         Err(e) => {
             last_err = e.to_string();
-            eprintln!("ffmpeg execution error: {e}");
+            crate::note!("ffmpeg execution error: {e}");
         }
     }
 
@@ -687,7 +687,7 @@ pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
                     .chars()
                     .take(300)
                     .collect::<String>();
-                eprintln!("ffmpeg transcode mux failed: {}", last_err.trim());
+                crate::note!("ffmpeg transcode mux failed: {}", last_err.trim());
             }
             Err(e) => {
                 last_err = e.to_string();
@@ -698,7 +698,7 @@ pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
     let _ = std::fs::remove_file(&temp_video);
 
     if success {
-        eprintln!("[ATTACH_VIDEO] Склейка успешна -> {final_video:?}");
+        crate::note!("[ATTACH_VIDEO] Склейка успешна -> {final_video:?}");
         let _ = std::fs::remove_file(&audio_path);
         crate::media_registry::unmark_owned(&audio_path);
         crate::media_registry::mark_owned(&final_video);
@@ -714,7 +714,7 @@ pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
             200,
         );
     } else {
-        eprintln!("[ATTACH_VIDEO] Ошибка склейки ffmpeg: {last_err}");
+        crate::note!("[ATTACH_VIDEO] Ошибка склейки ffmpeg: {last_err}");
         json_response(
             request,
             json!({

@@ -214,7 +214,7 @@ fn spawn_child(cmd: &mut Command, video_path: &Path) -> Result<Child, String> {
     if let Ok(Some(status)) = child.try_wait() {
         return Err(format!("ffmpeg завершился сразу ({status})"));
     }
-    eprintln!("[SCREEN] Запись экрана запущена: {video_path:?}");
+    crate::note!("[SCREEN] Запись экрана запущена: {video_path:?}");
 
     Ok(child)
 }
@@ -291,7 +291,7 @@ impl ScreenCaptureSession {
             return Err("GNOME Shell не начал запись экрана".to_string());
         }
         let video_path = PathBuf::from(filename);
-        eprintln!("[SCREEN] Запись экрана запущена: {video_path:?}");
+        crate::note!("[SCREEN] Запись экрана запущена: {video_path:?}");
 
         Ok(Self { conn, video_path })
     }
@@ -311,7 +311,7 @@ impl ScreenCaptureSession {
     // ffmpeg выходит по 'q' из stdin — аналога EOF-сигнала хелпера Linux.
     #[cfg(any(windows, target_os = "macos"))]
     pub(crate) fn stop(mut self) -> Result<PathBuf, String> {
-        eprintln!("[SCREEN] Остановка записи экрана...");
+        crate::note!("[SCREEN] Остановка записи экрана...");
         {
             use std::io::Write;
             if let Some(mut si) = self.child.stdin.take() {
@@ -324,20 +324,20 @@ impl ScreenCaptureSession {
         while start_wait.elapsed() < Duration::from_secs(7) {
             match self.child.try_wait() {
                 Ok(Some(status)) => {
-                    eprintln!("[SCREEN] Процесс захвата завершился со статусом {status:?}");
+                    crate::note!("[SCREEN] Процесс захвата завершился со статусом {status:?}");
                     exited = true;
                     break;
                 }
                 Ok(None) => std::thread::sleep(Duration::from_millis(100)),
                 Err(e) => {
-                    eprintln!("[SCREEN] Ошибка ожидания процесса захвата: {e}");
+                    crate::note!("[SCREEN] Ошибка ожидания процесса захвата: {e}");
                     break;
                 }
             }
         }
 
         if !exited {
-            eprintln!("[SCREEN] Процесс захвата не завершился вовремя, отправляю kill");
+            crate::note!("[SCREEN] Процесс захвата не завершился вовремя, отправляю kill");
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
@@ -350,7 +350,7 @@ impl ScreenCaptureSession {
         proxy
             .call::<_, _, bool>("StopScreencast", &())
             .map_err(|e| format!("Не удалось остановить запись экрана: {e}"))?;
-        eprintln!("[SCREEN] Остановка записи экрана...");
+        crate::note!("[SCREEN] Остановка записи экрана...");
         wait_finalized(&self.video_path)
     }
 }
@@ -361,7 +361,7 @@ fn wait_finalized(video_path: &Path) -> Result<PathBuf, String> {
         if video_path.is_file() {
             let size = std::fs::metadata(video_path).map(|m| m.len()).unwrap_or(0);
             if size > 1000 {
-                eprintln!("[SCREEN] Записано видео: {video_path:?} ({size} байт)");
+                crate::note!("[SCREEN] Записано видео: {video_path:?} ({size} байт)");
                 return Ok(video_path.to_path_buf());
             }
         }
@@ -399,7 +399,7 @@ pub(crate) fn mux_screen_and_audio(
     audio_path: &Path,
     final_path: &Path,
 ) -> Result<(), String> {
-    eprintln!("[SCREEN] Склейка видео {video_path:?} и аудио {audio_path:?} -> {final_path:?}");
+    crate::note!("[SCREEN] Склейка видео {video_path:?} и аудио {audio_path:?} -> {final_path:?}");
 
     let remove_leftovers = || {
         let _ = std::fs::remove_file(video_path);
@@ -429,14 +429,14 @@ pub(crate) fn mux_screen_and_audio(
     if output.status.success() && final_path.is_file() {
         let size = std::fs::metadata(final_path).map(|m| m.len()).unwrap_or(0);
         if size > 1000 {
-            eprintln!("[SCREEN] Склейка успешна (-c:v copy): {size} байт");
+            crate::note!("[SCREEN] Склейка успешна (-c:v copy): {size} байт");
             let _ = std::fs::remove_file(video_path);
             let _ = std::fs::remove_file(audio_path);
             return Ok(());
         }
     }
 
-    eprintln!("[SCREEN] Прямое копирование не сработало, запускаю перекодирование...");
+    crate::note!("[SCREEN] Прямое копирование не сработало, запускаю перекодирование...");
     let encoder = fallback_encoder();
     let mut cmd = Command::new(mr_audio::tools::ffmpeg_path());
     cmd.arg("-y")
@@ -461,7 +461,7 @@ pub(crate) fn mux_screen_and_audio(
     if output.status.success() && final_path.is_file() {
         let size = std::fs::metadata(final_path).map(|m| m.len()).unwrap_or(0);
         if size > 1000 {
-            eprintln!("[SCREEN] Перекодирование успешно: {size} байт");
+            crate::note!("[SCREEN] Перекодирование успешно: {size} байт");
             let _ = std::fs::remove_file(video_path);
             let _ = std::fs::remove_file(audio_path);
             return Ok(());
@@ -529,7 +529,7 @@ mod windows_tests {
     #[test]
     fn screen_capture_roundtrip_writes_valid_video() {
         if !is_screen_capture_supported() {
-            eprintln!("ffmpeg недоступен — пропуск живого теста");
+            crate::note!("ffmpeg недоступен — пропуск живого теста");
             return;
         }
         let started = std::time::SystemTime::now()
