@@ -10,6 +10,7 @@ export const settings = $state({
   recordMode: 'split',
   platform: '',
   systemAudio: false,
+  systemAudioPermission: true,
   autoTranscribe: true,
   hotwords: [] as string[],
   ctcEnabled: true,
@@ -50,12 +51,21 @@ export async function loadRecordMode(): Promise<void> {
     const st = await readJsonSafe(await fetch('/api/status'))
     if (typeof st.platform === 'string') settings.platform = st.platform
     settings.systemAudio = st.device?.has_system_audio === true
+    if (typeof st.system_audio_permission === 'boolean') {
+      settings.systemAudioPermission = st.system_audio_permission
+    }
   } catch {
     /* платформа неизвестна — покажем режим как есть */
   }
   try {
     const d = await readJsonSafe(await fetch('/api/record/mode'))
     if (d.mode === 'mix' || d.mode === 'split') settings.recordMode = d.mode
+    // Старый конфиг мог сохранить mix, когда системного канала ещё не было.
+    // Один раз переключаем на split; ручной выбор пользователя не трогаем.
+    if (settings.systemAudio && d.explicit !== true && settings.recordMode === 'mix') {
+      await setRecordMode('split')
+      toast('Включили 2 канала: теперь слышны собеседники. Вернуть можно в настройках')
+    }
   } catch {
   }
   // Без второго канала split недоступен: бэкенд пишет моно.

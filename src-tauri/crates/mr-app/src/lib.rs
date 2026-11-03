@@ -784,6 +784,11 @@ mod live_api_tests {
         );
         let (_, v) = json(http(port, "GET", "/api/record/mode", &[], &[]));
         assert_eq!(v.get("mode").and_then(|x| x.as_str()), Some("mix"));
+        assert_eq!(
+            v.get("explicit").and_then(|x| x.as_bool()),
+            Some(true),
+            "ручной выбор режима должен сохраняться"
+        );
 
         let (_, v) = json(http(port, "GET", "/api/transcribe/auto", &[], &[]));
         assert_eq!(v.get("enabled").and_then(|x| x.as_bool()), Some(true));

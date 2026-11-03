@@ -199,7 +199,11 @@
             </button>
           </div>
           <div class="help-text">
-            {#if settings.platform === 'macos' && !hasSystemAudio()}
+            {#if settings.platform === 'macos' && hasSystemAudio() && !settings.systemAudioPermission}
+              Разрешите «Запись экрана и системного аудио» в «Системные настройки → Конфиденциальность
+              и безопасность», включите Подтекст и перезапустите приложение. Без разрешения
+              собеседники не попадут в запись.
+            {:else if settings.platform === 'macos' && !hasSystemAudio()}
               Системный звук на macOS не найден. Установите BlackHole 2ch и многовыходное
               устройство (см. README) — или пишите только микрофон в один канал.
             {:else if isMobile}

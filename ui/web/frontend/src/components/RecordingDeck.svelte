@@ -79,6 +79,7 @@
             toast('Запись экрана и звука началась')
           }
           if (d.mic_muted) toast('Микрофон выключен в системе – будет тишина', 'error')
+          if (d.sys_error) toast('Системный звук не пишется: ' + d.sys_error, 'error')
           if (d.screen_error) toast('Экран не записывается: ' + d.screen_error, 'error')
         } else if (d.error === 'Запись уже идёт') {
           setRecordingState(true)
@@ -103,6 +104,8 @@
             toast(`Видеозапись сохранена: ${d.filename || baseName(d.file || '')}`)
           } else if (d.silent) {
             toast('Записана тишина – микрофон ничего не записал. Проверьте звук и источник в системе', 'error')
+          } else if (d.sys_silent) {
+            toast('Системный звук не записался — проверьте разрешение «Запись экрана и системного аудио»', 'error')
           } else if (d.filename) {
             toast(`Запись сохранена: ${d.filename}`)
           }
@@ -134,6 +137,7 @@
       }
       if (typeof d.system_audio_permission === 'boolean') {
         systemAudioPermission = d.system_audio_permission
+        settings.systemAudioPermission = d.system_audio_permission
       }
       // Запись могли включить/выключить извне (глобальный хоткей, IPC,
       // второй клик по ярлыку) — кнопка обязана следовать за реальностью.

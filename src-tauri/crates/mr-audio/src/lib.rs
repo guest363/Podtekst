@@ -90,11 +90,19 @@ pub fn mix_channels(mic: &[f32], sys: &[f32], mode: ChannelMode) -> (Vec<f32>, V
     match mode {
         ChannelMode::Split => (mic[..n].to_vec(), sys[..n].to_vec()),
         ChannelMode::Mix => {
-            let mono: Vec<f32> = mic[..n]
-                .iter()
-                .zip(sys[..n].iter())
-                .map(|(a, b)| (a + b) * 0.5)
-                .collect();
+            // Мёртвый канал (SCK не дал звука) не должен глушить живой на 6 дБ.
+            let peak = |s: &[f32]| s.iter().fold(0.0f32, |a, &x| a.max(x.abs()));
+            let mono: Vec<f32> = if peak(&sys[..n]) < 1e-5 {
+                mic[..n].to_vec()
+            } else if peak(&mic[..n]) < 1e-5 {
+                sys[..n].to_vec()
+            } else {
+                mic[..n]
+                    .iter()
+                    .zip(sys[..n].iter())
+                    .map(|(a, b)| (a + b) * 0.5)
+                    .collect()
+            };
             (mono.clone(), mono)
         }
     }
@@ -199,6 +207,16 @@ mod tests {
         let (lm, rm) = mix_channels(&mic, &sys, ChannelMode::Mix);
         assert!(lm.iter().all(|x| x.abs() < 1e-6));
         assert_eq!(lm, rm);
+    }
+
+    #[test]
+    fn mix_keeps_live_channel_when_other_is_silent() {
+        let mic = vec![0.5, -0.5];
+        let silence = vec![0.0, 0.0];
+        let (m, _) = mix_channels(&mic, &silence, ChannelMode::Mix);
+        assert_eq!(m, mic, "мёртвый системный канал не глушит микрофон");
+        let (m, _) = mix_channels(&silence, &mic, ChannelMode::Mix);
+        assert_eq!(m, mic, "мёртвый микрофон не глушит системный канал");
     }
 
     #[test]

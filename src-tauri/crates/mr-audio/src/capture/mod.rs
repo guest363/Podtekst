@@ -191,6 +191,8 @@ impl Drop for CaptureStream {
 pub struct CaptureSession {
     pub mic: Option<CaptureStream>,
     pub system: Option<CaptureStream>,
+    /// Причина, по которой системный канал не открылся (запись продолжается моно).
+    pub system_error: Option<String>,
 }
 
 impl CaptureSession {
@@ -291,6 +293,7 @@ pub fn start_capture(req: &CaptureRequest) -> Result<CaptureSession> {
                 Err(e) => {
                     // Системный звук — необязательный: пишем тишину в правый канал.
                     eprintln!("Системный звук недоступен: {e}");
+                    session.system_error = Some(e.to_string());
                 }
             }
         }

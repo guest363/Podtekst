@@ -43,8 +43,8 @@ fn handle_transcript_edit(request: tiny_http::Request, _body: serde_json::Value)
 }
 use self::update::{handle_update_apply, handle_update_check, handle_update_progress};
 use crate::config::{
-    app_data_dir, configured_auto_transcribe, configured_record_mode, save_auto_transcribe,
-    save_dir, save_record_mode, static_dir,
+    app_data_dir, configured_auto_transcribe, configured_record_mode, record_mode_explicit,
+    save_auto_transcribe, save_dir, save_record_mode, static_dir,
 };
 use crate::recording::now_secs;
 use crate::recording::{start_recording_inner, stop_recording_inner, RecordingState};
@@ -526,7 +526,11 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 (tiny_http::Method::Get, "/api/record/mode") => {
                     json_response(
                         request,
-                        json!({"ok": true, "mode": configured_record_mode()}),
+                        json!({
+                            "ok": true,
+                            "mode": configured_record_mode(),
+                            "explicit": record_mode_explicit(),
+                        }),
                         200,
                     );
                 }
@@ -1002,9 +1006,6 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                             .unwrap_or(false);
                         let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
                         let res = start_recording_inner(&mut st, mode, screen);
-                        if res.get("ok").and_then(|x| x.as_bool()) == Some(true) {
-                            save_record_mode(mode);
-                        }
                         json_response(request, res, 200);
                     }
                 }

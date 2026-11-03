@@ -101,19 +101,19 @@ impl CheckpointWriter {
                 .extend(read_new_samples(path, &mut self.sys_offset)?);
         }
         let has_sys = self.sys_path.is_some();
-        let count = if has_sys {
-            self.mic_pending.len().min(self.sys_pending.len())
-        } else {
-            self.mic_pending.len()
-        };
+        // Системный канал мог остановиться (AirPods): не замираем на min(),
+        // иначе чекпоинт перестаёт писать и микрофон.
+        let sys_peak = self
+            .sys_pending
+            .iter()
+            .fold(0.0f32, |acc, &s| acc.max(s.abs()));
+        let sys_live = has_sys && sys_peak >= 1e-5;
+        let count = self.mic_pending.len().max(self.sys_pending.len());
         for i in 0..count {
-            let mic = self.mic_pending[i];
+            let mic = self.mic_pending.get(i).copied().unwrap_or(0.0);
+            let sys = self.sys_pending.get(i).copied().unwrap_or(0.0);
             if self.mix {
-                let sample = if has_sys {
-                    (mic + self.sys_pending[i]) * 0.5
-                } else {
-                    mic
-                };
+                let sample = if sys_live { (mic + sys) * 0.5 } else { mic };
                 self.writer
                     .write_sample(pcm(sample))
                     .map_err(|e| e.to_string())?;
@@ -122,12 +122,12 @@ impl CheckpointWriter {
                     .write_sample(pcm(mic))
                     .map_err(|e| e.to_string())?;
                 self.writer
-                    .write_sample(pcm(self.sys_pending[i]))
+                    .write_sample(pcm(sys))
                     .map_err(|e| e.to_string())?;
             }
         }
-        self.mic_pending.drain(..count);
-        self.sys_pending.drain(..count);
+        self.mic_pending.drain(..count.min(self.mic_pending.len()));
+        self.sys_pending.drain(..count.min(self.sys_pending.len()));
         // hound обновляет RIFF/data lengths и оставляет валидный WAV на этом месте.
         self.writer.flush().map_err(|e| e.to_string())
     }
@@ -339,6 +339,7 @@ pub(crate) fn start_recording_inner(
         }
     };
     let has_sys = session.system.is_some();
+    let sys_error = session.system_error.clone();
     // Если системный канал не открылся, честно пишем моно, а не стерео с нулями.
     let actual_mode = if has_sys { mode } else { "mix" };
     let checkpoint = match WavCheckpoint::start(
@@ -381,7 +382,8 @@ pub(crate) fn start_recording_inner(
     st.mode = actual_mode.to_string();
     json!({"ok": true, "file": out.to_string_lossy(), "filename": fname,
         "mic": mic_label, "mic_muted": muted,
-        "sys": has_sys, "screen_error": screen_error})
+        "sys": has_sys, "sys_error": sys_error,
+        "screen_error": screen_error})
 }
 
 fn finalize_recording_name(file: &str, start: u64, end: u64) -> (String, String) {
@@ -424,8 +426,9 @@ pub(crate) fn stop_recording_inner(
         checkpoint.stop();
     }
     let mut peak: Option<f32> = None;
+    let mut sys_peak: Option<f32> = None;
     if let Some(capture) = st.capture.take() {
-        let finalize = || -> std::result::Result<f32, String> {
+        let mut finalize = || -> std::result::Result<f32, String> {
             let (mic_path, sys_path, session_peak) = {
                 let mut session = capture.lock().map_err(|_| "захват занят".to_string())?;
                 let mic = session.mic.as_ref().map(|s| s.path.clone());
@@ -458,6 +461,9 @@ pub(crate) fn stop_recording_inner(
             let max_len = mic.len().max(sys.len());
             mic.resize(max_len, 0.0);
             sys.resize(max_len, 0.0);
+            if sys_path.is_some() {
+                sys_peak = Some(sys.iter().fold(0.0f32, |acc, &s| acc.max(s.abs())));
+            }
             let (l, r) = if st.mode == "mix" && sys_path.is_none() {
                 (mic.clone(), Vec::new())
             } else {
@@ -551,6 +557,10 @@ pub(crate) fn stop_recording_inner(
         // shortcut: порог −46 дБFS; тише — почти наверняка мьют/не тот источник, чинить выбором дефолта в pactl
         resp["silent"] = json!(p < 0.005);
         resp["peak"] = json!(p);
+    }
+    if let Some(p) = sys_peak {
+        resp["sys_silent"] = json!(p < 0.001);
+        resp["sys_peak"] = json!(p);
     }
     if !defer_autotranscribe {
         maybe_autotranscribe(&file);
