@@ -1,6 +1,3 @@
-//! Разрешение на запись экрана — без запроса: первый
-//! `SCShareableContent::get()` показывает системный диалог сам.
-
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     // Apple Boolean — unsigned char, не C99 _Bool.

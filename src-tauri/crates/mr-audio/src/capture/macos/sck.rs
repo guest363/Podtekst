@@ -1,9 +1,3 @@
-//! Системный звук macOS через ScreenCaptureKit (без виртуального драйвера).
-//!
-//! SCK отдаёт звук вместе с видеокадрами: `with_captures_audio(true)` включаем,
-//! а сами кадры не используем. Разрешение на запись экрана проверяет система
-//! при первом `SCShareableContent::get()` — отдельного запроса нет.
-
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::sync_channel;
@@ -17,9 +11,7 @@ use screencapturekit::stream::delegate_trait::StreamCallbacks;
 use crate::capture::stream::{f32le_to_samples, LevelMeter, RawWriter, StreamingResampler};
 use crate::capture::{AudioError, CaptureStream, Result};
 
-/// SCK стабильнее всего отдаёт 48 кГц; на 16 кГц уходим существующим
-/// потоковым ресемплером. 16 кГц напрямую поддерживается, но хуже обкатано
-/// на Bluetooth-маршрутах (AirPods/HFP).
+// 48 кГц: 16 кГц хуже обкатано на Bluetooth/HFP; в 16 кГц уходим ресемплером.
 const CAPTURE_RATE: u32 = 48_000;
 
 struct AudioSink {
@@ -28,12 +20,12 @@ struct AudioSink {
     resampler: Option<StreamingResampler>,
     capture_rate: u32,
     out_rate: u32,
-    /// Переиспользуемые буферы: колбэк вызывается десятки раз в секунду.
+    // Колбэк вызывается десятки раз в секунду: переиспользуем буферы, чтобы
+    // не аллоцировать на каждом кадре.
     samples: Vec<f32>,
     resampled: Vec<f32>,
     silence: Vec<f32>,
-    /// Конец предыдущего буфера по PTS: по нему добиваем разрыв тишиной
-    /// после переподключения AirPods, иначе системная дорожка «съедет».
+    /// По PTS добиваем разрыв тишиной после смены AirPods, иначе дорожка съедет.
     last_end_pts: Option<f64>,
     write_failed: bool,
 }
@@ -57,8 +49,7 @@ impl AudioSink {
             }
         }
         self.samples.clear();
-        // При channel_count(1) SCK кладёт моно в один буфер; лишние буферы
-        // (если система их всё же отдаст) дописываем подряд.
+        // channel_count(1): SCK отдаёт один моно-буфер.
         for buffer in list.iter() {
             f32le_to_samples(buffer.data(), &mut self.samples);
         }
@@ -111,8 +102,7 @@ struct AudioHandler {
 
 impl SCStreamOutputTrait for AudioHandler {
     fn did_output_sample_buffer(&self, sample: CMSampleBuffer, kind: SCStreamOutputType) {
-        // Видеокадры не нужны: регистрация Screen-output только убирает
-        // предупреждения SCK о неподключённом выходе.
+        // Без Screen-output SCK сыпет предупреждениями о неподключённом выходе.
         if kind != SCStreamOutputType::Audio {
             return;
         }
@@ -127,7 +117,6 @@ impl SCStreamOutputTrait for AudioHandler {
     }
 }
 
-/// `CMTime` в секундах; невалидное время даёт 0.
 fn seconds(time: CMTime) -> f64 {
     if time.timescale > 0 {
         time.value as f64 / time.timescale as f64

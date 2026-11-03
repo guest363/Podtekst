@@ -155,7 +155,6 @@ fn device_muted(device: AudioDeviceId) -> bool {
     get_u32(device, DEVICE_PROPERTY_MUTE, OBJECT_SCOPE_INPUT).is_some_and(|v| v != 0)
 }
 
-/// Псевдо-устройство: системный звук через ScreenCaptureKit, без драйвера.
 pub(super) const NATIVE_SYSTEM_ID: &str = "sck";
 const NATIVE_SYSTEM_NAME: &str = "Системный звук (ScreenCaptureKit)";
 
@@ -177,8 +176,8 @@ fn is_loopback(name: &str) -> bool {
 pub fn devices() -> DeviceCatalog {
     let mut catalog = DeviceCatalog {
         platform: "darwin".to_string(),
-        // Нативный системный звук — первым и по умолчанию; BlackHole-устройства
-        // остаются ниже как явный выбор пользователя.
+        // SCK не требует BlackHole, поэтому нативный системный звук — первым
+        // и по умолчанию; BlackHole-устройства остаются ниже как явный выбор.
         system: vec![DeviceInfo {
             id: NATIVE_SYSTEM_ID.to_string(),
             name: NATIVE_SYSTEM_NAME.to_string(),

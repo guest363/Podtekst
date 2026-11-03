@@ -113,9 +113,7 @@ pub fn mobile_main() {
     std::process::exit(code);
 }
 
-/// Диагностика на арендованном Mac: 5 секунд системного захвата, затем
-/// печатает объём и уровень записи. Нужна, потому что разрешения Screen
-/// Recording и наличие виртуального драйвера иначе проверяются только руками.
+// TCC и реальный SCK иначе проверяются только руками на живом Mac.
 #[cfg(target_os = "macos")]
 fn macos_selftest() -> i32 {
     let dir = std::env::temp_dir().join(format!("podtekst-selftest-{}", std::process::id()));

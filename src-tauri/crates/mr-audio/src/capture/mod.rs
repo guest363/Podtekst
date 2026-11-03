@@ -191,7 +191,6 @@ impl Drop for CaptureStream {
 pub struct CaptureSession {
     pub mic: Option<CaptureStream>,
     pub system: Option<CaptureStream>,
-    /// Причина, по которой системный канал не открылся (запись продолжается моно).
     pub system_error: Option<String>,
 }
 
@@ -261,7 +260,6 @@ pub fn devices() -> DeviceCatalog {
     }
 }
 
-/// Разрешение на запись системного звука (на macOS — запись экрана).
 pub fn system_audio_permission() -> bool {
     #[cfg(target_os = "macos")]
     {

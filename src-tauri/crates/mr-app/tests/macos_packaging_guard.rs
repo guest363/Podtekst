@@ -1,6 +1,3 @@
-//! Упаковка macOS: plist-описания доступа и entitlements не компилируются
-//! на Linux, но их потеря ломает запись на Mac молча — проверяем текстом.
-
 #[test]
 fn info_plist_declares_microphone_and_screen_capture() {
     let plist = include_str!("../Info.plist");

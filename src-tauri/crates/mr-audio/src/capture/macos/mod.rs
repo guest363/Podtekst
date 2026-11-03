@@ -1,10 +1,3 @@
-//! macOS: живой захват микрофона и системного звука.
-//!
-//! Микрофон идёт через CoreAudio HAL (AudioUnit). Системный звук — через
-//! ScreenCaptureKit, если драйвер BlackHole не выбран явно: SCK не требует
-//! виртуального аудиодрайвера. Выбор `sck` в списке устройств означает SCK,
-//! любой другой id — конкретный вход CoreAudio (BlackHole/Loopback).
-
 use std::path::Path;
 
 use crate::capture::{CaptureStream, Result, StreamKind};
@@ -27,6 +20,8 @@ pub fn start_stream(
     match kind {
         StreamKind::Microphone => audio::start_stream(kind, device, path, rate),
         StreamKind::System => {
+            // CoreAudio без виртуального драйвера системный звук не отдаёт —
+            // по умолчанию идём через SCK, BlackHole остаётся явным выбором.
             let native = device.is_none_or(|id| id.is_empty() || id == devices::NATIVE_SYSTEM_ID);
             if native {
                 sck::start_stream(path, rate)

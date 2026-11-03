@@ -46,9 +46,8 @@ pub(crate) struct ScreenCaptureSession {
 #[cfg(target_os = "linux")]
 static SUPPORTED_CACHE: OnceLock<bool> = OnceLock::new();
 
-/// Windows и macOS зависят от ffmpeg, который можно доустановить
-/// из интерфейса: успех кэшируется навсегда, неудача перепроверяется
-/// не чаще раза в 30 с — переключатель включается без перезапуска.
+// Успех кэшируется навсегда, неудача — на 30 с: ffmpeg можно доустановить
+// из интерфейса, и переключатель включится без перезапуска.
 pub(crate) fn is_screen_capture_supported() -> bool {
     #[cfg(windows)]
     {
@@ -77,7 +76,6 @@ pub(crate) fn is_screen_capture_supported() -> bool {
     }
 }
 
-/// Выбор H.264-энкодера с кэшем: успех — навсегда, неудача — на 30 с.
 #[cfg(any(windows, target_os = "macos"))]
 fn cached_encoder(
     cache: &'static Mutex<(Option<&'static str>, Option<Instant>)>,
@@ -143,7 +141,7 @@ fn probe_macos_encoder() -> Option<&'static str> {
     }
 }
 
-/// На Windows и macOS libx264 может отсутствовать, поэтому повторяем выбор энкодера захвата.
+// libx264 может отсутствовать, поэтому выбор энкодера повторяем при старте.
 fn fallback_encoder() -> &'static str {
     #[cfg(windows)]
     {
@@ -159,10 +157,10 @@ fn fallback_encoder() -> &'static str {
     }
 }
 
-/// Аргументы ffmpeg для avfoundation: экран устройства 0 без системного аудио
-/// (звук пишет mr-audio отдельно).
 #[cfg(any(test, target_os = "macos"))]
 fn macos_ffmpeg_args(encoder: &str, path: &Path) -> Vec<OsString> {
+    // avfoundation: "Capture screen 0" — имя устройства, ":none" — без аудио
+    // (звук пишет mr-audio отдельно).
     let mut args: Vec<OsString> = [
         "-hide_banner",
         "-loglevel",
@@ -201,7 +199,6 @@ fn macos_ffmpeg_args(encoder: &str, path: &Path) -> Vec<OsString> {
     args
 }
 
-/// Запуск ffmpeg и handshake «процесс жив спустя 1.2 с»: общий для Windows и macOS.
 #[cfg(any(windows, target_os = "macos"))]
 fn spawn_child(cmd: &mut Command, video_path: &Path) -> Result<Child, String> {
     cmd.stdin(Stdio::piped())
@@ -257,7 +254,7 @@ impl ScreenCaptureSession {
         })
     }
 
-    // shortcut: ffmpeg avfoundation, заменить на SCK+AVAssetWriter когда будет Mac для проверки TCC
+    // shortcut: ffmpeg avfoundation вместо SCK+AVAssetWriter (нет Mac для проверки TCC), заменить после живой проверки.
     #[cfg(target_os = "macos")]
     pub(crate) fn start(started_ts: u64) -> Result<Self, String> {
         let Some(encoder) = macos_encoder() else {

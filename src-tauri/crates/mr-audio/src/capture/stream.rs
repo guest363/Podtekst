@@ -98,8 +98,7 @@ pub fn read_raw_f32(path: &Path) -> std::io::Result<Vec<f32>> {
     Ok(chunks.iter().map(|c| f32::from_le_bytes(*c)).collect())
 }
 
-/// Разложить PCM f32 little-endian (так ScreenCaptureKit отдаёт звук) в сэмплы.
-/// Неполный хвост отбрасывается: кадр записи не должен разрастаться.
+// ScreenCaptureKit отдаёт f32 LE; неполный хвост отбрасываем, чтобы не читать мусор.
 pub fn f32le_to_samples(bytes: &[u8], out: &mut Vec<f32>) {
     let (chunks, _) = bytes.as_chunks::<4>();
     out.extend(chunks.iter().map(|c| f32::from_le_bytes(*c)));
@@ -220,7 +219,6 @@ mod tests {
 
     #[test]
     fn f32le_to_samples_ignores_incomplete_tail() {
-        // 1.0 и -2.0 плюс байт от недописанного сэмпла.
         let bytes = [0x00, 0x00, 0x80, 0x3f, 0x00, 0x00, 0x00, 0xc0, 0xaa];
         let mut out = Vec::new();
         f32le_to_samples(&bytes, &mut out);
