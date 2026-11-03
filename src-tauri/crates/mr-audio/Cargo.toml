@@ -33,5 +33,10 @@ windows = { version = "0.62", features = [
     "Win32_UI_Shell_PropertiesSystem",
 ] }
 
+# macOS: ScreenCaptureKit не требует BlackHole, поэтому он основной путь;
+# BlackHole остаётся запасным. Микрофон — по-прежнему CoreAudio AUHAL.
+[target.'cfg(target_os = "macos")'.dependencies]
+screencapturekit = { version = "11.1", features = ["macos_13_0"] }
+
 [features]
 default = []

@@ -98,6 +98,12 @@ pub fn read_raw_f32(path: &Path) -> std::io::Result<Vec<f32>> {
     Ok(chunks.iter().map(|c| f32::from_le_bytes(*c)).collect())
 }
 
+// ScreenCaptureKit отдаёт f32 LE; неполный хвост отбрасываем, чтобы не читать мусор.
+pub fn f32le_to_samples(bytes: &[u8], out: &mut Vec<f32>) {
+    let (chunks, _) = bytes.as_chunks::<4>();
+    out.extend(chunks.iter().map(|c| f32::from_le_bytes(*c)));
+}
+
 pub fn s16le_to_f32(bytes: &[u8]) -> Vec<f32> {
     let (chunks, _) = bytes.as_chunks::<2>();
     chunks
@@ -209,6 +215,16 @@ mod tests {
         let f = s16le_to_f32(&bytes);
         assert_eq!(f.len(), 2);
         assert!((f[0] - 0.5).abs() < 0.01 && (f[1] + 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn f32le_to_samples_ignores_incomplete_tail() {
+        let bytes = [0x00, 0x00, 0x80, 0x3f, 0x00, 0x00, 0x00, 0xc0, 0xaa];
+        let mut out = Vec::new();
+        f32le_to_samples(&bytes, &mut out);
+        assert_eq!(out.len(), 2);
+        assert!((out[0] - 1.0).abs() < 1e-6);
+        assert!((out[1] + 2.0).abs() < 1e-6);
     }
 
     #[test]

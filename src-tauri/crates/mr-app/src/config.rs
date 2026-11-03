@@ -48,9 +48,19 @@ pub(crate) fn configured_record_mode() -> String {
     }
 }
 
+pub(crate) fn record_mode_explicit() -> bool {
+    load_config()
+        .get("record_mode_explicit")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false)
+}
+
 pub(crate) fn save_record_mode(mode: &str) {
     let m = if mode == "mix" { "mix" } else { "split" };
-    update_config(|cfg| cfg["record_mode"] = json!(m));
+    update_config(|cfg| {
+        cfg["record_mode"] = json!(m);
+        cfg["record_mode_explicit"] = json!(true);
+    });
 }
 
 pub(crate) fn configured_auto_transcribe() -> bool {

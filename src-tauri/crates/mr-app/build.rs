@@ -68,6 +68,14 @@ fn resource_dir() -> Option<PathBuf> {
     })
 }
 
+/// Swift-мост ScreenCaptureKit лежит в /usr/lib/swift, а не в dyld-кэше:
+/// без rpath приложение и тесты падают с «Library not loaded».
+fn link_swift_runtime() {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
+    }
+}
+
 /// Command-line запуск (`run.command`) идёт мимо .app-бандла, а TCC требует
 /// NSMicrophoneUsageDescription до первого обращения к микрофону. Вшиваем
 /// Info.plist в секцию __TEXT бинарника — macOS читает её как у бандла.
@@ -92,6 +100,7 @@ fn embed_macos_info_plist() {
 
 fn main() {
     link_clang_rt_on_apple();
+    link_swift_runtime();
     embed_macos_info_plist();
     println!("cargo:rerun-if-env-changed=CC");
     println!("cargo:rerun-if-env-changed=TARGET_CC");

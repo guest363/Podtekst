@@ -28,10 +28,10 @@ fn home_dir() -> PathBuf {
 pub fn autostart_file_path() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
-        return home_dir()
+        home_dir()
             .join("Library")
             .join("LaunchAgents")
-            .join("io.github.guest363.podtekst.plist");
+            .join("io.github.guest363.podtekst.plist")
     }
     #[cfg(target_os = "windows")]
     {
@@ -76,7 +76,7 @@ pub fn install_autostart(exec_path: &str) -> Result<()> {
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n<key>Label</key><string>io.github.guest363.podtekst</string>\n<key>ProgramArguments</key><array><string>{esc}</string><string>--tray</string></array>\n<key>RunAtLoad</key><true/>\n</dict>\n</plist>\n"
         );
         std::fs::write(&target, plist)?;
-        return Ok(());
+        Ok(())
     }
     #[cfg(target_os = "windows")]
     {

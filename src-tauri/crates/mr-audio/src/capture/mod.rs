@@ -191,6 +191,7 @@ impl Drop for CaptureStream {
 pub struct CaptureSession {
     pub mic: Option<CaptureStream>,
     pub system: Option<CaptureStream>,
+    pub system_error: Option<String>,
 }
 
 impl CaptureSession {
@@ -259,6 +260,17 @@ pub fn devices() -> DeviceCatalog {
     }
 }
 
+pub fn system_audio_permission() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos::screen_recording_granted()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
 /// Начать запись звука согласно запросу.
 ///
 /// Микрофон обязателен: без него запись не имеет смысла. Системный звук —
@@ -279,6 +291,7 @@ pub fn start_capture(req: &CaptureRequest) -> Result<CaptureSession> {
                 Err(e) => {
                     // Системный звук — необязательный: пишем тишину в правый канал.
                     eprintln!("Системный звук недоступен: {e}");
+                    session.system_error = Some(e.to_string());
                 }
             }
         }

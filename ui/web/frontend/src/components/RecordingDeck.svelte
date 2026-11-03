@@ -13,6 +13,9 @@
 
   let isRecording = $state(false)
   let screenSupported = $state(false)
+  // /api/status отдаёт std::env::consts::OS: на macOS это "macos", но часть
+  // старых проверок в UI использует "darwin" — поддерживаем оба значения.
+  let systemAudioPermission = $state(true)
   let timerText = $state('00:00:00')
   let micName = $state('Определение…')
   let micMuted = $state(false)
@@ -76,6 +79,8 @@
             toast('Запись экрана и звука началась')
           }
           if (d.mic_muted) toast('Микрофон выключен в системе – будет тишина', 'error')
+          if (d.sys_error) toast('Системный звук не пишется: ' + d.sys_error, 'error')
+          if (d.screen_error) toast('Экран не записывается: ' + d.screen_error, 'error')
         } else if (d.error === 'Запись уже идёт') {
           setRecordingState(true)
         } else {
@@ -99,6 +104,8 @@
             toast(`Видеозапись сохранена: ${d.filename || baseName(d.file || '')}`)
           } else if (d.silent) {
             toast('Записана тишина – микрофон ничего не записал. Проверьте звук и источник в системе', 'error')
+          } else if (d.sys_silent) {
+            toast('Системный звук не записался — проверьте разрешение «Запись экрана и системного аудио»', 'error')
           } else if (d.filename) {
             toast(`Запись сохранена: ${d.filename}`)
           }
@@ -127,6 +134,10 @@
       }
       if (typeof d.screen_supported === 'boolean') {
         screenSupported = d.screen_supported && !isMobile
+      }
+      if (typeof d.system_audio_permission === 'boolean') {
+        systemAudioPermission = d.system_audio_permission
+        settings.systemAudioPermission = d.system_audio_permission
       }
       // Запись могли включить/выключить извне (глобальный хоткей, IPC,
       // второй клик по ярлыку) — кнопка обязана следовать за реальностью.
@@ -224,7 +235,7 @@
               {/if}
             </span>
           </button>
-        {:else if settings.platform === 'windows'}
+        {:else if settings.platform === 'windows' || settings.platform === 'darwin' || settings.platform === 'macos'}
           <button
             type="button"
             class="clean-chip"
@@ -235,6 +246,15 @@
           >
             <span>Запись экрана: нужен ffmpeg</span>
           </button>
+        {/if}
+
+        {#if (settings.platform === 'darwin' || settings.platform === 'macos') && !systemAudioPermission}
+          <div
+            class="clean-chip static warn"
+            title="Системные настройки → Конфиденциальность и безопасность → Запись экрана и системного аудио. Включите Подтекст и перезапустите приложение"
+          >
+            <span>Системный звук: нужно разрешение</span>
+          </div>
         {/if}
 
         {#if !isMobile}
