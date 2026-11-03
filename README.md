@@ -198,6 +198,7 @@ cd podtekst
 ./run.sh --stop        # Остановить запись
 ./run.sh --tray        # Фоновый режим в системном трее
 ./run.sh --web         # Открыть веб-интерфейс в браузере
+./run.sh --diagnostics # Собрать отчёт диагностики и напечатать путь к zip
 
 # Пакетная расшифровка аудиофайла без запуска интерфейса:
 ./run.sh --transcribe meeting.mp3 [--engine auto|gigaam|whisper]
