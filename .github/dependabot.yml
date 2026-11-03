@@ -4,14 +4,34 @@ updates:
     directory: /src-tauri
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 8
+    groups:
+      cargo-minor-patch:
+        patterns: ["*"]
+        # ort и Tauri ломают API/ABI: обновляем их отдельными PR.
+        exclude-patterns: ["ort", "tauri", "tauri-build"]
+        update-types: ["minor", "patch"]
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
+      semver-minor-days: 3
+      semver-patch-days: 1
+
   - package-ecosystem: npm
     directory: /ui/web/frontend
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ["*"]
