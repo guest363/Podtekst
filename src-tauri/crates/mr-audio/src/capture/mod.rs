@@ -259,6 +259,18 @@ pub fn devices() -> DeviceCatalog {
     }
 }
 
+/// Разрешение на запись системного звука (на macOS — запись экрана).
+pub fn system_audio_permission() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos::screen_recording_granted()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
 /// Начать запись звука согласно запросу.
 ///
 /// Микрофон обязателен: без него запись не имеет смысла. Системный звук —

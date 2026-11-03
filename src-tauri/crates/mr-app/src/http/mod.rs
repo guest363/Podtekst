@@ -474,6 +474,7 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                             "sys_level": sys_level,
                             "screen_recording": st.screen_session.is_some(),
                             "screen_supported": crate::screen::is_screen_capture_supported(),
+                            "system_audio_permission": mr_audio::capture::system_audio_permission(),
                             "ffmpeg": crate::ffmpeg_dl::status_json(),
                             "core": "rust",
                         }),
