@@ -6,7 +6,7 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{sync_channel, SyncSender};
+use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -186,7 +186,7 @@ impl SckCapture {
         drop(stream);
         if let Ok(mut sink) = sink.lock() {
             let _ = sink.writer.flush();
-        }
+        };
     }
 }
 
