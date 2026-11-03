@@ -260,12 +260,21 @@ jobs:
           else:
               print("Подписей нет — latest.json не создаём")
           PY
+      - name: Release notes
+        run: |
+          # Описание релиза пишется руками и лежит в репозитории: короткий
+          # вычитанный текст вместо списка коммитов. Без файла релиз не публикуем.
+          file=".github/release-notes/${GITHUB_REF_NAME}.md"
+          if [ ! -f "$file" ]; then
+            echo "Нет описания релиза: $file"
+            exit 1
+          fi
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          name: Meeting Recorder ${{ github.ref_name }}
+          name: Подтекст ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
-          generate_release_notes: true
+          body_path: .github/release-notes/${{ github.ref_name }}.md
           fail_on_unmatched_files: true
           files: |
             artifacts/**/*
