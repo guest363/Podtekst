@@ -42,6 +42,12 @@ export function remainingMb(m: ModelInfo): number {
   return Math.round(left / 1048576)
 }
 
+/** Whisper и CTC — дополнения: без них распознавание и спикеры работают. */
+export function isCoreModel(m: ModelInfo): boolean {
+  const id = m.id.toLowerCase()
+  return !id.includes('whisper') && !id.includes('ctc')
+}
+
 export interface SpeakerSample {
   start: number
   end: number

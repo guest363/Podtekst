@@ -1,4 +1,4 @@
-import { baseName, encPath, readJsonSafe } from './api'
+import { baseName, encPath, isCoreModel, readJsonSafe } from './api'
 import type { ModelInfo, SpeakerInfo, TranscriptData, Utterance } from './api'
 import { toast } from './toast.svelte.ts'
 import { emit, ui } from './ui.svelte.ts'
@@ -67,10 +67,8 @@ export async function editTranscript(
 }
 
 export function emptyHint(): string {
-  // Критерий «ядра» — как в downloadAllCoreModels: всё, кроме Whisper-fallback.
-  const missingCore = settings.models.filter(
-    (m) => !m.id.toLowerCase().includes('whisper') && !m.is_installed,
-  )
+  // Критерий «ядра» — как в downloadAllCoreModels и App.svelte.
+  const missingCore = settings.models.filter((m) => isCoreModel(m) && !m.is_installed)
   const base = ui.currentTranscriptIsVideo
     ? 'Расшифровка ещё не выполнялась. Звук из видео извлекается автоматически.'
     : 'Расшифровка ещё не выполнялась.'
@@ -273,9 +271,7 @@ export async function downloadModel(m: ModelInfo): Promise<boolean> {
 }
 
 export async function downloadAllCoreModels(): Promise<void> {
-  const core = settings.models.filter(
-    (m) => !m.id.toLowerCase().includes('whisper') && !m.is_installed
-  )
+  const core = settings.models.filter((m) => isCoreModel(m) && !m.is_installed)
   if (core.length === 0) return
   downloadingCore.active = true
   downloadingCore.queued = core.map((m) => m.id)
