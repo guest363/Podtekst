@@ -356,19 +356,15 @@ pub(crate) fn start_recording_inner(
         }
     };
 
+    let mut screen_error = None;
     let screen_session = if record_screen {
         match crate::screen::ScreenCaptureSession::start(started) {
             Ok(sess) => Some(std::sync::Arc::new(Mutex::new(Some(sess)))),
             Err(e) => {
-                let mut session = session;
-                session.stop();
-                checkpoint.stop();
-                crate::media_registry::unmark_owned(&out);
-                let _ = std::fs::remove_file(&out);
-                return json!({
-                    "ok": false,
-                    "error": format!("Ошибка запуска записи экрана: {e}")
-                });
+                // Сбой захвата экрана не должен отнимать запись звука встречи.
+                eprintln!("[SCREEN] Запись экрана не запустилась, пишу только звук: {e}");
+                screen_error = Some(format!("Ошибка запуска записи экрана: {e}"));
+                None
             }
         }
     } else {
@@ -385,7 +381,7 @@ pub(crate) fn start_recording_inner(
     st.mode = actual_mode.to_string();
     json!({"ok": true, "file": out.to_string_lossy(), "filename": fname,
         "mic": mic_label, "mic_muted": muted,
-        "sys": has_sys})
+        "sys": has_sys, "screen_error": screen_error})
 }
 
 fn finalize_recording_name(file: &str, start: u64, end: u64) -> (String, String) {
