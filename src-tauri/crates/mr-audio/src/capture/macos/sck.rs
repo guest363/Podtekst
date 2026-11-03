@@ -192,6 +192,12 @@ impl SckCapture {
 
 pub fn start_stream(path: &Path, rate: u32) -> Result<CaptureStream> {
     let rate = if rate == 0 { 16_000 } else { rate };
+    if !super::permission::screen_recording_granted() {
+        return Err(AudioError::Record(
+            "системный звук macOS: разрешите «Запись экрана и системного аудио» в «Системные настройки → Конфиденциальность и безопасность» и перезапустите приложение"
+                .to_string(),
+        ));
+    }
     let path = path.to_path_buf();
     let (start_tx, start_rx) = sync_channel::<std::result::Result<(), String>>(1);
     let stream = CaptureStream::spawn(
