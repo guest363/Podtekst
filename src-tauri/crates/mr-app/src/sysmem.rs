@@ -64,10 +64,10 @@ pub(crate) fn available_bytes() -> Option<u64> {
 }
 
 #[cfg(test)]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod tests {
     use super::*;
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn parses_mem_available_from_proc() {
         let text = "MemTotal:       32000000 kB\nMemAvailable:    6600000 kB\n";
