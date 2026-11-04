@@ -17,7 +17,7 @@
     statusBadge,
   } from './lib/settings.svelte.ts'
   import { loadSupportInfo } from './lib/support.svelte.ts'
-  import { applyUpdate, checkUpdate, dismissUpdate, update } from './lib/update.svelte.ts'
+  import { checkUpdate, dismissUpdate, openUpdateModal, update } from './lib/update.svelte.ts'
   import { initRouting, on, ui } from './lib/ui.svelte.ts'
   import { renderMarkdown } from './lib/markdown'
   import RecordingDeck from './components/RecordingDeck.svelte'
@@ -25,6 +25,8 @@
   import TranscriptPage from './components/TranscriptPage.svelte'
   import SettingsModal from './components/SettingsModal.svelte'
   import DonateModal from './components/DonateModal.svelte'
+  import UpdateModal from './components/UpdateModal.svelte'
+  import CrashBanner from './components/CrashBanner.svelte'
   import Toasts from './components/Toasts.svelte'
   import { isMobile, isCoreModel, remainingMb } from './lib/api'
 
@@ -148,40 +150,29 @@
     </header>
 
     <main class="main-column">
+      <CrashBanner />
       {#if update.isNewer && !update.dismissed}
         <section class="card update-card" aria-label="Доступно обновление">
           <div class="card-header">
             <span class="card-title">Доступна версия {update.latest}</span>
-            {#if !update.applying}
-              <button class="icon-btn" aria-label="Скрыть предложение обновления" onclick={dismissUpdate}>
-                ✕
-              </button>
-            {/if}
+            <button class="icon-btn" aria-label="Скрыть предложение обновления" onclick={dismissUpdate}>
+              ✕
+            </button>
           </div>
           <div class="help-text">
+            У вас установлена версия {update.current}.
             {#if update.applying}
-              Скачиваю обновление… {update.pct}%. После установки приложение перезапустится само.
-            {:else if update.error}
-              {update.error}
+              Скачиваю обновление… {update.pct}%.
+            {:else if update.selfUpdate}
+              Обновление скачается и установится здесь.
             {:else}
-              У вас установлена версия {update.current}.
-              {update.selfUpdate
-                ? 'Обновление скачается и установится здесь.'
-                : 'Новую версию можно скачать со страницы релиза.'}
+              Новую версию можно скачать со страницы релиза.
             {/if}
           </div>
-          {#if !update.applying}
-            <div class="row-start">
-              {#if update.selfUpdate}
-                <button class="btn-primary" onclick={applyUpdate}>Обновить и перезапустить</button>
-              {:else}
-                <a class="btn-primary" href={update.url} target="_blank" rel="noopener noreferrer">
-                  Скачать обновление
-                </a>
-              {/if}
-              <button class="btn-secondary" onclick={dismissUpdate}>Позже</button>
-            </div>
-          {/if}
+          <div class="row-start">
+            <button class="btn-primary" onclick={openUpdateModal}>Что нового и обновить</button>
+            <button class="btn-secondary" onclick={dismissUpdate}>Позже</button>
+          </div>
         </section>
       {/if}
       <RecordingDeck />
@@ -311,6 +302,7 @@
 </style>
 
 <SettingsModal />
+<UpdateModal />
 <DonateModal />
 <Toasts />
 

@@ -22,11 +22,12 @@
   } from '../lib/settings.svelte.ts'
   import { isMobile, readJsonSafe, remainingMb } from '../lib/api'
   import type { ModelInfo } from '../lib/api'
-  import { checkUpdate, update } from '../lib/update.svelte.ts'
+  import { checkUpdate, openUpdateModal, update } from '../lib/update.svelte.ts'
   import { peopleState } from '../lib/people.svelte.ts'
   import People from './People.svelte'
+  import SystemPane from './SystemPane.svelte'
 
-  let tab = $state<'record' | 'people' | 'voices' | 'dict' | 'models'>('record')
+  let tab = $state<'record' | 'people' | 'voices' | 'dict' | 'models' | 'system'>('record')
   let packFileInput: HTMLInputElement | null = $state(null)
   let termInput = $state('')
   let diagBusy = $state(false)
@@ -155,6 +156,8 @@
           >
             {update.checking ? 'Проверяю…' : 'Проверить обновления'}
           </button>
+          ·
+          <button class="link-btn" onclick={openUpdateModal}>Подробнее</button>
         </div>
       </div>
       <button class="icon-btn" aria-label="Закрыть настройки" onclick={() => (ui.settingsOpen = false)}>✕</button>
@@ -200,6 +203,14 @@
         onclick={() => void openModelsTab()}
       >
         Компоненты
+      </button>
+      <button
+        class="settings-tab {tab === 'system' ? 'active' : ''}"
+        role="tab"
+        aria-selected={tab === 'system'}
+        onclick={() => (tab = 'system')}
+      >
+        Система
       </button>
     </div>
 
@@ -561,6 +572,10 @@
             Требует модель «GigaAM-v3 e2e CTC int8» из вкладки «Компоненты».
             Без неё второй проход пропускается.
           </div>
+        </div>
+      {:else if tab === 'system'}
+        <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Система">
+          <SystemPane />
         </div>
       {/if}
     </div>

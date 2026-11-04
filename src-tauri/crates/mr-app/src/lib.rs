@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 mod config;
+mod crash;
 mod desktop;
 mod diagnostics;
 mod ffmpeg_dl;
@@ -11,10 +12,14 @@ mod fsutil;
 mod hotwords;
 mod http;
 mod ipc;
+mod journal;
 mod logging;
 mod media_registry;
+mod privacy;
 mod recording;
 pub(crate) mod screen;
+mod sysmem;
+mod system;
 #[cfg(feature = "tauri-ui")]
 mod tauri_shell;
 #[cfg(feature = "onnx")]
@@ -168,6 +173,7 @@ fn macos_selftest() -> i32 {
 pub fn run_cli() {
     let cli = Cli::parse();
     logging::init();
+    crash::install_hook();
     if cli.diagnostics {
         match diagnostics::collect() {
             Ok(path) => println!("{}", path.display()),
@@ -350,6 +356,7 @@ pub fn run_cli() {
         }
     };
     cleanup_stale_files();
+    crash::begin_run();
 
     if start_on_launch {
         let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
@@ -373,6 +380,7 @@ pub fn run_cli() {
         if code != 0 {
             std::process::exit(code);
         }
+        crash::mark_clean();
         return;
     }
     // Без фичи `tauri-ui` флаг --window открывает системный браузер на тот же UI
@@ -384,6 +392,7 @@ pub fn run_cli() {
         });
     }
     run_http_server(state, cli.port);
+    crash::mark_clean();
 }
 
 #[cfg(test)]
@@ -820,6 +829,49 @@ mod live_api_tests {
         assert_eq!(v.get("enabled").and_then(|x| x.as_bool()), Some(false));
         let (_, v) = json(http(port, "GET", "/api/status", &[], &[]));
         assert_eq!(v.get("transcribing").and_then(|x| x.as_bool()), Some(false));
+        assert_eq!(
+            v.get("version").and_then(|x| x.as_str()),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert!(v.get("arch").and_then(|x| x.as_str()).is_some());
+        assert!(v.get("self_update").and_then(|x| x.as_bool()).is_some());
+
+        let (st, v) = json(http(port, "GET", "/api/system", &[], &[]));
+        assert_eq!(st, 200);
+        assert_eq!(
+            v.pointer("/system/version").and_then(|x| x.as_str()),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+
+        let (st, v) = json(http(
+            port,
+            "POST",
+            "/api/system/check",
+            &[("Content-Type", "application/json")],
+            json!({"probe_audio":false,"include_optional":false})
+                .to_string()
+                .as_bytes(),
+        ));
+        assert_eq!(st, 200);
+        assert_eq!(v.get("ok").and_then(|x| x.as_bool()), Some(true));
+        assert_eq!(
+            v.get("checks").and_then(|x| x.as_array()).map(Vec::len),
+            Some(10)
+        );
+
+        let (st, v) = json(http(port, "GET", "/api/journal", &[], &[]));
+        assert_eq!(st, 200);
+        assert!(v.get("sessions").and_then(|x| x.as_array()).is_some());
+        let (st, v) = json(http(port, "GET", "/api/crashes", &[], &[]));
+        assert_eq!(st, 200);
+        assert!(v.get("items").and_then(|x| x.as_array()).is_some());
+
+        let (st, v) = json(http(port, "GET", "/api/update/state", &[], &[]));
+        assert_eq!(st, 200);
+        assert_eq!(
+            v.get("current").and_then(|x| x.as_str()),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
 
         // Чужая вкладка не должна управлять записью (CSRF): Origin не локальный — 403.
         let (st, _, _) = http(

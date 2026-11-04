@@ -26,8 +26,8 @@ yarn build                 # прод-сборка в ../static (index.html + cs
   Импорт рун-модулей - всегда с полным именем файла: `from './ui.svelte.ts'`
   (голый `.svelte` резолвится в компонент, а не в модуль - проверено кровью).
 - `components/` - по одному компоненту на файл: `RecordingDeck`, `People`, `Recordings`,
-  `SlimPlayer` (свой slim-плеер вместо нативных `<audio>`), `TranscriptModal`, `TranscriptDoc`,
-  `SpeakersPane`, `SettingsModal`, `GuestModal`, `DonateModal`, `Toasts`.
+  `SlimPlayer` (свой slim-плеер вместо нативных `<audio>`), `TranscriptPage`, `TranscriptDoc`,
+  `SpeakersPane`, `SettingsModal`, `SystemPane`, `UpdateModal`, `CrashBanner`, `DonateModal`, `Toasts`.
 - `styles/*.css` - глобальные слои `@layer tokens, base, components, responsive`
   (импорт порядком каскада в `app.css`). Компонентные `<style>` - без слоёв:
   незалейеренное бьёт лейерное, компонент всегда поверх базы. Новые стили -

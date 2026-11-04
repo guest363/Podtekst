@@ -1,7 +1,9 @@
 pub(crate) mod export_dialog;
 pub(crate) mod files;
+pub(crate) mod journal_api;
 pub(crate) mod media;
 pub(crate) mod people;
+pub(crate) mod system_api;
 pub(crate) mod transcribe_api;
 #[cfg(feature = "onnx")]
 pub(crate) mod transcript_edit;
@@ -20,6 +22,7 @@ use self::files::{
     handle_attach_video, handle_extract_audio, handle_recording_delete, handle_recording_rename,
     handle_upload,
 };
+use self::journal_api::{handle_crash_ack, handle_crashes, handle_journal};
 use self::media::{local_request_allowed, recordings_list, serve_audio_file, serve_media_snippet};
 use self::people::{
     handle_people_add, handle_people_move, handle_voiceprint_delete,
@@ -27,6 +30,7 @@ use self::people::{
     load_all_voiceprints, load_external_people, read_people_list, remove_person,
     save_external_people, serve_voiceprint_detail, update_people,
 };
+use self::system_api::{handle_system, handle_system_check, handle_system_open};
 use self::transcribe_api::{
     handle_hotwords_save, handle_models_update, handle_transcribe_start, serve_hotwords,
     serve_transcribe_stream, serve_transcript,
@@ -41,7 +45,10 @@ fn handle_transcript_edit(request: tiny_http::Request, _body: serde_json::Value)
         501,
     );
 }
-use self::update::{handle_update_apply, handle_update_check, handle_update_progress};
+use self::update::{
+    handle_update_apply, handle_update_check, handle_update_progress, handle_update_skip,
+    handle_update_state,
+};
 use crate::config::{
     app_data_dir, configured_auto_transcribe, configured_record_mode, record_mode_explicit,
     save_auto_transcribe, save_dir, save_record_mode, static_dir,
@@ -62,7 +69,7 @@ fn donation_methods() -> serde_json::Value {
     }])
 }
 
-fn json_response(request: tiny_http::Request, value: serde_json::Value, status: u16) {
+pub(super) fn json_response(request: tiny_http::Request, value: serde_json::Value, status: u16) {
     let body = serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string());
     let resp = tiny_http::Response::from_string(body)
         .with_status_code(status)
@@ -165,7 +172,7 @@ fn serve_static(request: tiny_http::Request, rel: &str) {
 
 const MAX_JSON_BODY: u64 = 16 * 1024 * 1024;
 
-fn read_body_to_json(request: &mut tiny_http::Request) -> serde_json::Value {
+pub(super) fn read_body_to_json(request: &mut tiny_http::Request) -> serde_json::Value {
     let mut buf = Vec::new();
     let _ = request
         .as_reader()
@@ -462,6 +469,9 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                         request,
                         json!({
                             "recording": st.is_recording,
+                            "version": env!("CARGO_PKG_VERSION"),
+                            "arch": std::env::consts::ARCH,
+                            "self_update": update::available_for_status(),
                             "transcribing": transcribing,
                             "transcribing_file": transcribing_file,
                             "elapsed": elapsed,
@@ -490,6 +500,9 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                         Err(e) => json_response(request, json!({"ok": false, "error": e}), 409),
                     }
                 }
+                (tiny_http::Method::Get, "/api/update/state") => {
+                    handle_update_state(request);
+                }
                 (tiny_http::Method::Get, "/api/update/check") => {
                     handle_update_check(
                         request,
@@ -497,7 +510,17 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     );
                 }
                 (tiny_http::Method::Post, "/api/update/apply") => {
-                    handle_update_apply(request);
+                    let busy = {
+                        let st = state.lock().unwrap_or_else(|e| e.into_inner());
+                        st.is_recording
+                    };
+                    #[cfg(feature = "onnx")]
+                    let busy = busy || crate::transcribe::is_transcribe_running();
+                    handle_update_apply(request, busy);
+                }
+                (tiny_http::Method::Post, "/api/update/skip") => {
+                    let body = read_body_to_json(&mut request);
+                    handle_update_skip(request, &body);
                 }
                 (tiny_http::Method::Get, "/api/update/progress") => {
                     handle_update_progress(request);
@@ -701,6 +724,40 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     let manifest = mr_models::load_bundled_manifest();
                     let status = mr_models::get_models_status(&app, &manifest);
                     json_response(request, json!({"ok": true, "models": status}), 200);
+                }
+                (tiny_http::Method::Get, "/api/system") => {
+                    let (recording, elapsed, mode) = {
+                        let st = state.lock().unwrap_or_else(|e| e.into_inner());
+                        let elapsed = if st.is_recording {
+                            now_secs().saturating_sub(st.start_time)
+                        } else {
+                            0
+                        };
+                        (st.is_recording, elapsed, st.mode.clone())
+                    };
+                    handle_system(request, recording, elapsed, &mode);
+                }
+                (tiny_http::Method::Post, "/api/system/check") => {
+                    let body = read_body_to_json(&mut request);
+                    let recording = state.lock().unwrap_or_else(|e| e.into_inner()).is_recording;
+                    handle_system_check(request, body, recording);
+                }
+                (tiny_http::Method::Post, "/api/system/open") => {
+                    let body = read_body_to_json(&mut request);
+                    handle_system_open(request, body);
+                }
+                (tiny_http::Method::Get, "/api/journal") => {
+                    let limit = query_param(&query, "limit")
+                        .and_then(|value| value.parse::<usize>().ok())
+                        .unwrap_or(20);
+                    handle_journal(request, limit);
+                }
+                (tiny_http::Method::Get, "/api/crashes") => {
+                    handle_crashes(request);
+                }
+                (tiny_http::Method::Post, "/api/crashes/ack") => {
+                    let body = read_body_to_json(&mut request);
+                    handle_crash_ack(request, &body);
                 }
                 (tiny_http::Method::Post, "/api/diagnostics") => {
                     let mut body = Vec::new();

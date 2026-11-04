@@ -1,0 +1,33 @@
+name: verify-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Тег релиза (пусто = последний релиз)"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install cryptography
+        run: python -m pip install --disable-pip-version-check cryptography
+      - name: Verify release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          args=(--root . --repo "$GITHUB_REPOSITORY")
+          if [ -n "$TAG" ]; then
+            args+=(--tag "$TAG")
+          fi
+          python .github/scripts/verify_release.py "${args[@]}"

@@ -14,6 +14,17 @@ val tauriProperties = Properties().apply {
     }
 }
 
+val releaseKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+    ?: providers.gradleProperty("ANDROID_KEYSTORE_PATH").orNull
+val releaseKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+    ?: providers.gradleProperty("ANDROID_KEYSTORE_PASSWORD").orNull
+val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
+    ?: providers.gradleProperty("ANDROID_KEY_ALIAS").orNull
+val releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+    ?: providers.gradleProperty("ANDROID_KEY_PASSWORD").orNull
+val hasReleaseKey = listOf(releaseKeystorePath, releaseKeystorePassword, releaseKeyAlias, releaseKeyPassword)
+    .all { !it.isNullOrBlank() }
+
 android {
     compileSdk = 37
     namespace = "io.github.guest363.podtekst"
@@ -24,6 +35,16 @@ android {
         targetSdk = 37
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "0.1.1")
+    }
+    signingConfigs {
+        if (hasReleaseKey) {
+            create("release") {
+                storeFile = file(releaseKeystorePath!!)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -39,7 +60,12 @@ android {
             }
         }
         getByName("release") {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseKey) {
+                signingConfigs.getByName("release")
+            } else {
+                project.logger.warn("Android release keystore не задан: release APK подписывается debug-ключом")
+                signingConfigs.getByName("debug")
+            }
             optimization {
                enable = true
             }
