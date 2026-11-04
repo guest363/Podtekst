@@ -125,32 +125,54 @@
   )
 
   const drawerGroups = $derived.by(() => {
-    const map = new Map<string, RecordingItem[]>()
+    const map = new Map<string, { label: string; isToday: boolean; recs: RecordingItem[] }>()
+    const monthsGen = [
+      'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+      'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+    ]
+    const monthsNom = [
+      'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+      'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь',
+    ]
     for (const rec of drawerFiltered) {
       const d = parseRecDate(rec.date, rec.name)
-      let key = 'Архив'
+      let key = 'archive'
+      let label = 'Архив'
+      let isGroupToday = false
+
       if (d) {
         const yesterday = new Date(today)
         yesterday.setDate(yesterday.getDate() - 1)
+        const y = d.getFullYear()
+        const ySuffix = y !== today.getFullYear() ? ` ${y}` : ''
+
         if (d.getTime() === today.getTime()) {
-          key = 'Сегодня'
+          key = 'today'
+          label = `Сегодня · ${d.getDate()} ${monthsGen[d.getMonth()]}`
+          isGroupToday = true
         } else if (d.getTime() === yesterday.getTime()) {
-          key = 'Вчера'
+          key = 'yesterday'
+          label = `Вчера · ${d.getDate()} ${monthsGen[d.getMonth()]}`
         } else {
-          const months = [
-            'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
-            'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь',
-          ]
-          const y = d.getFullYear()
-          const ySuffix = y !== today.getFullYear() ? ` ${y}` : ''
-          key = `${months[d.getMonth()]}${ySuffix}`
+          const diffDays = Math.round((today.getTime() - d.getTime()) / 86400000)
+          if (diffDays > 0 && diffDays <= 7) {
+            key = `day-${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+            label = `${d.getDate()} ${monthsGen[d.getMonth()]}${ySuffix}`
+          } else {
+            key = `month-${d.getFullYear()}-${d.getMonth()}`
+            label = `${monthsNom[d.getMonth()]}${ySuffix}`
+          }
         }
       }
-      const list = map.get(key) ?? []
-      list.push(rec)
-      map.set(key, list)
+
+      let entry = map.get(key)
+      if (!entry) {
+        entry = { label, isToday: isGroupToday, recs: [] }
+        map.set(key, entry)
+      }
+      entry.recs.push(rec)
     }
-    return Array.from(map.entries()).map(([label, recs]) => ({ label, recs }))
+    return Array.from(map.values())
   })
 
   function setMainPreset(p: 'today' | 'week' | 'all'): void {
@@ -632,8 +654,13 @@
         {:else}
           {#each drawerGroups as group}
             <div class="rec-group">
-              <div class="rec-sticky-header">
-                <span class="rec-sticky-title">{group.label}</span>
+              <div class="rec-sticky-header {group.isToday ? 'is-today' : ''}">
+                <div class="rec-sticky-left">
+                  {#if group.isToday}
+                    <span class="rec-sticky-dot" aria-hidden="true"></span>
+                  {/if}
+                  <span class="rec-sticky-title">{group.label}</span>
+                </div>
                 <span class="rec-sticky-count">{group.recs.length} {pluralRecords(group.recs.length)}</span>
               </div>
               {#each group.recs as rec (rec.path)}

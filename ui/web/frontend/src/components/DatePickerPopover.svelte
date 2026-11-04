@@ -226,14 +226,16 @@
       Сбросить
     </button>
     {#if selStart}
-      <span class="cal-footer-selected">
-        {formatRangeLabel(selStart, selEnd ?? selStart)}
-      </span>
-      {#if !selEnd}
-        <button type="button" class="cal-footer-btn apply" onclick={confirmSingle}>
-          Выбрать день
-        </button>
-      {/if}
+      <div class="cal-footer-right">
+        <span class="cal-footer-selected">
+          {formatRangeLabel(selStart, selEnd ?? selStart)}
+        </span>
+        {#if !selEnd}
+          <button type="button" class="cal-footer-btn apply" onclick={confirmSingle}>
+            Выбрать
+          </button>
+        {/if}
+      </div>
     {/if}
   </div>
 </div>
@@ -331,7 +333,7 @@
   .calendar-grid {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
-    gap: 2px 0;
+    gap: 4px 3px;
   }
   .calendar-empty-cell {
     height: 30px;
@@ -348,44 +350,35 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    border-radius: 0;
+    border-radius: 6px;
     padding: 0;
     transition: background 100ms ease, color 100ms ease;
   }
   .calendar-day-btn:hover {
     background: var(--bg-inset);
-    border-radius: var(--radius-sm);
   }
 
-  /* Сегодня без выбора в диапазон */
-  .calendar-day-btn.is-today:not(.range-start):not(.range-end):not(.range-mid) {
-    box-shadow: inset 0 0 0 1.5px var(--accent-blue);
-    border-radius: var(--radius-sm);
+  .day-num {
+    line-height: 1;
+    margin-top: -2px;
   }
-  .calendar-day-btn.is-today:not(.range-start):not(.range-end) .day-num {
+
+  /* Сегодня без грубых рамок: деликатная мягкая подсветка без рамок и обводок */
+  .calendar-day-btn.is-today:not(.range-start):not(.range-end):not(.range-mid) {
+    background: #edf3fd;
+  }
+  .calendar-day-btn.is-today:not(.range-start):not(.range-end):not(.range-mid) .day-num {
     font-weight: 800;
     color: var(--accent-blue);
   }
 
-  /* Выбранные края диапазона (или одиночный день) */
+  /* Выбранные края диапазона (или одиночный день): синий фон, чисто белый текст */
   .calendar-day-btn.range-start,
   .calendar-day-btn.range-end {
     background: var(--accent-blue) !important;
     color: #ffffff !important;
+    border-radius: 6px;
   }
-  .calendar-day-btn.range-start {
-    border-top-left-radius: var(--radius-sm);
-    border-bottom-left-radius: var(--radius-sm);
-  }
-  .calendar-day-btn.range-end {
-    border-top-right-radius: var(--radius-sm);
-    border-bottom-right-radius: var(--radius-sm);
-  }
-  .calendar-day-btn.range-start.range-end {
-    border-radius: var(--radius-sm);
-  }
-
-  /* КРИТИЧЕСКИЙ ФИКС: текст цифры дня в выбранном диапазоне ОБЯЗАН быть белым */
   .calendar-day-btn.range-start .day-num,
   .calendar-day-btn.range-end .day-num {
     color: #ffffff !important;
@@ -395,21 +388,22 @@
   /* Середина диапазона */
   .calendar-day-btn.range-mid {
     background: #edf3fd !important;
-    color: var(--accent-blue) !important;
+    border-radius: 0;
   }
   .calendar-day-btn.range-mid .day-num {
     color: var(--accent-blue) !important;
     font-weight: 700;
   }
 
-  /* Точка наличия записей */
+  /* Точка наличия записей: мягкая точка под цифрой */
   .day-dot {
     position: absolute;
-    bottom: 2px;
-    width: 3.5px;
-    height: 3.5px;
+    bottom: 3px;
+    width: 3px;
+    height: 3px;
     border-radius: 999px;
     background: var(--text-faint);
+    pointer-events: none;
     opacity: 0.9;
   }
   .calendar-day-btn.range-start .day-dot,
@@ -420,7 +414,7 @@
   .calendar-day-btn.range-mid .day-dot {
     background: var(--accent-blue) !important;
   }
-  .calendar-day-btn.is-today .day-dot {
+  .calendar-day-btn.is-today:not(.range-start):not(.range-end) .day-dot {
     background: var(--accent-blue);
   }
 
@@ -431,6 +425,11 @@
     margin-top: 8px;
     padding-top: 6px;
     border-top: 1px solid var(--border-soft);
+  }
+  .cal-footer-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
   .cal-footer-selected {
     font-size: 11px;

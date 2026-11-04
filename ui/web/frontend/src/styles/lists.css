@@ -360,30 +360,71 @@ body:has(.bottom-player-bar) {
 .rec-group {
   display: flex;
   flex-direction: column;
+  margin-top: 24px;
+}
+.rec-group:first-child {
+  margin-top: 4px;
 }
 .rec-sticky-header {
   position: sticky;
   top: 0;
   z-index: 10;
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(6px);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-inner);
+  padding: 7px 12px;
+  margin-bottom: 6px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 0 4px;
-  border-bottom: 1px solid var(--border-soft);
-  margin-bottom: 2px;
+  box-shadow: 0 1px 3px rgba(15, 30, 51, 0.04);
+}
+.rec-sticky-header.is-today {
+  background: #edf3fd;
+  border-color: rgba(37, 99, 235, 0.22);
+}
+.rec-sticky-left {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.rec-sticky-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent-blue);
+  flex-shrink: 0;
 }
 .rec-sticky-title {
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  color: var(--text-primary);
+  letter-spacing: normal;
+}
+.rec-sticky-header.is-today .rec-sticky-title {
   color: var(--accent-blue);
 }
 .rec-sticky-count {
   font-size: 11px;
-  color: var(--text-faint);
+  font-weight: 600;
+  color: var(--text-muted);
+  background: #ffffff;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-feature-settings: 'tnum';
+}
+
+/* В шторке приглушаем день внутри карточки, акцентируя время */
+.rec-drawer-list .rec-date-day {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.rec-drawer-list .rec-date-time {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--accent-blue);
 }
 
 .btn-link {
