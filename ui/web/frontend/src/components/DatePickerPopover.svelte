@@ -116,6 +116,21 @@
     return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
   }
 
+  function isToday(d: Date): boolean {
+    return isSameDay(d, today)
+  }
+
+  const activePreset = $derived.by(() => {
+    if (!selStart || !selEnd) return null
+    if (isSameDay(selStart, today) && isSameDay(selEnd, today)) return 'today'
+    const weekStart = new Date(today.getTime() - 6 * 86400000)
+    if (isSameDay(selStart, weekStart) && isSameDay(selEnd, today)) return 'week'
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1)
+    const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0)
+    if (isSameDay(selStart, monthStart) && isSameDay(selEnd, monthEnd)) return 'month'
+    return null
+  })
+
   function isInRange(d: Date): boolean {
     const s = selStart
     const e = selEnd ?? (selStart ? hoverDate : null)
@@ -154,9 +169,9 @@
 <div class="date-picker-popover" bind:this={rootEl} role="dialog" aria-label="Календарь периода">
   <!-- 3 обязательных пресета -->
   <div class="date-presets-row">
-    <button type="button" class="preset-btn" onclick={() => applyPreset('today')}>Сегодня</button>
-    <button type="button" class="preset-btn" onclick={() => applyPreset('week')}>7 дней</button>
-    <button type="button" class="preset-btn" onclick={() => applyPreset('month')}>Месяц</button>
+    <button type="button" class="preset-btn {activePreset === 'today' ? 'active' : ''}" onclick={() => applyPreset('today')}>Сегодня</button>
+    <button type="button" class="preset-btn {activePreset === 'week' ? 'active' : ''}" onclick={() => applyPreset('week')}>7 дней</button>
+    <button type="button" class="preset-btn {activePreset === 'month' ? 'active' : ''}" onclick={() => applyPreset('month')}>Месяц</button>
   </div>
 
   <!-- Навигация по месяцу -->
@@ -210,10 +225,15 @@
     <button type="button" class="cal-footer-btn clear" onclick={() => { onClear(); onClose(); }}>
       Сбросить
     </button>
-    {#if selStart && !selEnd}
-      <button type="button" class="cal-footer-btn apply" onclick={confirmSingle}>
-        Выбрать день
-      </button>
+    {#if selStart}
+      <span class="cal-footer-selected">
+        {formatRangeLabel(selStart, selEnd ?? selStart)}
+      </span>
+      {#if !selEnd}
+        <button type="button" class="cal-footer-btn apply" onclick={confirmSingle}>
+          Выбрать день
+        </button>
+      {/if}
     {/if}
   </div>
 </div>
@@ -263,6 +283,12 @@
     border-color: var(--accent-blue);
     color: var(--accent-blue);
   }
+  .preset-btn.active {
+    background: #ffffff;
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+    box-shadow: 0 1px 3px rgba(15, 30, 51, 0.08);
+  }
 
   .calendar-nav {
     display: flex;
@@ -308,14 +334,14 @@
     gap: 2px 0;
   }
   .calendar-empty-cell {
-    height: 28px;
+    height: 30px;
   }
   .calendar-day-btn {
     border: none;
     background: transparent;
     color: var(--text-primary);
-    height: 28px;
-    font-size: 11.5px;
+    height: 30px;
+    font-size: 12px;
     cursor: pointer;
     position: relative;
     display: flex;
@@ -324,43 +350,78 @@
     justify-content: center;
     border-radius: 0;
     padding: 0;
-    transition: background 100ms ease;
+    transition: background 100ms ease, color 100ms ease;
   }
   .calendar-day-btn:hover {
     background: var(--bg-inset);
     border-radius: var(--radius-sm);
   }
-  .calendar-day-btn.is-today .day-num {
+
+  /* Сегодня без выбора в диапазон */
+  .calendar-day-btn.is-today:not(.range-start):not(.range-end):not(.range-mid) {
+    box-shadow: inset 0 0 0 1.5px var(--accent-blue);
+    border-radius: var(--radius-sm);
+  }
+  .calendar-day-btn.is-today:not(.range-start):not(.range-end) .day-num {
     font-weight: 800;
     color: var(--accent-blue);
   }
-  .calendar-day-btn.range-start {
+
+  /* Выбранные края диапазона (или одиночный день) */
+  .calendar-day-btn.range-start,
+  .calendar-day-btn.range-end {
     background: var(--accent-blue) !important;
     color: #ffffff !important;
+  }
+  .calendar-day-btn.range-start {
     border-top-left-radius: var(--radius-sm);
     border-bottom-left-radius: var(--radius-sm);
   }
   .calendar-day-btn.range-end {
-    background: var(--accent-blue) !important;
-    color: #ffffff !important;
     border-top-right-radius: var(--radius-sm);
     border-bottom-right-radius: var(--radius-sm);
   }
   .calendar-day-btn.range-start.range-end {
     border-radius: var(--radius-sm);
   }
+
+  /* КРИТИЧЕСКИЙ ФИКС: текст цифры дня в выбранном диапазоне ОБЯЗАН быть белым */
+  .calendar-day-btn.range-start .day-num,
+  .calendar-day-btn.range-end .day-num {
+    color: #ffffff !important;
+    font-weight: 800;
+  }
+
+  /* Середина диапазона */
   .calendar-day-btn.range-mid {
     background: #edf3fd !important;
     color: var(--accent-blue) !important;
   }
+  .calendar-day-btn.range-mid .day-num {
+    color: var(--accent-blue) !important;
+    font-weight: 700;
+  }
+
+  /* Точка наличия записей */
   .day-dot {
     position: absolute;
     bottom: 2px;
-    width: 3px;
-    height: 3px;
+    width: 3.5px;
+    height: 3.5px;
     border-radius: 999px;
-    background: currentColor;
-    opacity: 0.8;
+    background: var(--text-faint);
+    opacity: 0.9;
+  }
+  .calendar-day-btn.range-start .day-dot,
+  .calendar-day-btn.range-end .day-dot {
+    background: #ffffff !important;
+    opacity: 1;
+  }
+  .calendar-day-btn.range-mid .day-dot {
+    background: var(--accent-blue) !important;
+  }
+  .calendar-day-btn.is-today .day-dot {
+    background: var(--accent-blue);
   }
 
   .calendar-footer {
@@ -370,6 +431,11 @@
     margin-top: 8px;
     padding-top: 6px;
     border-top: 1px solid var(--border-soft);
+  }
+  .cal-footer-selected {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-primary);
   }
   .cal-footer-btn {
     border: none;
