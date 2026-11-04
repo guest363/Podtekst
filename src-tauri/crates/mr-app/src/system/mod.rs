@@ -53,6 +53,7 @@ pub(crate) fn snapshot(recording: bool, elapsed: u64, mode: &str) -> Value {
             "diagnostics": crate::diagnostics::output_dir().to_string_lossy(),
         },
         "disk": {
+            "total_bytes": fs2::total_space(&recordings).ok(),
             "free_bytes": fs2::available_space(&recordings).ok(),
             "path": recordings.to_string_lossy(),
         },

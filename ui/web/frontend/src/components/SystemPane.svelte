@@ -27,6 +27,9 @@
     SystemCheck,
   } from '../lib/system.svelte.ts'
 
+  type SystemTab = 'overview' | 'audio' | 'models' | 'storage' | 'logs'
+
+  let currentTab = $state<SystemTab>('overview')
   let probeAudio = $state(true)
   let journalExpanded = $state(false)
 
@@ -50,10 +53,45 @@
       ? `${missingModels.slice(0, 2).join(', ')} и ещё ${missingModels.length - 2}`
       : missingModels.join(', '),
   )
+  const allInstalled = $derived(
+    Boolean(
+      snap?.models?.items?.length &&
+      snap.models.items.every((m) => m.is_installed),
+    ),
+  )
+  const modelsBadgeKind = $derived(
+    allInstalled ? 'ok' : coreReady ? 'ok' : 'warn',
+  )
+  const modelsBadgeLabel = $derived(
+    allInstalled ? 'Все готовы' : coreReady ? 'Базовые готовы' : 'Не всё',
+  )
+
+  function getModel(id: string) {
+    return snap?.models?.items?.find((m) => m.id === id)
+  }
+
+  function modelStatusText(id: string, isOptional = false): { label: string; ok: boolean } {
+    const item = getModel(id)
+    if (item?.is_installed) return { label: 'установлена', ok: true }
+    if (isOptional) return { label: 'не установлена', ok: false }
+    return { label: 'не установлена', ok: false }
+  }
   const ffmpegReady = $derived(snap?.ffmpeg?.available === true)
   const systemAudio = $derived(snap?.devices?.has_system_audio === true)
   const screenReady = $derived(permission('screen_capture_supported') !== false)
   const micName = $derived(defaultName(snap?.devices, snap?.devices?.default_input))
+  const freeBytes = $derived(snap?.disk?.free_bytes ?? 0)
+  const totalBytes = $derived(snap?.disk?.total_bytes ?? 0)
+  const usedBytes = $derived(totalBytes > freeBytes ? totalBytes - freeBytes : 0)
+  const usedPct = $derived(totalBytes > 0 ? Math.min(100, Math.round((usedBytes / totalBytes) * 100)) : 0)
+  const freeHours = $derived(freeBytes > 0 ? Math.floor(freeBytes / (450 * 1024 * 1024)) : 0)
+  const systemAudioText = $derived(
+    systemAudio
+      ? 'доступен'
+      : snap?.os && (typeof snap.os === 'object' ? snap.os.name : snap.os) === 'macos'
+        ? 'нужен BlackHole'
+        : 'не найден',
+  )
   const overallKind = $derived(
     unacknowledged > 0 || system.summary?.status === 'error'
       ? 'error'
@@ -126,13 +164,21 @@
     const os = snap?.os
     if (!os) return ''
     if (typeof os === 'string') return os
-    return [os.name || os.family, os.arch].filter(Boolean).join(' · ')
+    let name = os.name || os.family || ''
+    if (name === 'macos') name = 'macOS'
+    else if (name === 'windows') name = 'Windows'
+    else if (name === 'linux') name = 'Linux'
+    return [name, os.arch].filter(Boolean).join(' · ')
   }
 
   function diskText(): string {
-    const disk = snap?.disk
-    if (!disk?.free_bytes) return disk?.path || '—'
-    return `свободно ${fmtBytes(disk.free_bytes)}`
+    if (!freeBytes) return snap?.disk?.path || '—'
+    const free = fmtBytes(freeBytes)
+    const hours = freeHours > 0 ? ` (~${freeHours} ч)` : ''
+    if (totalBytes > 0) {
+      return `свободно ${free} из ${fmtBytes(totalBytes)}${hours}`
+    }
+    return `свободно ${free}${hours}`
   }
 
   function memoryText(): string {
@@ -259,242 +305,496 @@
     }}
   >
     <div
-      class="modal-box system-box"
+      class="modal-box system-box md-layout"
       role="dialog"
       tabindex="-1"
       aria-modal="true"
       aria-label="Система"
     >
-      <div class="system-head">
-        <div class="system-heading">
-          <div class="modal-title">Система</div>
-          <div class="system-sub">
-            {@html statusBadge(overallKind, overallLabel)}
-            <span>{osText() || 'Проверка окружения'}</span>
-          </div>
-        </div>
-        <button class="icon-btn" aria-label="Закрыть состояние системы" onclick={close}>✕</button>
-      </div>
-
-      <div class="system-body">
-        <div class="system-hero">
-          <div>
-            <div class="system-hero-title">Проверка настроек</div>
-            <div class="help-text">
-              {#if system.checkedAt}
-                Последняя проверка {fmtDateTime(system.checkedAt)}
-              {:else}
-                Проверка займёт несколько секунд и не мешает уже идущей записи.
-              {/if}
+      <aside class="md-sidebar">
+        <div class="md-sidebar-head">
+          <div class="md-sidebar-title-row">
+            <div class="modal-title">Система</div>
+            <div class="system-sub">
+              {@html statusBadge(overallKind, overallLabel)}
             </div>
           </div>
-          <div class="row-start">
+          <div class="md-os-tag">{osText() || 'Окружение'}</div>
+          <button class="icon-btn md-mobile-close" aria-label="Закрыть" onclick={close}>✕</button>
+        </div>
+
+        <nav class="md-nav" aria-label="Разделы диагностики">
+          <button
+            class="md-nav-item"
+            class:active={currentTab === 'overview'}
+            onclick={() => (currentTab = 'overview')}
+          >
+            <span class="md-nav-label">Обзор готовности</span>
+            <span class="md-dot {overallKind}"></span>
+          </button>
+
+          <button
+            class="md-nav-item"
+            class:active={currentTab === 'audio'}
+            onclick={() => (currentTab = 'audio')}
+          >
+            <span class="md-nav-label">Звуковой тракт</span>
+            <span class="md-dot {systemAudio && micName ? 'ok' : 'warn'}"></span>
+          </button>
+
+          <button
+            class="md-nav-item"
+            class:active={currentTab === 'models'}
+            onclick={() => (currentTab = 'models')}
+          >
+            <span class="md-nav-label">ИИ и модели</span>
+            <span class="md-dot {coreReady && ffmpegReady ? 'ok' : 'warn'}"></span>
+          </button>
+
+          <button
+            class="md-nav-item"
+            class:active={currentTab === 'storage'}
+            onclick={() => (currentTab = 'storage')}
+          >
+            <span class="md-nav-label">Диск и память</span>
+            {#if freeBytes > 0}
+              <span class="md-tag font-mono">{fmtBytes(freeBytes)}</span>
+            {/if}
+          </button>
+
+          <button
+            class="md-nav-item"
+            class:active={currentTab === 'logs'}
+            onclick={() => (currentTab = 'logs')}
+          >
+            <span class="md-nav-label">Журнал и сбои</span>
+            {#if unacknowledged > 0}
+              <span class="md-tag error font-mono">{unacknowledged}</span>
+            {:else}
+              <span class="md-tag ok font-mono">0</span>
+            {/if}
+          </button>
+        </nav>
+
+        <nav class="md-mobile-nav" aria-label="Разделы системы">
+          <div class="md-mobile-nav-row">
             <button
-              class="btn-primary"
-              disabled={system.checksLoading}
-              onclick={() => void runChecks(probeAudio)}
+              type="button"
+              class="md-mobile-tab"
+              class:active={currentTab === 'overview'}
+              onclick={() => (currentTab = 'overview')}
             >
-              {system.checksLoading ? 'Проверяю…' : 'Проверить настройки'}
+              <span>Обзор</span>
+              <span class="md-dot {overallKind}"></span>
             </button>
-            <button class="btn-secondary btn-sm" disabled={system.loading} onclick={refresh}>
-              {system.loading ? 'Обновляю…' : 'Обновить'}
+            <button
+              type="button"
+              class="md-mobile-tab"
+              class:active={currentTab === 'audio'}
+              onclick={() => (currentTab = 'audio')}
+            >
+              <span>Звук</span>
+              <span class="md-dot {systemAudio && micName ? 'ok' : 'warn'}"></span>
+            </button>
+            <button
+              type="button"
+              class="md-mobile-tab"
+              class:active={currentTab === 'models'}
+              onclick={() => (currentTab = 'models')}
+            >
+              <span>Модели</span>
+              <span class="md-dot {coreReady && ffmpegReady ? 'ok' : 'warn'}"></span>
             </button>
           </div>
-        </div>
-
-        <label class="setting-check system-probe">
-          <input type="checkbox" bind:checked={probeAudio} />
-          <span class="setting-switch" aria-hidden="true"></span>
-          <span>Проверять микрофон короткой записью</span>
-        </label>
-
-        <div class="system-grid">
-          <section class="system-card">
-            <div class="system-card-head">
-              <span class="card-title">Запись</span>
-              {@html snap?.recording?.active
-                ? statusBadge('info', 'Идёт')
-                : statusBadge(systemAudio ? 'ok' : 'warn', systemAudio ? 'Готова' : 'Без системы')}
-            </div>
-            <div class="system-facts">
-              <span class="system-key">Микрофон</span>
-              <span class="system-val">{micName || 'не выбран'}</span>
-              <span class="system-key">Системный звук</span>
-              <span class="system-val">{systemAudio ? 'доступен' : 'не найден'}</span>
-              <span class="system-key">Запись экрана</span>
-              <span class="system-val">{screenReady ? 'доступна' : 'нет разрешения'}</span>
-            </div>
-          </section>
-
-          <section class="system-card">
-            <div class="system-card-head">
-              <span class="card-title">Компоненты</span>
-              {@html coreReady && ffmpegReady
-                ? statusBadge('ok', 'Готовы')
-                : statusBadge('warn', 'Не всё')}
-            </div>
-            <div class="system-facts">
-              <span class="system-key">Модели</span>
-              <span class="system-val">
-                {coreReady
-                  ? 'базовые установлены'
-                  : `не хватает: ${missingModelsText || ' '}`}
-              </span>
-              <span class="system-key">ffmpeg</span>
-              <span class="system-val">{ffmpegReady ? 'установлен' : 'не установлен'}</span>
-            </div>
-            <button class="btn-secondary btn-sm" onclick={() => openSettings('models')}>
-              Открыть «Компоненты»
-            </button>
-          </section>
-
-          {#if unacknowledged > 0 || journalTotal > 0}
-            <section class="system-card system-card-wide">
-              <div class="system-card-head">
-                <span class="card-title">Сбои и журнал</span>
-                {@html unacknowledged > 0
-                  ? statusBadge('error', `${unacknowledged} ${crashWord(unacknowledged)}`)
-                  : statusBadge('ok', 'Чисто')}
-              </div>
-              <div class="system-facts">
-                <span class="system-key">Сбои</span>
-                <span class="system-val">{unacknowledged || 'нет'}</span>
-                <span class="system-key">Записей</span>
-                <span class="system-val">{journalTotal || 'нет'}</span>
-              </div>
-              {#if lastCrash}
-                <button class="btn-secondary btn-sm" onclick={() => void ackCrash(lastCrash.id)}>
-                  Скрыть сбой
-                </button>
+          <div class="md-mobile-nav-row">
+            <button
+              type="button"
+              class="md-mobile-tab"
+              class:active={currentTab === 'storage'}
+              onclick={() => (currentTab = 'storage')}
+            >
+              <span>Диск и память</span>
+              {#if freeBytes > 0}
+                <span class="md-tag font-mono">{fmtBytes(freeBytes).split(' ')[0]} ГБ</span>
               {/if}
-            </section>
+            </button>
+            <button
+              type="button"
+              class="md-mobile-tab"
+              class:active={currentTab === 'logs'}
+              onclick={() => (currentTab = 'logs')}
+            >
+              <span>Журнал и сбои</span>
+              {#if unacknowledged > 0}
+                <span class="md-tag error font-mono">{unacknowledged}</span>
+              {:else}
+                <span class="md-tag ok font-mono">0</span>
+              {/if}
+            </button>
+          </div>
+        </nav>
+
+        <div class="md-sidebar-foot">
+          {#if !isMobile}
+            <button class="btn-secondary btn-sm md-diag-btn" onclick={() => void collectDiagnostics()}>
+              Собрать отчёт
+            </button>
           {/if}
         </div>
+      </aside>
 
-        {#if system.checks.length}
-          <section class="system-section">
-            <div class="system-section-head">
-              <span class="card-title">Проверки</span>
-              <span class="help-text">{summaryText()}</span>
-            </div>
-            {#if problemChecks.length}
-              <div class="recordings-list">
-                {#each problemChecks as check (check.id)}
-                  {@render checkRow(check)}
-                {/each}
+      <main class="md-content">
+        <header class="md-content-head">
+          <div>
+            <h3 class="md-content-title">
+              {#if currentTab === 'overview'}Обзор готовности
+              {:else if currentTab === 'audio'}Звуковой тракт
+              {:else if currentTab === 'models'}ИИ и модели
+              {:else if currentTab === 'storage'}Диск и память
+              {:else if currentTab === 'logs'}Журнал и сбои
+              {/if}
+            </h3>
+            <p class="help-text">
+              {#if currentTab === 'overview'}
+                {#if system.checkedAt}Последняя проверка {fmtDateTime(system.checkedAt)}{:else}Ключевые узлы перед началом записи{/if}
+              {:else if currentTab === 'audio'}Конфигурация микрофона и системного звука
+              {:else if currentTab === 'models'}Локальные нейросети для расшифровки
+              {:else if currentTab === 'storage'}Каталоги и емкость дискового хранилища
+              {:else if currentTab === 'logs'}История сессий и аварийных завершений
+              {/if}
+            </p>
+          </div>
+          <button class="icon-btn md-desktop-close" aria-label="Закрыть состояние системы" onclick={close}>✕</button>
+        </header>
+
+        <div class="md-content-body">
+          {#if currentTab === 'overview'}
+            <div class="system-hero">
+              <div class="system-hero-actions">
+                <button
+                  class="btn-primary"
+                  disabled={system.checksLoading}
+                  onclick={() => void runChecks(probeAudio)}
+                >
+                  {system.checksLoading ? 'Проверяю…' : 'Проверить систему'}
+                </button>
+                <button class="btn-secondary btn-sm" disabled={system.loading} onclick={refresh}>
+                  {system.loading ? '…' : 'Обновить'}
+                </button>
               </div>
-            {/if}
-            <details class="collapse">
-              <summary class="collapse-head">
-                <span>Все проверки ({system.checks.length})</span>
-                <span class="collapse-chev" aria-hidden="true">›</span>
-              </summary>
-              <div class="collapse-body">
+
+              <label class="setting-check system-probe">
+                <input type="checkbox" bind:checked={probeAudio} />
+                <span class="setting-switch" aria-hidden="true"></span>
+                <span>Проверять микрофон короткой записью</span>
+              </label>
+            </div>
+
+            <div class="system-grid">
+              <section class="system-card">
+                <div class="system-card-head">
+                  <span class="card-title">Запись</span>
+                  {@html snap?.recording?.active
+                    ? statusBadge('info', 'Идёт')
+                    : statusBadge(systemAudio ? 'ok' : 'warn', systemAudio ? 'Готова' : 'Без системы')}
+                </div>
+                <div class="system-facts">
+                  <span class="system-key">Микрофон</span>
+                  <span class="system-val">{micName || 'не выбран'}</span>
+                  <span class="system-key">Системный звук</span>
+                  <span class="system-val">{systemAudioText}</span>
+                </div>
+              </section>
+
+              <section class="system-card">
+                <div class="system-card-head">
+                  <span class="card-title">Компоненты</span>
+                  {@html coreReady && ffmpegReady
+                    ? statusBadge('ok', 'Готовы')
+                    : statusBadge('warn', 'Не всё')}
+                </div>
+                <div class="system-facts">
+                  <span class="system-key">Модели</span>
+                  <span class="system-val">{coreReady ? 'базовые установлены' : (missingModelsText || 'не всё')}</span>
+                  <span class="system-key">ffmpeg</span>
+                  <span class="system-val">{ffmpegReady ? 'установлен' : 'не установлен'}</span>
+                </div>
+              </section>
+
+              <section class="system-card system-card-wide">
+                <div class="system-card-head">
+                  <span class="card-title">Дисковое пространство</span>
+                  <span class="disk-meta">{diskText()}</span>
+                </div>
+                {#if totalBytes > 0}
+                  <div class="disk-gauge-track" aria-hidden="true">
+                    <div class="disk-gauge-fill" style="width: {usedPct}%"></div>
+                  </div>
+                {/if}
+                <div class="system-card-footer">
+                  <span class="system-path" title={snap?.disk?.path || snap?.paths?.recordings}>
+                    {snap?.paths?.recordings || snap?.disk?.path || '—'}
+                  </span>
+                  {#if !isMobile}
+                    <button class="btn-secondary btn-sm" onclick={() => void openTarget('recordings')}>
+                      Открыть папку записей
+                    </button>
+                  {/if}
+                </div>
+              </section>
+            </div>
+
+            {#if problemChecks.length}
+              <div class="problem-alert">
+                <div class="problem-alert-title">Есть замечания проверок ({problemChecks.length})</div>
                 <div class="recordings-list">
-                  {#each system.checks as check (check.id)}
+                  {#each problemChecks as check (check.id)}
                     {@render checkRow(check)}
                   {/each}
                 </div>
               </div>
-            </details>
-          </section>
-        {/if}
-
-        {#if journalTotal > 0}
-        <section class="system-section">
-          <div class="system-section-head">
-            <span class="card-title">Последние записи</span>
-            {#if system.journalTotal > 5}
-              <button
-                class="link-btn"
-                onclick={() => (journalExpanded = !journalExpanded)}
-              >
-                {journalExpanded ? 'Свернуть' : `Показать все (${system.journalTotal})`}
-              </button>
             {/if}
-          </div>
-          <div class="recordings-list">
-            {#each visibleJournal as session (session.id)}
-              <div class="rec-item">
-                <div class="rec-info">
-                  <span class="rec-name">{journalFile(session)}</span>
-                  <span class="rec-meta">{journalMeta(session)}</span>
+
+          {:else if currentTab === 'audio'}
+            <div class="tab-pane-content">
+              <section class="system-card">
+                <div class="system-card-head">
+                  <span class="card-title">Микрофон</span>
+                  {@html statusBadge(micName ? 'ok' : 'warn', micName ? 'Подключен' : 'Не выбран')}
                 </div>
-                <div class="rec-actions">{@html journalBadge(session)}</div>
+                <div class="system-facts">
+                  <span class="system-key">Устройство</span>
+                  <span class="system-val">{micName || 'не выбрано'}</span>
+                  <span class="system-key">Платформа</span>
+                  <span class="system-val">{snap?.devices?.platform || 'Нативная'}</span>
+                </div>
+              </section>
+
+              <section class="system-card">
+                <div class="system-card-head">
+                  <span class="card-title">Системный звук (собеседники)</span>
+                  {@html statusBadge(systemAudio ? 'ok' : 'warn', systemAudio ? 'Доступен' : 'Отсутствует')}
+                </div>
+                <div class="system-facts">
+                  <span class="system-key">Захват звука</span>
+                  <span class="system-val">{systemAudioText}</span>
+                  <span class="system-key">Запись экрана</span>
+                  <span class="system-val">{screenReady ? 'доступна' : 'нет разрешения'}</span>
+                </div>
+              </section>
+
+              <div class="row-start pt-2">
+                <button class="btn-primary btn-sm" disabled={system.checksLoading} onclick={() => void runChecks(true)}>
+                  Проверить микрофон
+                </button>
+                <button class="btn-secondary btn-sm" onclick={() => openSettings('record')}>
+                  Настройки аудио ↗
+                </button>
               </div>
-            {/each}
-          </div>
-          {#if system.journalTruncated && !journalExpanded}
-            <div class="help-text">
-              Показаны последние {system.journal.length} из {system.journalTotal}.
+            </div>
+
+          {:else if currentTab === 'models'}
+            {#snippet modelRow(key: string, name: string, id: string, optional = false)}
+              {@const st = modelStatusText(id, optional)}
+              {@const isInstalled = getModel(id)?.is_installed}
+              {@const kind = isInstalled ? 'ok' : (optional ? 'optional' : 'missing')}
+              <span class="system-key">{key}</span>
+              <span class="system-val model-val">
+                <span class="model-name">{name}</span>
+                <span class="model-status-indicator {kind}" title="{name}: {st.label}">
+                  <span class="model-status-dot {kind}"></span>
+                  <span class="model-status-text">{st.label}</span>
+                </span>
+              </span>
+            {/snippet}
+
+            <div class="tab-pane-content">
+              <section class="system-card">
+                <div class="system-card-head">
+                  <span class="card-title">Локальные нейросети</span>
+                  {@html statusBadge(modelsBadgeKind, modelsBadgeLabel)}
+                </div>
+                <div class="system-facts">
+                  {@render modelRow('Русский (SOTA)', 'GigaAM-v3 RNNT int8', 'asr-gigaam-v3-rnnt-int8')}
+                  {@render modelRow('Мультиязычный', 'Whisper large-v3-turbo', 'asr-whisper-large-v3-turbo-q', true)}
+                  {@render modelRow('Детекция речи', 'Silero VAD v6', 'vad-silero-v6')}
+                  {@render modelRow('Диаризация', 'PyAnnote Segmentation 3.0', 'diar-pyannote-segmentation-3')}
+                  {@render modelRow('Эмбеддинги', 'ERes2NetV2 192-dim', 'diar-eres2netv2-emb')}
+                  {#if getModel('asr-gigaam-v3-e2e-ctc-int8')}
+                    {@render modelRow('Словарь терминов', 'GigaAM-v3 CTC int8', 'asr-gigaam-v3-e2e-ctc-int8', true)}
+                  {/if}
+                </div>
+              </section>
+
+              <section class="system-card">
+                <div class="system-card-head">
+                  <span class="card-title">Медиа-утилиты</span>
+                  {@html statusBadge(ffmpegReady ? 'ok' : 'warn', ffmpegReady ? 'Готов' : 'Не установлен')}
+                </div>
+                <div class="system-facts">
+                  <span class="system-key">FFmpeg</span>
+                  <span class="system-val">{ffmpegReady ? 'установлен и доступен' : 'требуется для импорта медиа'}</span>
+                </div>
+              </section>
+
+              <div class="row-start pt-2">
+                <button class="btn-secondary btn-sm" onclick={() => openSettings('models')}>
+                  Управление моделями и весами ↗
+                </button>
+                {#if !isMobile}
+                  <button class="btn-secondary btn-sm" onclick={() => void openTarget('models')}>
+                    Открыть папку моделей
+                  </button>
+                {/if}
+              </div>
+            </div>
+
+          {:else if currentTab === 'storage'}
+            <div class="tab-pane-content">
+              <section class="system-card">
+                <div class="system-card-head">
+                  <span class="card-title">Емкость накопителя</span>
+                  <span class="disk-meta">{diskText()}</span>
+                </div>
+                {#if totalBytes > 0}
+                  <div class="disk-gauge-track" aria-hidden="true">
+                    <div class="disk-gauge-fill" style="width: {usedPct}%"></div>
+                  </div>
+                {/if}
+              </section>
+
+              <section class="system-card">
+                <div class="system-card-head">
+                  <span class="card-title">Каталоги файловой системы</span>
+                </div>
+                <div class="system-paths-block">
+                  <div class="system-path-row">
+                    <span class="system-key">Записи</span>
+                    <span class="system-val system-path" title={snap?.paths?.recordings}>{snap?.paths?.recordings || '—'}</span>
+                    {#if !isMobile}
+                      <button class="btn-secondary btn-xs" onclick={() => void openTarget('recordings')}>Открыть</button>
+                    {/if}
+                  </div>
+                  <div class="system-path-row">
+                    <span class="system-key">Данные</span>
+                    <span class="system-val system-path" title={snap?.paths?.data}>{snap?.paths?.data || '—'}</span>
+                    {#if !isMobile}
+                      <button class="btn-secondary btn-xs" onclick={() => void openTarget('data')}>Открыть</button>
+                    {/if}
+                  </div>
+                  {#if snap?.log?.path}
+                    <div class="system-path-row">
+                      <span class="system-key">Лог</span>
+                      <span class="system-val system-path" title={snap.log.path}>{snap.log.path}</span>
+                      {#if !isMobile}
+                        <button class="btn-secondary btn-xs" onclick={() => void openTarget('logs')}>Открыть</button>
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+
+                {#if !isMobile}
+                  <div class="system-facts pt-2">
+                    <span class="system-key">Папки</span>
+                    <div class="path-chips">
+                      <button class="chip-btn" onclick={() => void openTarget('logs')}>Логи</button>
+                      <button class="chip-btn" onclick={() => void openTarget('models')}>Модели</button>
+                      <button class="chip-btn" onclick={() => void openTarget('crashes')}>Сбои</button>
+                      <button class="chip-btn" onclick={() => void openTarget('diagnostics')}>Диагностика</button>
+                    </div>
+                  </div>
+                {/if}
+              </section>
+
+              <section class="system-card">
+                <div class="system-facts">
+                  <span class="system-key">Память</span>
+                  <span class="system-val">{memoryText()}</span>
+                </div>
+              </section>
+            </div>
+
+          {:else if currentTab === 'logs'}
+            <div class="tab-pane-content">
+              {#if lastCrash}
+                <section class="system-card">
+                  <div class="system-card-head">
+                    <span class="card-title">Последний сбой</span>
+                    <span class="help-text">{crashKind()}</span>
+                  </div>
+                  <div class="rec-item">
+                    <div class="rec-info">
+                      <span class="rec-name">{fmtDateTime(lastCrash.created_at) || 'без даты'}</span>
+                      <span class="rec-meta">{crashMessage(lastCrash) || 'Сообщение не записано.'}</span>
+                      <span class="rec-meta">
+                        {#if crashVersion(lastCrash)}Версия {crashVersion(lastCrash)}{/if}
+                        {#if crashHasBacktrace(lastCrash)} · есть стек вызовов{/if}
+                      </span>
+                    </div>
+                    <div class="rec-actions">
+                      <button class="btn-secondary btn-sm" onclick={() => void ackCrash(lastCrash.id)}>
+                        Скрыть
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              {:else}
+                <section class="system-card">
+                  <div class="system-card-head">
+                    <span class="card-title">Состояние системы</span>
+                    {@html statusBadge('ok', 'Сбоев нет')}
+                  </div>
+                  <div class="system-facts">
+                    <span class="system-key">Сбои</span>
+                    <span class="system-val">Аварийных завершений не зафиксировано</span>
+                    {#if snap?.paths?.logs}
+                      <span class="system-key">Папка логов</span>
+                      <span class="system-val system-path">{snap.paths.logs}</span>
+                    {/if}
+                  </div>
+                </section>
+              {/if}
+
+              {#if journalTotal > 0}
+                <section class="system-section">
+                  <div class="system-section-head">
+                    <span class="card-title">Журнал записей ({journalTotal})</span>
+                    {#if system.journalTotal > 5}
+                      <button class="link-btn" onclick={() => (journalExpanded = !journalExpanded)}>
+                        {journalExpanded ? 'Свернуть' : `Показать все (${system.journalTotal})`}
+                      </button>
+                    {/if}
+                  </div>
+                  <div class="recordings-list">
+                    {#each visibleJournal as session (session.id)}
+                      <div class="rec-item">
+                        <div class="rec-info">
+                          <span class="rec-name">{journalFile(session)}</span>
+                          <span class="rec-meta">{journalMeta(session)}</span>
+                        </div>
+                        <div class="rec-actions">{@html journalBadge(session)}</div>
+                      </div>
+                    {/each}
+                  </div>
+                </section>
+              {/if}
+
+              <div class="row-start pt-2">
+                {#if isMobile}
+                  <button class="btn-secondary btn-sm" onclick={() => void collectDiagnostics()}>
+                    Собрать отчёт
+                  </button>
+                {/if}
+                {#if !isMobile}
+                  <button class="btn-secondary btn-sm" onclick={() => void openTarget('logs')}>
+                    Открыть папку логов
+                  </button>
+                {/if}
+              </div>
             </div>
           {/if}
-        </section>
-        {/if}
-
-        {#if lastCrash}
-          <section class="system-section">
-            <div class="system-section-head">
-              <span class="card-title">Сбои</span>
-              <span class="help-text">{crashKind()}</span>
-            </div>
-            <div class="rec-item">
-              <div class="rec-info">
-                <span class="rec-name">{fmtDateTime(lastCrash.created_at) || 'без даты'}</span>
-                <span class="rec-meta">
-                  {crashMessage(lastCrash) || 'Сообщение не записано.'}
-                </span>
-                <span class="rec-meta">
-                  {#if crashVersion(lastCrash)}Версия {crashVersion(lastCrash)}{/if}
-                  {#if crashHasBacktrace(lastCrash)} · есть стек вызовов{/if}
-                </span>
-              </div>
-              <div class="rec-actions">
-                <button class="btn-secondary btn-sm" onclick={() => void collectDiagnostics()}>
-                  Собрать отчёт
-                </button>
-                <button class="btn-secondary btn-sm" onclick={() => void ackCrash(lastCrash.id)}>
-                  Скрыть
-                </button>
-              </div>
-            </div>
-          </section>
-        {/if}
-
-        <details class="collapse system-details">
-          <summary class="collapse-head">
-            <span class="card-title">Подробности</span>
-            <span class="collapse-chev" aria-hidden="true">›</span>
-          </summary>
-          <div class="collapse-body">
-            <div class="system-facts">
-              {#each pathRows as [key, value] (key)}
-                <span class="system-key">{PATH_LABELS[key] || key}</span>
-                <span class="system-val system-path">{value}</span>
-              {/each}
-            </div>
-            <div class="system-facts">
-              <span class="system-key">Диск</span><span class="system-val">{diskText()}</span>
-              <span class="system-key">Память</span><span class="system-val">{memoryText()}</span>
-              {#if snap?.log?.path}
-                <span class="system-key">Лог</span>
-                <span class="system-val system-path">{snap.log.path}</span>
-              {/if}
-            </div>
-            {#if !isMobile}
-              <div class="row-start">
-                <button class="btn-secondary btn-sm" onclick={() => void collectDiagnostics()}>
-                  Собрать отчёт
-                </button>
-                <button class="btn-secondary btn-sm" onclick={() => void openTarget('diagnostics')}>
-                  Открыть папку
-                </button>
-              </div>
-            {/if}
-          </div>
-        </details>
-
-      </div>
+        </div>
+      </main>
     </div>
   </div>
 {/if}
@@ -502,29 +802,238 @@
 <style>
   .system-overlay {
     z-index: 70;
+    padding: 0;
+    align-items: stretch;
+    justify-content: stretch;
   }
-  .system-box {
-    max-width: 760px;
+  .system-box.md-layout {
+    width: 100vw;
+    height: 100dvh;
+    max-width: 100vw;
+    max-height: 100dvh;
     padding: 0;
     gap: 0;
-    max-height: calc(100dvh - 56px);
+    border-radius: 0;
+    border: none;
+    box-shadow: none;
+    margin: 0;
     overflow: hidden;
-  }
-  .system-head {
     display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 12px;
-    padding: 20px 22px 14px;
-    border-bottom: 1px solid var(--border-soft);
-    flex-shrink: 0;
+    flex-direction: row;
+    animation: fadeIn 160ms var(--ease-spring);
   }
-  .system-heading {
+  .md-sidebar {
+    width: 220px;
+    flex-shrink: 0;
+    background: var(--bg-inset);
+    border-right: 1px solid var(--border-soft);
+    display: flex;
+    flex-direction: column;
+    padding: 20px 14px 16px;
+    box-sizing: border-box;
+  }
+  .md-sidebar-head {
     display: flex;
     flex-direction: column;
     gap: 6px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .md-sidebar-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .md-mobile-close {
+    display: none;
+  }
+  .md-mobile-nav {
+    display: none;
+  }
+  .md-os-tag {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-faint);
+  }
+  .md-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 12px;
+  }
+  .md-nav-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    border-radius: var(--radius-inner);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.15s var(--ease-spring);
+  }
+  .md-nav-item:hover {
+    background: rgba(15, 30, 51, 0.04);
+    color: var(--text-primary);
+  }
+  .md-nav-item.active {
+    background: #fff;
+    color: var(--text-primary);
+    font-weight: 600;
+    border-color: var(--border-card);
+    box-shadow: 0 1px 3px rgba(15, 30, 51, 0.06);
+  }
+  .md-nav-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .md-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+  .md-dot.ok { background: var(--accent-ok); }
+  .md-dot.warn { background: var(--accent-amber); }
+  .md-dot.error { background: var(--accent-rec); }
+  .md-dot.info { background: var(--accent-blue); }
+
+  .md-tag {
+    font-size: 10.5px;
+    padding: 1px 6px;
+    border-radius: var(--radius-pill);
+    background: rgba(15, 30, 51, 0.05);
+    color: var(--text-muted);
+  }
+  .md-tag.ok { color: var(--accent-ok); background: var(--accent-ok-bg); }
+  .md-tag.error { color: var(--accent-rec); background: #fde8e8; font-weight: 700; }
+
+  .md-sidebar-foot {
+    margin-top: auto;
+    padding-top: 14px;
+    border-top: 1px solid var(--border-soft);
+  }
+  .md-diag-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .md-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: #fff;
+    height: 100%;
+  }
+  .md-content-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 20px 24px 14px;
+    border-bottom: 1px solid var(--border-soft);
+    flex-shrink: 0;
+  }
+  .md-content-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+  }
+  .md-content-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .tab-pane-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .tab-pane-content,
+  .system-hero,
+  .system-grid,
+  .system-section,
+  .problem-alert {
+    max-width: 760px;
+    width: 100%;
+  }
+
+  .problem-alert {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    border-radius: var(--radius-inner);
+    background: var(--accent-amber-bg);
+    border: 1px solid rgba(138, 90, 0, 0.15);
+  }
+  .problem-alert-title {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--accent-amber);
+  }
+
+  .model-val {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
     min-width: 0;
   }
+  .model-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .model-status-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: var(--radius-sm);
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+  .model-status-indicator.ok {
+    background: var(--accent-ok-bg);
+    color: var(--accent-ok);
+  }
+  .model-status-indicator.missing {
+    background: #fde8e8;
+    color: var(--accent-rec);
+  }
+  .model-status-indicator.optional {
+    background: var(--bg-inset);
+    color: var(--text-faint);
+  }
+  .model-status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+  .model-status-dot.ok {
+    background: var(--accent-ok);
+  }
+  .model-status-dot.missing {
+    background: var(--accent-rec);
+  }
+  .model-status-dot.optional {
+    background: #94a3b8;
+  }
+
   .system-sub {
     display: flex;
     align-items: center;
@@ -533,27 +1042,21 @@
     color: var(--text-muted);
     font-size: 12px;
   }
-  .system-body {
-    overflow-y: auto;
-    padding: 18px 22px 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
   .system-hero {
     display: flex;
     justify-content: space-between;
-    align-items: flex-start;
+    align-items: center;
     gap: 16px;
     flex-wrap: wrap;
   }
-  .system-hero-title {
-    font-size: 15px;
-    font-weight: 700;
-    letter-spacing: -0.01em;
+  .system-hero-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
   }
   .system-probe {
-    margin-top: -4px;
+    margin-top: -6px;
+    margin-bottom: 2px;
   }
   .system-grid {
     display: grid;
@@ -564,7 +1067,7 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    padding: 13px 14px;
+    padding: 12px 14px;
     border: 1px solid var(--border-card);
     border-radius: var(--radius-inner);
     background: #fff;
@@ -573,8 +1076,33 @@
   .system-card-wide {
     grid-column: 1 / -1;
   }
-  .system-card > .btn-secondary {
-    align-self: flex-start;
+  .disk-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 500;
+    font-family: var(--font-mono);
+  }
+  .disk-gauge-track {
+    height: 7px;
+    background: var(--border-card);
+    border-radius: var(--radius-pill);
+    overflow: hidden;
+    display: flex;
+    width: 100%;
+    margin-top: 2px;
+  }
+  .disk-gauge-fill {
+    background: var(--text-primary);
+    border-radius: var(--radius-pill);
+    transition: width 0.3s var(--ease-spring);
+  }
+  .system-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-top: 2px;
+    flex-wrap: wrap;
   }
   .system-card-head,
   .system-section-head {
@@ -586,9 +1114,53 @@
   }
   .system-facts {
     display: grid;
-    grid-template-columns: minmax(100px, max-content) minmax(0, 1fr);
+    grid-template-columns: minmax(110px, max-content) minmax(0, 1fr);
     gap: 4px 12px;
     font-size: 12.5px;
+    word-break: normal;
+    overflow-wrap: break-word;
+  }
+  .system-paths-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-bottom: 4px;
+  }
+  .system-path-row {
+    display: grid;
+    grid-template-columns: 80px minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    font-size: 12px;
+  }
+  .btn-xs {
+    padding: 2px 8px;
+    font-size: 11px;
+    height: 24px;
+    border-radius: var(--radius-sm);
+  }
+  .path-chips {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .chip-btn {
+    font-size: 11.5px;
+    padding: 2px 9px;
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-sm);
+    background: #fff;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .chip-btn:hover {
+    background: var(--bg-inset);
+    color: var(--text-primary);
+    border-color: var(--text-muted);
+  }
+  .pt-2 {
+    padding-top: 8px;
   }
   .system-key {
     color: var(--text-muted);
@@ -610,31 +1182,136 @@
   .check-hint {
     color: var(--text-faint);
   }
-  .system-details {
-    border-top: 1px solid var(--border-soft);
-    padding-top: 10px;
-  }
-  .system-box :global(.status-badge.error) {
-    color: var(--accent-rec);
-  }
-  @media (max-width: 640px) {
-    .system-box {
-      max-height: calc(100dvh - 24px);
-    }
-    .system-head {
-      padding: 16px 16px 12px;
-    }
-    .system-body {
-      padding: 14px 16px 16px;
+
+  @media (max-width: 900px) {
+    .md-sidebar {
+      width: 190px;
+      min-width: 190px;
+      padding: 16px 10px 14px;
     }
     .system-grid {
       grid-template-columns: 1fr;
     }
-    .system-hero .row-start {
+  }
+
+  @media (max-width: 640px) {
+    .system-box.md-layout {
+      flex-direction: column;
+      height: 100dvh;
+      max-height: 100dvh;
+    }
+    .md-sidebar {
+      width: 100%;
+      min-width: 0;
+      border-right: none;
+      border-bottom: 1px solid var(--border-soft);
+      padding: 12px 14px 10px;
+      flex-shrink: 0;
+    }
+    .md-sidebar-head {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      padding-bottom: 6px;
+      border-bottom: none;
+    }
+    .md-sidebar-title-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .md-os-tag {
+      display: none;
+    }
+    .md-mobile-close {
+      display: inline-flex;
+      margin-left: auto;
+    }
+    .md-desktop-close {
+      display: none;
+    }
+    .md-nav {
+      display: none;
+    }
+    .md-mobile-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      width: 100%;
+      margin-top: 6px;
+    }
+    .md-mobile-nav-row {
+      display: grid;
+      gap: 4px;
       width: 100%;
     }
-    .system-hero .btn-primary {
+    .md-mobile-nav-row:first-child {
+      grid-template-columns: repeat(3, 1fr);
+    }
+    .md-mobile-nav-row:last-child {
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .md-mobile-tab {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      padding: 6px 4px;
+      border-radius: var(--radius-inner);
+      font-size: 11.5px;
+      font-weight: 500;
+      color: var(--text-muted);
+      background: rgba(15, 30, 51, 0.03);
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: all 0.15s var(--ease-spring);
+      text-align: center;
+      white-space: nowrap;
+    }
+    .md-mobile-tab:hover {
+      background: rgba(15, 30, 51, 0.06);
+      color: var(--text-primary);
+    }
+    .md-mobile-tab.active {
+      background: #fff;
+      color: var(--text-primary);
+      font-weight: 600;
+      border-color: var(--border-card);
+      box-shadow: 0 1px 2px rgba(15, 30, 51, 0.05);
+    }
+    .model-status-text {
+      display: none;
+    }
+    .model-status-indicator {
+      padding: 0;
+      background: transparent !important;
+    }
+    .model-status-dot {
+      width: 8px;
+      height: 8px;
+    }
+    .md-sidebar-foot {
+      display: none;
+    }
+    .md-content-head {
+      padding: 10px 14px 8px;
+    }
+    .md-content-body {
+      padding: 12px 14px;
+    }
+    .system-grid {
+      grid-template-columns: 1fr;
+    }
+    .system-hero-actions {
+      width: 100%;
+    }
+    .system-hero-actions .btn-primary {
       flex: 1;
+    }
+    .system-path-row {
+      grid-template-columns: 60px minmax(0, 1fr) auto;
     }
   }
 </style>

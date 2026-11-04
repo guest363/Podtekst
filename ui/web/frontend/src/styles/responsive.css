@@ -48,14 +48,13 @@
 
   /* Карточки и сегменты */
   .card { padding: 16px 14px; border-radius: var(--radius-card); gap: 10px; }
-  .people-chips { grid-template-columns: 1fr; }
+  .people-chips { grid-template-columns: minmax(0, 1fr); width: 100%; }
   .seg-bar { flex-direction: column; }
   .transcript-media-player { flex-basis: 100%; }
 
   /* Модалки и тосты */
   .modal-overlay { padding: 10px 8px; }
   .modal-box { padding: 18px 14px; border-radius: var(--radius-card); max-width: 100%; }
-  .settings-tab { padding: 8px 10px; font-size: 12px; }
   .toast-stack {
     width: min(440px, calc(100vw - 24px));
     bottom: max(16px, calc(env(safe-area-inset-bottom) + 8px));

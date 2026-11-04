@@ -44,12 +44,26 @@ export interface RecordingInfo {
   mode?: string
 }
 
+export interface ModelItem {
+  id: string
+  title: string
+  version?: string
+  installed_version?: string | null
+  is_installed: boolean
+  has_update?: boolean
+  total_size_bytes?: number
+  on_disk_bytes?: number
+  license?: string
+  description?: string
+}
+
 export interface ModelsSummary {
   core_ready?: boolean
   installed?: number
   total?: number
   missing_core?: string[]
   updates?: string[]
+  items?: ModelItem[]
 }
 
 export interface FfmpegStatus {

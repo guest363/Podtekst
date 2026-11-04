@@ -96,6 +96,7 @@ body:has(.app-drawer-overlay) {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 18px 20px;
   display: flex;
   flex-direction: column;
@@ -114,8 +115,11 @@ body:has(.app-drawer-overlay) {
 }
 
 @media (max-width: 640px) {
-  .app-drawer {
+  .app-drawer,
+  .app-drawer.settings-drawer,
+  .app-drawer.rec-drawer {
     width: 100vw;
+    max-width: 100vw;
     border-left: none;
   }
   .app-drawer-top {

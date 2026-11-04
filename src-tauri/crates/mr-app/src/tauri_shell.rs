@@ -35,6 +35,8 @@ pub(crate) const WINDOW_MIN_W: f64 = 480.0;
 #[cfg(feature = "tauri-ui")]
 pub(crate) const WINDOW_MIN_H: f64 = 560.0;
 
+pub(crate) const UI_BUILD_MARKER: &str = "PODTEKST_TAURI_UI_BUILD_V1";
+
 #[cfg(all(
     feature = "tauri-ui",
     not(any(target_os = "android", target_os = "ios"))
@@ -176,6 +178,9 @@ fn setup_global_shortcut(app: &tauri::AppHandle<tauri::Wry>) {
 
 #[cfg(feature = "tauri-ui")]
 pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visible: bool) -> i32 {
+    // Без black_box линкер выбросит строку как неиспользуемую, и run.sh
+    // перестанет отличать нативную сборку от headless.
+    std::hint::black_box(UI_BUILD_MARKER.as_bytes());
     let st = state.clone();
     std::thread::spawn(move || {
         crate::run_http_server(st, http_port);

@@ -136,8 +136,6 @@
           >
             {update.checking ? 'Проверяю…' : 'Проверить обновления'}
           </button>
-          ·
-          <button class="link-btn" onclick={() => (ui.systemOpen = true)}>Состояние</button>
         </div>
       </div>
       <button class="icon-btn" aria-label="Закрыть настройки" onclick={() => (ui.settingsOpen = false)}>✕</button>
@@ -617,36 +615,50 @@
   }
   .dict-del:hover { color: var(--accent-rec); background: #fee2e2; }
   .settings-tabs {
-    display: flex; gap: 4px;
+    display: flex;
+    gap: 6px;
     border-bottom: 1px solid var(--border-soft);
-    padding: 0 20px;
-    background: #fff;
+    padding: 8px 16px;
+    background: var(--bg-inset);
     flex-shrink: 0;
     overflow-x: auto;
     overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .settings-tabs::-webkit-scrollbar {
+    display: none;
   }
   @media (max-width: 640px) {
     .settings-tabs {
-      display: flex;
-      gap: 0;
-      padding: 0 10px;
-      overflow-x: auto;
-      overflow-y: hidden;
+      padding: 6px 12px;
+      gap: 4px;
     }
   }
   .settings-tab {
-    border: none; background: transparent; cursor: pointer;
-    padding: 9px 14px 10px;
-    font-family: inherit; font-size: 13px; font-weight: 700;
+    border: 1px solid transparent;
+    background: transparent;
+    cursor: pointer;
+    padding: 6px 12px;
+    border-radius: var(--radius-inner);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
     color: var(--text-muted);
-    border-bottom: 2px solid transparent;
-    margin-bottom: -1px;
     white-space: nowrap;
     flex-shrink: 0;
-    transition: color 180ms var(--ease-spring), border-color 180ms var(--ease-spring);
+    transition: all 160ms var(--ease-spring);
   }
-  .settings-tab:hover { color: var(--text-primary); }
-  .settings-tab.active { color: var(--text-primary); border-bottom-color: var(--accent-blue); }
+  .settings-tab:hover {
+    color: var(--text-primary);
+    background: rgba(15, 30, 51, 0.04);
+  }
+  .settings-tab.active {
+    color: var(--text-primary);
+    background: #fff;
+    border-color: var(--border-card);
+    box-shadow: 0 1px 2px rgba(15, 30, 51, 0.06);
+  }
   .settings-pane {
     display: flex; flex-direction: column; gap: 14px;
     padding-top: 2px;

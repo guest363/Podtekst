@@ -298,6 +298,19 @@ pub fn run_cli() {
         }
     }
 
+    #[cfg(not(feature = "tauri-ui"))]
+    if !cli.web
+        && !cli.browser
+        && !cli.window
+        && !cli.no_browser
+        && !cli.toggle
+        && !cli.start
+        && !cli.stop
+    {
+        crate::note!("Сборка без нативного окна (tauri-ui). Запустите ./run.sh --build");
+        std::process::exit(1);
+    }
+
     // Повторный клик по иконке (запуск без флагов) поднимает уже работающее окно,
     // а не молча выходит из-за занятого IPC.
     let bare_launch = !cli.toggle
@@ -309,8 +322,17 @@ pub fn run_cli() {
         && !cli.tray
         && !cli.web
         && !cli.browser;
-    if bare_launch && send_ipc("SHOW").is_some() {
-        return;
+    if bare_launch {
+        match send_ipc("SHOW").as_deref() {
+            Some("OK") => return,
+            Some(resp) => {
+                crate::note!(
+                    "Подтекст уже запущен без окна ({resp}). Завершите фоновый экземпляр и запустите снова."
+                );
+                std::process::exit(1);
+            }
+            None => {}
+        }
     }
 
     let ipc_listener = TcpListener::bind(format!("127.0.0.1:{IPC_PORT}"));

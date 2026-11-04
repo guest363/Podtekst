@@ -123,7 +123,6 @@
   <div class="page">
     <header class="app-header">
       <div class="app-title">
-        <span class="dot" aria-hidden="true"></span>
         <span class="app-title-text">Подтекст</span>
       </div>
       <div class="header-right">
@@ -354,8 +353,21 @@
   .status-dot.warn { background: var(--accent-amber); }
   .status-dot.error { background: var(--accent-rec); }
   @media (max-width: 640px) {
-    .status-pill { padding: 7px 9px; }
+    .status-pill {
+      width: 38px;
+      height: 38px;
+      padding: 0;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
     .status-pill-text { display: none; }
+    .status-dot {
+      width: 9px;
+      height: 9px;
+    }
   }
 </style>
 
