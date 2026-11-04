@@ -22,21 +22,22 @@ const PATH: &str = "/org/gnome/Shell/Screencast";
 const IFACE: &str = "org.gnome.Shell.Screencast";
 
 #[cfg(target_os = "linux")]
-fn session_connection() -> Result<zbus::blocking::Connection, String> {
-    zbus::blocking::Connection::session().map_err(|e| format!("Сессия D-Bus недоступна: {e}"))
+async fn session_connection() -> Result<zbus::Connection, String> {
+    zbus::Connection::session()
+        .await
+        .map_err(|e| format!("Сессия D-Bus недоступна: {e}"))
 }
 
 #[cfg(target_os = "linux")]
-fn screencast_proxy(
-    conn: &zbus::blocking::Connection,
-) -> Result<zbus::blocking::Proxy<'_>, String> {
-    zbus::blocking::Proxy::new(conn, DEST, PATH, IFACE)
+async fn screencast_proxy<'a>(conn: &'a zbus::Connection) -> Result<zbus::Proxy<'a>, String> {
+    zbus::Proxy::new(conn, DEST, PATH, IFACE)
+        .await
         .map_err(|e| format!("Служба записи экрана недоступна: {e}"))
 }
 
 pub(crate) struct ScreenCaptureSession {
     #[cfg(target_os = "linux")]
-    conn: zbus::blocking::Connection,
+    conn: zbus::Connection,
     video_path: PathBuf,
     #[cfg(any(windows, target_os = "macos"))]
     child: Child,
@@ -60,14 +61,12 @@ pub(crate) fn is_screen_capture_supported() -> bool {
     #[cfg(target_os = "linux")]
     {
         *SUPPORTED_CACHE.get_or_init(|| {
-            session_connection()
-                .and_then(|conn| {
-                    let supported: bool = screencast_proxy(&conn)?
-                        .get_property("ScreencastSupported")
-                        .unwrap_or(false);
-                    Ok(supported)
-                })
-                .unwrap_or(false)
+            zbus::block_on(async {
+                let conn = session_connection().await.ok()?;
+                let proxy = screencast_proxy(&conn).await.ok()?;
+                proxy.get_property("ScreencastSupported").await.ok()
+            })
+            .unwrap_or(false)
         })
     }
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
@@ -277,19 +276,21 @@ impl ScreenCaptureSession {
     /// Запускает запись экрана (Linux): служба GNOME Shell Screencast по D-Bus.
     #[cfg(target_os = "linux")]
     pub(crate) fn start(started_ts: u64) -> Result<Self, String> {
-        let conn = session_connection()?;
-        let template = format!("/tmp/.mr_screen_{started_ts}_%d_%t");
-        let options: HashMap<&str, zbus::zvariant::Value> =
-            HashMap::from([("draw-cursor", zbus::zvariant::Value::from(true))]);
-        let (success, filename): (bool, String) = {
-            let proxy = screencast_proxy(&conn)?;
-            proxy
+        let (conn, filename) = zbus::block_on(async {
+            let conn = session_connection().await?;
+            let template = format!("/tmp/.mr_screen_{started_ts}_%d_%t");
+            let options: HashMap<&str, zbus::Variant> =
+                HashMap::from([("draw-cursor", zbus::Variant::from(true))]);
+            let proxy = screencast_proxy(&conn).await?;
+            let (success, filename): (bool, String) = proxy
                 .call("Screencast", &(&template, &options))
-                .map_err(|e| format!("Служба записи экрана не запустилась: {e}"))?
-        };
-        if !success {
-            return Err("GNOME Shell не начал запись экрана".to_string());
-        }
+                .await
+                .map_err(|e| format!("Служба записи экрана не запустилась: {e}"))?;
+            if !success {
+                return Err("GNOME Shell не начал запись экрана".to_string());
+            }
+            Ok::<_, String>((conn, filename))
+        })?;
         let video_path = PathBuf::from(filename);
         crate::note!("[SCREEN] Запись экрана запущена: {video_path:?}");
 
@@ -346,10 +347,14 @@ impl ScreenCaptureSession {
 
     #[cfg(target_os = "linux")]
     pub(crate) fn stop(self) -> Result<PathBuf, String> {
-        let proxy = screencast_proxy(&self.conn)?;
-        proxy
-            .call::<_, _, bool>("StopScreencast", &())
-            .map_err(|e| format!("Не удалось остановить запись экрана: {e}"))?;
+        zbus::block_on(async {
+            let proxy = screencast_proxy(&self.conn).await?;
+            proxy
+                .call::<_, _, bool>("StopScreencast", &())
+                .await
+                .map_err(|e| format!("Не удалось остановить запись экрана: {e}"))?;
+            Ok::<_, String>(())
+        })?;
         crate::note!("[SCREEN] Остановка записи экрана...");
         wait_finalized(&self.video_path)
     }
@@ -387,9 +392,11 @@ impl Drop for ScreenCaptureSession {
             let _ = self.child.wait();
         }
         #[cfg(target_os = "linux")]
-        if let Ok(proxy) = screencast_proxy(&self.conn) {
-            let _ = proxy.call::<_, _, bool>("StopScreencast", &());
-        }
+        let _ = zbus::block_on(async {
+            let proxy = screencast_proxy(&self.conn).await.ok()?;
+            let _: bool = proxy.call("StopScreencast", &()).await.ok()?;
+            Some(())
+        });
     }
 }
 
