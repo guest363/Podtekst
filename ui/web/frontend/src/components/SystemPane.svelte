@@ -3,7 +3,7 @@
   import { fmtClock, isMobile } from '../lib/api'
   import { statusBadge } from '../lib/settings.svelte.ts'
   import { emit, ui } from '../lib/ui.svelte.ts'
-  import { openUpdateModal, update } from '../lib/update.svelte.ts'
+  import { openUpdateModal } from '../lib/update.svelte.ts'
   import {
     ackCrash,
     collectDiagnostics,
@@ -54,11 +54,6 @@
   const systemAudio = $derived(snap?.devices?.has_system_audio === true)
   const screenReady = $derived(permission('screen_capture_supported') !== false)
   const micName = $derived(defaultName(snap?.devices, snap?.devices?.default_input))
-  const currentVersion = $derived(snap?.update?.current || update.current || '…')
-  const lastCheckAt = $derived(
-    snap?.update?.last_check_at || snap?.update?.last_check?.at || update.lastCheckAt,
-  )
-  const latestVersion = $derived(snap?.update?.latest || update.latest)
   const overallKind = $derived(
     unacknowledged > 0 || system.summary?.status === 'error'
       ? 'error'
@@ -85,12 +80,6 @@
     models: 'Модели',
     crashes: 'Сбои',
     diagnostics: 'Диагностика',
-  }
-
-  const PERMISSION_LABELS: Record<string, string> = {
-    microphone: 'Микрофон',
-    system_audio: 'Системный звук',
-    screen_capture_supported: 'Запись экрана',
   }
 
   const MODE_LABELS: Record<string, string> = {
@@ -161,6 +150,9 @@
   function summaryText(): string {
     const summary = system.summary
     if (!summary) return ''
+    if (summary.warn === 0 && summary.error === 0) {
+      return `Проверок: ${system.checks.length} · всё в порядке`
+    }
     const parts = [
       `норма ${summary.ok}`,
       `замечания ${summary.warn}`,
@@ -347,43 +339,27 @@
             </button>
           </section>
 
-          <section class="system-card">
-            <div class="system-card-head">
-              <span class="card-title">Обновления</span>
-              {@html !lastCheckAt
-                ? statusBadge('info', 'Не проверялось')
-                : update.isNewer
-                  ? statusBadge('warn', `Доступна ${latestVersion}`)
-                  : statusBadge('ok', 'Актуально')}
-            </div>
-            <div class="system-facts">
-              <span class="system-key">Версия</span>
-              <span class="system-val">{currentVersion}</span>
-              <span class="system-key">Проверка</span>
-              <span class="system-val">{lastCheckAt ? fmtDateTime(lastCheckAt) : 'не выполнялась'}</span>
-            </div>
-            <button class="btn-secondary btn-sm" onclick={openUpdates}>Проверить обновления</button>
-          </section>
-
-          <section class="system-card">
-            <div class="system-card-head">
-              <span class="card-title">Сбои и журнал</span>
-              {@html unacknowledged > 0
-                ? statusBadge('error', `${unacknowledged} сбоя`)
-                : statusBadge('ok', 'Чисто')}
-            </div>
-            <div class="system-facts">
-              <span class="system-key">Сбои</span>
-              <span class="system-val">{unacknowledged || 'нет'}</span>
-              <span class="system-key">Записей</span>
-              <span class="system-val">{journalTotal || 'нет'}</span>
-            </div>
-            {#if lastCrash}
-              <button class="btn-secondary btn-sm" onclick={() => void ackCrash(lastCrash.id)}>
-                Скрыть сбой
-              </button>
-            {/if}
-          </section>
+          {#if unacknowledged > 0 || journalTotal > 0}
+            <section class="system-card system-card-wide">
+              <div class="system-card-head">
+                <span class="card-title">Сбои и журнал</span>
+                {@html unacknowledged > 0
+                  ? statusBadge('error', `${unacknowledged} сбоя`)
+                  : statusBadge('ok', 'Чисто')}
+              </div>
+              <div class="system-facts">
+                <span class="system-key">Сбои</span>
+                <span class="system-val">{unacknowledged || 'нет'}</span>
+                <span class="system-key">Записей</span>
+                <span class="system-val">{journalTotal || 'нет'}</span>
+              </div>
+              {#if lastCrash}
+                <button class="btn-secondary btn-sm" onclick={() => void ackCrash(lastCrash.id)}>
+                  Скрыть сбой
+                </button>
+              {/if}
+            </section>
+          {/if}
         </div>
 
         {#if system.checks.length}
@@ -398,8 +374,6 @@
                   {@render checkRow(check)}
                 {/each}
               </div>
-            {:else}
-              <div class="empty-note">Замечаний нет</div>
             {/if}
             <details class="collapse">
               <summary class="collapse-head">
@@ -417,6 +391,7 @@
           </section>
         {/if}
 
+        {#if journalTotal > 0}
         <section class="system-section">
           <div class="system-section-head">
             <span class="card-title">Последние записи</span>
@@ -429,27 +404,24 @@
               </button>
             {/if}
           </div>
-          {#if visibleJournal.length}
-            <div class="recordings-list">
-              {#each visibleJournal as session (session.id)}
-                <div class="rec-item">
-                  <div class="rec-info">
-                    <span class="rec-name">{journalFile(session)}</span>
-                    <span class="rec-meta">{journalMeta(session)}</span>
-                  </div>
-                  <div class="rec-actions">{@html journalBadge(session)}</div>
+          <div class="recordings-list">
+            {#each visibleJournal as session (session.id)}
+              <div class="rec-item">
+                <div class="rec-info">
+                  <span class="rec-name">{journalFile(session)}</span>
+                  <span class="rec-meta">{journalMeta(session)}</span>
                 </div>
-              {/each}
-            </div>
-            {#if system.journalTruncated && !journalExpanded}
-              <div class="help-text">
-                Показаны последние {system.journal.length} из {system.journalTotal}.
+                <div class="rec-actions">{@html journalBadge(session)}</div>
               </div>
-            {/if}
-          {:else}
-            <div class="empty-note">Журнал пуст.</div>
+            {/each}
+          </div>
+          {#if system.journalTruncated && !journalExpanded}
+            <div class="help-text">
+              Показаны последние {system.journal.length} из {system.journalTotal}.
+            </div>
           {/if}
         </section>
+        {/if}
 
         {#if lastCrash}
           <section class="system-section">
@@ -513,16 +485,6 @@
           </div>
         </details>
 
-        <div class="system-footer">
-          <span class="help-text">
-            {#if permission('microphone') === 'unknown'}
-              Разрешение микрофона проверяется короткой записью.
-            {:else}
-              {PERMISSION_LABELS.microphone}: {permission('microphone') || 'не проверено'}
-            {/if}
-          </span>
-          <button class="btn-secondary" onclick={close}>Закрыть</button>
-        </div>
       </div>
     </div>
   </div>
@@ -599,6 +561,9 @@
     background: #fff;
     min-width: 0;
   }
+  .system-card-wide {
+    grid-column: 1 / -1;
+  }
   .system-card-head,
   .system-section-head {
     display: flex;
@@ -636,15 +601,6 @@
   .system-details {
     border-top: 1px solid var(--border-soft);
     padding-top: 10px;
-  }
-  .system-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-    border-top: 1px solid var(--border-soft);
-    padding-top: 12px;
   }
   .system-box :global(.status-badge.error) {
     color: var(--accent-rec);

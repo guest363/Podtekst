@@ -102,13 +102,14 @@
 .collapse-head::-webkit-details-marker { display: none; }
 .collapse-head::marker { content: ""; }
 .collapse-chev {
-  font-size: 13px; color: var(--text-faint);
+  font-size: 13px; line-height: 1; color: var(--text-faint);
   transition: transform 250ms var(--ease-spring);
   width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
   background: #fff; border: 1px solid var(--border-card);
   display: inline-flex; align-items: center; justify-content: center;
 }
-.collapse:not([open]) .collapse-chev { transform: rotate(-90deg); }
+.collapse:not([open]) .collapse-chev { transform: rotate(90deg); }
+.collapse[open] .collapse-chev { transform: rotate(-90deg); }
 .collapse-body { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; }
 
 /* ---------- Сегменты ---------- */
