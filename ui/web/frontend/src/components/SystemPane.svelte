@@ -1,11 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { fmtClock } from '../lib/api'
-  import type { ModelInfo } from '../lib/api'
-  import { toast } from '../lib/toast.svelte.ts'
-  import { downloadFfmpeg, statusBadge } from '../lib/settings.svelte.ts'
-  import { downloadModel } from '../lib/transcript.svelte.ts'
-  import { checkUpdate, openUpdateModal, update } from '../lib/update.svelte.ts'
+  import { fmtClock, isMobile } from '../lib/api'
+  import { statusBadge } from '../lib/settings.svelte.ts'
+  import { emit, ui } from '../lib/ui.svelte.ts'
+  import { openUpdateModal, update } from '../lib/update.svelte.ts'
   import {
     ackCrash,
     collectDiagnostics,
@@ -25,68 +23,79 @@
   import type {
     CheckFix,
     DevicesInfo,
-    DiskInfo,
-    IntegrationInfo,
     JournalSession,
-    MemoryInfo,
-    PermissionInfo,
-    PermissionsInfo,
-    SystemSnapshot,
+    SystemCheck,
   } from '../lib/system.svelte.ts'
 
   let probeAudio = $state(true)
+  let journalExpanded = $state(false)
 
   const snap = $derived(system.snapshot)
-  const pathRows = $derived(Object.entries(snap?.paths ?? {}))
-  const devices = $derived(deviceRows(snap?.devices))
-  const permissions = $derived(permissionRows(snap?.permissions))
-  const integrations = $derived(integrationRows(snap?.integration))
   const lastCrash = $derived(system.crashes.find(crashUnacknowledged) ?? null)
-  const selfUpdate = $derived(snap?.update?.mode === 'self' || update.selfUpdate)
-  const skippedVersion = $derived(snap?.update?.skipped_version || update.skippedVersion)
-  const latestKnown = $derived(snap?.update?.latest || update.latest)
-  const lastCheckAt = $derived(snap?.update?.last_check_at || update.lastCheckAt)
+  const problemChecks = $derived(
+    system.checks.filter((check) => check.status === 'warn' || check.status === 'error'),
+  )
+  const visibleJournal = $derived(
+    journalExpanded ? system.journal : system.journal.slice(0, 5),
+  )
+  const pathRows = $derived(Object.entries(snap?.paths ?? {}))
+  const unacknowledged = $derived(
+    system.unacknowledged || snap?.crashes?.count || 0,
+  )
+  const journalTotal = $derived(system.journalTotal || snap?.journal?.count || 0)
+  const coreReady = $derived(snap?.models?.core_ready === true)
+  const missingModels = $derived(snap?.models?.missing_core ?? [])
+  const missingModelsText = $derived(
+    missingModels.length > 2
+      ? `${missingModels.slice(0, 2).join(', ')} и ещё ${missingModels.length - 2}`
+      : missingModels.join(', '),
+  )
+  const ffmpegReady = $derived(snap?.ffmpeg?.available === true)
+  const systemAudio = $derived(snap?.devices?.has_system_audio === true)
+  const screenReady = $derived(permission('screen_capture_supported') !== false)
+  const micName = $derived(defaultName(snap?.devices, snap?.devices?.default_input))
+  const currentVersion = $derived(snap?.update?.current || update.current || '…')
+  const lastCheckAt = $derived(
+    snap?.update?.last_check_at || snap?.update?.last_check?.at || update.lastCheckAt,
+  )
+  const latestVersion = $derived(snap?.update?.latest || update.latest)
+  const overallKind = $derived(
+    unacknowledged > 0 || system.summary?.status === 'error'
+      ? 'error'
+      : system.summary?.status === 'warn' || (snap && !coreReady)
+        ? 'warn'
+        : system.summary?.status === 'ok' || snap
+          ? 'ok'
+          : 'info',
+  )
+  const overallLabel = $derived(
+    overallKind === 'error'
+      ? 'Есть проблема'
+      : overallKind === 'warn'
+        ? 'Есть замечания'
+        : overallKind === 'ok'
+          ? 'Всё в порядке'
+          : 'Проверки не запускались',
+  )
 
   const PATH_LABELS: Record<string, string> = {
     data: 'Данные',
     recordings: 'Записи',
-    models: 'Модели',
-    packs: 'Пакеты',
     logs: 'Логи',
+    models: 'Модели',
     crashes: 'Сбои',
     diagnostics: 'Диагностика',
-    cache: 'Кэш',
-    temp: 'Временные файлы',
   }
 
   const PERMISSION_LABELS: Record<string, string> = {
     microphone: 'Микрофон',
     system_audio: 'Системный звук',
     screen_capture_supported: 'Запись экрана',
-    screen_recording: 'Запись экрана',
-    accessibility: 'Универсальный доступ',
-    notifications: 'Уведомления',
-    input_monitoring: 'Мониторинг ввода',
   }
 
   const MODE_LABELS: Record<string, string> = {
     split: '2 канала',
     mix: '1 канал',
-    screen: 'экран',
-  }
-
-  const OS_NAMES: Record<string, string> = {
-    linux: 'Linux',
-    windows: 'Windows',
-    macos: 'macOS',
-    android: 'Android',
-    ios: 'iOS',
-  }
-
-  interface PermissionRow {
-    name: string
-    value: string
-    ok?: boolean
   }
 
   onMount(() => {
@@ -95,136 +104,51 @@
     void loadCrashes()
   })
 
+  function close(): void {
+    ui.systemOpen = false
+  }
+
+  function onWindowKey(event: KeyboardEvent): void {
+    if (ui.systemOpen && event.key === 'Escape') close()
+  }
+
   function refresh(): void {
     void loadSystem()
     void loadJournal(20)
     void loadCrashes()
   }
 
-  function osText(os: SystemSnapshot['os']): string {
+  function permission(key: string): boolean | string | undefined {
+    const permissions = snap?.permissions
+    if (!permissions) return undefined
+    if (Array.isArray(permissions)) {
+      return permissions.find((item) => item.id === key)?.granted
+    }
+    return permissions[key]
+  }
+
+  function defaultName(devices: DevicesInfo | undefined, id?: string | null): string {
+    if (!id) return ''
+    const all = [...(devices?.inputs || []), ...(devices?.system || [])]
+    return all.find((device) => device.id === id)?.name || id
+  }
+
+  function osText(): string {
+    const os = snap?.os
     if (!os) return ''
     if (typeof os === 'string') return os
-    const name = os.name ? OS_NAMES[os.name] || os.name : os.family
-    return [name, os.version, os.arch, os.kernel].filter(Boolean).join(' · ')
+    return [os.name || os.family, os.arch].filter(Boolean).join(' · ')
   }
 
-  function diskText(d?: DiskInfo): string {
-    if (!d) return ''
-    const parts: string[] = []
-    if (d.free_bytes) parts.push(`свободно ${fmtBytes(d.free_bytes)}`)
-    if (d.total_bytes) parts.push(`из ${fmtBytes(d.total_bytes)}`)
-    return parts.join(' ') || d.path || '—'
+  function diskText(): string {
+    const disk = snap?.disk
+    if (!disk?.free_bytes) return disk?.path || '—'
+    return `свободно ${fmtBytes(disk.free_bytes)}`
   }
 
-  function memoryText(m?: MemoryInfo): string {
-    if (!m) return ''
-    const parts: string[] = []
-    if (m.available_bytes) parts.push(`доступно ${fmtBytes(m.available_bytes)}`)
-    if (m.total_bytes) parts.push(`из ${fmtBytes(m.total_bytes)}`)
-    return parts.join(' ') || '—'
-  }
-
-  function deviceRows(v?: DevicesInfo): Array<{ name: string; meta: string }> {
-    if (!v) return []
-    const rows: Array<{ name: string; meta: string }> = []
-    const add = (list: DevicesInfo['inputs'], kind: string): void => {
-      for (const d of list || []) {
-        const parts = [kind]
-        if (d.muted) parts.push('выключено')
-        if (d.system) parts.push('системный')
-        rows.push({ name: String(d.name || d.id || 'Устройство'), meta: parts.join(' · ') })
-      }
-    }
-    add(v.inputs, 'вход')
-    add(v.system, 'системный звук')
-    return rows
-  }
-
-  function defaultName(v: DevicesInfo, id?: string | null): string {
-    if (!id) return ''
-    const all = [...(v.inputs || []), ...(v.system || [])]
-    return all.find((d) => d.id === id)?.name || id
-  }
-
-  function permissionRows(
-    v: PermissionsInfo | PermissionInfo[] | undefined,
-  ): PermissionRow[] {
-    if (!v) return []
-    if (Array.isArray(v)) {
-      return v.map((p) => ({
-        name: String(p.name || PERMISSION_LABELS[String(p.id || '')] || p.id || 'Разрешение'),
-        value: p.granted === true ? 'разрешено' : p.granted === false ? 'нет' : String(p.detail || ''),
-        ok: typeof p.granted === 'boolean' ? p.granted : undefined,
-      }))
-    }
-    return Object.entries(v).map(([key, value]) => ({
-      name: PERMISSION_LABELS[key] || key,
-      value:
-        value === true ? 'разрешено'
-        : value === false ? 'нет'
-        : value === 'unknown' ? 'не проверено'
-        : String(value),
-      ok: typeof value === 'boolean' ? value : undefined,
-    }))
-  }
-
-  function integrationRows(
-    v: IntegrationInfo | undefined,
-  ): Array<{ label: string; value: string }> {
-    if (!v) return []
-    const rows: Array<{ label: string; value: string }> = []
-    const hotkey = v.hotkey
-    if (hotkey && typeof hotkey === 'object') {
-      const reg =
-        hotkey.registered === true ? 'зарегистрирована'
-        : hotkey.registered === false ? 'не зарегистрирована'
-        : 'регистрация не проверена'
-      rows.push({ label: 'Горячая клавиша', value: `${hotkey.accelerator || '—'} — ${reg}` })
-    }
-    if (typeof v.autostart === 'boolean') {
-      rows.push({ label: 'Автозапуск', value: v.autostart ? 'включён' : 'выключен' })
-    }
-    if (typeof v.single_instance === 'boolean') {
-      rows.push({ label: 'Один экземпляр', value: v.single_instance ? 'да' : 'нет' })
-    }
-    if (typeof v.ipc === 'boolean') {
-      rows.push({ label: 'Управление через IPC', value: v.ipc ? 'доступно' : 'нет' })
-    }
-    if (typeof v.updater === 'string') {
-      rows.push({ label: 'Обновление', value: installModeText(v.updater) })
-    }
-    return rows
-  }
-
-  function journalFile(s: JournalSession): string {
-    if (!s.file) return s.id
-    if (typeof s.file === 'string') return s.file.split(/[\\/]/).pop() || s.file
-    return s.file.name || s.file.id || s.id
-  }
-
-  function journalMeta(s: JournalSession): string {
-    const parts: string[] = []
-    if (s.started_at) parts.push(fmtDateTime(s.started_at))
-    if (s.duration_sec) parts.push(fmtClock(s.duration_sec))
-    if (s.channels) parts.push(s.channels === 1 ? '1 канал' : `${s.channels} канала`)
-    else if (s.mode) parts.push(MODE_LABELS[s.mode] || s.mode)
-    if (s.finalized === false) parts.push('не финализирована')
-    if (s.errors?.length) parts.push(`Ошибок: ${s.errors.length}`)
-    if (s.warnings?.length) parts.push(`Предупреждений: ${s.warnings.length}`)
-    if (s.silent) parts.push('тихая запись')
-    if (s.sys_silent) parts.push('тихий системный канал')
-    if (s.transcribe?.status) parts.push(`Расшифровка: ${s.transcribe.status}`)
-    return parts.join(' · ')
-  }
-
-  function journalBadge(s: JournalSession): string {
-    if (s.status === 'ok' || s.status === 'completed' || s.status === 'done' || s.status === 'finalized') {
-      return statusBadge('ok', 'Готово')
-    }
-    if (s.status === 'failed' || s.status === 'error') return statusBadge('error', 'Ошибка')
-    if (s.status === 'recording') return statusBadge('info', 'Идёт')
-    if (s.status === 'interrupted' || s.status === 'aborted') return statusBadge('warn', 'Прервана')
-    return statusBadge('info', s.status || 'Без статуса')
+  function memoryText(): string {
+    const available = snap?.memory?.available_bytes
+    return available ? `доступно ${fmtBytes(available)}` : '—'
   }
 
   function checkBadge(status: string): string {
@@ -235,427 +159,514 @@
   }
 
   function summaryText(): string {
-    const s = system.summary
-    if (!s) return ''
+    const summary = system.summary
+    if (!summary) return ''
     const parts = [
-      `Норма: ${s.ok}`,
-      `Замечания: ${s.warn}`,
-      `Ошибки: ${s.error}`,
-      `Пропущено: ${s.skip}`,
+      `норма ${summary.ok}`,
+      `замечания ${summary.warn}`,
+      `ошибки ${summary.error}`,
     ]
-    if (system.checkedAt) parts.push(fmtDateTime(system.checkedAt))
+    if (summary.skip) parts.push(`пропущено ${summary.skip}`)
     return parts.join(' · ')
   }
 
-  function installModeText(mode: string): string {
-    if (mode === 'self') return 'самообновление'
-    if (mode === 'manual') return 'вручную'
-    return mode || 'неизвестен'
+  function journalFile(session: JournalSession): string {
+    if (!session.file) return session.id
+    if (typeof session.file === 'string') return session.file.split(/[\\/]/).pop() || session.file
+    return session.file.name || session.file.id || session.id
   }
 
-  async function downloadModelById(id: string): Promise<void> {
-    if (!id) {
-      await openTarget('models')
-      return
+  function journalMeta(session: JournalSession): string {
+    const parts: string[] = []
+    if (session.started_at) parts.push(fmtDateTime(session.started_at))
+    if (session.duration_sec) parts.push(fmtClock(session.duration_sec))
+    if (session.mode) parts.push(MODE_LABELS[session.mode] || session.mode)
+    if (session.silent) parts.push('тихая запись')
+    if (session.errors?.length) parts.push(`ошибок: ${session.errors.length}`)
+    return parts.join(' · ')
+  }
+
+  function journalBadge(session: JournalSession): string {
+    if (session.status === 'recording') return statusBadge('info', 'Идёт')
+    if (session.status === 'ok' || session.status === 'completed' || session.status === 'done') {
+      return statusBadge('ok', 'Готова')
     }
-    const model: ModelInfo = { id, title: id, is_installed: false }
-    if (await downloadModel(model)) void loadSystem()
+    if (session.status === 'interrupted' || session.status === 'aborted') {
+      return statusBadge('warn', 'Прервана')
+    }
+    if (session.status === 'error') return statusBadge('error', 'Ошибка')
+    return statusBadge('info', session.status || 'Без статуса')
   }
 
-  async function handleFix(fix: CheckFix | null): Promise<void> {
+  function openSettings(tab: 'record' | 'people' | 'voices' | 'dict' | 'models'): void {
+    close()
+    emit('open-settings', tab)
+  }
+
+  function openUpdates(): void {
+    close()
+    openUpdateModal()
+  }
+
+  function handleFix(fix: CheckFix | null): void {
     if (!fix) return
-    switch (fix.kind) {
-      case 'open_folder':
-      case 'open_path':
-      case 'open':
-        await openTarget(fix.target)
-        break
-      case 'open_settings':
-        await openTarget(fix.target)
-        break
-      case 'download_model':
-      case 'model':
-        await downloadModelById(fix.target)
-        break
-      case 'download_ffmpeg':
-      case 'ffmpeg':
-        await downloadFfmpeg()
-        break
-      case 'open_update':
-      case 'update':
-        openUpdateModal()
-        break
-      case 'collect_diagnostics':
-      case 'diagnostics':
-        await collectDiagnostics()
-        break
-      default:
-        toast('Это действие пока не поддерживается')
+    if (fix.kind === 'open_folder' || fix.kind === 'open_settings') {
+      void openTarget(fix.target)
+    } else if (fix.kind === 'download_model') {
+      openSettings('models')
+    } else if (fix.kind === 'download_ffmpeg') {
+      openSettings('models')
+    } else if (fix.kind === 'open_update') {
+      openUpdates()
+    } else if (fix.kind === 'collect_diagnostics') {
+      void collectDiagnostics()
     }
+  }
+
+  function crashKind(): string {
+    if (!lastCrash) return ''
+    return lastCrash.synthetic ? 'Завершение без корректного выхода' : 'Сбой'
   }
 </script>
 
-<div class="system-pane">
-  <section class="pane-section">
-    <div class="section-head">
-      <div class="card-title">Обзор</div>
-      <button class="btn-secondary btn-sm" disabled={system.loading} onclick={refresh}>
-        {system.loading ? 'Обновляю…' : 'Обновить'}
-      </button>
-    </div>
-    {#if system.error}
-      <div class="help-text pane-error">{system.error}</div>
-    {/if}
-    {#if snap}
-      <div class="kv-grid">
-        <span class="kv-key">Версия</span><span class="kv-val">{snap.version || '—'}</span>
-        <span class="kv-key">Система</span><span class="kv-val">{osText(snap.os) || '—'}</span>
-        {#if snap.disk}
-          <span class="kv-key">Диск</span><span class="kv-val">{diskText(snap.disk)}</span>
-        {/if}
-        {#if snap.memory}
-          <span class="kv-key">Память</span><span class="kv-val">{memoryText(snap.memory)}</span>
-        {/if}
-        {#if snap.recording?.active}
-          <span class="kv-key">Запись</span>
-          <span class="kv-val">
-            идёт {fmtClock(snap.recording.elapsed || 0)}
-            {#if snap.recording.mode} · {MODE_LABELS[snap.recording.mode] || snap.recording.mode}{/if}
-          </span>
-        {/if}
-        {#if snap.log?.path}
-          <span class="kv-key">Лог</span>
-          <span class="kv-val path-val">
-            {snap.log.path}{#if snap.log.bytes} · {fmtBytes(snap.log.bytes)}{/if}
-          </span>
-        {/if}
-      </div>
-      {#if pathRows.length}
-        <div class="kv-grid">
-          {#each pathRows as [key, value] (key)}
-            <span class="kv-key">{PATH_LABELS[key] || key}</span>
-            <span class="kv-val path-val">{value}</span>
-          {/each}
-        </div>
-      {/if}
-    {:else if system.loading}
-      <div class="help-text">Загружаю состояние…</div>
-    {/if}
-  </section>
+<svelte:window onkeydown={onWindowKey} />
 
-  <section class="pane-section">
-    <div class="card-title">Проверка настроек</div>
-    <label class="check-probe">
-      <input type="checkbox" bind:checked={probeAudio} />
-      <span>Проверить микрофон короткой записью</span>
-    </label>
-    <div class="row-start">
-      <button
-        class="btn-secondary"
-        disabled={system.checksLoading}
-        onclick={() => void runChecks(probeAudio)}
-      >
-        {system.checksLoading ? 'Проверяю…' : 'Проверить настройки'}
-      </button>
+{#snippet checkRow(check: SystemCheck)}
+  <div class="rec-item">
+    <div class="rec-info">
+      <span class="rec-name">{check.title}</span>
+      {#if check.detail}<span class="rec-meta">{check.detail}</span>{/if}
+      {#if check.hint}<span class="rec-meta check-hint">{check.hint}</span>{/if}
     </div>
-    {#if system.summary}
-      <div class="help-text">{summaryText()}</div>
-    {/if}
-    {#if system.checks.length}
-      <div class="recordings-list">
-        {#each system.checks as c (c.id)}
-          <div class="rec-item check-item">
-            <div class="rec-info">
-              <span class="rec-name">{c.title}</span>
-              {#if c.detail}<span class="rec-meta">{c.detail}</span>{/if}
-              {#if c.hint}<span class="rec-meta check-hint">{c.hint}</span>{/if}
-            </div>
-            <div class="rec-actions">
-              {@html checkBadge(c.status)}
-              {#if c.fix}
-                <button class="btn-secondary btn-sm" onclick={() => void handleFix(c.fix)}>
-                  {c.fix.label || 'Исправить'}
-                </button>
+    <div class="rec-actions">
+      {@html checkBadge(check.status)}
+      {#if check.fix}
+        <button class="btn-secondary btn-sm" onclick={() => handleFix(check.fix)}>
+          {check.fix.label || 'Исправить'}
+        </button>
+      {/if}
+    </div>
+  </div>
+{/snippet}
+
+{#if ui.systemOpen}
+  <div
+    class="modal-overlay open system-overlay"
+    role="presentation"
+    onmousedown={(event) => {
+      if (event.target === event.currentTarget) close()
+    }}
+  >
+    <div
+      class="modal-box system-box"
+      role="dialog"
+      tabindex="-1"
+      aria-modal="true"
+      aria-label="Система"
+    >
+      <div class="system-head">
+        <div class="system-heading">
+          <div class="modal-title">Система</div>
+          <div class="system-sub">
+            {@html statusBadge(overallKind, overallLabel)}
+            <span>{osText() || 'Проверка окружения'}</span>
+          </div>
+        </div>
+        <button class="icon-btn" aria-label="Закрыть состояние системы" onclick={close}>✕</button>
+      </div>
+
+      <div class="system-body">
+        <div class="system-hero">
+          <div>
+            <div class="system-hero-title">Проверка настроек</div>
+            <div class="help-text">
+              {#if system.checkedAt}
+                Последняя проверка {fmtDateTime(system.checkedAt)}
+              {:else}
+                Проверка займёт несколько секунд и не мешает уже идущей записи.
               {/if}
             </div>
           </div>
-        {/each}
-      </div>
-    {:else if !system.checksLoading}
-      <div class="help-text">Проверки ещё не запускались.</div>
-    {/if}
-  </section>
-
-  <section class="pane-section">
-    <div class="card-title">Модели</div>
-    {#if snap?.models}
-      <div class="kv-grid">
-        <span class="kv-key">Базовые модели</span>
-        <span class="kv-val">{snap.models.core_ready ? 'готовы' : 'не хватает'}</span>
-        <span class="kv-key">Установлено</span>
-        <span class="kv-val">{snap.models.installed ?? 0} из {snap.models.total ?? 0}</span>
-        {#if snap.models.missing_core?.length}
-          <span class="kv-key">Не хватает</span>
-          <span class="kv-val">{snap.models.missing_core.join(', ')}</span>
-        {/if}
-        {#if snap.models.updates?.length}
-          <span class="kv-key">Обновления</span>
-          <span class="kv-val">{snap.models.updates.join(', ')}</span>
-        {/if}
-      </div>
-    {:else}
-      <div class="help-text">Сводка по моделям недоступна.</div>
-    {/if}
-  </section>
-
-  <section class="pane-section">
-    <div class="card-title">ffmpeg</div>
-    <div class="rec-item">
-      <div class="rec-info">
-        <span class="rec-name">ffmpeg</span>
-        <span class="rec-meta">
-          {#if snap?.ffmpeg?.available}
-            Установлен
-          {:else if snap?.ffmpeg?.downloading}
-            Скачивается {snap.ffmpeg.pct || 0}%
-          {:else}
-            Не найден. Видео, запись экрана и экспорт MP3 недоступны.
-          {/if}
-        </span>
-        {#if snap?.ffmpeg?.error}
-          <span class="rec-meta">{snap.ffmpeg.error}</span>
-        {/if}
-      </div>
-      <div class="rec-actions">
-        {@html statusBadge(snap?.ffmpeg?.available ? 'ok' : 'warn', snap?.ffmpeg?.available ? 'Есть' : 'Нет')}
-      </div>
-    </div>
-  </section>
-
-  <section class="pane-section">
-    <div class="card-title">Аудио и разрешения</div>
-    {#if devices.length}
-      <div class="recordings-list">
-        {#each devices as d, i (i)}
-          <div class="rec-item">
-            <div class="rec-info">
-              <span class="rec-name">{d.name}</span>
-              {#if d.meta}<span class="rec-meta">{d.meta}</span>{/if}
-            </div>
+          <div class="row-start">
+            <button
+              class="btn-primary"
+              disabled={system.checksLoading}
+              onclick={() => void runChecks(probeAudio)}
+            >
+              {system.checksLoading ? 'Проверяю…' : 'Проверить настройки'}
+            </button>
+            <button class="btn-secondary btn-sm" disabled={system.loading} onclick={refresh}>
+              {system.loading ? 'Обновляю…' : 'Обновить'}
+            </button>
           </div>
-        {/each}
-      </div>
-    {:else}
-      <div class="help-text">Устройства не перечислены.</div>
-    {/if}
-    {#if snap?.devices}
-      <div class="kv-grid">
-        <span class="kv-key">Вход по умолчанию</span>
-        <span class="kv-val">{defaultName(snap.devices, snap.devices.default_input) || 'не выбран'}</span>
-        <span class="kv-key">Системный звук</span>
-        <span class="kv-val">{snap.devices.has_system_audio ? 'доступен' : 'не найден'}</span>
-      </div>
-    {/if}
-    {#if permissions.length}
-      <div class="recordings-list">
-        {#each permissions as p, i (i)}
-          <div class="rec-item">
-            <div class="rec-info">
-              <span class="rec-name">{p.name}</span>
-              {#if p.value}<span class="rec-meta">{p.value}</span>{/if}
+        </div>
+
+        <label class="setting-check system-probe">
+          <input type="checkbox" bind:checked={probeAudio} />
+          <span class="setting-switch" aria-hidden="true"></span>
+          <span>Проверять микрофон короткой записью</span>
+        </label>
+
+        <div class="system-grid">
+          <section class="system-card">
+            <div class="system-card-head">
+              <span class="card-title">Запись</span>
+              {@html snap?.recording?.active
+                ? statusBadge('info', 'Идёт')
+                : statusBadge(systemAudio ? 'ok' : 'warn', systemAudio ? 'Готова' : 'Без системы')}
             </div>
-            {#if p.ok !== undefined}
+            <div class="system-facts">
+              <span class="system-key">Микрофон</span>
+              <span class="system-val">{micName || 'не выбран'}</span>
+              <span class="system-key">Системный звук</span>
+              <span class="system-val">{systemAudio ? 'доступен' : 'не найден'}</span>
+              <span class="system-key">Запись экрана</span>
+              <span class="system-val">{screenReady ? 'доступна' : 'нет разрешения'}</span>
+            </div>
+          </section>
+
+          <section class="system-card">
+            <div class="system-card-head">
+              <span class="card-title">Компоненты</span>
+              {@html coreReady && ffmpegReady
+                ? statusBadge('ok', 'Готовы')
+                : statusBadge('warn', 'Не всё')}
+            </div>
+            <div class="system-facts">
+              <span class="system-key">Модели</span>
+              <span class="system-val">
+                {coreReady
+                  ? 'базовые установлены'
+                  : `не хватает: ${missingModelsText || ' '}`}
+              </span>
+              <span class="system-key">ffmpeg</span>
+              <span class="system-val">{ffmpegReady ? 'установлен' : 'не установлен'}</span>
+            </div>
+            <button class="btn-secondary btn-sm" onclick={() => openSettings('models')}>
+              Открыть «Компоненты»
+            </button>
+          </section>
+
+          <section class="system-card">
+            <div class="system-card-head">
+              <span class="card-title">Обновления</span>
+              {@html !lastCheckAt
+                ? statusBadge('info', 'Не проверялось')
+                : update.isNewer
+                  ? statusBadge('warn', `Доступна ${latestVersion}`)
+                  : statusBadge('ok', 'Актуально')}
+            </div>
+            <div class="system-facts">
+              <span class="system-key">Версия</span>
+              <span class="system-val">{currentVersion}</span>
+              <span class="system-key">Проверка</span>
+              <span class="system-val">{lastCheckAt ? fmtDateTime(lastCheckAt) : 'не выполнялась'}</span>
+            </div>
+            <button class="btn-secondary btn-sm" onclick={openUpdates}>Проверить обновления</button>
+          </section>
+
+          <section class="system-card">
+            <div class="system-card-head">
+              <span class="card-title">Сбои и журнал</span>
+              {@html unacknowledged > 0
+                ? statusBadge('error', `${unacknowledged} сбоя`)
+                : statusBadge('ok', 'Чисто')}
+            </div>
+            <div class="system-facts">
+              <span class="system-key">Сбои</span>
+              <span class="system-val">{unacknowledged || 'нет'}</span>
+              <span class="system-key">Записей</span>
+              <span class="system-val">{journalTotal || 'нет'}</span>
+            </div>
+            {#if lastCrash}
+              <button class="btn-secondary btn-sm" onclick={() => void ackCrash(lastCrash.id)}>
+                Скрыть сбой
+              </button>
+            {/if}
+          </section>
+        </div>
+
+        {#if system.checks.length}
+          <section class="system-section">
+            <div class="system-section-head">
+              <span class="card-title">Проверки</span>
+              <span class="help-text">{summaryText()}</span>
+            </div>
+            {#if problemChecks.length}
+              <div class="recordings-list">
+                {#each problemChecks as check (check.id)}
+                  {@render checkRow(check)}
+                {/each}
+              </div>
+            {:else}
+              <div class="empty-note">Замечаний нет</div>
+            {/if}
+            <details class="collapse">
+              <summary class="collapse-head">
+                <span>Все проверки ({system.checks.length})</span>
+                <span class="collapse-chev" aria-hidden="true">›</span>
+              </summary>
+              <div class="collapse-body">
+                <div class="recordings-list">
+                  {#each system.checks as check (check.id)}
+                    {@render checkRow(check)}
+                  {/each}
+                </div>
+              </div>
+            </details>
+          </section>
+        {/if}
+
+        <section class="system-section">
+          <div class="system-section-head">
+            <span class="card-title">Последние записи</span>
+            {#if system.journalTotal > 5}
+              <button
+                class="link-btn"
+                onclick={() => (journalExpanded = !journalExpanded)}
+              >
+                {journalExpanded ? 'Свернуть' : `Показать все (${system.journalTotal})`}
+              </button>
+            {/if}
+          </div>
+          {#if visibleJournal.length}
+            <div class="recordings-list">
+              {#each visibleJournal as session (session.id)}
+                <div class="rec-item">
+                  <div class="rec-info">
+                    <span class="rec-name">{journalFile(session)}</span>
+                    <span class="rec-meta">{journalMeta(session)}</span>
+                  </div>
+                  <div class="rec-actions">{@html journalBadge(session)}</div>
+                </div>
+              {/each}
+            </div>
+            {#if system.journalTruncated && !journalExpanded}
+              <div class="help-text">
+                Показаны последние {system.journal.length} из {system.journalTotal}.
+              </div>
+            {/if}
+          {:else}
+            <div class="empty-note">Журнал пуст.</div>
+          {/if}
+        </section>
+
+        {#if lastCrash}
+          <section class="system-section">
+            <div class="system-section-head">
+              <span class="card-title">Сбои</span>
+              <span class="help-text">{crashKind()}</span>
+            </div>
+            <div class="rec-item">
+              <div class="rec-info">
+                <span class="rec-name">{fmtDateTime(lastCrash.created_at) || 'без даты'}</span>
+                <span class="rec-meta">
+                  {crashMessage(lastCrash) || 'Сообщение не записано.'}
+                </span>
+                <span class="rec-meta">
+                  {#if crashVersion(lastCrash)}Версия {crashVersion(lastCrash)}{/if}
+                  {#if crashHasBacktrace(lastCrash)} · есть стек вызовов{/if}
+                </span>
+              </div>
               <div class="rec-actions">
-                {@html statusBadge(p.ok ? 'ok' : 'warn', p.ok ? 'Есть' : 'Нет')}
+                <button class="btn-secondary btn-sm" onclick={() => void collectDiagnostics()}>
+                  Собрать отчёт
+                </button>
+                <button class="btn-secondary btn-sm" onclick={() => void ackCrash(lastCrash.id)}>
+                  Скрыть
+                </button>
+              </div>
+            </div>
+          </section>
+        {/if}
+
+        <details class="collapse system-details">
+          <summary class="collapse-head">
+            <span class="card-title">Подробности</span>
+            <span class="collapse-chev" aria-hidden="true">›</span>
+          </summary>
+          <div class="collapse-body">
+            <div class="system-facts">
+              {#each pathRows as [key, value] (key)}
+                <span class="system-key">{PATH_LABELS[key] || key}</span>
+                <span class="system-val system-path">{value}</span>
+              {/each}
+            </div>
+            <div class="system-facts">
+              <span class="system-key">Диск</span><span class="system-val">{diskText()}</span>
+              <span class="system-key">Память</span><span class="system-val">{memoryText()}</span>
+              {#if snap?.log?.path}
+                <span class="system-key">Лог</span>
+                <span class="system-val system-path">{snap.log.path}</span>
+              {/if}
+            </div>
+            {#if !isMobile}
+              <div class="row-start">
+                <button class="btn-secondary btn-sm" onclick={() => void collectDiagnostics()}>
+                  Собрать отчёт
+                </button>
+                <button class="btn-secondary btn-sm" onclick={() => void openTarget('diagnostics')}>
+                  Открыть папку
+                </button>
               </div>
             {/if}
           </div>
-        {/each}
-      </div>
-    {/if}
-  </section>
+        </details>
 
-  <section class="pane-section">
-    <div class="card-title">Интеграция</div>
-    {#if integrations.length}
-      <div class="kv-grid">
-        {#each integrations as row (row.label)}
-          <span class="kv-key">{row.label}</span><span class="kv-val">{row.value}</span>
-        {/each}
-      </div>
-    {:else}
-      <div class="help-text">Данные интеграции недоступны.</div>
-    {/if}
-  </section>
-
-  <section class="pane-section">
-    <div class="card-title">Обновления и поставка</div>
-    <div class="kv-grid">
-      <span class="kv-key">Версия</span>
-      <span class="kv-val">{snap?.update?.current || snap?.version || update.current || '—'}</span>
-      <span class="kv-key">Режим установки</span>
-      <span class="kv-val">{installModeText(snap?.update?.mode || update.installMode)}</span>
-      <span class="kv-key">Самообновление</span>
-      <span class="kv-val">{selfUpdate ? 'доступно' : 'только вручную'}</span>
-      <span class="kv-key">Подпись ОС</span>
-      <span class="kv-val">{snap?.update?.signed === true ? 'есть' : 'нет — ожидаемо для этой сборки'}</span>
-      {#if latestKnown}
-        <span class="kv-key">Последняя версия</span><span class="kv-val">{latestKnown}</span>
-      {/if}
-      {#if lastCheckAt}
-        <span class="kv-key">Проверено</span><span class="kv-val">{fmtDateTime(lastCheckAt)}</span>
-      {/if}
-      {#if skippedVersion}
-        <span class="kv-key">Пропущена версия</span><span class="kv-val">{skippedVersion}</span>
-      {/if}
-    </div>
-    <div class="row-start">
-      <button
-        class="btn-secondary btn-sm"
-        disabled={update.checking}
-        onclick={() => void checkUpdate(true, true)}
-      >
-        {update.checking ? 'Проверяю…' : 'Проверить обновления'}
-      </button>
-      <button class="btn-secondary btn-sm" onclick={openUpdateModal}>
-        Подробнее об обновлении
-      </button>
-    </div>
-  </section>
-
-  <section class="pane-section">
-    <div class="section-head">
-      <div class="card-title">Последние записи</div>
-      <button class="btn-secondary btn-sm" onclick={() => void loadJournal(20)}>Обновить</button>
-    </div>
-    {#if system.journal.length}
-      <div class="recordings-list">
-        {#each system.journal as s (s.id)}
-          <div class="rec-item">
-            <div class="rec-info">
-              <span class="rec-name">{journalFile(s)}</span>
-              <span class="rec-meta">{journalMeta(s)}</span>
-            </div>
-            <div class="rec-actions">{@html journalBadge(s)}</div>
-          </div>
-        {/each}
-      </div>
-      {#if system.journalTruncated}
-        <div class="help-text">Показаны последние {system.journal.length} из {system.journalTotal}.</div>
-      {/if}
-    {:else if snap?.journal?.count}
-      <div class="help-text">
-        Файлов журнала: {snap.journal.count}
-        {#if snap.journal.last_at} · последняя запись {fmtDateTime(snap.journal.last_at)}{/if}
-      </div>
-    {:else}
-      <div class="help-text">Журнал пуст.</div>
-    {/if}
-  </section>
-
-  <section class="pane-section">
-    <div class="card-title">Диагностика</div>
-    <div class="help-text">
-      Отчёт с версией, разрешениями, устройствами, журналом и хвостом лога.
-      Аудио, расшифровок и имён участников в нём нет.
-    </div>
-    <div class="row-start">
-      <button class="btn-secondary btn-sm" onclick={() => void collectDiagnostics()}>
-        Собрать отчёт
-      </button>
-      <button class="btn-secondary btn-sm" onclick={() => void openTarget('diagnostics')}>
-        Открыть папку
-      </button>
-    </div>
-  </section>
-
-  <section class="pane-section">
-    <div class="section-head">
-      <div class="card-title">Сбои</div>
-      <button class="btn-secondary btn-sm" disabled={system.crashesLoading} onclick={() => void loadCrashes()}>
-        {system.crashesLoading ? 'Загружаю…' : 'Обновить'}
-      </button>
-    </div>
-    {#if lastCrash}
-      <div class="rec-item">
-        <div class="rec-info">
-          <span class="rec-name">
-            {lastCrash.synthetic ? 'Завершение без корректного выхода' : (lastCrash.kind || 'Сбой')}
-            · {fmtDateTime(lastCrash.created_at) || 'без даты'}
+        <div class="system-footer">
+          <span class="help-text">
+            {#if permission('microphone') === 'unknown'}
+              Разрешение микрофона проверяется короткой записью.
+            {:else}
+              {PERMISSION_LABELS.microphone}: {permission('microphone') || 'не проверено'}
+            {/if}
           </span>
-          <span class="rec-meta">{crashMessage(lastCrash) || 'Сообщение не записано.'}</span>
-          <span class="rec-meta">
-            {#if crashVersion(lastCrash)}Версия {crashVersion(lastCrash)}{/if}
-            {#if crashHasBacktrace(lastCrash)} · есть стек вызовов{/if}
-          </span>
-        </div>
-        <div class="rec-actions">
-          <button class="btn-secondary btn-sm" onclick={() => void ackCrash(lastCrash.id)}>Скрыть</button>
+          <button class="btn-secondary" onclick={close}>Закрыть</button>
         </div>
       </div>
-    {:else if snap?.crashes?.count}
-      <div class="help-text">
-        Неразобранных сбоев нет. Файлов сбоев: {snap.crashes.count}
-        {#if snap.crashes.last_at} · последний {fmtDateTime(snap.crashes.last_at)}{/if}
-      </div>
-    {:else}
-      <div class="help-text">Неразобранных сбоев нет.</div>
-    {/if}
-  </section>
-</div>
+    </div>
+  </div>
+{/if}
 
 <style>
-  .system-pane {
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
+  .system-overlay {
+    z-index: 70;
   }
-  .pane-section {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
+  .system-box {
+    max-width: 760px;
+    padding: 0;
+    gap: 0;
+    max-height: calc(100dvh - 56px);
+    overflow: hidden;
   }
-  .section-head {
+  .system-head {
     display: flex;
     justify-content: space-between;
-    align-items: center;
-    gap: 10px;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 20px 22px 14px;
+    border-bottom: 1px solid var(--border-soft);
+    flex-shrink: 0;
   }
-  .kv-grid {
-    display: grid;
-    grid-template-columns: minmax(120px, max-content) minmax(0, 1fr);
-    gap: 3px 14px;
-    font-size: 12.5px;
+  .system-heading {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
   }
-  .kv-key {
-    color: var(--text-muted);
-  }
-  .kv-val {
-    color: var(--text-primary);
-    word-break: break-word;
-  }
-  .path-val {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-  }
-  .check-probe {
+  .system-sub {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 12.5px;
+    flex-wrap: wrap;
     color: var(--text-muted);
-    cursor: pointer;
+    font-size: 12px;
   }
-  .check-item {
-    align-items: start;
+  .system-body {
+    overflow-y: auto;
+    padding: 18px 22px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .system-hero {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .system-hero-title {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .system-probe {
+    margin-top: -4px;
+  }
+  .system-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .system-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 13px 14px;
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-inner);
+    background: #fff;
+    min-width: 0;
+  }
+  .system-card-head,
+  .system-section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .system-facts {
+    display: grid;
+    grid-template-columns: minmax(100px, max-content) minmax(0, 1fr);
+    gap: 4px 12px;
+    font-size: 12.5px;
+  }
+  .system-key {
+    color: var(--text-muted);
+  }
+  .system-val {
+    color: var(--text-primary);
+    word-break: break-word;
+  }
+  .system-path {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+  }
+  .system-section {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding-top: 2px;
   }
   .check-hint {
     color: var(--text-faint);
   }
-  .pane-error {
+  .system-details {
+    border-top: 1px solid var(--border-soft);
+    padding-top: 10px;
+  }
+  .system-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    border-top: 1px solid var(--border-soft);
+    padding-top: 12px;
+  }
+  .system-box :global(.status-badge.error) {
     color: var(--accent-rec);
   }
-  .system-pane :global(.status-badge.error) {
-    color: var(--accent-rec);
+  @media (max-width: 640px) {
+    .system-box {
+      max-height: calc(100dvh - 24px);
+    }
+    .system-head {
+      padding: 16px 16px 12px;
+    }
+    .system-body {
+      padding: 14px 16px 16px;
+    }
+    .system-grid {
+      grid-template-columns: 1fr;
+    }
+    .system-hero .row-start {
+      width: 100%;
+    }
+    .system-hero .btn-primary {
+      flex: 1;
+    }
   }
 </style>

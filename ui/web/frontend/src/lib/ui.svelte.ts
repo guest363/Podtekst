@@ -2,6 +2,7 @@ import { isVideoPath } from './api'
 
 export const ui = $state({
   settingsOpen: false,
+  systemOpen: false,
   donateOpen: false,
   transcriptOpen: false,
   currentTranscriptPath: '',

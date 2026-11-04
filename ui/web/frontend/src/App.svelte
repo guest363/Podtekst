@@ -17,6 +17,7 @@
     statusBadge,
   } from './lib/settings.svelte.ts'
   import { loadSupportInfo } from './lib/support.svelte.ts'
+  import { system } from './lib/system.svelte.ts'
   import { checkUpdate, dismissUpdate, openUpdateModal, update } from './lib/update.svelte.ts'
   import { initRouting, on, ui } from './lib/ui.svelte.ts'
   import { renderMarkdown } from './lib/markdown'
@@ -26,6 +27,7 @@
   import SettingsModal from './components/SettingsModal.svelte'
   import DonateModal from './components/DonateModal.svelte'
   import UpdateModal from './components/UpdateModal.svelte'
+  import SystemPane from './components/SystemPane.svelte'
   import CrashBanner from './components/CrashBanner.svelte'
   import Toasts from './components/Toasts.svelte'
   import { isMobile, isCoreModel, remainingMb } from './lib/api'
@@ -40,6 +42,15 @@
     coreModels.some((m) => engine.downloading[m.id] !== undefined)
   )
   const coreLeftMb = $derived(coreModels.reduce((s, m) => s + remainingMb(m), 0))
+  const statusTone = $derived(
+    system.unacknowledged > 0 || system.summary?.status === 'error'
+      ? 'error'
+      : system.summary?.status === 'warn' || system.snapshot?.models?.core_ready === false
+        ? 'warn'
+        : system.snapshot
+          ? 'ok'
+          : 'info'
+  )
 
   function closeIntro(): void {
     introOpen = false
@@ -116,6 +127,15 @@
         <span class="app-title-text">Подтекст</span>
       </div>
       <div class="header-right">
+        <button
+          class="status-pill"
+          title="Состояние системы"
+          aria-label="Открыть состояние системы"
+          onclick={() => (ui.systemOpen = true)}
+        >
+          <span class="status-dot {statusTone}" aria-hidden="true"></span>
+          <span class="status-pill-text">Состояние</span>
+        </button>
         <button
           class="icon-btn help-btn"
           title="Как это работает"
@@ -299,10 +319,49 @@
     flex-wrap: wrap;
     margin-top: 4px;
   }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 11px;
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-pill);
+    background: #fff;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 180ms var(--ease-spring), border-color 180ms var(--ease-spring);
+  }
+  .status-pill:hover {
+    background: var(--bg-inset);
+    border-color: #cbd5e1;
+  }
+  .status-pill:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 2px;
+  }
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #94a3b8;
+    flex-shrink: 0;
+  }
+  .status-dot.ok { background: var(--accent-ok); }
+  .status-dot.warn { background: var(--accent-amber); }
+  .status-dot.error { background: var(--accent-rec); }
+  @media (max-width: 640px) {
+    .status-pill { padding: 7px 9px; }
+    .status-pill-text { display: none; }
+  }
 </style>
 
 <SettingsModal />
 <UpdateModal />
+<SystemPane />
 <DonateModal />
 <Toasts />
 

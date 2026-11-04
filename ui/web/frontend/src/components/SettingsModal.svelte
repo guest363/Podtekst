@@ -20,41 +20,15 @@
     statusBadge,
     togglePack,
   } from '../lib/settings.svelte.ts'
-  import { isMobile, readJsonSafe, remainingMb } from '../lib/api'
+  import { isMobile, remainingMb } from '../lib/api'
   import type { ModelInfo } from '../lib/api'
-  import { checkUpdate, openUpdateModal, update } from '../lib/update.svelte.ts'
+  import { checkUpdate, update } from '../lib/update.svelte.ts'
   import { peopleState } from '../lib/people.svelte.ts'
   import People from './People.svelte'
-  import SystemPane from './SystemPane.svelte'
 
-  let tab = $state<'record' | 'people' | 'voices' | 'dict' | 'models' | 'system'>('record')
+  let tab = $state<'record' | 'people' | 'voices' | 'dict' | 'models'>('record')
   let packFileInput: HTMLInputElement | null = $state(null)
   let termInput = $state('')
-  let diagBusy = $state(false)
-  let diagPath = $state('')
-
-  async function collectDiagnostics() {
-    diagBusy = true
-    try {
-      const d = await readJsonSafe(await fetch('/api/diagnostics', { method: 'POST' }))
-      if (!d.ok) throw new Error(d.error || 'Не удалось собрать отчёт')
-      diagPath = String(d.path || '')
-      toast('Отчёт диагностики сохранён')
-    } catch (e) {
-      toast('Отчёт не собрался: ' + (e as Error).message, 'error')
-    } finally {
-      diagBusy = false
-    }
-  }
-
-  async function openDiagnostics() {
-    try {
-      const d = await readJsonSafe(await fetch('/api/diagnostics/open', { method: 'POST' }))
-      if (!d.ok) throw new Error(d.error || 'Не удалось открыть папку')
-    } catch (e) {
-      toast('Папка не открылась: ' + (e as Error).message, 'error')
-    }
-  }
 
   const filteredHotwords = $derived.by(() => {
     const q = termInput.trim().toLowerCase()
@@ -117,6 +91,12 @@
   }
 
   on('models-changed', () => void loadModels())
+  on('open-settings', (value) => {
+    if (value === 'record' || value === 'people' || value === 'voices' || value === 'dict' || value === 'models') {
+      tab = value
+    }
+    ui.settingsOpen = true
+  })
   // Компонент живёт всё время приложения: одно чтение статуса на старте,
   // дальше состояние обновляет опрос после нажатия «Скачать».
   void loadFfmpeg()
@@ -157,7 +137,7 @@
             {update.checking ? 'Проверяю…' : 'Проверить обновления'}
           </button>
           ·
-          <button class="link-btn" onclick={openUpdateModal}>Подробнее</button>
+          <button class="link-btn" onclick={() => (ui.systemOpen = true)}>Состояние</button>
         </div>
       </div>
       <button class="icon-btn" aria-label="Закрыть настройки" onclick={() => (ui.settingsOpen = false)}>✕</button>
@@ -203,14 +183,6 @@
         onclick={() => void openModelsTab()}
       >
         Компоненты
-      </button>
-      <button
-        class="settings-tab {tab === 'system' ? 'active' : ''}"
-        role="tab"
-        aria-selected={tab === 'system'}
-        onclick={() => (tab = 'system')}
-      >
-        Система
       </button>
     </div>
 
@@ -446,33 +418,6 @@
           <div class="row-start">
             <button class="btn-secondary" onclick={() => void loadModels()}>Обновить список</button>
           </div>
-          {#if !isMobile}
-            <div class="rec-item">
-              <div class="rec-info">
-                <span class="rec-name">Диагностика</span>
-                <span class="rec-meta">
-                  Версия, разрешения, устройства и последние строки лога. Без записей и расшифровок.
-                </span>
-                {#if diagPath}
-                  <span class="rec-meta">{diagPath}</span>
-                {/if}
-              </div>
-              <div class="rec-actions">
-                <button
-                  class="btn-secondary btn-sm"
-                  disabled={diagBusy}
-                  onclick={() => void collectDiagnostics()}
-                >
-                  {diagBusy ? 'Собираю…' : 'Собрать отчёт'}
-                </button>
-                {#if diagPath}
-                  <button class="btn-secondary btn-sm" onclick={() => void openDiagnostics()}>
-                    Открыть папку
-                  </button>
-                {/if}
-              </div>
-            </div>
-          {/if}
         </div>
       {:else if tab === 'dict'}
         <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Словарь терминов">
@@ -572,10 +517,6 @@
             Требует модель «GigaAM-v3 e2e CTC int8» из вкладки «Компоненты».
             Без неё второй проход пропускается.
           </div>
-        </div>
-      {:else if tab === 'system'}
-        <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Система">
-          <SystemPane />
         </div>
       {/if}
     </div>
@@ -716,32 +657,6 @@
   .settings-pane {
     display: flex; flex-direction: column; gap: 14px;
     padding-top: 2px;
-  }
-  .setting-check {
-    display: flex; align-items: center; gap: 10px;
-    font-size: 12.5px; font-weight: 700; color: var(--text-primary);
-    cursor: pointer; padding-top: 4px;
-  }
-  .setting-check input {
-    position: absolute; opacity: 0; width: 1px; height: 1px;
-    pointer-events: none;
-  }
-  .setting-switch {
-    position: relative; flex-shrink: 0;
-    width: 36px; height: 21px; border-radius: 999px;
-    background: #c3cedb;
-    transition: background 180ms var(--ease-spring);
-  }
-  .setting-switch::after {
-    content: ""; position: absolute; top: 3px; left: 3px;
-    width: 15px; height: 15px; border-radius: 50%;
-    background: #fff; box-shadow: 0 1px 3px rgba(15, 30, 51, 0.25);
-    transition: transform 180ms var(--ease-spring);
-  }
-  .setting-check input:checked + .setting-switch { background: var(--accent-ok); }
-  .setting-check input:checked + .setting-switch::after { transform: translateX(15px); }
-  .setting-check input:focus-visible + .setting-switch {
-    outline: 2px solid var(--accent-blue); outline-offset: 2px;
   }
   .link-meta-btn {
     border: none;
