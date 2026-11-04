@@ -17,7 +17,8 @@
     statusBadge,
   } from './lib/settings.svelte.ts'
   import { loadSupportInfo } from './lib/support.svelte.ts'
-  import { applyUpdate, checkUpdate, dismissUpdate, update } from './lib/update.svelte.ts'
+  import { system } from './lib/system.svelte.ts'
+  import { checkUpdate, dismissUpdate, openUpdateModal, update } from './lib/update.svelte.ts'
   import { initRouting, on, ui } from './lib/ui.svelte.ts'
   import { renderMarkdown } from './lib/markdown'
   import RecordingDeck from './components/RecordingDeck.svelte'
@@ -25,6 +26,9 @@
   import TranscriptPage from './components/TranscriptPage.svelte'
   import SettingsModal from './components/SettingsModal.svelte'
   import DonateModal from './components/DonateModal.svelte'
+  import UpdateModal from './components/UpdateModal.svelte'
+  import SystemPane from './components/SystemPane.svelte'
+  import CrashBanner from './components/CrashBanner.svelte'
   import Toasts from './components/Toasts.svelte'
   import { isMobile, isCoreModel, remainingMb } from './lib/api'
 
@@ -38,6 +42,15 @@
     coreModels.some((m) => engine.downloading[m.id] !== undefined)
   )
   const coreLeftMb = $derived(coreModels.reduce((s, m) => s + remainingMb(m), 0))
+  const statusTone = $derived(
+    system.unacknowledged > 0 || system.summary?.status === 'error'
+      ? 'error'
+      : system.summary?.status === 'warn' || system.snapshot?.models?.core_ready === false
+        ? 'warn'
+        : system.snapshot
+          ? 'ok'
+          : 'info'
+  )
 
   function closeIntro(): void {
     introOpen = false
@@ -110,10 +123,18 @@
   <div class="page">
     <header class="app-header">
       <div class="app-title">
-        <span class="dot" aria-hidden="true"></span>
         <span class="app-title-text">Подтекст</span>
       </div>
       <div class="header-right">
+        <button
+          class="status-pill"
+          title="Состояние системы"
+          aria-label="Открыть состояние системы"
+          onclick={() => (ui.systemOpen = true)}
+        >
+          <span class="status-dot {statusTone}" aria-hidden="true"></span>
+          <span class="status-pill-text">Состояние</span>
+        </button>
         <button
           class="icon-btn help-btn"
           title="Как это работает"
@@ -148,40 +169,29 @@
     </header>
 
     <main class="main-column">
+      <CrashBanner />
       {#if update.isNewer && !update.dismissed}
         <section class="card update-card" aria-label="Доступно обновление">
           <div class="card-header">
             <span class="card-title">Доступна версия {update.latest}</span>
-            {#if !update.applying}
-              <button class="icon-btn" aria-label="Скрыть предложение обновления" onclick={dismissUpdate}>
-                ✕
-              </button>
-            {/if}
+            <button class="icon-btn" aria-label="Скрыть предложение обновления" onclick={dismissUpdate}>
+              ✕
+            </button>
           </div>
           <div class="help-text">
+            У вас установлена версия {update.current}.
             {#if update.applying}
-              Скачиваю обновление… {update.pct}%. После установки приложение перезапустится само.
-            {:else if update.error}
-              {update.error}
+              Скачиваю обновление… {update.pct}%.
+            {:else if update.selfUpdate}
+              Обновление скачается и установится здесь.
             {:else}
-              У вас установлена версия {update.current}.
-              {update.selfUpdate
-                ? 'Обновление скачается и установится здесь.'
-                : 'Новую версию можно скачать со страницы релиза.'}
+              Новую версию можно скачать со страницы релиза.
             {/if}
           </div>
-          {#if !update.applying}
-            <div class="row-start">
-              {#if update.selfUpdate}
-                <button class="btn-primary" onclick={applyUpdate}>Обновить и перезапустить</button>
-              {:else}
-                <a class="btn-primary" href={update.url} target="_blank" rel="noopener noreferrer">
-                  Скачать обновление
-                </a>
-              {/if}
-              <button class="btn-secondary" onclick={dismissUpdate}>Позже</button>
-            </div>
-          {/if}
+          <div class="row-start">
+            <button class="btn-primary" onclick={openUpdateModal}>Что нового и обновить</button>
+            <button class="btn-secondary" onclick={dismissUpdate}>Позже</button>
+          </div>
         </section>
       {/if}
       <RecordingDeck />
@@ -308,9 +318,62 @@
     flex-wrap: wrap;
     margin-top: 4px;
   }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 11px;
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-pill);
+    background: #fff;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 180ms var(--ease-spring), border-color 180ms var(--ease-spring);
+  }
+  .status-pill:hover {
+    background: var(--bg-inset);
+    border-color: #cbd5e1;
+  }
+  .status-pill:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 2px;
+  }
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #94a3b8;
+    flex-shrink: 0;
+  }
+  .status-dot.ok { background: var(--accent-ok); }
+  .status-dot.warn { background: var(--accent-amber); }
+  .status-dot.error { background: var(--accent-rec); }
+  @media (max-width: 640px) {
+    .status-pill {
+      width: 38px;
+      height: 38px;
+      padding: 0;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .status-pill-text { display: none; }
+    .status-dot {
+      width: 9px;
+      height: 9px;
+    }
+  }
 </style>
 
 <SettingsModal />
+<UpdateModal />
+<SystemPane />
 <DonateModal />
 <Toasts />
 

@@ -139,15 +139,16 @@ pub fn spawn_transcription_worker(audio_path: PathBuf, opts: TranscribeOptions) 
         });
         match result {
             Ok(rep) => {
+                crate::journal::transcription_finish(&audio_path, "ok", rep.duration_sec);
                 emit(
                     serde_json::json!({"type": "stage", "pct": 100, "message": "Расшифровка завершена"}),
                 );
                 emit(
                     serde_json::json!({"type": "done", "code": 0, "file": audio_path.to_string_lossy()}),
                 );
-                let _ = rep;
             }
             Err(e) => {
+                crate::journal::transcription_finish(&audio_path, "error", 0.0);
                 emit(serde_json::json!({"type": "error", "message": e}));
             }
         }

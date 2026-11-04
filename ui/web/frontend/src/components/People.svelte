@@ -434,31 +434,38 @@
           {#if hasVoiceprint(p.name)}
             <span class="voice-dot" title="Голос сохранён в базе"></span>
           {/if}
-          <span class="chip-main">
-            <span class="chip-name">{p.name}{voiceprintCount(p.name) ? ` · голосов: ${voiceprintCount(p.name)}` : ''}</span>
+          <div class="chip-main">
+            <div class="chip-title-row">
+              <span class="chip-name">{p.name}</span>
+              {#if voiceprintCount(p.name)}
+                <span class="chip-voice-count">{voiceprintCount(p.name)} гол.</span>
+              {/if}
+            </div>
             <span class="chip-role">
               {p.role || (p.is_external ? 'Гость' : 'Участник')}{p.pack_name ? ` · ${p.pack_name}` : ''}
             </span>
-          </span>
-          <button
-            class="chip-edit"
-            title="Изменить имя и роль"
-            aria-label={`Изменить участника ${p.name}`}
-            onclick={() => startEdit(p)}
-          >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z" />
-            </svg>
-          </button>
-          <button
-            class="chip-del"
-            title="Убрать из участников"
-            aria-label={`Убрать участника ${p.name}`}
-            onclick={() =>
-              toastConfirm(`Убрать «${p.name}» из участников?`, 'Убрать', () => void removePerson(p.name))}
-          >
-            ×
-          </button>
+          </div>
+          <div class="chip-actions">
+            <button
+              class="chip-edit"
+              title="Изменить имя и роль"
+              aria-label={`Изменить участника ${p.name}`}
+              onclick={() => startEdit(p)}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z" />
+              </svg>
+            </button>
+            <button
+              class="chip-del"
+              title="Убрать из участников"
+              aria-label={`Убрать участника ${p.name}`}
+              onclick={() =>
+                toastConfirm(`Убрать «${p.name}» из участников?`, 'Убрать', () => void removePerson(p.name))}
+            >
+              ×
+            </button>
+          </div>
         </div>
       {/each}
     {/if}
@@ -470,6 +477,64 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+    width: 100%;
+    min-width: 0;
+  }
+  :global(.chip) {
+    box-sizing: border-box;
+    max-width: 100%;
+    min-width: 0;
+  }
+  :global(.chip-title-row) {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  :global(.chip-voice-count) {
+    font-size: 10.5px;
+    color: var(--accent-ok);
+    background: var(--accent-ok-bg);
+    padding: 1px 6px;
+    border-radius: var(--radius-pill);
+    font-family: var(--font-mono);
+    flex-shrink: 0;
+    font-weight: 600;
+  }
+  :global(.chip-actions) {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+  @media (max-width: 640px) {
+    :global(.people-chips) {
+      grid-template-columns: minmax(0, 1fr) !important;
+      gap: 6px;
+      width: 100%;
+      min-width: 0;
+    }
+    :global(.chip) {
+      padding: 8px 10px;
+      min-height: 48px;
+      gap: 8px;
+    }
+    :global(.chip-name) {
+      font-size: 13px;
+      font-weight: 600;
+    }
+    :global(.chip-actions .chip-edit),
+    :global(.chip-actions .chip-del) {
+      opacity: 0.85;
+      width: 28px;
+      height: 28px;
+      border-radius: var(--radius-sm);
+      background: var(--bg-inset);
+    }
+    :global(.chip-actions .chip-del) {
+      font-size: 16px;
+    }
   }
   .pack-filter-bar {
     display: flex;

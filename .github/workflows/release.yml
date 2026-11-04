@@ -4,17 +4,63 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Собрать и проверить без публикации"
+        type: boolean
+        default: true
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  # Тег и версии проверяются до сборки: ключ апдейтера обязателен.
+  meta:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Resolve tag
+        id: meta
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            version="$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/crates/mr-app/Cargo.toml | head -n1)"
+            tag="v$version"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+      - name: Require updater signing key
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::Секрет TAURI_SIGNING_PRIVATE_KEY не задан: релиз без подписанных обновлений не выпускаем"
+            exit 1
+          fi
+      - name: Check versions and release notes
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          ALLOW_LEGACY_NOTES: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          extra=()
+          if [ "$ALLOW_LEGACY_NOTES" = "true" ]; then
+            extra+=(--allow-legacy-notes)
+          fi
+          python3 .github/scripts/updater_manifest.py --root . --tag "$TAG" --check-only "${extra[@]}"
+
   # --- Tauri v2 bundles (окно + трей; нужен системный WebView) ---
   build-tauri:
+    needs: meta
     strategy:
       fail-fast: false
       matrix:
@@ -49,53 +95,8 @@ jobs:
         run: |
           corepack enable
           cd "$GITHUB_WORKSPACE/ui/web/frontend" && yarn install --immutable && yarn build
-      # Ключ подписи апдейтера — секрет репозитория. Без него пакет не подписать:
-      # отключаем updater-артефакты, чтобы релиз собрался как раньше (без самообновления).
-      - name: Updater signing
-        shell: bash
-        env:
-          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          if [ -n "$KEY" ]; then
-            {
-              echo "TAURI_SIGNING_PRIVATE_KEY=$KEY"
-              echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$PASSWORD"
-            } >> "$GITHUB_ENV"
-            echo "Апдейтер: пакеты будут подписаны"
-          else
-            node -e "const fs=require('fs');const f='crates/mr-app/tauri.conf.json';const c=JSON.parse(fs.readFileSync(f,'utf8'));c.bundle.createUpdaterArtifacts=false;fs.writeFileSync(f,JSON.stringify(c,null,2));"
-            echo "::warning::TAURI_SIGNING_PRIVATE_KEY не задан — релиз без автообновления"
-          fi
       - name: Rust unit tests (host)
         run: cargo test --workspace --locked
-      # Подпись и нотаризация включаются сами, когда в репозитории заданы
-      # секреты Apple Developer. Без них сборка остаётся неподписанной:
-      # macOS покажет предупреждение Gatekeeper (см. README).
-      - name: Configure macOS signing (optional)
-        if: startsWith(matrix.os, 'macos')
-        shell: bash
-        env:
-          CERT: ${{ secrets.APPLE_CERTIFICATE }}
-          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          if [ -n "$CERT" ]; then
-            {
-              echo "APPLE_CERTIFICATE=$CERT"
-              echo "APPLE_CERTIFICATE_PASSWORD=$CERT_PASSWORD"
-              echo "APPLE_SIGNING_IDENTITY=$IDENTITY"
-              echo "APPLE_ID=$APPLE_ID"
-              echo "APPLE_PASSWORD=$APPLE_PASSWORD"
-              echo "APPLE_TEAM_ID=$TEAM_ID"
-            } >> "$GITHUB_ENV"
-            echo "macOS: подпись и нотаризация включены"
-          else
-            echo "macOS: секреты Apple не заданы, сборка без подписи"
-          fi
       # projectPath: нестандартная раскладка — tauri.conf.json лежит в
       # crates/mr-app, а не в <корень>/src-tauri.
       - name: Build Tauri bundle
@@ -103,6 +104,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           MACOSX_DEPLOYMENT_TARGET: "13.4"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: src-tauri/crates/mr-app
           args: ${{ matrix.args }}
@@ -134,6 +137,7 @@ jobs:
 
   # --- Android APK (aarch64) ---
   build-android:
+    needs: meta
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -149,6 +153,35 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Decode Android release keystore
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+              if [ -z "${!name}" ]; then
+                echo "::error::Для тега нужны секреты ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD"
+                exit 1
+              fi
+            done
+          fi
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
+            path="$RUNNER_TEMP/podtekst-release.jks"
+            printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$path"
+            {
+              echo "ANDROID_KEYSTORE_PATH=$path"
+              echo "ANDROID_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+              echo "ANDROID_KEY_ALIAS=$KEY_ALIAS"
+              echo "ANDROID_KEY_PASSWORD=$KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+            echo "Android: release keystore подключён"
+          else
+            echo "::warning::Android: release keystore не задан, release APK будет подписан debug-ключом"
+          fi
       - name: Setup Android NDK
         shell: bash
         run: |
@@ -189,7 +222,10 @@ jobs:
         shell: bash
         run: |
           mkdir -p bundle-pkg
-          apk="$(find src-tauri/crates/mr-app/gen/android/app/build/outputs -name '*.apk' | head -n 1)"
+          apk="$(find src-tauri/crates/mr-app/gen/android/app/build/outputs -name '*-release.apk' | head -n 1)"
+          if [ -z "$apk" ]; then
+            apk="$(find src-tauri/crates/mr-app/gen/android/app/build/outputs -name '*.apk' | head -n 1)"
+          fi
           if [ -z "$apk" ] || [ ! -f "$apk" ]; then
             echo "Ошибка: APK не найден в outputs"
             find src-tauri/crates/mr-app/gen/android -name '*.apk' || true
@@ -204,84 +240,264 @@ jobs:
           if-no-files-found: error
           path: bundle-pkg/*
 
-  # Публикация — только после успеха сборок Tauri-бандлов и Android APK.
-  # Приложение проверяет обновления по последнему GitHub Release, поэтому
-  # тег обязан совпадать с версией в Cargo.toml.
-  publish:
-    needs: [build-tauri, build-android]
+  smoke-linux:
+    needs: [meta, build-tauri]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - name: Validate tag matches app version
+      - name: Install Linux runtime deps
         run: |
-          tag="${GITHUB_REF_NAME#v}"
-          ver="$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/crates/mr-app/Cargo.toml | head -n1)"
-          if [ "$tag" != "$ver" ]; then
-            echo "Тег v$tag не совпадает с версией приложения $ver"
-            exit 1
-          fi
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
       - uses: actions/download-artifact@v8
         with:
-          path: artifacts
-      - name: Checksums
+          name: tauri-bundles-ubuntu-24.04
+          path: pkg
+      - name: Smoke AppImage over HTTP
+        shell: bash
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
         run: |
-          # GitHub Release кладёт ассеты плоско: в SHA256SUMS нужны basename.
-          find artifacts -type f -print0 | sort -z | xargs -0 sha256sum \
-            | sed 's#  artifacts/.*/#  #' > SHA256SUMS
-          cat SHA256SUMS
-      # Манифест штатного апдейтера Tauri: приложение читает его из
-      # releases/latest/download/latest.json и сверяет подпись пакета.
-      - name: Updater manifest
-        run: |
-          python3 - "$GITHUB_REF_NAME" <<'PY'
-          import json, os, pathlib, sys
-
-          tag, root = sys.argv[1], pathlib.Path("artifacts")
-          repo = os.environ["GITHUB_REPOSITORY"]
-          kinds = {
-              ".AppImage": "linux-x86_64",
-              ".app.tar.gz": "darwin-aarch64",
-              "-setup.exe": "windows-x86_64",
-          }
-          platforms = {}
-          for sig in root.rglob("*.sig"):
-              name = sig.name[:-4]
-              key = next((v for k, v in kinds.items() if name.endswith(k)), None)
-              if key:
-                  platforms[key] = {
-                      "url": f"https://github.com/{repo}/releases/download/{tag}/{name}",
-                      "signature": sig.read_text().strip(),
-                  }
-          if platforms:
-              expected = {"linux-x86_64", "darwin-aarch64", "windows-x86_64"}
-              missing = expected - set(platforms)
-              if missing:
-                  sys.exit("latest.json неполный, нет платформ: " + ", ".join(sorted(missing)))
-              out = root / "updater"
-              out.mkdir(exist_ok=True)
-              (out / "latest.json").write_text(
-                  json.dumps({"version": tag.lstrip("v"), "platforms": platforms},
-                             ensure_ascii=False, indent=2))
-              print("latest.json:", ", ".join(platforms))
-          else:
-              print("Подписей нет — latest.json не создаём")
-          PY
-      - name: Release notes
-        run: |
-          # Описание релиза пишется руками и лежит в репозитории: короткий
-          # вычитанный текст вместо списка коммитов. Без файла релиз не публикуем.
-          file=".github/release-notes/${GITHUB_REF_NAME}.md"
-          if [ ! -f "$file" ]; then
-            echo "Нет описания релиза: $file"
+          appimage="$(find pkg -name '*.AppImage' -print -quit)"
+          if [ -z "$appimage" ]; then
+            echo "::error::AppImage не найден"
             exit 1
           fi
+          chmod +x "$appimage"
+          python3 .github/scripts/smoke_http.py \
+            --exe "$appimage" \
+            --expected-version "$VERSION" \
+            --expected-os linux \
+            --expected-arch x86_64 \
+            --static-dir ui/web/static
+
+  smoke-macos:
+    needs: [meta, build-tauri]
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: tauri-bundles-macos-26
+          path: pkg
+      - name: Smoke .app from dmg
+        shell: bash
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          dmg="$(find pkg -name '*.dmg' -print -quit)"
+          if [ -z "$dmg" ]; then
+            echo "::error::dmg не найден"
+            exit 1
+          fi
+          mount="$RUNNER_TEMP/podtekst-dmg"
+          appdir="$RUNNER_TEMP/podtekst-app"
+          mkdir -p "$mount" "$appdir"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
+          app="$(find "$mount" -maxdepth 1 -name '*.app' -print -quit)"
+          if [ -z "$app" ]; then
+            hdiutil detach "$mount"
+            echo "::error::.app не найден в dmg"
+            exit 1
+          fi
+          ditto "$app" "$appdir/Podtekst.app"
+          hdiutil detach "$mount"
+          # Gatekeeper не проверяем: релиз без Apple Developer ID.
+          xattr -dr com.apple.quarantine "$appdir/Podtekst.app" || true
+          exe="$appdir/Podtekst.app/Contents/MacOS/podtekst"
+          if [ ! -x "$exe" ]; then
+            echo "::error::нет исполняемого файла $exe"
+            exit 1
+          fi
+          python3 .github/scripts/smoke_http.py \
+            --exe "$exe" \
+            --expected-version "$VERSION" \
+            --expected-os macos \
+            --expected-arch arm64 \
+            --static-dir ui/web/static
+
+  smoke-windows:
+    needs: [meta, build-tauri]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: tauri-bundles-windows-latest
+          path: pkg
+      - name: Install and smoke NSIS
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          $installer = Get-ChildItem pkg -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $installer) {
+            Write-Error "NSIS installer не найден"
+            exit 1
+          }
+          $installDir = Join-Path $env:RUNNER_TEMP "podtekst-install"
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$installDir" -Wait
+          $exe = Get-ChildItem -Path $installDir -Filter '*.exe' -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ne 'uninstall.exe' } |
+            Select-Object -First 1
+          if (-not $exe) {
+            $fallback = Join-Path $env:LOCALAPPDATA 'Podtekst'
+            $exe = Get-ChildItem -Path $fallback -Filter '*.exe' -Recurse -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -ne 'uninstall.exe' } |
+              Select-Object -First 1
+          }
+          if (-not $exe) {
+            Write-Error "exe приложения не найден после установки"
+            exit 1
+          }
+          $productVersion = (Get-Item $exe.FullName).VersionInfo.ProductVersion
+          Write-Host "ProductVersion=$productVersion"
+          if (-not $productVersion.StartsWith($env:VERSION)) {
+            Write-Error "ProductVersion $productVersion не совпадает с $env:VERSION"
+            exit 1
+          }
+          # Подписи Authenticode нет по политике проекта: фиксируем статус в логе.
+          $signature = Get-AuthenticodeSignature $exe.FullName
+          Write-Host "Authenticode: $($signature.Status) $($signature.StatusMessage)"
+          python .github/scripts/smoke_http.py `
+            --exe $exe.FullName `
+            --expected-version $env:VERSION `
+            --expected-os windows `
+            --expected-arch x86_64 `
+            --static-dir ui/web/static
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  smoke-android:
+    needs: [meta, build-android]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup Java 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: "temurin"
+          java-version: "21"
+      - uses: actions/download-artifact@v8
+        with:
+          name: tauri-bundles-android
+          path: pkg
+      - name: Check APK metadata and signature
+        shell: bash
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          REQUIRE_RELEASE_SIGNING: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+        run: |
+          set -eu
+          sdk="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          build_tools="$(ls -d "$sdk"/build-tools/* | sort -V | tail -n 1)"
+          aapt2="$build_tools/aapt2"
+          apksigner="$build_tools/apksigner"
+          apk="$(find pkg -name '*.apk' -print -quit)"
+          if [ -z "$apk" ]; then
+            echo "::error::APK не найден"
+            exit 1
+          fi
+          badging="$("$aapt2" dump badging "$apk")"
+          echo "$badging" | head -n 5
+          echo "$badging" | grep -q "package: name='io.github.guest363.podtekst'" || {
+            echo "::error::Неверный package в APK"; exit 1; }
+          echo "$badging" | grep -q "versionName='$VERSION'" || {
+            echo "::error::versionName не совпадает с $VERSION"; exit 1; }
+          echo "$badging" | grep -q "versionCode='" || {
+            echo "::error::В APK нет versionCode"; exit 1; }
+          echo "$badging" | grep -q "native-code:.*arm64-v8a" || {
+            echo "::error::В APK нет ABI arm64-v8a"; exit 1; }
+          # Сертификат в лог не печатаем: только результат проверки схем подписи.
+          "$apksigner" verify --print-certs "$apk" > "$RUNNER_TEMP/apksigner.txt"
+          grep -E "Verified using v[0-9]+ scheme .*: true" "$RUNNER_TEMP/apksigner.txt" || {
+            echo "::error::apksigner не подтвердил ни одну схему подписи"; exit 1; }
+          if [ "$REQUIRE_RELEASE_SIGNING" = "true" ] && grep -q "CN=Android Debug" "$RUNNER_TEMP/apksigner.txt"; then
+            echo "::error::APK подписан debug-ключом, а для тега нужен release keystore"
+            exit 1
+          fi
+
+  # Сначала latest.json: иначе SHA256SUMS не покроет манифест.
+  manifest:
+    needs: [meta, build-tauri, build-android]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Install cryptography
+        run: python -m pip install --disable-pip-version-check cryptography
+      - name: Build latest.json and SHA256SUMS
+        env:
+          TAG: ${{ needs.meta.outputs.tag }}
+          ALLOW_LEGACY_NOTES: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          extra=()
+          if [ "$ALLOW_LEGACY_NOTES" = "true" ]; then
+            extra+=(--allow-legacy-notes)
+          fi
+          python .github/scripts/updater_manifest.py \
+            --root . \
+            --tag "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --artifacts dist \
+            "${extra[@]}"
+          ls -la dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-dist
+          if-no-files-found: error
+          path: dist/*
+
+  publish:
+    needs: [meta, manifest, smoke-linux, smoke-macos, smoke-windows, smoke-android]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-dist
+          path: dist
+      - name: Release notes present
+        run: test -s ".github/release-notes/${{ needs.meta.outputs.tag }}.md"
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          name: Подтекст ${{ github.ref_name }}
-          tag_name: ${{ github.ref_name }}
-          body_path: .github/release-notes/${{ github.ref_name }}.md
+          name: Подтекст ${{ needs.meta.outputs.tag }}
+          tag_name: ${{ needs.meta.outputs.tag }}
+          body_path: .github/release-notes/${{ needs.meta.outputs.tag }}.md
           fail_on_unmatched_files: true
           files: |
-            artifacts/**/*
-            SHA256SUMS
+            dist/**/*
+
+  # Проверка после публикации: свежий latest.json, URL, SHA256SUMS и подписи.
+  # Отдельный workflow_dispatch не нужен: GITHUB_TOKEN не создаёт новый запуск
+  # по событию release published, поэтому проверяем здесь.
+  verify-published:
+    needs: [meta, publish]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install cryptography
+        run: python -m pip install --disable-pip-version-check cryptography
+      - name: Verify published release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.meta.outputs.tag }}
+        run: |
+          python .github/scripts/verify_release.py \
+            --root . \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$TAG" \
+            --require-latest

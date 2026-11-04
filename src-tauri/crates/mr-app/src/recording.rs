@@ -167,6 +167,9 @@ pub(crate) struct RecordingState {
     pub(crate) capture: Option<std::sync::Arc<Mutex<mr_audio::capture::CaptureSession>>>,
     checkpoint: Option<Arc<WavCheckpoint>>,
     pub(crate) screen_session: Option<Arc<Mutex<Option<crate::screen::ScreenCaptureSession>>>>,
+    pub(crate) session_id: Option<String>,
+    /// Некритичные сбои старта: журнал и диагностика показывают их без падения записи.
+    pub(crate) warnings: Vec<String>,
 }
 
 impl Default for RecordingState {
@@ -179,6 +182,8 @@ impl Default for RecordingState {
             capture: None,
             checkpoint: None,
             screen_session: None,
+            session_id: None,
+            warnings: Vec::new(),
         }
     }
 }
@@ -210,6 +215,14 @@ pub(crate) fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+fn new_session_id() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("{millis:x}-{:x}", std::process::id())
 }
 
 /// Разделитель часов и минут: двоеточие нельзя в имени файла на Windows.
@@ -273,8 +286,10 @@ pub(crate) fn start_recording_inner(
     record_screen: bool,
 ) -> serde_json::Value {
     if st.is_recording {
+        crate::journal::error(None, "start", "already_recording", "Запись уже идёт");
         return json!({"ok": false, "error": "Запись уже идёт"});
     }
+    let session_id = new_session_id();
     let catalog = mr_audio::capture::devices();
     let has_system = catalog.default_system.is_some();
     // Android и платформы без второго канала (на macOS — без BlackHole) не
@@ -302,6 +317,9 @@ pub(crate) fn start_recording_inner(
         st.start_time = now_secs();
         st.current_file = Some(out.to_string_lossy().to_string());
         st.mode = mode.to_string();
+        st.warnings.clear();
+        st.session_id = Some(session_id.clone());
+        crate::journal::start(&session_id, mode, "Тестовый захват", None, false);
         return json!({"ok": true, "file": out.to_string_lossy(), "filename": fname});
     }
     let mic_id = catalog.default_input.clone();
@@ -335,7 +353,9 @@ pub(crate) fn start_recording_inner(
         Ok(session) => session,
         Err(e) => {
             crate::media_registry::unmark_owned(&out);
-            return json!({"ok": false, "error": e.to_string()});
+            let message = e.to_string();
+            crate::journal::error(Some(&session_id), "capture", "capture_failed", &message);
+            return json!({"ok": false, "error": message});
         }
     };
     let has_sys = session.system.is_some();
@@ -353,6 +373,7 @@ pub(crate) fn start_recording_inner(
             let mut session = session;
             session.stop();
             crate::media_registry::unmark_owned(&out);
+            crate::journal::error(Some(&session_id), "checkpoint", "checkpoint_failed", &e);
             return json!({"ok": false, "error": e});
         }
     };
@@ -380,6 +401,31 @@ pub(crate) fn start_recording_inner(
     st.start_time = started;
     st.current_file = Some(out.to_string_lossy().to_string());
     st.mode = actual_mode.to_string();
+    st.session_id = Some(session_id.clone());
+    st.warnings.clear();
+    if let Some(e) = sys_error.as_ref() {
+        st.warnings.push(format!("system: {e}"));
+    }
+    if let Some(e) = screen_error.as_ref() {
+        st.warnings.push(format!("screen: {e}"));
+    }
+    let sys_label = if has_sys {
+        catalog
+            .system
+            .iter()
+            .find(|d| catalog.default_system.as_deref() == Some(d.id.as_str()))
+            .map(|d| d.name.clone())
+    } else {
+        None
+    };
+    let screen_started = st.screen_session.is_some();
+    crate::journal::start(
+        &session_id,
+        actual_mode,
+        &mic_label,
+        sys_label.as_deref(),
+        screen_started,
+    );
     json!({"ok": true, "file": out.to_string_lossy(), "filename": fname,
         "mic": mic_label, "mic_muted": muted,
         "sys": has_sys, "sys_error": sys_error,
@@ -413,8 +459,15 @@ pub(crate) fn stop_recording_inner(
     defer_autotranscribe: bool,
 ) -> serde_json::Value {
     if !st.is_recording {
+        crate::journal::error(
+            st.session_id.as_deref(),
+            "stop",
+            "not_recording",
+            "Запись не активна",
+        );
         return json!({"ok": false, "error": "Запись не активна"});
     }
+    let session = st.session_id.clone();
     st.is_recording = false;
     notify_recording_state(false);
     let ended = now_secs();
@@ -499,6 +552,13 @@ pub(crate) fn stop_recording_inner(
             Err(e) => {
                 crate::media_registry::unmark_owned(&out_path);
                 st.current_file = None;
+                crate::journal::error(
+                    session.as_deref(),
+                    "finalize",
+                    "finalize_failed",
+                    &format!("Не удалось склеить запись: {e}"),
+                );
+                st.session_id = None;
                 return json!({"ok": false, "error": format!("Не удалось склеить запись: {e}")});
             }
         }
@@ -534,11 +594,13 @@ pub(crate) fn stop_recording_inner(
                             }
                             Err(e) => {
                                 crate::note!("[SCREEN] Ошибка склейки видео с аудио: {e}");
+                                st.warnings.push(format!("screen mux: {e}"));
                             }
                         }
                     }
                     Err(e) => {
                         crate::note!("[SCREEN] Ошибка остановки захвата экрана: {e}");
+                        st.warnings.push(format!("screen stop: {e}"));
                     }
                 }
             }
@@ -562,6 +624,24 @@ pub(crate) fn stop_recording_inner(
         resp["sys_silent"] = json!(p < 0.001);
         resp["sys_peak"] = json!(p);
     }
+    crate::journal::finish(
+        session.as_deref().unwrap_or_default(),
+        "ok",
+        elapsed as f64,
+        &st.mode,
+        if st.mode == "mix" { 1 } else { 2 },
+        Path::new(&file),
+        Path::new(&file).is_file(),
+        is_video,
+        resp.get("silent")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        resp.get("sys_silent")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        &st.warnings,
+    );
+    st.session_id = None;
     if !defer_autotranscribe {
         maybe_autotranscribe(&file);
     }
@@ -662,6 +742,7 @@ pub(crate) mod shutdown {
         unsafe {
             libc::signal(libc::SIGINT, on_signal as *const () as libc::sighandler_t);
             libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
+            libc::signal(libc::SIGHUP, on_signal as *const () as libc::sighandler_t);
         }
         std::thread::spawn(move || loop {
             if PENDING.load(Ordering::SeqCst) {
@@ -670,6 +751,7 @@ pub(crate) mod shutdown {
                 if st.is_recording {
                     let _ = super::stop_recording_inner(&mut st, false);
                 }
+                crate::crash::mark_clean();
                 std::process::exit(0);
             }
             std::thread::sleep(std::time::Duration::from_millis(200));

@@ -48,6 +48,7 @@ else
 fi
 
 BIN="$SCRIPT_DIR/src-tauri/target/release/podtekst$SUFFIX"
+UI_MARKER="PODTEKST_TAURI_UI_BUILD_V1"
 
 # Сборка нужна ТОЛЬКО если бинарник отсутствует, изменились исходники или передан явный флаг --build / --rebuild.
 # На обычный клик по иконке или вызов CLI запуск мгновенный без фоновых компиляций Cargo.
@@ -68,6 +69,8 @@ if [ "$WANT_BUILD" = 1 ] || [ ! -f "$BIN" ]; then
 elif [ -n "$(find "$SCRIPT_DIR/src-tauri/crates"/*/src "$SCRIPT_DIR/src-tauri/Cargo.toml" -type f -newer "$BIN" 2>/dev/null | head -n 1)" ]; then
     NEEDS_RUST_BUILD=1
 elif [ "$NEEDS_FRONT_BUILD" = 1 ]; then
+    NEEDS_RUST_BUILD=1
+elif [ "$WANT_WEB" = 0 ] && ! grep -aq "$UI_MARKER" "$BIN" 2>/dev/null; then
     NEEDS_RUST_BUILD=1
 fi
 

@@ -20,7 +20,7 @@
     statusBadge,
     togglePack,
   } from '../lib/settings.svelte.ts'
-  import { isMobile, readJsonSafe, remainingMb } from '../lib/api'
+  import { isMobile, remainingMb } from '../lib/api'
   import type { ModelInfo } from '../lib/api'
   import { checkUpdate, update } from '../lib/update.svelte.ts'
   import { peopleState } from '../lib/people.svelte.ts'
@@ -29,31 +29,6 @@
   let tab = $state<'record' | 'people' | 'voices' | 'dict' | 'models'>('record')
   let packFileInput: HTMLInputElement | null = $state(null)
   let termInput = $state('')
-  let diagBusy = $state(false)
-  let diagPath = $state('')
-
-  async function collectDiagnostics() {
-    diagBusy = true
-    try {
-      const d = await readJsonSafe(await fetch('/api/diagnostics', { method: 'POST' }))
-      if (!d.ok) throw new Error(d.error || 'Не удалось собрать отчёт')
-      diagPath = String(d.path || '')
-      toast('Отчёт диагностики сохранён')
-    } catch (e) {
-      toast('Отчёт не собрался: ' + (e as Error).message, 'error')
-    } finally {
-      diagBusy = false
-    }
-  }
-
-  async function openDiagnostics() {
-    try {
-      const d = await readJsonSafe(await fetch('/api/diagnostics/open', { method: 'POST' }))
-      if (!d.ok) throw new Error(d.error || 'Не удалось открыть папку')
-    } catch (e) {
-      toast('Папка не открылась: ' + (e as Error).message, 'error')
-    }
-  }
 
   const filteredHotwords = $derived.by(() => {
     const q = termInput.trim().toLowerCase()
@@ -116,6 +91,12 @@
   }
 
   on('models-changed', () => void loadModels())
+  on('open-settings', (value) => {
+    if (value === 'record' || value === 'people' || value === 'voices' || value === 'dict' || value === 'models') {
+      tab = value
+    }
+    ui.settingsOpen = true
+  })
   // Компонент живёт всё время приложения: одно чтение статуса на старте,
   // дальше состояние обновляет опрос после нажатия «Скачать».
   void loadFfmpeg()
@@ -435,33 +416,6 @@
           <div class="row-start">
             <button class="btn-secondary" onclick={() => void loadModels()}>Обновить список</button>
           </div>
-          {#if !isMobile}
-            <div class="rec-item">
-              <div class="rec-info">
-                <span class="rec-name">Диагностика</span>
-                <span class="rec-meta">
-                  Версия, разрешения, устройства и последние строки лога. Без записей и расшифровок.
-                </span>
-                {#if diagPath}
-                  <span class="rec-meta">{diagPath}</span>
-                {/if}
-              </div>
-              <div class="rec-actions">
-                <button
-                  class="btn-secondary btn-sm"
-                  disabled={diagBusy}
-                  onclick={() => void collectDiagnostics()}
-                >
-                  {diagBusy ? 'Собираю…' : 'Собрать отчёт'}
-                </button>
-                {#if diagPath}
-                  <button class="btn-secondary btn-sm" onclick={() => void openDiagnostics()}>
-                    Открыть папку
-                  </button>
-                {/if}
-              </div>
-            </div>
-          {/if}
         </div>
       {:else if tab === 'dict'}
         <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Словарь терминов">
@@ -580,13 +534,6 @@
     font-size: 11.5px; color: var(--text-faint);
     display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
   }
-  .link-btn {
-    border: none; background: none; padding: 0;
-    font: inherit; color: var(--accent-blue); cursor: pointer;
-    text-decoration: underline; text-underline-offset: 2px;
-  }
-  .link-btn:hover { color: var(--text-primary); }
-  .link-btn:disabled { color: var(--text-faint); cursor: wait; text-decoration: none; }
   .support-link {
     margin-right: auto;
     border: none; background: none; padding: 6px 0;
@@ -668,65 +615,53 @@
   }
   .dict-del:hover { color: var(--accent-rec); background: #fee2e2; }
   .settings-tabs {
-    display: flex; gap: 4px;
+    display: flex;
+    gap: 6px;
     border-bottom: 1px solid var(--border-soft);
-    padding: 0 20px;
-    background: #fff;
+    padding: 8px 16px;
+    background: var(--bg-inset);
     flex-shrink: 0;
     overflow-x: auto;
     overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .settings-tabs::-webkit-scrollbar {
+    display: none;
   }
   @media (max-width: 640px) {
     .settings-tabs {
-      display: flex;
-      gap: 0;
-      padding: 0 10px;
-      overflow-x: auto;
-      overflow-y: hidden;
+      padding: 6px 12px;
+      gap: 4px;
     }
   }
   .settings-tab {
-    border: none; background: transparent; cursor: pointer;
-    padding: 9px 14px 10px;
-    font-family: inherit; font-size: 13px; font-weight: 700;
+    border: 1px solid transparent;
+    background: transparent;
+    cursor: pointer;
+    padding: 6px 12px;
+    border-radius: var(--radius-inner);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
     color: var(--text-muted);
-    border-bottom: 2px solid transparent;
-    margin-bottom: -1px;
     white-space: nowrap;
     flex-shrink: 0;
-    transition: color 180ms var(--ease-spring), border-color 180ms var(--ease-spring);
+    transition: all 160ms var(--ease-spring);
   }
-  .settings-tab:hover { color: var(--text-primary); }
-  .settings-tab.active { color: var(--text-primary); border-bottom-color: var(--accent-blue); }
+  .settings-tab:hover {
+    color: var(--text-primary);
+    background: rgba(15, 30, 51, 0.04);
+  }
+  .settings-tab.active {
+    color: var(--text-primary);
+    background: #fff;
+    border-color: var(--border-card);
+    box-shadow: 0 1px 2px rgba(15, 30, 51, 0.06);
+  }
   .settings-pane {
     display: flex; flex-direction: column; gap: 14px;
     padding-top: 2px;
-  }
-  .setting-check {
-    display: flex; align-items: center; gap: 10px;
-    font-size: 12.5px; font-weight: 700; color: var(--text-primary);
-    cursor: pointer; padding-top: 4px;
-  }
-  .setting-check input {
-    position: absolute; opacity: 0; width: 1px; height: 1px;
-    pointer-events: none;
-  }
-  .setting-switch {
-    position: relative; flex-shrink: 0;
-    width: 36px; height: 21px; border-radius: 999px;
-    background: #c3cedb;
-    transition: background 180ms var(--ease-spring);
-  }
-  .setting-switch::after {
-    content: ""; position: absolute; top: 3px; left: 3px;
-    width: 15px; height: 15px; border-radius: 50%;
-    background: #fff; box-shadow: 0 1px 3px rgba(15, 30, 51, 0.25);
-    transition: transform 180ms var(--ease-spring);
-  }
-  .setting-check input:checked + .setting-switch { background: var(--accent-ok); }
-  .setting-check input:checked + .setting-switch::after { transform: translateX(15px); }
-  .setting-check input:focus-visible + .setting-switch {
-    outline: 2px solid var(--accent-blue); outline-offset: 2px;
   }
   .link-meta-btn {
     border: none;
