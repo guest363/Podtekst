@@ -87,7 +87,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.99" # закреплён rust-toolchain.toml; MSRV по lock-файлу — 1.92 (ort)
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Build frontend (Svelte)
@@ -101,7 +101,7 @@ jobs:
       # crates/mr-app, а не в <корень>/src-tauri.
       - name: Build Tauri bundle
         id: tauri
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           MACOSX_DEPLOYMENT_TARGET: "13.4"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -150,7 +150,7 @@ jobs:
         with:
           toolchain: "1.99"
           targets: aarch64-linux-android
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Decode Android release keystore
@@ -422,7 +422,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - uses: actions/download-artifact@v8
@@ -468,7 +468,7 @@ jobs:
       - name: Release notes present
         run: test -s ".github/release-notes/${{ needs.meta.outputs.tag }}.md"
       - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: Подтекст ${{ needs.meta.outputs.tag }}
           tag_name: ${{ needs.meta.outputs.tag }}
@@ -486,7 +486,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install cryptography
