@@ -742,6 +742,7 @@ pub(crate) mod shutdown {
         unsafe {
             libc::signal(libc::SIGINT, on_signal as *const () as libc::sighandler_t);
             libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
+            libc::signal(libc::SIGHUP, on_signal as *const () as libc::sighandler_t);
         }
         std::thread::spawn(move || loop {
             if PENDING.load(Ordering::SeqCst) {

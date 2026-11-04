@@ -2,6 +2,8 @@ mod checks;
 mod health;
 mod probe;
 
+pub(crate) use probe::cleanup_stale;
+
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -179,35 +181,9 @@ fn open_url(url: &str) -> Result<(), String> {
 }
 
 fn update_mode() -> &'static str {
-    #[cfg(target_os = "linux")]
-    {
-        if std::env::var_os("APPIMAGE").is_some() {
-            "self"
-        } else {
-            "manual"
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        if cfg!(feature = "tauri-ui") {
-            "self"
-        } else {
-            "manual"
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let installed = std::env::current_exe()
-            .map(|p| p.to_string_lossy().contains(".app/Contents/MacOS/"))
-            .unwrap_or(false);
-        if installed {
-            "self"
-        } else {
-            "manual"
-        }
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    {
+    if crate::http::update::available_for_status() {
+        "self"
+    } else {
         "manual"
     }
 }
@@ -380,7 +356,7 @@ mod tests {
             "paths": {"data": format!("{home}/.local/share/podtekst")},
             "devices": {
                 "inputs": [
-                    {"id": "alsa:personal", "name": "Наушники Олег", "muted": false, "system": false},
+                    {"id": "alsa:personal", "name": "Наушники Test", "muted": false, "system": false},
                     {"id": "sck", "name": "Системный звук (ScreenCaptureKit)", "muted": false, "system": true},
                 ],
                 "system": [],

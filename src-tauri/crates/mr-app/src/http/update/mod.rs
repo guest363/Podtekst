@@ -47,7 +47,8 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use super::json_response;
-use source::{fetch_latest, version_is_newer};
+use source::fetch_latest;
+pub(crate) use source::version_is_newer;
 
 const CACHE_TTL: Duration = Duration::from_secs(6 * 3600);
 

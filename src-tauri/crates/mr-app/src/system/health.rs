@@ -110,18 +110,11 @@ pub(super) fn check_integration(snapshot: &Value) -> Outcome {
         if autostart {
             "включён"
         } else {
-            "выключен"
+            "выключен — это нормально"
         },
         if single_instance { "да" } else { "нет" }
     );
-    if autostart {
-        Outcome::ok(detail)
-    } else {
-        Outcome::warn(
-            detail,
-            "Включите автозапуск, если приложение должно работать в фоне после входа",
-        )
-    }
+    Outcome::ok(detail)
 }
 
 pub(super) fn check_updates(snapshot: &Value) -> Outcome {
@@ -141,7 +134,7 @@ pub(super) fn check_updates(snapshot: &Value) -> Outcome {
         .pointer("/update/skipped_version")
         .and_then(Value::as_str)
         .unwrap_or("");
-    if latest.is_empty() || latest == current {
+    if latest.is_empty() || !crate::http::update::version_is_newer(latest, current) {
         return Outcome::ok(format!("Установлена версия {current}; обновление: {mode}"));
     }
     if skipped == latest {
@@ -184,11 +177,13 @@ pub(super) fn check_journal(snapshot: &Value) -> Outcome {
                     .with_fix("collect_diagnostics", "", "Собрать диагностику")
             }
         };
-    if crashes == 0 && journal == 0 {
-        return Outcome::ok(format!("Сбоев нет; {config_detail}"));
+    if crashes == 0 {
+        return Outcome::ok(format!(
+            "Неразобранных сбоев нет; файлов журнала: {journal}; {config_detail}"
+        ));
     }
     Outcome::warn(
-        format!("Сбоев: {crashes}, записей журнала: {journal}; {config_detail}"),
+        format!("Неразобранных сбоев: {crashes}; файлов журнала: {journal}; {config_detail}"),
         "Проверьте журнал или соберите диагностику",
     )
     .with_fix("collect_diagnostics", "", "Собрать диагностику")
@@ -231,5 +226,21 @@ mod tests {
             "update": {"current": "0.4.1", "mode": "manual", "latest": "0.5.0"},
         });
         assert_eq!(check_updates(&value).status, "warn");
+        let value = json!({
+            "update": {"current": "0.5.0", "mode": "manual", "latest": "0.4.1"},
+        });
+        assert_eq!(check_updates(&value).status, "ok");
+    }
+
+    #[test]
+    fn disabled_autostart_is_not_a_problem() {
+        let value = json!({
+            "integration": {
+                "hotkey": {"accelerator": "Ctrl+Shift+R"},
+                "autostart": false,
+                "single_instance": true,
+            },
+        });
+        assert_eq!(check_integration(&value).status, "ok");
     }
 }

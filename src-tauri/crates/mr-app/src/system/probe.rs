@@ -1,8 +1,40 @@
-use std::time::Duration;
+use std::path::PathBuf;
+use std::time::{Duration, SystemTime};
 
 use crate::config::app_data_dir;
 
 use super::checks::Outcome;
+
+struct ProbeDir(PathBuf);
+
+impl Drop for ProbeDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+pub(crate) fn cleanup_stale() {
+    let root = app_data_dir().join("tmp");
+    let Ok(entries) = std::fs::read_dir(&root) else {
+        return;
+    };
+    let now = SystemTime::now();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with("probe-") {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age > Duration::from_secs(15 * 60));
+        if stale {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
 
 pub(super) fn run() -> Outcome {
     let catalog = mr_audio::capture::devices();
@@ -22,6 +54,7 @@ pub(super) fn run() -> Outcome {
             "Проверьте права на папку данных приложения",
         );
     }
+    let _guard = ProbeDir(dir.clone());
     let request = mr_audio::capture::CaptureRequest {
         rate: 16000,
         mic: Some(mic),
@@ -70,7 +103,6 @@ pub(super) fn run() -> Outcome {
             "Проверьте микрофон и настройки доступа к нему",
         ),
     };
-    let _ = std::fs::remove_dir_all(&dir);
     outcome
 }
 

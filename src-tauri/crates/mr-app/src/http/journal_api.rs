@@ -2,15 +2,35 @@ use serde_json::{json, Value};
 
 use super::json_response;
 
-pub(crate) fn handle_journal(request: tiny_http::Request, limit: usize) {
-    let sessions = crate::journal::list(limit.clamp(1, 100));
+pub(crate) fn handle_journal(
+    request: tiny_http::Request,
+    limit: usize,
+    active: Option<&str>,
+    current_file: Option<&str>,
+) {
+    let mut sessions = crate::journal::list(limit.clamp(1, 100));
+    if let Some(active) = active {
+        let file_name = current_file
+            .and_then(|path| path.rsplit(['/', '\\']).next())
+            .unwrap_or("");
+        for session in &mut sessions {
+            if session.get("id").and_then(Value::as_str) == Some(active) {
+                session["status"] = json!("recording");
+                if !file_name.is_empty() {
+                    session["file"] = json!({"name": file_name});
+                }
+            }
+        }
+    }
+    let total = crate::journal::total();
+    let truncated = total > sessions.len();
     json_response(
         request,
         json!({
             "ok": true,
             "sessions": sessions,
-            "total": sessions.len(),
-            "truncated": false,
+            "total": total,
+            "truncated": truncated,
         }),
         200,
     );

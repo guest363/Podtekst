@@ -179,7 +179,17 @@ fn read_lines(path: &Path) -> Vec<Value> {
         .collect()
 }
 
+pub(crate) fn total() -> usize {
+    sessions_from(&journal_dir()).len()
+}
+
 fn list_from(dir: &Path, limit: usize) -> Vec<Value> {
+    let mut sessions = sessions_from(dir);
+    sessions.truncate(limit);
+    sessions
+}
+
+fn sessions_from(dir: &Path) -> Vec<Value> {
     let mut sessions: Vec<Value> = Vec::new();
     let mut index: HashMap<String, usize> = HashMap::new();
     for event in read_events(dir) {
@@ -249,7 +259,6 @@ fn list_from(dir: &Path, limit: usize) -> Vec<Value> {
         }
     }
     sessions.reverse();
-    sessions.truncate(limit);
     sessions
 }
 
@@ -412,6 +421,20 @@ mod tests {
         assert!(!text.contains("AirPods Pro Test"));
         assert!(!text.contains("take.wav"));
         assert!(!text.contains("/home/example"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn list_truncates_but_total_keeps_all() {
+        let dir = temp_dir("total");
+        for i in 0..25 {
+            append_event(
+                &dir,
+                json!({"event": "recording_start", "session": format!("s{i}")}),
+            );
+        }
+        assert_eq!(sessions_from(&dir).len(), 25);
+        assert_eq!(list_from(&dir, 10).len(), 10);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

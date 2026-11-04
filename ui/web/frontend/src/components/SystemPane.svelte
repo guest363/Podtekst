@@ -580,12 +580,12 @@
       <div class="rec-item">
         <div class="rec-info">
           <span class="rec-name">
-            {lastCrash.kind || 'Сбой'} · {fmtDateTime(lastCrash.created_at) || 'без даты'}
+            {lastCrash.synthetic ? 'Завершение без корректного выхода' : (lastCrash.kind || 'Сбой')}
+            · {fmtDateTime(lastCrash.created_at) || 'без даты'}
           </span>
           <span class="rec-meta">{crashMessage(lastCrash) || 'Сообщение не записано.'}</span>
           <span class="rec-meta">
             {#if crashVersion(lastCrash)}Версия {crashVersion(lastCrash)}{/if}
-            {#if lastCrash.synthetic} · тестовый сбой{/if}
             {#if crashHasBacktrace(lastCrash)} · есть стек вызовов{/if}
           </span>
         </div>

@@ -30,7 +30,7 @@
     if (crashLocation(crash)) lines.push(`Место: ${crashLocation(crash)}`)
     if (crashMessage(crash)) lines.push(`Сообщение: ${crashMessage(crash)}`)
     if (crashHasBacktrace(crash)) lines.push('Есть стек вызовов')
-    if (crash.synthetic) lines.push('Тестовый сбой')
+    if (crash.synthetic) lines.push('Завершение без корректного выхода')
     return lines.join('\n')
   }
 
@@ -43,11 +43,13 @@
 {#if crash}
   <section class="card crash-banner" aria-label="Недавний сбой">
     <div class="card-header">
-      <span class="card-title">Приложение недавно завершилось с ошибкой</span>
+      <span class="card-title">
+        {crash.synthetic ? 'Приложение завершилось без корректного выхода' : 'Приложение недавно завершилось с ошибкой'}
+      </span>
       <span class="rec-meta">
         {fmtDateTime(crash.created_at) || 'без даты'}
         {#if crashVersion(crash)} · {crashVersion(crash)}{/if}
-        {#if crash.synthetic} · тестовый сбой{/if}
+        {#if crash.synthetic} · завершение без корректного выхода{/if}
       </span>
     </div>
     <div class="help-text crash-message">

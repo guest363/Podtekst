@@ -51,7 +51,7 @@ fn parse_version(text: &str) -> Vec<u64> {
         .collect()
 }
 
-pub(super) fn version_is_newer(latest: &str, current: &str) -> bool {
+pub(crate) fn version_is_newer(latest: &str, current: &str) -> bool {
     let a = parse_version(latest);
     let b = parse_version(current);
     if a.is_empty() {

@@ -218,13 +218,7 @@ export async function applyUpdate(): Promise<void> {
   update.hint = ''
   update.retryable = false
   try {
-    const d = await readJsonSafe(
-      await fetch('/api/update/apply', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ version: update.latest }),
-      }),
-    )
+    const d = await readJsonSafe(await fetch('/api/update/apply', { method: 'POST' }))
     if (d.ok === false) {
       failApply(d)
       return

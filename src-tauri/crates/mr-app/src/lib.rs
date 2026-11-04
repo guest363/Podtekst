@@ -356,6 +356,7 @@ pub fn run_cli() {
         }
     };
     cleanup_stale_files();
+    system::cleanup_stale();
     crash::begin_run();
 
     if start_on_launch {

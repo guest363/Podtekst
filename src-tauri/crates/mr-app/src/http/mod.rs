@@ -516,6 +516,8 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     };
                     #[cfg(feature = "onnx")]
                     let busy = busy || crate::transcribe::is_transcribe_running();
+                    // Старый UI мог прислать тело: вычитываем, чтобы соединение не зависло.
+                    let _ = read_body_to_json(&mut request);
                     handle_update_apply(request, busy);
                 }
                 (tiny_http::Method::Post, "/api/update/skip") => {
@@ -750,7 +752,14 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     let limit = query_param(&query, "limit")
                         .and_then(|value| value.parse::<usize>().ok())
                         .unwrap_or(20);
-                    handle_journal(request, limit);
+                    let (active, current_file) = {
+                        let st = state.lock().unwrap_or_else(|e| e.into_inner());
+                        (
+                            st.is_recording.then(|| st.session_id.clone()).flatten(),
+                            st.current_file.clone(),
+                        )
+                    };
+                    handle_journal(request, limit, active.as_deref(), current_file.as_deref());
                 }
                 (tiny_http::Method::Get, "/api/crashes") => {
                     handle_crashes(request);
