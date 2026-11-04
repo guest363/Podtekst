@@ -132,8 +132,8 @@
     <!-- Десктопный сайдбар: строгий левый фрейм, скрыт на мобильных -->
     <aside class="shell-sidebar" aria-label="Разделы приложения">
       <div class="sidebar-brand">
+        <img src="/favicon.svg" class="app-brand-logo" alt="" width="22" height="22" />
         <span class="app-title-text">Подтекст</span>
-        <span class="app-title-dot"></span>
       </div>
 
       <nav class="sidebar-nav" aria-label="Основная навигация">
@@ -208,8 +208,8 @@
       <!-- Мобильная шапка: отображается только на смартфонах -->
       <header class="mobile-header">
         <div class="app-title">
+          <img src="/favicon.svg" class="app-brand-logo" alt="" width="20" height="20" />
           <span class="app-title-text">Подтекст</span>
-          <span class="app-title-dot"></span>
         </div>
         <div class="header-right">
           <button
@@ -261,8 +261,10 @@
         {/if}
 
         {#if ui.activeTab === 'studio'}
-          <RecordingDeck />
-          <Recordings />
+          <div class="studio-view">
+            <RecordingDeck />
+            <Recordings />
+          </div>
         {:else if ui.activeTab === 'people'}
           <div class="card people-page-card">
             <div class="card-header">
@@ -271,7 +273,9 @@
             <People />
           </div>
         {:else if ui.activeTab === 'settings'}
-          <SettingsModal inline={true} />
+          <div class="settings-page-card">
+            <SettingsModal inline={true} />
+          </div>
         {/if}
       </main>
 
@@ -477,41 +481,24 @@
   .status-dot.error { background: var(--accent-rec); }
 
   /* ---------- App Shell Desktop ---------- */
-  .app-shell {
-    display: flex;
-    align-items: flex-start;
-    gap: 24px;
-    max-width: 1120px;
-    width: 100%;
-    margin: 0 auto;
+  :global(html) {
+    height: 100%;
   }
-  .shell-sidebar {
-    width: 200px;
+
+  .app-brand-logo {
+    width: 22px;
+    height: 22px;
     flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    position: sticky;
-    top: 12px;
-    height: calc(100vh - 24px);
-    height: calc(100dvh - 24px);
-    padding: 4px 0 12px;
-    box-sizing: border-box;
+    display: block;
+    border-radius: 4px;
   }
+
   .sidebar-brand {
     display: flex;
     align-items: center;
     gap: 8px;
     padding: 4px 4px 14px;
     border-bottom: 1px solid var(--border-soft);
-  }
-  .app-title-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--accent-ok);
-    box-shadow: 0 0 0 3px rgba(14, 122, 85, 0.16);
-    flex-shrink: 0;
   }
   .sidebar-nav {
     display: flex;
@@ -575,15 +562,84 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .shell-workspace {
-    flex: 1 1 auto;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-  .people-page-card {
-    padding: 18px 20px;
+  /* Десктоп: окно строго зафиксировано, никакого скролла окна/body */
+  @media (min-width: 641px) {
+    :global(body) {
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden !important;
+      padding: 0 !important;
+      margin: 0 !important;
+    }
+    .app-shell {
+      display: flex;
+      align-items: stretch;
+      gap: 20px;
+      max-width: 1200px;
+      width: 100%;
+      height: 100vh;
+      height: 100dvh;
+      margin: 0 auto;
+      padding: 12px 16px;
+      box-sizing: border-box;
+      overflow: hidden;
+    }
+    .shell-sidebar {
+      width: 200px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      height: 100%;
+      padding: 4px 16px 8px 0;
+      border-right: 1px solid var(--border-soft);
+      box-sizing: border-box;
+    }
+    .shell-workspace {
+      flex: 1 1 auto;
+      min-width: 0;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow: hidden;
+    }
+    .shell-main {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow: hidden;
+    }
+    .studio-view {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow: hidden;
+    }
+    .studio-view :global(#recordingsCard) {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .studio-view :global(#recordingsList) {
+      flex: 1 1 auto;
+      min-height: 0;
+      max-height: none !important;
+      overflow-y: auto;
+    }
+    .people-page-card,
+    .settings-page-card {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 18px 20px;
+    }
   }
 
   /* На десктопе мобильная шапка и мобильный таббар СТРОГО скрыты */
@@ -603,6 +659,15 @@
     .shell-sidebar {
       display: none !important;
     }
+    .shell-workspace {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      padding-bottom: 74px;
+    }
+    .people-page-card {
+      padding: 18px 20px;
+    }
     .mobile-header {
       display: flex !important;
       justify-content: space-between;
@@ -610,9 +675,6 @@
       gap: 8px;
       padding: 2px 2px;
       width: 100%;
-    }
-    .shell-workspace {
-      padding-bottom: 74px;
     }
     .mobile-bottom-nav {
       display: flex !important;
