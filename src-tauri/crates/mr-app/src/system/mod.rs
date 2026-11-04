@@ -123,7 +123,7 @@ pub(crate) fn snapshot_for_report() -> Value {
     redacted(snapshot(false, 0, &crate::config::configured_record_mode()))
 }
 
-/// Для отчёта: домашний каталог заменяется на `~`, имена устройств скрываются.
+/// В отчёте не должно быть домашнего пути и настоящих имён устройств.
 pub(crate) fn redacted(mut value: Value) -> Value {
     mask_devices(&mut value);
     redact_value(&mut value);

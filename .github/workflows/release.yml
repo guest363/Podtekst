@@ -240,7 +240,6 @@ jobs:
           if-no-files-found: error
           path: bundle-pkg/*
 
-  # Смоуки запускают собранный пакет с --web в отдельной папке данных.
   smoke-linux:
     needs: [meta, build-tauri]
     runs-on: ubuntu-24.04
@@ -417,7 +416,7 @@ jobs:
             exit 1
           fi
 
-  # latest.json и SHA256SUMS собираются после всех сборок.
+  # Сначала latest.json: иначе SHA256SUMS не покроет манифест.
   manifest:
     needs: [meta, build-tauri, build-android]
     runs-on: ubuntu-24.04
@@ -454,7 +453,6 @@ jobs:
           if-no-files-found: error
           path: dist/*
 
-  # Публикация только для push тега и не dry_run.
   publish:
     needs: [meta, manifest, smoke-linux, smoke-macos, smoke-windows, smoke-android]
     if: github.event_name == 'push'

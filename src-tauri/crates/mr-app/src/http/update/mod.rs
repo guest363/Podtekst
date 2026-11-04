@@ -1,9 +1,3 @@
-//! Проверка обновлений и штатный апдейтер Tauri.
-//!
-//! Канонический источник — `latest.json` последнего релиза: его же читает
-//! Tauri updater, поэтому версия и заметки не расходятся с тем, что реально
-//! установится. GitHub API остаётся резервом для старых релизов.
-
 mod source;
 
 #[cfg(all(
@@ -242,8 +236,6 @@ fn save_attempt(from: &str, to: &str, outcome: &str) {
     });
 }
 
-/// POST /api/update/apply — скачать и установить обновление. Запускается только
-/// по явному нажатию в UI; при успехе приложение перезапускается само.
 pub(crate) fn handle_update_apply(request: tiny_http::Request, busy: bool) {
     if !self_update::available() {
         json_response(
@@ -310,7 +302,6 @@ pub(crate) fn handle_update_progress(request: tiny_http::Request) {
     json_response(request, self_update::progress(), 200);
 }
 
-/// Для `/api/status` и смоука: доступно ли самообновление в этой сборке.
 pub(crate) fn available_for_status() -> bool {
     self_update::available()
 }

@@ -112,7 +112,6 @@ pub(crate) fn export_redacted() -> String {
     export_redacted_in(&journal_dir())
 }
 
-/// Короткий стабильный id файла: FNV-1a 64, без внешних крейтов.
 pub(crate) fn file_id(path: &Path) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in path.to_string_lossy().as_bytes() {
