@@ -31,21 +31,9 @@
   import SystemPane from './components/SystemPane.svelte'
   import CrashBanner from './components/CrashBanner.svelte'
   import Toasts from './components/Toasts.svelte'
-  import {
-    displayRecTitle,
-    fmtClock,
-    formatRecDate,
-    isMobile,
-    isCoreModel,
-    pluralSpeakers,
-    remainingMb,
-  } from './lib/api'
+  import { isMobile, isCoreModel, remainingMb } from './lib/api'
 
   let introOpen = $state(false)
-
-  const recentRecordings = $derived(
-    (isMobile ? recordings.items.filter((r) => !r.is_video) : recordings.items).slice(0, 3),
-  )
 
   $effect(() => {
     if (ui.settingsOpen) {
@@ -166,21 +154,6 @@
         <button
           type="button"
           class="sidebar-btn"
-          class:active={ui.activeTab === 'recordings'}
-          onclick={() => selectTab('recordings')}
-        >
-          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-            <path d="M4 6h16M4 12h16M4 18h10" />
-          </svg>
-          <span class="sidebar-btn-label">Записи</span>
-          {#if recordings.items.length > 0}
-            <span class="sidebar-count">{recordings.items.length}</span>
-          {/if}
-        </button>
-
-        <button
-          type="button"
-          class="sidebar-btn"
           class:active={ui.activeTab === 'people'}
           onclick={() => selectTab('people')}
         >
@@ -289,36 +262,6 @@
 
         {#if ui.activeTab === 'studio'}
           <RecordingDeck />
-          {#if recentRecordings.length > 0}
-            <section class="card recent-recordings-card" aria-label="Последние записи">
-              <div class="card-header">
-                <span class="card-title">Последние записи</span>
-                <button type="button" class="link-btn" onclick={() => selectTab('recordings')}>
-                  Все записи ({recordings.items.length}) →
-                </button>
-              </div>
-              <div class="recordings-list">
-                {#each recentRecordings as rec (rec.path)}
-                  {@const dt = formatRecDate(rec.date, rec.name)}
-                  <div class="rec-item">
-                    <div class="rec-info">
-                      <span class="rec-name" title={rec.name}>{displayRecTitle(rec.name)}</span>
-                      <span class="rec-meta">
-                        {dt.full} · {#if rec.duration_sec}{fmtClock(rec.duration_sec)} · {/if}
-                        {#if rec.speakers_count}{rec.speakers_count} {pluralSpeakers(rec.speakers_count)}{:else if rec.has_transcript}Текст готов{:else}Аудио{/if}
-                      </span>
-                    </div>
-                    <div class="rec-actions">
-                      <button type="button" class="btn-secondary btn-sm" onclick={() => openTranscript(rec.path, rec.is_video)}>
-                        Текст и спикеры
-                      </button>
-                    </div>
-                  </div>
-                {/each}
-              </div>
-            </section>
-          {/if}
-        {:else if ui.activeTab === 'recordings'}
           <Recordings />
         {:else if ui.activeTab === 'people'}
           <div class="card people-page-card">
@@ -346,18 +289,6 @@
             <line x1="12" y1="19" x2="12" y2="22" />
           </svg>
           <span>Запись</span>
-        </button>
-
-        <button
-          type="button"
-          class="mobile-tab-btn"
-          class:active={ui.activeTab === 'recordings'}
-          onclick={() => selectTab('recordings')}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-            <path d="M4 6h16M4 12h16M4 18h10" />
-          </svg>
-          <span>Записи</span>
         </button>
 
         <button
@@ -653,9 +584,6 @@
   }
   .people-page-card {
     padding: 18px 20px;
-  }
-  .recent-recordings-card {
-    padding: 16px 20px;
   }
 
   /* На десктопе мобильная шапка и мобильный таббар СТРОГО скрыты */
