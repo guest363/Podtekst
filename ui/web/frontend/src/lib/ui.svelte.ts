@@ -1,6 +1,9 @@
 import { isVideoPath } from './api'
 
+export type AppTab = 'studio' | 'recordings' | 'people' | 'settings'
+
 export const ui = $state({
+  activeTab: 'studio' as AppTab,
   settingsOpen: false,
   systemOpen: false,
   donateOpen: false,
@@ -8,6 +11,20 @@ export const ui = $state({
   currentTranscriptPath: '',
   currentTranscriptIsVideo: false,
 })
+
+export function selectTab(tab: AppTab): void {
+  ui.activeTab = tab
+  if (ui.transcriptOpen) {
+    ui.transcriptOpen = false
+    ui.currentTranscriptPath = ''
+  }
+  if (typeof window !== 'undefined') {
+    const hash = tab === 'studio' ? '#/' : `#/${tab}`
+    if (window.location.hash !== hash) {
+      window.location.hash = hash
+    }
+  }
+}
 
 export function openTranscript(path: string, isVideo?: boolean): void {
   const vid = typeof isVideo === 'boolean' ? isVideo : isVideoPath(path)
@@ -26,7 +43,8 @@ export function closeTranscript(): void {
   ui.transcriptOpen = false
   ui.currentTranscriptPath = ''
   if (typeof window !== 'undefined' && window.location.hash.startsWith('#/transcript')) {
-    history.pushState('', document.title, window.location.pathname + window.location.search)
+    const targetHash = ui.activeTab === 'studio' ? '#/' : `#/${ui.activeTab}`
+    window.location.hash = targetHash
   }
 }
 
@@ -48,7 +66,16 @@ export function initRouting(): void {
           return
         }
       }
+    } else if (hash === '#/recordings') {
+      ui.activeTab = 'recordings'
+    } else if (hash === '#/people') {
+      ui.activeTab = 'people'
+    } else if (hash === '#/settings') {
+      ui.activeTab = 'settings'
+    } else if (hash === '#/' || hash === '' || hash === '#/studio') {
+      ui.activeTab = 'studio'
     }
+
     if (ui.transcriptOpen) {
       ui.transcriptOpen = false
       ui.currentTranscriptPath = ''

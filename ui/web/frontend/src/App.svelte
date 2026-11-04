@@ -19,10 +19,11 @@
   import { loadSupportInfo } from './lib/support.svelte.ts'
   import { system } from './lib/system.svelte.ts'
   import { checkUpdate, dismissUpdate, openUpdateModal, update } from './lib/update.svelte.ts'
-  import { initRouting, on, ui } from './lib/ui.svelte.ts'
+  import { initRouting, on, openTranscript, selectTab, ui } from './lib/ui.svelte.ts'
   import { renderMarkdown } from './lib/markdown'
   import RecordingDeck from './components/RecordingDeck.svelte'
   import Recordings from './components/Recordings.svelte'
+  import People from './components/People.svelte'
   import TranscriptPage from './components/TranscriptPage.svelte'
   import SettingsModal from './components/SettingsModal.svelte'
   import DonateModal from './components/DonateModal.svelte'
@@ -30,9 +31,28 @@
   import SystemPane from './components/SystemPane.svelte'
   import CrashBanner from './components/CrashBanner.svelte'
   import Toasts from './components/Toasts.svelte'
-  import { isMobile, isCoreModel, remainingMb } from './lib/api'
+  import {
+    displayRecTitle,
+    fmtClock,
+    formatRecDate,
+    isMobile,
+    isCoreModel,
+    pluralSpeakers,
+    remainingMb,
+  } from './lib/api'
 
   let introOpen = $state(false)
+
+  const recentRecordings = $derived(
+    (isMobile ? recordings.items.filter((r) => !r.is_video) : recordings.items).slice(0, 3),
+  )
+
+  $effect(() => {
+    if (ui.settingsOpen) {
+      selectTab('settings')
+      ui.settingsOpen = false
+    }
+  })
 
   const coreModels = $derived(settings.models.filter(isCoreModel))
   const coreInstalled = $derived(
@@ -120,14 +140,77 @@
 {#if ui.transcriptOpen && ui.currentTranscriptPath}
   <TranscriptPage />
 {:else}
-  <div class="page">
-    <header class="app-header">
-      <div class="app-title">
+  <div class="app-shell">
+    <!-- Десктопный сайдбар: строгий левый фрейм, скрыт на мобильных -->
+    <aside class="shell-sidebar" aria-label="Разделы приложения">
+      <div class="sidebar-brand">
         <span class="app-title-text">Подтекст</span>
+        <span class="app-title-dot"></span>
       </div>
-      <div class="header-right">
+
+      <nav class="sidebar-nav" aria-label="Основная навигация">
         <button
-          class="status-pill"
+          type="button"
+          class="sidebar-btn"
+          class:active={ui.activeTab === 'studio'}
+          onclick={() => selectTab('studio')}
+        >
+          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+            <line x1="12" y1="19" x2="12" y2="22" />
+          </svg>
+          <span class="sidebar-btn-label">Запись</span>
+        </button>
+
+        <button
+          type="button"
+          class="sidebar-btn"
+          class:active={ui.activeTab === 'recordings'}
+          onclick={() => selectTab('recordings')}
+        >
+          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M4 6h16M4 12h16M4 18h10" />
+          </svg>
+          <span class="sidebar-btn-label">Записи</span>
+          {#if recordings.items.length > 0}
+            <span class="sidebar-count">{recordings.items.length}</span>
+          {/if}
+        </button>
+
+        <button
+          type="button"
+          class="sidebar-btn"
+          class:active={ui.activeTab === 'people'}
+          onclick={() => selectTab('people')}
+        >
+          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="12" cy="7" r="4" />
+            <path d="M5.5 21a6.5 6.5 0 0 1 13 0" />
+          </svg>
+          <span class="sidebar-btn-label">Участники</span>
+        </button>
+
+        <button
+          type="button"
+          class="sidebar-btn"
+          class:active={ui.activeTab === 'settings'}
+          onclick={() => selectTab('settings')}
+        >
+          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M4 6h9M18 6h2M4 12h3M12 12h8M4 18h11M20 18h0" />
+            <circle cx="15.5" cy="6" r="2.5" />
+            <circle cx="9.5" cy="12" r="2.5" />
+            <circle cx="17.5" cy="18" r="2.5" />
+          </svg>
+          <span class="sidebar-btn-label">Настройки</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button
+          type="button"
+          class="status-pill sidebar-status"
           title="Состояние системы"
           aria-label="Открыть состояние системы"
           onclick={() => (ui.systemOpen = true)}
@@ -136,6 +219,7 @@
           <span class="status-pill-text">Состояние</span>
         </button>
         <button
+          type="button"
           class="icon-btn help-btn"
           title="Как это работает"
           aria-label="Справка"
@@ -143,60 +227,168 @@
         >
           ?
         </button>
-        <button
-          class="icon-btn"
-          title="Настройки"
-          aria-label="Открыть настройки"
-          onclick={() => (ui.settingsOpen = true)}
-        >
-          <svg
-            width="17"
-            height="17"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            aria-hidden="true"
+      </div>
+    </aside>
+
+    <!-- Рабочая область приложения -->
+    <div class="shell-workspace">
+      <!-- Мобильная шапка: отображается только на смартфонах -->
+      <header class="mobile-header">
+        <div class="app-title">
+          <span class="app-title-text">Подтекст</span>
+          <span class="app-title-dot"></span>
+        </div>
+        <div class="header-right">
+          <button
+            type="button"
+            class="status-pill mobile-status-btn"
+            title="Состояние системы"
+            aria-label="Открыть состояние системы"
+            onclick={() => (ui.systemOpen = true)}
           >
+            <span class="status-dot {statusTone}" aria-hidden="true"></span>
+          </button>
+          <button
+            type="button"
+            class="icon-btn help-btn"
+            title="Как это работает"
+            aria-label="Справка"
+            onclick={() => (introOpen = true)}
+          >
+            ?
+          </button>
+        </div>
+      </header>
+
+      <main class="main-column">
+        <CrashBanner />
+        {#if update.isNewer && !update.dismissed}
+          <section class="card update-card" aria-label="Доступно обновление">
+            <div class="card-header">
+              <span class="card-title">Доступна версия {update.latest}</span>
+              <button class="icon-btn" aria-label="Скрыть предложение обновления" onclick={dismissUpdate}>
+                ✕
+              </button>
+            </div>
+            <div class="help-text">
+              У вас установлена версия {update.current}.
+              {#if update.applying}
+                Скачиваю обновление… {update.pct}%.
+              {:else if update.selfUpdate}
+                Обновление скачается и установится здесь.
+              {:else}
+                Новую версию можно скачать со страницы релиза.
+              {/if}
+            </div>
+            <div class="row-start">
+              <button class="btn-primary" onclick={openUpdateModal}>Что нового и обновить</button>
+              <button class="btn-secondary" onclick={dismissUpdate}>Позже</button>
+            </div>
+          </section>
+        {/if}
+
+        {#if ui.activeTab === 'studio'}
+          <RecordingDeck />
+          {#if recentRecordings.length > 0}
+            <section class="card recent-recordings-card" aria-label="Последние записи">
+              <div class="card-header">
+                <span class="card-title">Последние записи</span>
+                <button type="button" class="link-btn" onclick={() => selectTab('recordings')}>
+                  Все записи ({recordings.items.length}) →
+                </button>
+              </div>
+              <div class="recordings-list">
+                {#each recentRecordings as rec (rec.path)}
+                  {@const dt = formatRecDate(rec.date, rec.name)}
+                  <div class="rec-item">
+                    <div class="rec-info">
+                      <span class="rec-name" title={rec.name}>{displayRecTitle(rec.name)}</span>
+                      <span class="rec-meta">
+                        {dt.full} · {#if rec.duration_sec}{fmtClock(rec.duration_sec)} · {/if}
+                        {#if rec.speakers_count}{rec.speakers_count} {pluralSpeakers(rec.speakers_count)}{:else if rec.has_transcript}Текст готов{:else}Аудио{/if}
+                      </span>
+                    </div>
+                    <div class="rec-actions">
+                      <button type="button" class="btn-secondary btn-sm" onclick={() => openTranscript(rec.path, rec.is_video)}>
+                        Текст и спикеры
+                      </button>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            </section>
+          {/if}
+        {:else if ui.activeTab === 'recordings'}
+          <Recordings />
+        {:else if ui.activeTab === 'people'}
+          <div class="card people-page-card">
+            <div class="card-header">
+              <span class="card-title">Участники и голоса</span>
+            </div>
+            <People />
+          </div>
+        {:else if ui.activeTab === 'settings'}
+          <SettingsModal inline={true} />
+        {/if}
+      </main>
+
+      <!-- Мобильный таббар: отображается только на смартфонах -->
+      <nav class="mobile-bottom-nav" aria-label="Мобильная навигация">
+        <button
+          type="button"
+          class="mobile-tab-btn"
+          class:active={ui.activeTab === 'studio'}
+          onclick={() => selectTab('studio')}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+            <line x1="12" y1="19" x2="12" y2="22" />
+          </svg>
+          <span>Запись</span>
+        </button>
+
+        <button
+          type="button"
+          class="mobile-tab-btn"
+          class:active={ui.activeTab === 'recordings'}
+          onclick={() => selectTab('recordings')}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M4 6h16M4 12h16M4 18h10" />
+          </svg>
+          <span>Записи</span>
+        </button>
+
+        <button
+          type="button"
+          class="mobile-tab-btn"
+          class:active={ui.activeTab === 'people'}
+          onclick={() => selectTab('people')}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="12" cy="7" r="4" />
+            <path d="M5.5 21a6.5 6.5 0 0 1 13 0" />
+          </svg>
+          <span>Люди</span>
+        </button>
+
+        <button
+          type="button"
+          class="mobile-tab-btn"
+          class:active={ui.activeTab === 'settings'}
+          onclick={() => selectTab('settings')}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
             <path d="M4 6h9M18 6h2M4 12h3M12 12h8M4 18h11M20 18h0" />
             <circle cx="15.5" cy="6" r="2.5" />
             <circle cx="9.5" cy="12" r="2.5" />
             <circle cx="17.5" cy="18" r="2.5" />
           </svg>
+          <span>Настройки</span>
         </button>
-      </div>
-    </header>
-
-    <main class="main-column">
-      <CrashBanner />
-      {#if update.isNewer && !update.dismissed}
-        <section class="card update-card" aria-label="Доступно обновление">
-          <div class="card-header">
-            <span class="card-title">Доступна версия {update.latest}</span>
-            <button class="icon-btn" aria-label="Скрыть предложение обновления" onclick={dismissUpdate}>
-              ✕
-            </button>
-          </div>
-          <div class="help-text">
-            У вас установлена версия {update.current}.
-            {#if update.applying}
-              Скачиваю обновление… {update.pct}%.
-            {:else if update.selfUpdate}
-              Обновление скачается и установится здесь.
-            {:else}
-              Новую версию можно скачать со страницы релиза.
-            {/if}
-          </div>
-          <div class="row-start">
-            <button class="btn-primary" onclick={openUpdateModal}>Что нового и обновить</button>
-            <button class="btn-secondary" onclick={dismissUpdate}>Позже</button>
-          </div>
-        </section>
-      {/if}
-      <RecordingDeck />
-      <Recordings />
-    </main>
+      </nav>
+    </div>
   </div>
 {/if}
 
@@ -352,7 +544,200 @@
   .status-dot.ok { background: var(--accent-ok); }
   .status-dot.warn { background: var(--accent-amber); }
   .status-dot.error { background: var(--accent-rec); }
+
+  /* ---------- App Shell Desktop ---------- */
+  .app-shell {
+    display: flex;
+    align-items: flex-start;
+    gap: 24px;
+    max-width: 1120px;
+    width: 100%;
+    margin: 0 auto;
+  }
+  .shell-sidebar {
+    width: 200px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    position: sticky;
+    top: 12px;
+    height: calc(100vh - 24px);
+    height: calc(100dvh - 24px);
+    padding: 4px 0 12px;
+    box-sizing: border-box;
+  }
+  .sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 4px 14px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .app-title-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent-ok);
+    box-shadow: 0 0 0 3px rgba(14, 122, 85, 0.16);
+    flex-shrink: 0;
+  }
+  .sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .sidebar-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: var(--radius-inner);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+    transition: all 140ms ease;
+    width: 100%;
+  }
+  .sidebar-btn:hover {
+    background: var(--bg-inset);
+    color: var(--text-primary);
+  }
+  .sidebar-btn.active {
+    background: #fff;
+    color: var(--text-primary);
+    border-color: var(--border-card);
+    box-shadow: 0 1px 3px rgba(15, 30, 51, 0.05);
+  }
+  .sidebar-btn.active .nav-icon {
+    color: var(--accent-rec);
+  }
+  .sidebar-count {
+    margin-left: auto;
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-faint);
+    background: var(--bg-inset);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-pill);
+    padding: 0 6px;
+  }
+  .sidebar-footer {
+    margin-top: auto;
+    padding-top: 14px;
+    border-top: 1px solid var(--border-soft);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .sidebar-status {
+    flex: 1;
+    min-width: 0;
+  }
+  .sidebar-status .status-pill-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .shell-workspace {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .people-page-card {
+    padding: 18px 20px;
+  }
+  .recent-recordings-card {
+    padding: 16px 20px;
+  }
+
+  /* На десктопе мобильная шапка и мобильный таббар СТРОГО скрыты */
+  .mobile-header {
+    display: none !important;
+  }
+  .mobile-bottom-nav {
+    display: none !important;
+  }
+
   @media (max-width: 640px) {
+    .app-shell {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .shell-sidebar {
+      display: none !important;
+    }
+    .mobile-header {
+      display: flex !important;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      padding: 2px 2px;
+      width: 100%;
+    }
+    .shell-workspace {
+      padding-bottom: 74px;
+    }
+    .mobile-bottom-nav {
+      display: flex !important;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 56px;
+      z-index: 40;
+      background: #ffffff;
+      border-top: 1px solid var(--border-card);
+      align-items: stretch;
+      justify-content: space-around;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      box-shadow: 0 -2px 10px rgba(15, 30, 51, 0.04);
+    }
+    .mobile-tab-btn {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      background: transparent;
+      border: none;
+      color: var(--text-faint);
+      font: inherit;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: color 140ms ease;
+    }
+    .mobile-tab-btn.active {
+      color: var(--accent-rec);
+      font-weight: 700;
+    }
+    .mobile-tab-btn.active svg {
+      color: var(--accent-rec);
+    }
+    .mobile-status-btn {
+      width: 38px;
+      height: 38px;
+      padding: 0;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .mobile-status-btn .status-dot {
+      width: 9px;
+      height: 9px;
+    }
     .status-pill {
       width: 38px;
       height: 38px;
@@ -371,7 +756,6 @@
   }
 </style>
 
-<SettingsModal />
 <UpdateModal />
 <SystemPane />
 <DonateModal />

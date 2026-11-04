@@ -26,6 +26,11 @@
   import { peopleState } from '../lib/people.svelte.ts'
   import People from './People.svelte'
 
+  interface Props {
+    inline?: boolean
+  }
+  let { inline = false }: Props = $props()
+
   let tab = $state<'record' | 'people' | 'voices' | 'dict' | 'models'>('record')
   let packFileInput: HTMLInputElement | null = $state(null)
   let termInput = $state('')
@@ -102,7 +107,7 @@
   void loadFfmpeg()
 
   function onWindowKey(e: KeyboardEvent): void {
-    if (ui.settingsOpen && !ui.donateOpen && e.key === 'Escape') {
+    if (!inline && ui.settingsOpen && !ui.donateOpen && e.key === 'Escape') {
       ui.settingsOpen = false
     }
   }
@@ -110,81 +115,70 @@
 
 <svelte:window onkeydown={onWindowKey} />
 
-{#if ui.settingsOpen}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div
-    class="app-drawer-overlay"
-    role="presentation"
-    onclick={() => (ui.settingsOpen = false)}
-  ></div>
-  <div
-    class="app-drawer settings-drawer"
-    role="dialog"
-    tabindex="-1"
-    aria-modal="true"
-    aria-label="Настройки"
-  >
-    <div class="app-drawer-top">
-      <div class="settings-heading">
-        <div class="modal-title">Настройки</div>
-        <div class="settings-version">
-          Версия {update.current || '…'} ·
-          <button
-            class="link-btn"
-            disabled={update.checking}
-            onclick={() => void checkUpdate(true, true)}
-          >
-            {update.checking ? 'Проверяю…' : 'Проверить обновления'}
-          </button>
-        </div>
+{#snippet settingsContent()}
+  <div class="app-drawer-top">
+    <div class="settings-heading">
+      <div class="modal-title">Настройки</div>
+      <div class="settings-version">
+        Версия {update.current || '…'} ·
+        <button
+          class="link-btn"
+          disabled={update.checking}
+          onclick={() => void checkUpdate(true, true)}
+        >
+          {update.checking ? 'Проверяю…' : 'Проверить обновления'}
+        </button>
       </div>
+    </div>
+    {#if !inline}
       <button class="icon-btn" aria-label="Закрыть настройки" onclick={() => (ui.settingsOpen = false)}>✕</button>
-    </div>
+    {/if}
+  </div>
 
-    <div class="settings-tabs" role="tablist" aria-label="Разделы настроек">
-      <button
-        class="settings-tab {tab === 'record' ? 'active' : ''}"
-        role="tab"
-        aria-selected={tab === 'record'}
-        onclick={() => (tab = 'record')}
-      >
-        Запись
-      </button>
-      <button
-        class="settings-tab {tab === 'people' ? 'active' : ''}"
-        role="tab"
-        aria-selected={tab === 'people'}
-        onclick={() => (tab = 'people')}
-      >
-        Участники
-      </button>
-      <button
-        class="settings-tab {tab === 'voices' ? 'active' : ''}"
-        role="tab"
-        aria-selected={tab === 'voices'}
-        onclick={() => (tab = 'voices')}
-      >
-        Голоса
-      </button>
-      <button
-        class="settings-tab {tab === 'dict' ? 'active' : ''}"
-        role="tab"
-        aria-selected={tab === 'dict'}
-        onclick={() => void openDictTab()}
-      >
-        Словарь
-      </button>
-      <button
-        class="settings-tab {tab === 'models' ? 'active' : ''}"
-        role="tab"
-        aria-selected={tab === 'models'}
-        onclick={() => void openModelsTab()}
-      >
-        Компоненты
-      </button>
-    </div>
+  <div class="settings-tabs" role="tablist" aria-label="Разделы настроек">
+    <button
+      class="settings-tab {tab === 'record' ? 'active' : ''}"
+      role="tab"
+      aria-selected={tab === 'record'}
+      onclick={() => (tab = 'record')}
+    >
+      Запись
+    </button>
+    <button
+      class="settings-tab {tab === 'people' ? 'active' : ''}"
+      role="tab"
+      aria-selected={tab === 'people'}
+      onclick={() => (tab = 'people')}
+    >
+      Участники
+    </button>
+    <button
+      class="settings-tab {tab === 'voices' ? 'active' : ''}"
+      role="tab"
+      aria-selected={tab === 'voices'}
+      onclick={() => (tab = 'voices')}
+    >
+      Голоса
+    </button>
+    <button
+      class="settings-tab {tab === 'dict' ? 'active' : ''}"
+      role="tab"
+      aria-selected={tab === 'dict'}
+      onclick={() => void openDictTab()}
+    >
+      Словарь
+    </button>
+    <button
+      class="settings-tab {tab === 'models' ? 'active' : ''}"
+      role="tab"
+      aria-selected={tab === 'models'}
+      onclick={() => void openModelsTab()}
+    >
+      Компоненты
+    </button>
+  </div>
 
-    <div class="app-drawer-body">
+  <div class="app-drawer-body">
       {#if tab === 'record'}
         <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Запись">
           <div class="card-title">Режим записи</div>
@@ -521,12 +515,51 @@
 
     <div class="app-drawer-bottom">
       <button class="support-link" onclick={() => (ui.donateOpen = true)}>Поддержать проект</button>
-      <button class="btn-primary" onclick={() => (ui.settingsOpen = false)}>Готово</button>
+      {#if !inline}
+        <button class="btn-primary" onclick={() => (ui.settingsOpen = false)}>Готово</button>
+      {/if}
     </div>
+{/snippet}
+
+{#if inline}
+  <div class="card settings-inline-card">
+    {@render settingsContent()}
+  </div>
+{:else if ui.settingsOpen}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div
+    class="app-drawer-overlay"
+    role="presentation"
+    onclick={() => (ui.settingsOpen = false)}
+  ></div>
+  <div
+    class="app-drawer settings-drawer"
+    role="dialog"
+    tabindex="-1"
+    aria-modal="true"
+    aria-label="Настройки"
+  >
+    {@render settingsContent()}
   </div>
 {/if}
 
 <style>
+  .settings-inline-card {
+    padding: 18px 20px;
+    gap: 14px;
+  }
+  .settings-inline-card :global(.app-drawer-top) {
+    padding: 0 0 14px;
+  }
+  .settings-inline-card :global(.app-drawer-body) {
+    overflow: visible;
+    padding: 6px 0;
+  }
+  .settings-inline-card :global(.app-drawer-bottom) {
+    padding: 14px 0 0;
+    border-top: 1px solid var(--border-soft);
+    background: transparent;
+  }
   .settings-heading {
     display: flex; flex-direction: column; gap: 1px; min-width: 0;
   }
