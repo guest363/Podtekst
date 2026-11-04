@@ -260,32 +260,32 @@
   }
 
   .date-presets-row {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 4px;
-    margin-bottom: 8px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--border-soft);
+    display: flex;
+    background: var(--bg-inset);
+    border-radius: var(--radius-inner);
+    padding: 2px;
+    gap: 2px;
+    margin-bottom: 10px;
+    border: 1px solid var(--border-soft);
   }
   .preset-btn {
-    border: 1px solid var(--border-card);
-    background: var(--bg-inset);
-    color: var(--text-primary);
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
     border-radius: var(--radius-sm);
-    padding: 4px 6px;
-    font-size: 11px;
+    padding: 5px 6px;
+    font-size: 11.5px;
     font-weight: 600;
     cursor: pointer;
-    transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+    text-align: center;
+    transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
   }
   .preset-btn:hover {
-    background: #ffffff;
-    border-color: var(--accent-blue);
-    color: var(--accent-blue);
+    color: var(--text-primary);
   }
   .preset-btn.active {
     background: #ffffff;
-    border-color: var(--accent-blue);
     color: var(--accent-blue);
     box-shadow: 0 1px 3px rgba(15, 30, 51, 0.08);
   }
