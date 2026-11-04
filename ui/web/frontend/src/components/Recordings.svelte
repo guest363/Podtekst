@@ -21,9 +21,7 @@
   let uploadInput: HTMLInputElement | null = $state(null)
   let uploadBtn: HTMLButtonElement | null = $state(null)
   let dropCard: HTMLElement | null = $state(null)
-  let drawerOpen = $state(false)
   let search = $state('')
-  let searchInput: HTMLInputElement | null = $state(null)
   let renaming = $state('')
   let renameValue = $state('')
   let savingName = $state(false)
@@ -52,12 +50,7 @@
   let mainRangeLabel = $state('')
   let mainPickerOpen = $state(false)
 
-  let drawerRangeStart = $state<Date | null>(null)
-  let drawerRangeEnd = $state<Date | null>(null)
-  let drawerPickerOpen = $state(false)
-
   // На телефоне видео не импортируется (нет ffmpeg) и не показывается.
-  const VISIBLE = 5
   const items = $derived(isMobile ? recordings.items.filter((r) => !r.is_video) : recordings.items)
 
   const countToday = $derived(
@@ -103,28 +96,7 @@
     return list
   })
 
-  const visible = $derived(mainFiltered.slice(0, VISIBLE))
-  const hiddenCount = $derived(Math.max(0, items.length - VISIBLE))
-
-  const drawerFiltered = $derived.by(() => {
-    let list = search.trim() === ''
-      ? items
-      : items.filter((r) => r.name.toLowerCase().includes(search.trim().toLowerCase()))
-
-    if (drawerRangeStart) {
-      list = filterByRange(list, drawerRangeStart, drawerRangeEnd ?? drawerRangeStart)
-    }
-    return list
-  })
-
-  const isDrawerFilterActive = $derived(drawerRangeStart !== null)
-  const drawerDateLabel = $derived(
-    drawerRangeStart
-      ? formatRangeLabel(drawerRangeStart, drawerRangeEnd ?? drawerRangeStart)
-      : 'Все даты',
-  )
-
-  const drawerGroups = $derived.by(() => {
+  const mainGroups = $derived.by(() => {
     const map = new Map<string, { label: string; isToday: boolean; recs: RecordingItem[] }>()
     const monthsGen = [
       'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
@@ -134,7 +106,7 @@
       'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
       'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь',
     ]
-    for (const rec of drawerFiltered) {
+    for (const rec of mainFiltered) {
       const d = parseRecDate(rec.date, rec.name)
       let key = 'archive'
       let label = 'Архив'
@@ -195,18 +167,6 @@
     setMainPreset('today')
   }
 
-  function onDrawerRangeSelect(start: Date, end: Date, label: string): void {
-    drawerRangeStart = start
-    drawerRangeEnd = end
-    drawerPickerOpen = false
-  }
-
-  function resetDrawerFilter(): void {
-    drawerRangeStart = null
-    drawerRangeEnd = null
-    drawerPickerOpen = false
-  }
-
   function hasRecsOnDate(d: Date): boolean {
     const t = d.getTime()
     return items.some((r) => {
@@ -214,11 +174,6 @@
       return rd && rd.getTime() === t
     })
   }
-
-  // Фокус в поиск при открытии панели (вместо autofocus-атрибута).
-  $effect(() => {
-    if (drawerOpen) searchInput?.focus()
-  })
 
   onMount(() => {
     on('recordings-changed', () => void loadRecordings())
@@ -230,20 +185,15 @@
     }
   })
 
-  function closeDrawer(): void {
-    drawerOpen = false
-    search = ''
-    drawerPickerOpen = false
-    resetDrawerFilter()
-  }
-
   function onWindowKey(e: KeyboardEvent): void {
     if (e.key !== 'Escape') return
     if (deleteTarget) {
       deleteTarget = null
       return
     }
-    if (drawerOpen) closeDrawer()
+    if (mainPickerOpen) {
+      mainPickerOpen = false
+    }
   }
 
   async function confirmDelete(): Promise<void> {
@@ -309,10 +259,10 @@
   {@const dt = formatRecDate(rec.date, rec.name)}
   <div class="rec-item rec-card">
     <div class="rec-date-col">
-      <span class="rec-date-day">{dt.day}</span>
       {#if dt.time}
         <span class="rec-date-time">{dt.time}</span>
       {/if}
+      <span class="rec-date-day">{dt.day}</span>
     </div>
 
     <div class="rec-info">
@@ -525,7 +475,7 @@
       </button>
     </div>
   </div>
-  <div class="recordings-list">
+  <div class="recordings-list" id="recordingsList">
     {#if items.length === 0}
       <div class="empty-note">
         Записей пока нет
@@ -537,7 +487,7 @@
           {/if}
         </span>
       </div>
-    {:else if visible.length === 0}
+    {:else if mainFiltered.length === 0}
       <div class="empty-note">
         {#if search.trim() !== ''}
           Ничего не найдено
@@ -559,120 +509,25 @@
         {/if}
       </div>
     {:else}
-      {#each visible as rec (rec.path)}
-        {@render recRow(rec)}
+      {#each mainGroups as group}
+        <div class="rec-group">
+          <div class="rec-sticky-header {group.isToday ? 'is-today' : ''}">
+            <div class="rec-sticky-left">
+              {#if group.isToday}
+                <span class="rec-sticky-dot" aria-hidden="true"></span>
+              {/if}
+              <span class="rec-sticky-title">{group.label}</span>
+            </div>
+            <span class="rec-sticky-count">{group.recs.length} {pluralRecords(group.recs.length)}</span>
+          </div>
+          {#each group.recs as rec (rec.path)}
+            {@render recRow(rec)}
+          {/each}
+        </div>
       {/each}
     {/if}
   </div>
-  {#if hiddenCount > 0}
-    <div class="row-start">
-      <button class="btn-secondary" onclick={() => (drawerOpen = true)}>
-        Все записи · ещё {hiddenCount}
-      </button>
-    </div>
-  {/if}
 </section>
-
-{#if drawerOpen}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="app-drawer-overlay" role="presentation" onclick={closeDrawer}></div>
-  <div class="app-drawer rec-drawer" role="dialog" aria-modal="true" aria-label="Все записи" tabindex="-1">
-    <div class="app-drawer-top">
-      <span class="card-title">Все записи · {items.length}</span>
-      <button class="icon-btn" aria-label="Закрыть список записей" onclick={closeDrawer}>✕</button>
-    </div>
-    <div class="app-drawer-body">
-      <div class="drawer-toolbar-row">
-        <div class="drawer-search-wrap">
-          <input
-            type="search"
-            class="input-field drawer-search-input"
-            placeholder="Поиск по названию…"
-            autocomplete="off"
-            aria-label="Поиск по названию"
-            bind:this={searchInput}
-            bind:value={search}
-          />
-        </div>
-        <div class="drawer-picker-wrap">
-          <button
-            type="button"
-            class="btn-secondary drawer-picker-btn {isDrawerFilterActive ? 'active' : ''}"
-            onclick={() => (drawerPickerOpen = !drawerPickerOpen)}
-            title="Период записей"
-            aria-label="Фильтр периода записей"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-              <line x1="16" y1="2" x2="16" y2="6" />
-              <line x1="8" y1="2" x2="8" y2="6" />
-              <line x1="3" y1="10" x2="21" y2="10" />
-            </svg>
-            <span>{drawerDateLabel}</span>
-            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M6 9l6 6 6-6" />
-            </svg>
-          </button>
-          {#if isDrawerFilterActive}
-            <button
-              type="button"
-              class="drawer-clear-filter-btn"
-              title="Сбросить дату"
-              aria-label="Сбросить дату"
-              onclick={resetDrawerFilter}
-            >
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          {/if}
-          {#if drawerPickerOpen}
-            <DatePickerPopover
-              start={drawerRangeStart}
-              end={drawerRangeEnd}
-              onSelect={onDrawerRangeSelect}
-              onClear={resetDrawerFilter}
-              onClose={() => (drawerPickerOpen = false)}
-              hasRecordings={hasRecsOnDate}
-            />
-          {/if}
-        </div>
-      </div>
-      <div class="recordings-list rec-drawer-list">
-        {#if drawerFiltered.length === 0}
-          <div class="empty-note">
-            Ничего не найдено
-            {#if isDrawerFilterActive || search.trim() !== ''}
-              <span class="empty-sub">
-                <button type="button" class="btn-link" onclick={() => { search = ''; resetDrawerFilter(); }}>
-                  Сбросить поиск и фильтр
-                </button>
-              </span>
-            {/if}
-          </div>
-        {:else}
-          {#each drawerGroups as group}
-            <div class="rec-group">
-              <div class="rec-sticky-header {group.isToday ? 'is-today' : ''}">
-                <div class="rec-sticky-left">
-                  {#if group.isToday}
-                    <span class="rec-sticky-dot" aria-hidden="true"></span>
-                  {/if}
-                  <span class="rec-sticky-title">{group.label}</span>
-                </div>
-                <span class="rec-sticky-count">{group.recs.length} {pluralRecords(group.recs.length)}</span>
-              </div>
-              {#each group.recs as rec (rec.path)}
-                {@render recRow(rec)}
-              {/each}
-            </div>
-          {/each}
-        {/if}
-      </div>
-    </div>
-  </div>
-{/if}
 
 {#if deleteTarget}
   <div
@@ -764,7 +619,6 @@
     padding: 6px 10px;
     font-size: 12px;
   }
-  .rec-drawer-list { overflow-y: auto; flex: 1; min-height: 0; padding-right: 2px; }
   .delete-box { max-width: 440px; }
   /* Деструктивное подтверждение: красный — только здесь, запись его не занимает смысл */
   .btn-danger {

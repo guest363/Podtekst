@@ -57,21 +57,6 @@
     }
   }
 
-  // 3 пресета строго по требованию: Сегодня, 7 дней, Месяц
-  function applyPreset(preset: 'today' | 'week' | 'month'): void {
-    if (preset === 'today') {
-      onSelect(today, today, 'Сегодня')
-    } else if (preset === 'week') {
-      const s = new Date(today.getTime() - 6 * 86400000)
-      onSelect(s, today, '7 дней')
-    } else {
-      const s = new Date(today.getFullYear(), today.getMonth(), 1)
-      const e = new Date(today.getFullYear(), today.getMonth() + 1, 0)
-      onSelect(s, e, 'Месяц')
-    }
-    onClose()
-  }
-
   function onDayClick(d: Date): void {
     if (!selStart || (selStart && selEnd)) {
       selStart = d
@@ -120,17 +105,6 @@
     return isSameDay(d, today)
   }
 
-  const activePreset = $derived.by(() => {
-    if (!selStart || !selEnd) return null
-    if (isSameDay(selStart, today) && isSameDay(selEnd, today)) return 'today'
-    const weekStart = new Date(today.getTime() - 6 * 86400000)
-    if (isSameDay(selStart, weekStart) && isSameDay(selEnd, today)) return 'week'
-    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1)
-    const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0)
-    if (isSameDay(selStart, monthStart) && isSameDay(selEnd, monthEnd)) return 'month'
-    return null
-  })
-
   function isInRange(d: Date): boolean {
     const s = selStart
     const e = selEnd ?? (selStart ? hoverDate : null)
@@ -167,13 +141,6 @@
 </script>
 
 <div class="date-picker-popover" bind:this={rootEl} role="dialog" aria-label="Календарь периода">
-  <!-- 3 обязательных пресета -->
-  <div class="date-presets-row">
-    <button type="button" class="preset-btn {activePreset === 'today' ? 'active' : ''}" onclick={() => applyPreset('today')}>Сегодня</button>
-    <button type="button" class="preset-btn {activePreset === 'week' ? 'active' : ''}" onclick={() => applyPreset('week')}>7 дней</button>
-    <button type="button" class="preset-btn {activePreset === 'month' ? 'active' : ''}" onclick={() => applyPreset('month')}>Месяц</button>
-  </div>
-
   <!-- Навигация по месяцу -->
   <div class="calendar-nav">
     <button type="button" class="nav-arrow-btn" aria-label="Предыдущий месяц" onclick={prevMonth}>
@@ -259,37 +226,6 @@
   @keyframes popoverFade {
     from { opacity: 0; transform: translateY(-4px); }
     to { opacity: 1; transform: translateY(0); }
-  }
-
-  .date-presets-row {
-    display: flex;
-    background: var(--bg-inset);
-    border-radius: var(--radius-inner);
-    padding: 2px;
-    gap: 2px;
-    margin-bottom: 10px;
-    border: 1px solid var(--border-soft);
-  }
-  .preset-btn {
-    flex: 1;
-    border: none;
-    background: transparent;
-    color: var(--text-muted);
-    border-radius: var(--radius-sm);
-    padding: 5px 6px;
-    font-size: 11.5px;
-    font-weight: 600;
-    cursor: pointer;
-    text-align: center;
-    transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
-  }
-  .preset-btn:hover {
-    color: var(--text-primary);
-  }
-  .preset-btn.active {
-    background: #ffffff;
-    color: var(--accent-blue);
-    box-shadow: 0 1px 3px rgba(15, 30, 51, 0.08);
   }
 
   .calendar-nav {
