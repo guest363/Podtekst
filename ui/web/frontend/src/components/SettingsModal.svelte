@@ -21,14 +21,45 @@
   import type { ModelInfo } from '../lib/api'
   import { checkUpdate, update } from '../lib/update.svelte.ts'
   import { peopleState } from '../lib/people.svelte.ts'
+  import SystemSettingsTab from './SystemSettingsTab.svelte'
+  import { system, runChecks, openTarget } from '../lib/system.svelte.ts'
+  import type { DevicesInfo } from '../lib/system.svelte.ts'
 
   interface Props {
     inline?: boolean
   }
   let { inline = false }: Props = $props()
 
-  let tab = $state<'record' | 'voices' | 'models'>('record')
+  let tab = $state<'record' | 'voices' | 'models' | 'system'>('record')
   let packFileInput: HTMLInputElement | null = $state(null)
+
+  function defaultName(devices: DevicesInfo | undefined, id?: string | null): string {
+    if (!id) return ''
+    const all = [...(devices?.inputs || []), ...(devices?.system || [])]
+    return all.find((device) => device.id === id)?.name || id
+  }
+  const micName = $derived(defaultName(system.snapshot?.devices, system.snapshot?.devices?.default_input))
+  const systemAudio = $derived(system.snapshot?.devices?.has_system_audio === true)
+  const systemAudioText = $derived(
+    systemAudio
+      ? 'доступен'
+      : settings.platform === 'macos'
+        ? 'нужен BlackHole'
+        : 'не найден',
+  )
+  const coreReady = $derived(system.snapshot?.models?.core_ready === true)
+  const allInstalled = $derived(
+    Boolean(
+      system.snapshot?.models?.items?.length &&
+      system.snapshot.models.items.every((m) => m.is_installed),
+    ),
+  )
+  const modelsBadgeKind = $derived(
+    allInstalled ? 'ok' : coreReady ? 'ok' : 'warn',
+  )
+  const modelsBadgeLabel = $derived(
+    allInstalled ? 'Все готовы' : coreReady ? 'Базовые готовы' : 'Не всё',
+  )
 
   async function openModelsTab(): Promise<void> {
     tab = 'models'
@@ -44,7 +75,7 @@
       selectTab('dict')
       return
     }
-    if (value === 'record' || value === 'voices' || value === 'models') {
+    if (value === 'record' || value === 'voices' || value === 'models' || value === 'system') {
       tab = value
     }
     ui.settingsOpen = true
@@ -107,6 +138,14 @@
     >
       Модели ИИ
     </button>
+    <button
+      class="settings-tab {tab === 'system' ? 'active' : ''}"
+      role="tab"
+      aria-selected={tab === 'system'}
+      onclick={() => (tab = 'system')}
+    >
+      Система и логи
+    </button>
   </div>
 
   <div class="app-drawer-body">
@@ -160,6 +199,27 @@
           </label>
           <div class="help-text">
             После остановки запись сама уйдёт в расшифровку. Результат появится в «Тексте и спикерах».
+          </div>
+
+          <div class="audio-diag-block pt-2">
+            <div class="card-title">Состояние звукового тракта</div>
+            <div class="system-facts">
+              <span class="system-key">Микрофон</span>
+              <span class="system-val">{micName || 'не выбран'}</span>
+              <span class="system-key">Системный звук</span>
+              <span class="system-val">{systemAudioText}</span>
+              <span class="system-key">Платформа</span>
+              <span class="system-val">{system.snapshot?.devices?.platform || settings.platform || 'Нативная'}</span>
+            </div>
+            <div class="row-start pt-2">
+              <button
+                class="btn-secondary btn-sm"
+                disabled={system.checksLoading}
+                onclick={() => void runChecks(true)}
+              >
+                {system.checksLoading ? 'Проверка…' : 'Проверить микрофон (тест 5 сек)'}
+              </button>
+            </div>
           </div>
         </div>
       {:else if tab === 'voices'}
@@ -240,7 +300,10 @@
         </div>
       {:else if tab === 'models'}
         <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Компоненты">
-          <div class="card-title">Модели и компоненты</div>
+          <div class="row-between">
+            <div class="card-title">Модели и компоненты</div>
+            {@html statusBadge(modelsBadgeKind, modelsBadgeLabel)}
+          </div>
           <div class="help-text">
             Локальные модели для распознавания речи: GigaAM (русский язык), Whisper (30+ языков),
             Silero VAD (детектор речи) и ERes2NetV2 (разделение голосов). Для первой
@@ -336,8 +399,15 @@
           </div>
           <div class="row-start">
             <button class="btn-secondary" onclick={() => void loadModels()}>Обновить список</button>
+            {#if !isMobile}
+              <button class="btn-secondary" onclick={() => void openTarget('models')}>
+                Открыть папку моделей
+              </button>
+            {/if}
           </div>
         </div>
+      {:else if tab === 'system'}
+        <SystemSettingsTab />
       {/if}
     </div>
 
@@ -466,5 +536,29 @@
   }
   .link-meta-btn:hover {
     color: #1a4299;
+  }
+  .audio-diag-block {
+    border-top: 1px solid var(--border-soft);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 14px;
+    margin-top: 6px;
+  }
+  .system-facts {
+    display: grid;
+    grid-template-columns: minmax(110px, max-content) minmax(0, 1fr);
+    gap: 4px 12px;
+    font-size: 12.5px;
+  }
+  .system-key {
+    color: var(--text-muted);
+  }
+  .system-val {
+    color: var(--text-primary);
+    word-break: break-word;
+  }
+  .pt-2 {
+    padding-top: 8px;
   }
 </style>

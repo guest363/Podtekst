@@ -19,7 +19,7 @@
   import { loadSupportInfo } from './lib/support.svelte.ts'
   import { system } from './lib/system.svelte.ts'
   import { checkUpdate, dismissUpdate, openUpdateModal, update } from './lib/update.svelte.ts'
-  import { initRouting, on, openTranscript, selectTab, ui } from './lib/ui.svelte.ts'
+  import { emit, initRouting, on, openTranscript, selectTab, ui } from './lib/ui.svelte.ts'
   import { renderMarkdown } from './lib/markdown'
   import RecordingDeck from './components/RecordingDeck.svelte'
   import Recordings from './components/Recordings.svelte'
@@ -29,12 +29,43 @@
   import SettingsModal from './components/SettingsModal.svelte'
   import DonateModal from './components/DonateModal.svelte'
   import UpdateModal from './components/UpdateModal.svelte'
-  import SystemPane from './components/SystemPane.svelte'
   import CrashBanner from './components/CrashBanner.svelte'
   import Toasts from './components/Toasts.svelte'
   import { isMobile, isCoreModel, remainingMb } from './lib/api'
 
   let introOpen = $state(false)
+
+  function openDiagnostics(): void {
+    selectTab('settings')
+    if (system.summary?.status === 'error' || system.summary?.status === 'warn') {
+      const hasAudio = system.checks.some(
+        (c) =>
+          (c.id.includes('audio') || c.id.includes('mic')) &&
+          (c.status === 'warn' || c.status === 'error'),
+      )
+      const hasModel = system.checks.some(
+        (c) =>
+          (c.id.includes('model') || c.id.includes('vad') || c.id.includes('asr')) &&
+          (c.status === 'warn' || c.status === 'error'),
+      )
+      if (hasAudio) {
+        emit('open-settings', 'record')
+        return
+      }
+      if (hasModel) {
+        emit('open-settings', 'models')
+        return
+      }
+    }
+    emit('open-settings', 'system')
+  }
+
+  $effect(() => {
+    if (ui.systemOpen) {
+      ui.systemOpen = false
+      openDiagnostics()
+    }
+  })
 
   $effect(() => {
     if (ui.settingsOpen) {
@@ -204,7 +235,7 @@
           class="status-pill sidebar-status"
           title="Состояние системы"
           aria-label="Открыть состояние системы"
-          onclick={() => (ui.systemOpen = true)}
+          onclick={openDiagnostics}
         >
           <span class="status-dot {statusTone}" aria-hidden="true"></span>
           <span class="status-pill-text">Состояние</span>
@@ -235,7 +266,7 @@
             class="status-pill mobile-status-btn"
             title="Состояние системы"
             aria-label="Открыть состояние системы"
-            onclick={() => (ui.systemOpen = true)}
+            onclick={openDiagnostics}
           >
             <span class="status-dot {statusTone}" aria-hidden="true"></span>
           </button>
@@ -784,7 +815,6 @@
 </style>
 
 <UpdateModal />
-<SystemPane />
 <DonateModal />
 <Toasts />
 
