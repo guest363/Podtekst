@@ -96,6 +96,8 @@ pub(super) fn apply() -> Result<(), String> {
             p.pct = 100;
             p.stage = "restart";
         }
+        // app.restart завершает процесс без возврата из run_cli: закрываем маркер сами.
+        crate::crash::mark_clean();
         // Не возвращается: новый процесс уже с обновлённой версией.
         app.restart();
     });
