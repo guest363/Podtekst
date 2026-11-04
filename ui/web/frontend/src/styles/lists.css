@@ -1,5 +1,19 @@
-.recordings-list { display: flex; flex-direction: column; gap: 0; }
-#recordingsList { max-height: 420px; overflow-y: auto; padding-right: 2px; }
+.recordings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-height: clamp(360px, 58vh, 620px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+  position: relative;
+}
+#recordingsList {
+  max-height: clamp(360px, 58vh, 620px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+}
 .rec-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -12,7 +26,11 @@
   border-radius: 0;
   background: transparent;
 }
-.recordings-list .rec-item:first-child { border-top: none; padding-top: 2px; }
+.recordings-list .rec-item:first-child,
+.rec-sticky-header + .rec-item {
+  border-top: none;
+  padding-top: 4px;
+}
 #recordingsCard.dragover { outline: 2px solid var(--accent-blue); outline-offset: -2px; border-radius: var(--radius-card); }
 
 .rec-item.rec-card {
@@ -27,17 +45,18 @@
   gap: 1px;
   flex-shrink: 0;
 }
-.rec-date-day {
-  font-weight: 700;
-  color: var(--text-primary);
-  font-size: 13.5px;
-  line-height: 1.25;
-}
 .rec-date-time {
   font-family: var(--font-mono);
-  font-weight: 600;
+  font-weight: 700;
   color: var(--accent-blue);
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.25;
+}
+.rec-date-day {
+  font-weight: 500;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.25;
 }
 
 .rec-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
@@ -204,24 +223,198 @@ body:has(.bottom-player-bar) {
   line-height: 1.4;
 }
 
-.rec-drawer-list .rec-item.rec-card {
-  grid-template-columns: 85px minmax(0, 1fr) auto;
-  gap: 10px 14px;
-  padding: 11px 0;
+/* Шапка карточки записей: строго в одну строку */
+.rec-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: nowrap;
+}
+.rec-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+/* Сегментный переключатель дат: Сегодня, 7 дней, Все + Календарь */
+.rec-segmented {
+  display: flex;
+  align-items: center;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-inner);
+  padding: 2px;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.rec-seg-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  line-height: 1.2;
+  transition: color 120ms ease, background 120ms ease, box-shadow 120ms ease;
+  white-space: nowrap;
+}
+.rec-seg-btn:hover {
+  color: var(--text-primary);
+}
+.rec-seg-btn.active {
+  background: #ffffff;
+  color: var(--accent-blue);
+  box-shadow: 0 1px 3px rgba(15, 30, 51, 0.08);
+}
+.rec-seg-count {
+  font-size: 10px;
+  background: rgba(15, 30, 51, 0.06);
+  color: var(--text-muted);
+  padding: 1px 4.5px;
+  border-radius: var(--radius-pill);
+  font-weight: 700;
+}
+.rec-seg-btn.active .rec-seg-count {
+  background: #eff4fc;
+  color: var(--accent-blue);
+}
+.rec-seg-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--border-card);
+  margin: 0 1px;
+}
+.rec-cal-wrap {
+  position: relative;
+  display: flex;
   align-items: center;
 }
-.rec-drawer-list .rec-card .rec-actions {
-  justify-content: flex-end;
+.rec-range-text {
+  font-size: 11px;
+  font-weight: 700;
+}
+.rec-seg-clear-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+}
+.rec-seg-clear-btn:hover {
+  color: var(--accent-rec);
+}
+
+/* Хронологические липкие группы в списке записей */
+.rec-group {
+  display: flex;
+  flex-direction: column;
+  margin-top: 24px;
+}
+.rec-group:first-child {
+  margin-top: 4px;
+}
+.rec-sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-inner);
+  padding: 7px 12px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 1px 3px rgba(15, 30, 51, 0.04);
+}
+.rec-sticky-header.is-today {
+  background: #edf3fd;
+  border-color: rgba(37, 99, 235, 0.22);
+}
+.rec-sticky-left {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.rec-sticky-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent-blue);
+  flex-shrink: 0;
+}
+.rec-sticky-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: normal;
+}
+.rec-sticky-header.is-today .rec-sticky-title {
+  color: var(--accent-blue);
+}
+.rec-sticky-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: #ffffff;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-feature-settings: 'tnum';
+}
+
+.btn-link {
+  border: none;
+  background: transparent;
+  color: var(--accent-blue);
+  cursor: pointer;
+  font-size: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  padding: 0;
+}
+.btn-link:hover {
+  color: #1d459f;
+}
+
+@media (max-width: 680px) {
+  .rec-card-header {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .rec-header-left {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .rec-card-header .header-actions {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .rec-card-header .header-actions .card-search {
+    flex: 1;
+    min-width: 0;
+  }
 }
 
 @media (max-width: 600px) {
-  .rec-item.rec-card,
-  .rec-drawer-list .rec-item.rec-card {
+  .rec-item.rec-card {
     grid-template-columns: 85px minmax(0, 1fr);
     gap: 8px 12px;
   }
-  .rec-card .rec-actions,
-  .rec-drawer-list .rec-card .rec-actions {
+  .rec-card .rec-actions {
     grid-column: 1 / -1;
     justify-content: flex-end;
     padding-top: 4px;

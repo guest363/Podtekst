@@ -56,9 +56,6 @@ body:has(.app-drawer-overlay) {
   flex-direction: column;
   animation: drawer-in 240ms var(--ease-spring);
 }
-.app-drawer.rec-drawer {
-  width: clamp(540px, 58vw, 800px);
-}
 .app-drawer.settings-drawer {
   width: clamp(560px, 56vw, 880px);
 }
@@ -116,8 +113,7 @@ body:has(.app-drawer-overlay) {
 
 @media (max-width: 640px) {
   .app-drawer,
-  .app-drawer.settings-drawer,
-  .app-drawer.rec-drawer {
+  .app-drawer.settings-drawer {
     width: 100vw;
     max-width: 100vw;
     border-left: none;
