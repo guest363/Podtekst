@@ -24,6 +24,7 @@
   import RecordingDeck from './components/RecordingDeck.svelte'
   import Recordings from './components/Recordings.svelte'
   import People from './components/People.svelte'
+  import Dictionary from './components/Dictionary.svelte'
   import TranscriptPage from './components/TranscriptPage.svelte'
   import SettingsModal from './components/SettingsModal.svelte'
   import DonateModal from './components/DonateModal.svelte'
@@ -167,6 +168,23 @@
         <button
           type="button"
           class="sidebar-btn"
+          class:active={ui.activeTab === 'dict'}
+          onclick={() => selectTab('dict')}
+        >
+          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z" />
+            <path d="M6 6h10" />
+            <path d="M6 10h10" />
+          </svg>
+          <span class="sidebar-btn-label">Словарь</span>
+          {#if settings.hotwords.length > 0}
+            <span class="sidebar-count">{settings.hotwords.length}</span>
+          {/if}
+        </button>
+
+        <button
+          type="button"
+          class="sidebar-btn"
           class:active={ui.activeTab === 'settings'}
           onclick={() => selectTab('settings')}
         >
@@ -272,6 +290,10 @@
             </div>
             <People />
           </div>
+        {:else if ui.activeTab === 'dict'}
+          <div class="card dict-page-card">
+            <Dictionary />
+          </div>
         {:else if ui.activeTab === 'settings'}
           <div class="settings-page-card">
             <SettingsModal inline={true} />
@@ -306,6 +328,20 @@
             <path d="M5.5 21a6.5 6.5 0 0 1 13 0" />
           </svg>
           <span>Люди</span>
+        </button>
+
+        <button
+          type="button"
+          class="mobile-tab-btn"
+          class:active={ui.activeTab === 'dict'}
+          onclick={() => selectTab('dict')}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z" />
+            <path d="M6 6h10" />
+            <path d="M6 10h10" />
+          </svg>
+          <span>Словарь</span>
         </button>
 
         <button
@@ -575,7 +611,7 @@
       display: flex;
       align-items: stretch;
       gap: 20px;
-      max-width: 1200px;
+      max-width: 1400px;
       width: 100%;
       height: 100vh;
       height: 100dvh;
@@ -634,6 +670,7 @@
       overflow-y: auto;
     }
     .people-page-card,
+    .dict-page-card,
     .settings-page-card {
       flex: 1 1 auto;
       min-height: 0;

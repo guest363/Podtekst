@@ -1,6 +1,6 @@
 import { isVideoPath } from './api'
 
-export type AppTab = 'studio' | 'people' | 'settings'
+export type AppTab = 'studio' | 'people' | 'dict' | 'settings'
 
 export const ui = $state({
   activeTab: 'studio' as AppTab,
@@ -68,6 +68,8 @@ export function initRouting(): void {
       }
     } else if (hash === '#/people') {
       ui.activeTab = 'people'
+    } else if (hash === '#/dict') {
+      ui.activeTab = 'dict'
     } else if (hash === '#/settings') {
       ui.activeTab = 'settings'
     } else {
