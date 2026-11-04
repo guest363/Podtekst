@@ -219,6 +219,15 @@
     if (!lastCrash) return ''
     return lastCrash.synthetic ? 'Завершение без корректного выхода' : 'Сбой'
   }
+
+  function crashWord(count: number): string {
+    const tail = count % 100
+    if (tail >= 11 && tail <= 14) return 'сбоев'
+    const digit = count % 10
+    if (digit === 1) return 'сбой'
+    if (digit >= 2 && digit <= 4) return 'сбоя'
+    return 'сбоев'
+  }
 </script>
 
 <svelte:window onkeydown={onWindowKey} />
@@ -344,7 +353,7 @@
               <div class="system-card-head">
                 <span class="card-title">Сбои и журнал</span>
                 {@html unacknowledged > 0
-                  ? statusBadge('error', `${unacknowledged} сбоя`)
+                  ? statusBadge('error', `${unacknowledged} ${crashWord(unacknowledged)}`)
                   : statusBadge('ok', 'Чисто')}
               </div>
               <div class="system-facts">
@@ -563,6 +572,9 @@
   }
   .system-card-wide {
     grid-column: 1 / -1;
+  }
+  .system-card > .btn-secondary {
+    align-self: flex-start;
   }
   .system-card-head,
   .system-section-head {

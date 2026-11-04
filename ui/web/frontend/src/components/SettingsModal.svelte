@@ -536,13 +536,6 @@
     font-size: 11.5px; color: var(--text-faint);
     display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
   }
-  .link-btn {
-    border: none; background: none; padding: 0;
-    font: inherit; color: var(--accent-blue); cursor: pointer;
-    text-decoration: underline; text-underline-offset: 2px;
-  }
-  .link-btn:hover { color: var(--text-primary); }
-  .link-btn:disabled { color: var(--text-faint); cursor: wait; text-decoration: none; }
   .support-link {
     margin-right: auto;
     border: none; background: none; padding: 6px 0;
