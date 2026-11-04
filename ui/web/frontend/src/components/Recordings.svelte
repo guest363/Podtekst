@@ -1,7 +1,18 @@
 <script lang="ts">
   import SlimPlayer from './SlimPlayer.svelte'
+  import DatePickerPopover from './DatePickerPopover.svelte'
   import { deleteRecording, handleFileUpload, loadRecordings, recordings } from '../lib/recordings.svelte.ts'
-  import { displayRecTitle, fmtClock, formatRecDate, isMobile, pluralSpeakers, readJsonSafe } from '../lib/api'
+  import {
+    displayRecTitle,
+    fmtClock,
+    formatRangeLabel,
+    formatRecDate,
+    isMobile,
+    parseRecDate,
+    pluralRecords,
+    pluralSpeakers,
+    readJsonSafe,
+  } from '../lib/api'
   import type { RecordingItem } from '../lib/api'
   import { on, openTranscript } from '../lib/ui.svelte.ts'
   import { toast } from '../lib/toast.svelte.ts'
@@ -31,24 +42,156 @@
       isPlaying = true
     }
   }
+
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+
+  let mainFilter = $state<'today' | 'week' | 'all' | 'range'>('today')
+  let mainRangeStart = $state<Date | null>(today)
+  let mainRangeEnd = $state<Date | null>(today)
+  let mainRangeLabel = $state('')
+  let mainPickerOpen = $state(false)
+
+  let drawerRangeStart = $state<Date | null>(null)
+  let drawerRangeEnd = $state<Date | null>(null)
+  let drawerPickerOpen = $state(false)
+
   // На телефоне видео не импортируется (нет ffmpeg) и не показывается.
   const VISIBLE = 5
   const items = $derived(isMobile ? recordings.items.filter((r) => !r.is_video) : recordings.items)
-  const filtered = $derived(
-    search.trim() === ''
+
+  const countToday = $derived(
+    items.filter((r) => {
+      const d = parseRecDate(r.date, r.name)
+      return d && d.getTime() === today.getTime()
+    }).length,
+  )
+  const countWeek = $derived(
+    items.filter((r) => {
+      const d = parseRecDate(r.date, r.name)
+      if (!d) return false
+      const t = d.getTime()
+      return t >= today.getTime() - 6 * 86400000 && t <= today.getTime()
+    }).length,
+  )
+
+  function filterByRange(list: RecordingItem[], start: Date | null, end: Date | null): RecordingItem[] {
+    if (!start && !end) return list
+    return list.filter((r) => {
+      const d = parseRecDate(r.date, r.name)
+      if (!d) return false
+      const t = d.getTime()
+      if (start && t < start.getTime()) return false
+      if (end && t > end.getTime()) return false
+      return true
+    })
+  }
+
+  const mainFiltered = $derived.by(() => {
+    let list = search.trim() === ''
       ? items
-      : items.filter((r) => r.name.toLowerCase().includes(search.trim().toLowerCase())),
+      : items.filter((r) => r.name.toLowerCase().includes(search.trim().toLowerCase()))
+
+    if (mainFilter === 'today') {
+      list = filterByRange(list, today, today)
+    } else if (mainFilter === 'week') {
+      const s = new Date(today.getTime() - 6 * 86400000)
+      list = filterByRange(list, s, today)
+    } else if (mainFilter === 'range' && mainRangeStart) {
+      list = filterByRange(list, mainRangeStart, mainRangeEnd ?? mainRangeStart)
+    }
+    return list
+  })
+
+  const visible = $derived(mainFiltered.slice(0, VISIBLE))
+  const hiddenCount = $derived(Math.max(0, items.length - VISIBLE))
+
+  const drawerFiltered = $derived.by(() => {
+    let list = search.trim() === ''
+      ? items
+      : items.filter((r) => r.name.toLowerCase().includes(search.trim().toLowerCase()))
+
+    if (drawerRangeStart) {
+      list = filterByRange(list, drawerRangeStart, drawerRangeEnd ?? drawerRangeStart)
+    }
+    return list
+  })
+
+  const isDrawerFilterActive = $derived(drawerRangeStart !== null)
+  const drawerDateLabel = $derived(
+    drawerRangeStart
+      ? formatRangeLabel(drawerRangeStart, drawerRangeEnd ?? drawerRangeStart)
+      : 'Все даты',
   )
-  const visible = $derived(
-    search.trim() === ''
-      ? items.slice(0, VISIBLE)
-      : filtered.slice(0, VISIBLE),
-  )
-  const hiddenCount = $derived(
-    search.trim() === ''
-      ? Math.max(0, items.length - VISIBLE)
-      : Math.max(0, filtered.length - VISIBLE),
-  )
+
+  const drawerGroups = $derived.by(() => {
+    const map = new Map<string, RecordingItem[]>()
+    for (const rec of drawerFiltered) {
+      const d = parseRecDate(rec.date, rec.name)
+      let key = 'Архив'
+      if (d) {
+        const yesterday = new Date(today)
+        yesterday.setDate(yesterday.getDate() - 1)
+        if (d.getTime() === today.getTime()) {
+          key = 'Сегодня'
+        } else if (d.getTime() === yesterday.getTime()) {
+          key = 'Вчера'
+        } else {
+          const months = [
+            'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+            'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь',
+          ]
+          const y = d.getFullYear()
+          const ySuffix = y !== today.getFullYear() ? ` ${y}` : ''
+          key = `${months[d.getMonth()]}${ySuffix}`
+        }
+      }
+      const list = map.get(key) ?? []
+      list.push(rec)
+      map.set(key, list)
+    }
+    return Array.from(map.entries()).map(([label, recs]) => ({ label, recs }))
+  })
+
+  function setMainPreset(p: 'today' | 'week' | 'all'): void {
+    mainFilter = p
+    mainRangeStart = p === 'today' ? today : p === 'week' ? new Date(today.getTime() - 6 * 86400000) : null
+    mainRangeEnd = p === 'all' ? null : today
+    mainRangeLabel = ''
+    mainPickerOpen = false
+  }
+
+  function onMainRangeSelect(start: Date, end: Date, label: string): void {
+    mainFilter = 'range'
+    mainRangeStart = start
+    mainRangeEnd = end
+    mainRangeLabel = label
+    mainPickerOpen = false
+  }
+
+  function clearMainRange(): void {
+    setMainPreset('today')
+  }
+
+  function onDrawerRangeSelect(start: Date, end: Date, label: string): void {
+    drawerRangeStart = start
+    drawerRangeEnd = end
+    drawerPickerOpen = false
+  }
+
+  function resetDrawerFilter(): void {
+    drawerRangeStart = null
+    drawerRangeEnd = null
+    drawerPickerOpen = false
+  }
+
+  function hasRecsOnDate(d: Date): boolean {
+    const t = d.getTime()
+    return items.some((r) => {
+      const rd = parseRecDate(r.date, r.name)
+      return rd && rd.getTime() === t
+    })
+  }
 
   // Фокус в поиск при открытии панели (вместо autofocus-атрибута).
   $effect(() => {
@@ -68,6 +211,8 @@
   function closeDrawer(): void {
     drawerOpen = false
     search = ''
+    drawerPickerOpen = false
+    resetDrawerFilter()
   }
 
   function onWindowKey(e: KeyboardEvent): void {
@@ -253,8 +398,83 @@
   }}
   ondrop={onDrop}
 >
-  <div class="card-header">
-    <span class="card-title">{isMobile ? 'Записи' : 'Записи и видео'} <span class="count-badge">{items.length}</span></span>
+  <div class="card-header rec-card-header">
+    <div class="rec-header-left">
+      <span class="card-title">{isMobile ? 'Записи' : 'Записи и видео'}</span>
+      <div class="rec-segmented" role="tablist" aria-label="Фильтр по дате">
+        <button
+          type="button"
+          class="rec-seg-btn {mainFilter === 'today' ? 'active' : ''}"
+          onclick={() => setMainPreset('today')}
+          role="tab"
+          aria-selected={mainFilter === 'today'}
+        >
+          <span>Сегодня</span>
+          {#if countToday > 0}<span class="rec-seg-count">{countToday}</span>{/if}
+        </button>
+        <button
+          type="button"
+          class="rec-seg-btn {mainFilter === 'week' ? 'active' : ''}"
+          onclick={() => setMainPreset('week')}
+          role="tab"
+          aria-selected={mainFilter === 'week'}
+        >
+          <span>7 дней</span>
+          {#if countWeek > 0}<span class="rec-seg-count">{countWeek}</span>{/if}
+        </button>
+        <button
+          type="button"
+          class="rec-seg-btn {mainFilter === 'all' ? 'active' : ''}"
+          onclick={() => setMainPreset('all')}
+          role="tab"
+          aria-selected={mainFilter === 'all'}
+        >
+          <span>Все</span>
+          <span class="rec-seg-count">{items.length}</span>
+        </button>
+        <div class="rec-seg-sep" aria-hidden="true"></div>
+        <div class="rec-cal-wrap">
+          <button
+            type="button"
+            class="rec-seg-btn rec-seg-cal {mainFilter === 'range' ? 'active' : ''}"
+            onclick={() => (mainPickerOpen = !mainPickerOpen)}
+            title="Выбрать период в календаре"
+            aria-label="Выбрать период в календаре"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+            </svg>
+            {#if mainFilter === 'range' && mainRangeLabel}
+              <span class="rec-range-text">{mainRangeLabel}</span>
+            {/if}
+          </button>
+          {#if mainFilter === 'range'}
+            <button
+              type="button"
+              class="rec-seg-clear-btn"
+              title="Сбросить диапазон"
+              aria-label="Сбросить диапазон"
+              onclick={clearMainRange}
+            >
+              ✕
+            </button>
+          {/if}
+          {#if mainPickerOpen}
+            <DatePickerPopover
+              start={mainRangeStart}
+              end={mainRangeEnd}
+              onSelect={onMainRangeSelect}
+              onClear={clearMainRange}
+              onClose={() => (mainPickerOpen = false)}
+              hasRecordings={hasRecsOnDate}
+            />
+          {/if}
+        </div>
+      </div>
+    </div>
     <div class="header-actions">
       {#if items.length > 2}
         <input
@@ -295,8 +515,27 @@
           {/if}
         </span>
       </div>
-    {:else if visible.length === 0 && search.trim() !== ''}
-      <div class="empty-note">Ничего не найдено</div>
+    {:else if visible.length === 0}
+      <div class="empty-note">
+        {#if search.trim() !== ''}
+          Ничего не найдено
+        {:else if mainFilter === 'today'}
+          За сегодня записей нет
+          <span class="empty-sub">
+            <button type="button" class="btn-link" onclick={() => setMainPreset('all')}>Показать все ({items.length})</button>
+          </span>
+        {:else if mainFilter === 'week'}
+          За последние 7 дней записей нет
+          <span class="empty-sub">
+            <button type="button" class="btn-link" onclick={() => setMainPreset('all')}>Показать все ({items.length})</button>
+          </span>
+        {:else}
+          За выбранный период записей нет
+          <span class="empty-sub">
+            <button type="button" class="btn-link" onclick={() => setMainPreset('all')}>Показать все ({items.length})</button>
+          </span>
+        {/if}
+      </div>
     {:else}
       {#each visible as rec (rec.path)}
         {@render recRow(rec)}
@@ -321,21 +560,86 @@
       <button class="icon-btn" aria-label="Закрыть список записей" onclick={closeDrawer}>✕</button>
     </div>
     <div class="app-drawer-body">
-      <input
-        type="search"
-        class="input-field"
-        placeholder="Поиск по названию…"
-        autocomplete="off"
-        aria-label="Поиск по названию"
-        bind:this={searchInput}
-        bind:value={search}
-      />
+      <div class="drawer-toolbar-row">
+        <div class="drawer-search-wrap">
+          <input
+            type="search"
+            class="input-field drawer-search-input"
+            placeholder="Поиск по названию…"
+            autocomplete="off"
+            aria-label="Поиск по названию"
+            bind:this={searchInput}
+            bind:value={search}
+          />
+        </div>
+        <div class="drawer-picker-wrap">
+          <button
+            type="button"
+            class="btn-secondary drawer-picker-btn {isDrawerFilterActive ? 'active' : ''}"
+            onclick={() => (drawerPickerOpen = !drawerPickerOpen)}
+            title="Период записей"
+            aria-label="Фильтр периода записей"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+            </svg>
+            <span>{drawerDateLabel}</span>
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+          {#if isDrawerFilterActive}
+            <button
+              type="button"
+              class="drawer-clear-filter-btn"
+              title="Сбросить дату"
+              aria-label="Сбросить дату"
+              onclick={resetDrawerFilter}
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          {/if}
+          {#if drawerPickerOpen}
+            <DatePickerPopover
+              start={drawerRangeStart}
+              end={drawerRangeEnd}
+              onSelect={onDrawerRangeSelect}
+              onClear={resetDrawerFilter}
+              onClose={() => (drawerPickerOpen = false)}
+              hasRecordings={hasRecsOnDate}
+            />
+          {/if}
+        </div>
+      </div>
       <div class="recordings-list rec-drawer-list">
-        {#if filtered.length === 0}
-          <div class="empty-note">Ничего не найдено</div>
+        {#if drawerFiltered.length === 0}
+          <div class="empty-note">
+            Ничего не найдено
+            {#if isDrawerFilterActive || search.trim() !== ''}
+              <span class="empty-sub">
+                <button type="button" class="btn-link" onclick={() => { search = ''; resetDrawerFilter(); }}>
+                  Сбросить поиск и фильтр
+                </button>
+              </span>
+            {/if}
+          </div>
         {:else}
-          {#each filtered as rec (rec.path)}
-            {@render recRow(rec)}
+          {#each drawerGroups as group}
+            <div class="rec-group">
+              <div class="rec-sticky-header">
+                <span class="rec-sticky-title">{group.label}</span>
+                <span class="rec-sticky-count">{group.recs.length} {pluralRecords(group.recs.length)}</span>
+              </div>
+              {#each group.recs as rec (rec.path)}
+                {@render recRow(rec)}
+              {/each}
+            </div>
           {/each}
         {/if}
       </div>

@@ -181,46 +181,87 @@ export interface FormattedRecDate {
   full: string
 }
 
-export function formatRecDate(rawDate?: string, rawName?: string): FormattedRecDate {
+export function parseRecDate(rawDate?: string, rawName?: string): Date | null {
   if (rawDate) {
-    const parts = rawDate.trim().split(' ')
-    if (parts.length >= 2) {
-      const [dPart, tPart] = parts
-      const time = tPart.slice(0, 5)
-      const [y, m, d] = dPart.split('-').map(Number)
+    const parts = rawDate.trim().split(/[\sT]/)
+    if (parts.length >= 1) {
+      const [y, m, d] = parts[0].split('-').map(Number)
       if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
-        const itemDate = new Date(y, m - 1, d)
-        const now = new Date()
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-        const yesterday = new Date(today)
-        yesterday.setDate(yesterday.getDate() - 1)
-
-        let day = ''
-        if (itemDate.getTime() === today.getTime()) {
-          day = 'Сегодня'
-        } else if (itemDate.getTime() === yesterday.getTime()) {
-          day = 'Вчера'
-        } else {
-          const months = [
-            'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
-            'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
-          ]
-          const monthName = months[m - 1] || ''
-          const yearSuffix = y !== now.getFullYear() ? ` ${y}` : ''
-          day = `${d} ${monthName}${yearSuffix}`
-        }
-        return { day, time, full: `${day}, ${time}` }
+        return new Date(y, m - 1, d)
       }
     }
   }
-
-  const match = String(rawName).match(/(\d{2})[:\-](\d{2}).*__(\d{2})-(\d{2})-(\d{4})/)
+  const match = String(rawName).match(/__(\d{2})-(\d{2})-(\d{4})/)
   if (match) {
-    const [, h, min, d, m, y] = match
-    return { day: `${d}.${m}.${y}`, time: `${h}:${min}`, full: `${d}.${m}.${y}, ${h}:${min}` }
+    const [, d, m, y] = match.map(Number)
+    if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+      return new Date(y, m - 1, d)
+    }
+  }
+  return null
+}
+
+export function formatRecDate(rawDate?: string, rawName?: string): FormattedRecDate {
+  let time = ''
+  if (rawDate) {
+    const parts = rawDate.trim().split(/[\sT]/)
+    if (parts.length >= 2) time = parts[1].slice(0, 5)
+  }
+  if (!time) {
+    const m = String(rawName).match(/(\d{2})[:\-](\d{2})/)
+    if (m) time = `${m[1]}:${m[2]}`
+  }
+
+  const itemDate = parseRecDate(rawDate, rawName)
+  if (itemDate) {
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const yesterday = new Date(today)
+    yesterday.setDate(yesterday.getDate() - 1)
+
+    let day = ''
+    if (itemDate.getTime() === today.getTime()) {
+      day = 'Сегодня'
+    } else if (itemDate.getTime() === yesterday.getTime()) {
+      day = 'Вчера'
+    } else {
+      const months = [
+        'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+        'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+      ]
+      const d = itemDate.getDate()
+      const m = itemDate.getMonth()
+      const y = itemDate.getFullYear()
+      const monthName = months[m] || ''
+      const yearSuffix = y !== now.getFullYear() ? ` ${y}` : ''
+      day = `${d} ${monthName}${yearSuffix}`
+    }
+    return { day, time, full: time ? `${day}, ${time}` : day }
   }
 
   return { day: 'Запись', time: '', full: 'Запись' }
+}
+
+export function formatRangeLabel(start: Date, end: Date): string {
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  if (start.getTime() === end.getTime()) {
+    if (start.getTime() === today.getTime()) return 'Сегодня'
+    const yesterday = new Date(today)
+    yesterday.setDate(yesterday.getDate() - 1)
+    if (start.getTime() === yesterday.getTime()) return 'Вчера'
+    return `${start.getDate()} ${['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'][start.getMonth()]}`
+  }
+  const fmt = (d: Date) => `${d.getDate()}.${String(d.getMonth() + 1).padStart(2, '0')}`
+  return `${fmt(start)}–${fmt(end)}`
+}
+
+export function pluralRecords(n: number): string {
+  const mod10 = n % 10
+  const mod100 = n % 100
+  if (mod10 === 1 && mod100 !== 11) return 'запись'
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'записи'
+  return 'записей'
 }
 
 export function displayRecTitle(rawName: string): string {
