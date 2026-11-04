@@ -26,7 +26,11 @@
   border-radius: 0;
   background: transparent;
 }
-.recordings-list .rec-item:first-child { border-top: none; padding-top: 2px; }
+.recordings-list .rec-item:first-child,
+.rec-sticky-header + .rec-item {
+  border-top: none;
+  padding-top: 4px;
+}
 #recordingsCard.dragover { outline: 2px solid var(--accent-blue); outline-offset: -2px; border-radius: var(--radius-card); }
 
 .rec-item.rec-card {
@@ -382,6 +386,27 @@ body:has(.bottom-player-bar) {
 }
 .btn-link:hover {
   color: #1d459f;
+}
+
+@media (max-width: 680px) {
+  .rec-card-header {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .rec-header-left {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .rec-card-header .header-actions {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .rec-card-header .header-actions .card-search {
+    flex: 1;
+    min-width: 0;
+  }
 }
 
 @media (max-width: 600px) {

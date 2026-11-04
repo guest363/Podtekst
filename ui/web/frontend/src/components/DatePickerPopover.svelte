@@ -203,6 +203,8 @@
           </button>
         {/if}
       </div>
+    {:else}
+      <span class="cal-footer-hint">Выберите дату</span>
     {/if}
   </div>
 </div>
@@ -324,7 +326,7 @@
   /* Середина диапазона */
   .calendar-day-btn.range-mid {
     background: #edf3fd !important;
-    border-radius: 0;
+    border-radius: 4px;
   }
   .calendar-day-btn.range-mid .day-num {
     color: var(--accent-blue) !important;
@@ -371,6 +373,10 @@
     font-size: 11px;
     font-weight: 700;
     color: var(--text-primary);
+  }
+  .cal-footer-hint {
+    font-size: 11px;
+    color: var(--text-faint);
   }
   .cal-footer-btn {
     border: none;
