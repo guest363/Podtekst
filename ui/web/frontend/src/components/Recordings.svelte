@@ -18,7 +18,7 @@
   import { toast } from '../lib/toast.svelte.ts'
   import { onMount } from 'svelte'
   import { getPosition, isActive, isQueued, removeFromQueue } from '../lib/queue.svelte.ts'
-  import { engine, startTranscription } from '../lib/transcript.svelte.ts'
+  import { engine } from '../lib/transcript.svelte.ts'
 
   let uploadInput: HTMLInputElement | null = $state(null)
   let uploadBtn: HTMLButtonElement | null = $state(null)

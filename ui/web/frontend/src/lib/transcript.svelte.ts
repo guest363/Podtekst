@@ -16,8 +16,8 @@ export const transcript = $state({
 })
 
 // Единственное состояние движка для всего UI (дека, модалка, настройки):
-// ядро выполняет одну расшифровку одновременно — UI обязан показывать её
-// одинаково везде и блокировать остальные запуски.
+// ядро обрабатывает файлы по одному, поэтому прогресс и очередь должны
+// выглядеть одинаково в любом месте интерфейса.
 export const engine = $state({
   running: false,
   file: '',
@@ -81,6 +81,7 @@ export function emptyHint(): string {
 
 let evtSource: EventSource | null = null
 let finishedAt = 0
+let finishing = false
 
 function closeStreamIfIdle(): void {
   if (!engine.running && Object.keys(engine.downloading).length === 0) {
@@ -138,6 +139,7 @@ function handleEngineEvent(e: MessageEvent): void {
     }
     if (evt.file && evt.file !== engine.file) {
       engine.file = evt.file
+      engine.pct = 0
       queueState.currentFile = evt.file
     }
     engine.msg = evt.message || 'Обработка…'
@@ -158,7 +160,7 @@ function handleEngineEvent(e: MessageEvent): void {
     if (evt.should_prompt_donate) emit('support-changed')
   } else if (evt.type === 'error') {
     void loadQueue().then(() => {
-      if (queueState.items.length === 0) {
+      if (!queueState.running) {
         engine.running = false
         closeStreamIfIdle()
       }
@@ -168,16 +170,22 @@ function handleEngineEvent(e: MessageEvent): void {
 }
 
 function finishEngine(donePath: string): void {
-  void loadQueue().then(() => {
-    if (queueState.items.length === 0 && !queueState.running) {
-      engine.running = false
-      engine.file = ''
-      engine.pct = 100
-      engine.msg = 'Расшифровка завершена'
-      finishedAt = Date.now()
-      closeStreamIfIdle()
-    }
-  })
+  if (!engine.running || finishing) return
+  finishing = true
+  void loadQueue()
+    .then(() => {
+      if (!queueState.running) {
+        engine.running = false
+        engine.file = ''
+        engine.pct = 100
+        engine.msg = 'Расшифровка завершена'
+        finishedAt = Date.now()
+        closeStreamIfIdle()
+      }
+    })
+    .finally(() => {
+      finishing = false
+    })
   emit('recordings-changed')
   emit('support-changed')
   if (!ui.transcriptOpen) toast(`Расшифровка «${baseName(donePath)}» завершена`)
@@ -195,8 +203,8 @@ export async function startTranscription(rawPath: string): Promise<void> {
     })
     const d = await readJsonSafe(r)
     if (!d.ok) throw new Error(d.error || 'движок отклонил запуск')
-    if (d.queued) {
-      toast(`Запись добавлена в очередь (#${d.position})`)
+    if (d.started === false) {
+      toast(d.queued ? `Запись добавлена в очередь (#${d.position})` : 'Эта запись уже расшифровывается')
       await loadQueue()
       ensureStream()
       return

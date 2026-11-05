@@ -2,7 +2,7 @@
 //! и фоновый воркер. Транспорт отделён от пайплайна (P3).
 
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -200,6 +200,21 @@ pub fn clear_queue() -> usize {
     len
 }
 
+pub fn rename_in_queue(old: &Path, new: &Path) {
+    let q = queue_cell();
+    let mut lock = q.lock().unwrap_or_else(|e| e.into_inner());
+    let mut changed = false;
+    for task in lock.iter_mut() {
+        if task.audio_path == old {
+            task.audio_path = new.to_path_buf();
+            changed = true;
+        }
+    }
+    if changed {
+        emit_queue_event(&lock);
+    }
+}
+
 pub fn enqueue_transcription(audio_path: PathBuf, opts: TranscribeOptions) -> (bool, usize) {
     let flag = running_flag();
     let mut r = flag.lock().unwrap_or_else(|e| e.into_inner());
@@ -221,10 +236,10 @@ pub fn enqueue_transcription(audio_path: PathBuf, opts: TranscribeOptions) -> (b
     }
 
     *r = true;
-    drop(r);
     *current_file_cell()
         .lock()
         .unwrap_or_else(|e| e.into_inner()) = cur_str.clone();
+    drop(r);
 
     {
         let cell = events();
@@ -235,7 +250,9 @@ pub fn enqueue_transcription(audio_path: PathBuf, opts: TranscribeOptions) -> (b
     }
 
     mr_audio::capture::foreground_processing_start();
-    emit(serde_json::json!({"type": "stage", "pct": 0, "message": "Подготовка к расшифровке…", "file": cur_str}));
+    emit(
+        serde_json::json!({"type": "stage", "pct": 0, "message": "Подготовка к расшифровке…", "file": cur_str}),
+    );
 
     let guard = RunningGuard(flag);
     std::thread::spawn(move || {
@@ -244,9 +261,13 @@ pub fn enqueue_transcription(audio_path: PathBuf, opts: TranscribeOptions) -> (b
         let mut current_opts = opts;
         loop {
             let file_str = path.to_string_lossy().to_string();
-            emit(serde_json::json!({"type": "stage", "pct": 0, "message": "Подготовка к расшифровке…", "file": file_str}));
+            emit(
+                serde_json::json!({"type": "stage", "pct": 0, "message": "Подготовка к расшифровке…", "file": file_str}),
+            );
             let result = super::transcribe_file(&path, &current_opts, &|pct, msg| {
-                emit(serde_json::json!({"type": "stage", "stage": "asr", "pct": pct, "message": msg, "file": file_str}));
+                emit(
+                    serde_json::json!({"type": "stage", "stage": "asr", "pct": pct, "message": msg, "file": file_str}),
+                );
             });
             match result {
                 Ok(rep) => {
@@ -254,9 +275,7 @@ pub fn enqueue_transcription(audio_path: PathBuf, opts: TranscribeOptions) -> (b
                     emit(
                         serde_json::json!({"type": "stage", "pct": 100, "message": "Расшифровка завершена", "file": file_str}),
                     );
-                    emit(
-                        serde_json::json!({"type": "done", "code": 0, "file": file_str}),
-                    );
+                    emit(serde_json::json!({"type": "done", "code": 0, "file": file_str}));
                 }
                 Err(e) => {
                     crate::journal::transcription_finish(&path, "error", 0.0);
@@ -336,23 +355,74 @@ mod tests {
         clear_queue();
         let opts = TranscribeOptions::default();
         let q = queue_cell();
-        q.lock().unwrap_or_else(|e| e.into_inner()).push_back(QueueTask {
-            audio_path: PathBuf::from("/tmp/test1.wav"),
-            opts: opts.clone(),
-        });
-        q.lock().unwrap_or_else(|e| e.into_inner()).push_back(QueueTask {
-            audio_path: PathBuf::from("/tmp/test2.wav"),
-            opts,
-        });
+        q.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push_back(QueueTask {
+                audio_path: PathBuf::from("/tmp/test1.wav"),
+                opts: opts.clone(),
+            });
+        q.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push_back(QueueTask {
+                audio_path: PathBuf::from("/tmp/test2.wav"),
+                opts,
+            });
         let status = get_queue_status();
         assert_eq!(status["queue"].as_array().unwrap().len(), 2);
 
-        assert!(remove_from_queue("test1.wav"));
+        rename_in_queue(Path::new("/tmp/test1.wav"), Path::new("/tmp/test3.wav"));
+        assert_eq!(
+            get_queue_status()["queue"][0]["file"].as_str(),
+            Some("/tmp/test3.wav")
+        );
+
+        assert!(remove_from_queue("test3.wav"));
         let status_after = get_queue_status();
         assert_eq!(status_after["queue"].as_array().unwrap().len(), 1);
 
         assert_eq!(clear_queue(), 1);
         let status_empty = get_queue_status();
         assert_eq!(status_empty["queue"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn enqueue_while_running_queues_and_dedupes() {
+        let _guard = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        clear_queue();
+        let opts = TranscribeOptions::default();
+        *running_flag().lock().unwrap_or_else(|e| e.into_inner()) = true;
+        *current_file_cell()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = "/tmp/current.wav".to_string();
+
+        assert_eq!(
+            enqueue_transcription(PathBuf::from("/tmp/current.wav"), opts.clone()),
+            (false, 1)
+        );
+        assert_eq!(
+            enqueue_transcription(PathBuf::from("/tmp/next.wav"), opts.clone()),
+            (false, 2)
+        );
+        assert_eq!(
+            enqueue_transcription(PathBuf::from("/tmp/next.wav"), opts.clone()),
+            (false, 2)
+        );
+        assert_eq!(
+            enqueue_transcription(PathBuf::from("/tmp/last.wav"), opts),
+            (false, 3)
+        );
+
+        let status = get_queue_status();
+        assert_eq!(status["running"].as_bool(), Some(true));
+        assert_eq!(status["current_file"].as_str(), Some("/tmp/current.wav"));
+        assert_eq!(status["queue"].as_array().unwrap().len(), 2);
+
+        clear_queue();
+        *running_flag().lock().unwrap_or_else(|e| e.into_inner()) = false;
+        *current_file_cell()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = String::new();
     }
 }

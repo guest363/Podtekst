@@ -220,27 +220,37 @@
 
         <button
           class="btn-primary btn-sm btn-transcribe-header"
-          disabled={isQueued(ui.currentTranscriptPath)}
-          title={otherRunning
-            ? (isQueued(ui.currentTranscriptPath)
-              ? 'Запись уже в очереди'
-              : `Сейчас расшифровывается «${baseName(engine.file)}». Нажмите, чтобы поставить в очередь`)
-            : transcript.hasText
-              ? 'Текст будет распознан заново и заменит текущий'
-              : ''}
+          disabled={isQueued(ui.currentTranscriptPath) || thisRunning}
+          title={thisRunning
+            ? 'Идёт расшифровка этой записи'
+            : otherRunning
+              ? (isQueued(ui.currentTranscriptPath)
+                ? 'Запись уже в очереди'
+                : `Сейчас расшифровывается «${baseName(engine.file)}». Нажмите, чтобы поставить в очередь`)
+              : transcript.hasText
+                ? 'Текст будет распознан заново и заменит текущий'
+                : ''}
           onclick={() => void startTranscription(ui.currentTranscriptPath)}
         >
           <span class="btn-text-full">
-            {isQueued(ui.currentTranscriptPath)
-              ? 'В очереди'
-              : otherRunning
-                ? 'Поставить в очередь'
-                : transcript.hasText
-                  ? 'Повторить расшифровку'
-                  : 'Запустить расшифровку'}
+            {thisRunning
+              ? 'Идёт расшифровка'
+              : isQueued(ui.currentTranscriptPath)
+                ? 'В очереди'
+                : otherRunning
+                  ? 'Поставить в очередь'
+                  : transcript.hasText
+                    ? 'Повторить расшифровку'
+                    : 'Запустить расшифровку'}
           </span>
           <span class="btn-text-short">
-            {isQueued(ui.currentTranscriptPath) ? 'В очереди' : otherRunning ? 'В очередь' : 'Расшифровать'}
+            {thisRunning
+              ? 'Расшифровка'
+              : isQueued(ui.currentTranscriptPath)
+                ? 'В очереди'
+                : otherRunning
+                  ? 'В очередь'
+                  : 'Расшифровать'}
           </span>
         </button>
 

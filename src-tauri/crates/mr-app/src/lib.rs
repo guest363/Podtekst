@@ -859,6 +859,30 @@ mod live_api_tests {
         assert!(v.get("arch").and_then(|x| x.as_str()).is_some());
         assert!(v.get("self_update").and_then(|x| x.as_bool()).is_some());
 
+        let (st, v) = json(http(port, "GET", "/api/transcribe/queue", &[], &[]));
+        assert_eq!(st, 200);
+        assert_eq!(v["running"].as_bool(), Some(false));
+        assert!(v["queue"].as_array().is_some());
+        let (st, v) = json(http(
+            port,
+            "POST",
+            "/api/transcribe/queue/remove",
+            &[("Content-Type", "application/json")],
+            json!({"file":"nope.wav"}).to_string().as_bytes(),
+        ));
+        assert_eq!((st, v["ok"].as_bool()), (200, Some(false)));
+        let (st, v) = json(http(
+            port,
+            "POST",
+            "/api/transcribe/queue/clear",
+            &[("Content-Type", "application/json")],
+            &[],
+        ));
+        assert_eq!(
+            (st, v["ok"].as_bool(), v["cleared"].as_u64()),
+            (200, Some(true), Some(0))
+        );
+
         let (st, v) = json(http(port, "GET", "/api/system", &[], &[]));
         assert_eq!(st, 200);
         assert_eq!(

@@ -92,6 +92,8 @@
 .rec-rename:hover { color: var(--accent-blue); background: var(--bg-inset); }
 .rec-meta { font-size: 11.5px; color: var(--text-muted); }
 .rec-state-ok { color: var(--accent-ok); font-weight: 600; }
+.rec-state-running { color: var(--accent-blue); font-weight: 600; }
+.rec-state-queued { color: var(--accent-amber); font-weight: 600; }
 .rec-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
 #modelsListSettings .rec-item { align-items: start; }
 #modelsListSettings .rec-actions { flex-direction: column; align-items: stretch; gap: 6px; }

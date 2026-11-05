@@ -7,6 +7,7 @@
     downloadingCore,
     engine,
     openTranscriptFile,
+    syncEngineFromStatus,
   } from './lib/transcript.svelte.ts'
   import {
     loadAutoTranscribe,
@@ -164,7 +165,9 @@
     void Promise.allSettled([
       loadPeople(),
       loadRecordings(),
-      loadQueue(),
+      loadQueue().then(() =>
+        syncEngineFromStatus(queueState.running, queueState.currentFile || ''),
+      ),
       loadVoicePacks(),
       loadModels(),
       loadRecordMode(),

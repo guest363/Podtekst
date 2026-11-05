@@ -141,6 +141,8 @@ pub(super) fn handle_recording_rename(
         return;
     }
     crate::media_registry::path_renamed(&old_path, &new_path);
+    #[cfg(feature = "onnx")]
+    crate::transcribe::rename_in_queue(&old_path, &new_path);
     // Старые записи узнаём по имени файла: после переименования шаблон уже
     // не совпадёт, поэтому фиксируем путь в реестре явно.
     if was_owned {
@@ -205,6 +207,8 @@ pub(super) fn handle_recording_delete(
     // принесли извне), не удаляем: убираем только запись из списка.
     if !crate::media_registry::load_registry().is_owned(&p) {
         crate::media_registry::hide(&p);
+        #[cfg(feature = "onnx")]
+        crate::transcribe::remove_from_queue(&path);
         json_response(
             request,
             json!({
@@ -227,6 +231,8 @@ pub(super) fn handle_recording_delete(
     let removed = std::fs::remove_file(&p).is_ok();
     if removed {
         crate::media_registry::unmark_owned(&p);
+        #[cfg(feature = "onnx")]
+        crate::transcribe::remove_from_queue(&path);
         deleted.push(
             p.file_name()
                 .map(|s| s.to_string_lossy().to_string())

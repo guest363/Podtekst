@@ -205,30 +205,42 @@ pub(super) fn handle_transcribe_start(request: tiny_http::Request, body: serde_j
             .and_then(|v| v.as_bool())
             .unwrap_or_else(crate::config::configured_ctc_enabled),
     };
-    let (started, position) = crate::transcribe::enqueue_transcription(PathBuf::from(audio_file), opts);
+    let (started, position) =
+        crate::transcribe::enqueue_transcription(PathBuf::from(audio_file), opts);
+    let already_running = !started && position == 1;
     json_response(
         request,
         json!({
             "ok": true,
-            "queued": !started,
+            "started": started,
+            "queued": !started && !already_running,
             "position": position,
-            "message": if started { "Расшифровка запущена" } else { "Добавлено в очередь" }
+            "message": if started {
+                "Расшифровка запущена"
+            } else if already_running {
+                "Запись уже расшифровывается"
+            } else {
+                "Добавлено в очередь"
+            }
         }),
         200,
     );
 }
 
+#[cfg(feature = "onnx")]
 pub(super) fn handle_queue_get(request: tiny_http::Request) {
     let status = crate::transcribe::get_queue_status();
     json_response(request, status, 200);
 }
 
+#[cfg(feature = "onnx")]
 pub(super) fn handle_queue_remove(request: tiny_http::Request, body: serde_json::Value) {
     let file = body.get("file").and_then(|v| v.as_str()).unwrap_or("");
     let ok = crate::transcribe::remove_from_queue(file);
     json_response(request, json!({"ok": ok}), 200);
 }
 
+#[cfg(feature = "onnx")]
 pub(super) fn handle_queue_clear(request: tiny_http::Request) {
     let count = crate::transcribe::clear_queue();
     json_response(request, json!({"ok": true, "cleared": count}), 200);

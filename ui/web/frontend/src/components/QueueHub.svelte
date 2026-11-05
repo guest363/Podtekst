@@ -1,7 +1,7 @@
 <script lang="ts">
   import { baseName, encPath, fmtClock, readJsonSafe } from '../lib/api'
   import { clearQueue, loadQueue, queueState, removeFromQueue } from '../lib/queue.svelte.ts'
-  import { engine, startTranscription } from '../lib/transcript.svelte.ts'
+  import { engine, startTranscription, syncEngineFromStatus } from '../lib/transcript.svelte.ts'
   import { loadRecordings, recordings } from '../lib/recordings.svelte.ts'
   import { openTranscript } from '../lib/ui.svelte.ts'
   import { toast } from '../lib/toast.svelte.ts'
@@ -14,6 +14,14 @@
   onMount(() => {
     void loadQueue()
     void loadRecordings()
+    // Страница очереди не монтирует RecordingDeck, поэтому о внешнем запуске
+    // (автозапуск, CLI) узнаём только опросом.
+    const timer = setInterval(() => {
+      void loadQueue().then(() =>
+        syncEngineFromStatus(queueState.running, queueState.currentFile || ''),
+      )
+    }, 2000)
+    return () => clearInterval(timer)
   })
 
   async function handleFiles(files: FileList | File[]) {

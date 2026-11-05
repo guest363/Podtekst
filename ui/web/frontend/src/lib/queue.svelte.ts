@@ -77,20 +77,14 @@ export async function clearQueue(): Promise<boolean> {
 }
 
 export function isQueued(filePath: string): boolean {
-  return queueState.items.some(
-    (i) => i.file === filePath || (filePath.endsWith(i.name) && i.name.length > 0)
-  )
+  return queueState.items.some((i) => i.file === filePath)
 }
 
 export function isActive(filePath: string): boolean {
-  if (!queueState.running || !queueState.currentFile) return false
-  return queueState.currentFile === filePath || filePath.endsWith(queueState.currentFile)
+  return queueState.running && queueState.currentFile === filePath
 }
 
 export function getPosition(filePath: string): number | null {
   if (isActive(filePath)) return 1
-  const item = queueState.items.find(
-    (i) => i.file === filePath || (filePath.endsWith(i.name) && i.name.length > 0)
-  )
-  return item ? item.position : null
+  return queueState.items.find((i) => i.file === filePath)?.position ?? null
 }
