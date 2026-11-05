@@ -76,13 +76,37 @@ export function snippetUrl(packId: string, protoId: string): string {
   return `/api/voicepacks/snippet?pack_id=${encodeURIComponent(packId || '')}&file=${encodeURIComponent(protoId)}.wav`
 }
 
-export async function deleteVoiceSample(name: string, prototypeId: string): Promise<boolean> {
+export async function deleteVoice(name: string): Promise<boolean> {
+  const clean = name.trim()
+  if (!clean) return false
+  try {
+    const r = await fetch('/api/voiceprints/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: clean }),
+    })
+    const d = await readJsonSafe(r)
+    if (!d.ok) {
+      toast(d.error || 'Не удалось удалить голос', 'error')
+      return false
+    }
+    toast(`Голос «${clean}» удалён из базы`)
+    await loadPeople()
+    await loadVoiceDetail(clean)
+    return true
+  } catch (e) {
+    toast('Не удалось удалить голос: ' + (e as Error).message, 'error')
+    return false
+  }
+}
+
+export async function deleteVoiceSample(name: string, prototypeId: string, packId?: string): Promise<boolean> {
   try {
     const d = await readJsonSafe(
       await fetch('/api/voiceprints/delete_sample', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, prototype_id: prototypeId }),
+        body: JSON.stringify({ name, prototype_id: prototypeId, pack_id: packId || undefined }),
       }),
     )
     if (!d.ok) {

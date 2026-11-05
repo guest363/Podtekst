@@ -73,7 +73,8 @@ pub(super) fn json_response(request: tiny_http::Request, value: serde_json::Valu
     let body = serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string());
     let resp = tiny_http::Response::from_string(body)
         .with_status_code(status)
-        .with_header(hdr("Content-Type: application/json; charset=utf-8"));
+        .with_header(hdr("Content-Type: application/json; charset=utf-8"))
+        .with_header(hdr("Cache-Control: no-store"));
     let _ = request.respond(resp);
 }
 
