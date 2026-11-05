@@ -36,6 +36,8 @@ use self::transcribe_api::{
     serve_transcribe_stream, serve_transcript,
 };
 #[cfg(feature = "onnx")]
+use self::transcribe_api::{handle_queue_clear, handle_queue_get, handle_queue_remove};
+#[cfg(feature = "onnx")]
 use self::transcript_edit::handle_transcript_edit;
 #[cfg(not(feature = "onnx"))]
 fn handle_transcript_edit(request: tiny_http::Request, _body: serde_json::Value) {
@@ -1132,6 +1134,19 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 }
                 (tiny_http::Method::Post, "/api/export/save_dialog") => {
                     handle_save_dialog(request, &query);
+                }
+                #[cfg(feature = "onnx")]
+                (tiny_http::Method::Get, "/api/transcribe/queue") => {
+                    handle_queue_get(request);
+                }
+                #[cfg(feature = "onnx")]
+                (tiny_http::Method::Post, "/api/transcribe/queue/remove") => {
+                    let body = read_body_to_json(&mut request);
+                    handle_queue_remove(request, body);
+                }
+                #[cfg(feature = "onnx")]
+                (tiny_http::Method::Post, "/api/transcribe/queue/clear") => {
+                    handle_queue_clear(request);
                 }
                 (tiny_http::Method::Get, "/api/transcribe_stream") => {
                     serve_transcribe_stream(request);

@@ -4,6 +4,7 @@ import { toast } from './toast.svelte.ts'
 import { emit, ui } from './ui.svelte.ts'
 import { settings } from './settings.svelte.ts'
 import { isVideoPath } from './api'
+import { loadQueue, queueState } from './queue.svelte.ts'
 
 export const transcript = $state({
   speakers: [] as SpeakerInfo[],
@@ -15,8 +16,8 @@ export const transcript = $state({
 })
 
 // Единственное состояние движка для всего UI (дека, модалка, настройки):
-// ядро выполняет одну расшифровку одновременно — UI обязан показывать её
-// одинаково везде и блокировать остальные запуски.
+// ядро обрабатывает файлы по одному, поэтому прогресс и очередь должны
+// выглядеть одинаково в любом месте интерфейса.
 export const engine = $state({
   running: false,
   file: '',
@@ -80,6 +81,7 @@ export function emptyHint(): string {
 
 let evtSource: EventSource | null = null
 let finishedAt = 0
+let finishing = false
 
 function closeStreamIfIdle(): void {
   if (!engine.running && Object.keys(engine.downloading).length === 0) {
@@ -121,12 +123,24 @@ function handleEngineEvent(e: MessageEvent): void {
   } catch {
     return
   }
+  if (evt.type === 'queue') {
+    if (Array.isArray(evt.queue)) {
+      queueState.items = evt.queue
+      queueState.total = queueState.running ? evt.queue.length + 1 : evt.queue.length
+    }
+    return
+  }
   if (evt.type === 'stage' || evt.type === 'progress') {
     if (evt.stage === 'model-download') {
       if (evt.model_id && evt.pct !== undefined) {
         engine.downloading[evt.model_id] = Math.round(evt.pct)
       }
       return
+    }
+    if (evt.file && evt.file !== engine.file) {
+      engine.file = evt.file
+      engine.pct = 0
+      queueState.currentFile = evt.file
     }
     engine.msg = evt.message || 'Обработка…'
     if (evt.pct !== undefined) engine.pct = Math.max(engine.pct, Math.max(5, Math.min(100, evt.pct)))
@@ -145,37 +159,42 @@ function handleEngineEvent(e: MessageEvent): void {
   } else if (evt.type === 'stats') {
     if (evt.should_prompt_donate) emit('support-changed')
   } else if (evt.type === 'error') {
-    engine.running = false
+    void loadQueue().then(() => {
+      if (!queueState.running) {
+        engine.running = false
+        closeStreamIfIdle()
+      }
+    })
     toast('Расшифровка прервана: ' + (evt.message || 'неизвестная ошибка'), 'error')
-    closeStreamIfIdle()
   }
 }
 
 function finishEngine(donePath: string): void {
-  if (!engine.running) return
-  engine.running = false
-  engine.file = ''
-  engine.pct = 100
-  engine.msg = 'Расшифровка завершена'
-  finishedAt = Date.now()
-  closeStreamIfIdle()
+  if (!engine.running || finishing) return
+  finishing = true
+  void loadQueue()
+    .then(() => {
+      if (!queueState.running) {
+        engine.running = false
+        engine.file = ''
+        engine.pct = 100
+        engine.msg = 'Расшифровка завершена'
+        finishedAt = Date.now()
+        closeStreamIfIdle()
+      }
+    })
+    .finally(() => {
+      finishing = false
+    })
   emit('recordings-changed')
   emit('support-changed')
-  if (!ui.transcriptOpen) toast('Расшифровка записи завершена')
+  if (!ui.transcriptOpen) toast(`Расшифровка «${baseName(donePath)}» завершена`)
   if (ui.transcriptOpen && donePath && donePath === ui.currentTranscriptPath) {
     void openTranscriptFile(donePath)
   }
 }
 
 export async function startTranscription(rawPath: string): Promise<void> {
-  if (engine.running) {
-    toast(
-      engine.file
-        ? `Уже расшифровывается «${baseName(engine.file)}». Дождитесь окончания.`
-        : 'Расшифровка уже выполняется. Дождитесь окончания.',
-    )
-    return
-  }
   try {
     const r = await fetch('/api/transcribe/start', {
       method: 'POST',
@@ -184,6 +203,12 @@ export async function startTranscription(rawPath: string): Promise<void> {
     })
     const d = await readJsonSafe(r)
     if (!d.ok) throw new Error(d.error || 'движок отклонил запуск')
+    if (d.started === false) {
+      toast(d.queued ? `Запись добавлена в очередь (#${d.position})` : 'Эта запись уже расшифровывается')
+      await loadQueue()
+      ensureStream()
+      return
+    }
   } catch (e) {
     toast('Не удалось запустить расшифровку: ' + (e as Error).message, 'error')
     return
@@ -192,6 +217,7 @@ export async function startTranscription(rawPath: string): Promise<void> {
   engine.file = rawPath
   engine.msg = 'Подготовка к расшифровке…'
   engine.pct = 5
+  await loadQueue()
   ensureStream()
 }
 

@@ -7,6 +7,7 @@
     downloadingCore,
     engine,
     openTranscriptFile,
+    syncEngineFromStatus,
   } from './lib/transcript.svelte.ts'
   import {
     loadAutoTranscribe,
@@ -23,6 +24,7 @@
   import { renderMarkdown } from './lib/markdown'
   import RecordingDeck from './components/RecordingDeck.svelte'
   import Recordings from './components/Recordings.svelte'
+  import QueueHub from './components/QueueHub.svelte'
   import People from './components/People.svelte'
   import Dictionary from './components/Dictionary.svelte'
   import TranscriptPage from './components/TranscriptPage.svelte'
@@ -32,6 +34,7 @@
   import CrashBanner from './components/CrashBanner.svelte'
   import Toasts from './components/Toasts.svelte'
   import { isMobile, isCoreModel, remainingMb } from './lib/api'
+  import { loadQueue, queueState } from './lib/queue.svelte.ts'
 
   let introOpen = $state(false)
 
@@ -103,6 +106,7 @@
 
   const TAB_TITLES: Record<string, string> = {
     studio: 'Запись',
+    queue: 'Очередь',
     people: 'Участники',
     dict: 'Словарь',
     settings: 'Настройки',
@@ -161,6 +165,9 @@
     void Promise.allSettled([
       loadPeople(),
       loadRecordings(),
+      loadQueue().then(() =>
+        syncEngineFromStatus(queueState.running, queueState.currentFile || ''),
+      ),
       loadVoicePacks(),
       loadModels(),
       loadRecordMode(),
@@ -197,6 +204,26 @@
             <line x1="12" y1="19" x2="12" y2="22" />
           </svg>
           <span class="sidebar-btn-label">Запись</span>
+        </button>
+
+        <button
+          type="button"
+          class="sidebar-btn"
+          class:active={ui.activeTab === 'queue'}
+          onclick={() => selectTab('queue')}
+        >
+          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="8" y1="6" x2="21" y2="6" />
+            <line x1="8" y1="12" x2="21" y2="12" />
+            <line x1="8" y1="18" x2="21" y2="18" />
+            <line x1="3" y1="6" x2="3.01" y2="6" />
+            <line x1="3" y1="12" x2="3.01" y2="12" />
+            <line x1="3" y1="18" x2="3.01" y2="18" />
+          </svg>
+          <span class="sidebar-btn-label">Очередь</span>
+          {#if queueState.total > 0}
+            <span class="sidebar-count">{queueState.total}</span>
+          {/if}
         </button>
 
         <button
@@ -330,6 +357,10 @@
             <RecordingDeck />
             <Recordings />
           </div>
+        {:else if ui.activeTab === 'queue'}
+          <div class="card queue-page-card">
+            <QueueHub />
+          </div>
         {:else if ui.activeTab === 'people'}
           <div class="card people-page-card">
             <People />
@@ -359,6 +390,23 @@
             <line x1="12" y1="19" x2="12" y2="22" />
           </svg>
           <span>Запись</span>
+        </button>
+
+        <button
+          type="button"
+          class="mobile-tab-btn"
+          class:active={ui.activeTab === 'queue'}
+          onclick={() => selectTab('queue')}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="8" y1="6" x2="21" y2="6" />
+            <line x1="8" y1="12" x2="21" y2="12" />
+            <line x1="8" y1="18" x2="21" y2="18" />
+            <line x1="3" y1="6" x2="3.01" y2="6" />
+            <line x1="3" y1="12" x2="3.01" y2="12" />
+            <line x1="3" y1="18" x2="3.01" y2="18" />
+          </svg>
+          <span>Очередь</span>
         </button>
 
         <button
@@ -716,6 +764,7 @@
       overflow-y: auto;
     }
     .people-page-card,
+    .queue-page-card,
     .dict-page-card,
     .settings-page-card {
       flex: 1 1 auto;
@@ -753,6 +802,7 @@
       overflow: visible !important;
     }
     .people-page-card,
+    .queue-page-card,
     .dict-page-card,
     .settings-page-card {
       padding: 14px 14px;
