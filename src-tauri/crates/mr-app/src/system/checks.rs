@@ -252,7 +252,16 @@ fn check_microphone(probe_audio: bool, recording: bool) -> Outcome {
     if recording {
         return Outcome::skip("Идёт запись — проверка пропущена");
     }
-    super::probe::run()
+    // Android: AAudio-проба из HTTP-потока роняет процесс на части прошивок.
+    // Живой микрофон там проверяется обычной записью — она идёт через сервис.
+    #[cfg(target_os = "android")]
+    {
+        Outcome::skip("На телефоне микрофон проверяется короткой записью, а не тестом")
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        super::probe::run()
+    }
 }
 
 fn check_screen_capture(snapshot: &Value, include_optional: bool) -> Outcome {

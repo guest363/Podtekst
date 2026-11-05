@@ -1,12 +1,17 @@
 package io.github.guest363.podtekst
 
 import android.Manifest
+import android.content.ClipData
+import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.enableEdgeToEdge
+import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import java.io.File
 
 class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -46,5 +51,25 @@ class MainActivity : TauriActivity() {
   @Suppress("unused")
   fun stopRecordingService() {
     RecordingService.stop(this)
+  }
+
+  // Отчёт диагностики лежит во внутренней песочнице: без этой передачи файл
+  // не виден ни файловому менеджеру, ни почте.
+  @Suppress("unused")
+  fun shareFile(path: String) {
+    runCatching {
+      val file = File(path)
+      if (!file.isFile) return
+      val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+      val send = Intent(Intent.ACTION_SEND).apply {
+        type = "application/zip"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        clipData = ClipData.newRawUri("diagnostics", uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      }
+      startActivity(Intent.createChooser(send, "Отправить отчёт"))
+    }.onFailure {
+      Log.w("Podtekst", "share diagnostics: $it")
+    }
   }
 }

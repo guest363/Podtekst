@@ -216,18 +216,20 @@
       <button
         class="btn-primary btn-sm"
         disabled={system.checksLoading}
-        onclick={() => void runChecks(probeAudio)}
+        onclick={() => void runChecks(!isMobile && probeAudio)}
       >
         {system.checksLoading ? 'Проверяю…' : 'Проверить систему'}
       </button>
       <button class="btn-secondary btn-sm" disabled={system.loading} onclick={refresh}>
         {system.loading ? '…' : 'Обновить'}
       </button>
-      <label class="setting-check system-probe-inline">
-        <input type="checkbox" bind:checked={probeAudio} />
-        <span class="setting-switch" aria-hidden="true"></span>
-        <span>Тест микрофона короткой записью</span>
-      </label>
+      {#if !isMobile}
+        <label class="setting-check system-probe-inline">
+          <input type="checkbox" bind:checked={probeAudio} />
+          <span class="setting-switch" aria-hidden="true"></span>
+          <span>Тест микрофона короткой записью</span>
+        </label>
+      {/if}
     </div>
   </div>
 
@@ -347,7 +349,7 @@
 
     <div class="row-start pt-2">
       <button class="btn-secondary btn-sm" onclick={() => void collectDiagnostics()}>
-        Собрать отчёт для поддержки
+        {isMobile ? 'Собрать и отправить отчёт' : 'Собрать отчёт для поддержки'}
       </button>
       {#if !isMobile}
         <button class="btn-secondary btn-sm" onclick={() => void openTarget('logs')}>

@@ -2395,6 +2395,7 @@ dependencies = [
  "clap",
  "fs2",
  "hound",
+ "jni 0.21.1",
  "libc",
  "mr-audio",
  "mr-ml",

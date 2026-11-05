@@ -773,11 +773,18 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     let mut body = Vec::new();
                     let _ = request.as_reader().read_to_end(&mut body);
                     match crate::diagnostics::collect() {
-                        Ok(path) => json_response(
-                            request,
-                            json!({"ok": true, "path": path.to_string_lossy()}),
-                            200,
-                        ),
+                        Ok(path) => {
+                            let shared = crate::diagnostics::share(&path);
+                            json_response(
+                                request,
+                                json!({
+                                    "ok": true,
+                                    "path": path.to_string_lossy(),
+                                    "shared": shared,
+                                }),
+                                200,
+                            )
+                        }
                         Err(e) => json_response(request, json!({"ok": false, "error": e}), 500),
                     }
                 }
