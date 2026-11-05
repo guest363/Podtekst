@@ -17,6 +17,8 @@
   import { on, openTranscript } from '../lib/ui.svelte.ts'
   import { toast } from '../lib/toast.svelte.ts'
   import { onMount } from 'svelte'
+  import { getPosition, isActive, isQueued, removeFromQueue } from '../lib/queue.svelte.ts'
+  import { engine, startTranscription } from '../lib/transcript.svelte.ts'
 
   let uploadInput: HTMLInputElement | null = $state(null)
   let uploadBtn: HTMLButtonElement | null = $state(null)
@@ -307,6 +309,10 @@
           <span class="rec-state-ok">
             {#if rec.speakers_count}{rec.speakers_count} {pluralSpeakers(rec.speakers_count)}{:else}Текст готов{/if}
           </span>
+        {:else if isActive(rec.path)}
+          <span class="rec-state-running">Расшифровка {engine.pct}%</span>
+        {:else if isQueued(rec.path)}
+          <span class="rec-state-queued">В очереди (#{getPosition(rec.path)})</span>
         {:else}
           {rec.is_video ? 'Видео' : 'Аудио'}
         {/if}
@@ -332,9 +338,15 @@
           </svg>
         {/if}
       </button>
-      <button class="btn-secondary btn-sm" onclick={() => openTranscript(rec.path, rec.is_video)}>
-        Текст и спикеры
-      </button>
+      {#if isQueued(rec.path)}
+        <button class="btn-secondary btn-sm" onclick={() => void removeFromQueue(rec.path)}>
+          ✕ Снять
+        </button>
+      {:else}
+        <button class="btn-secondary btn-sm" onclick={() => openTranscript(rec.path, rec.is_video)}>
+          {rec.has_transcript ? 'Текст и спикеры' : (isActive(rec.path) ? 'Смотреть ход' : 'Текст и спикеры')}
+        </button>
+      {/if}
       <button
         class="rec-delete-icon"
         title={rec.owned ? 'Удалить запись' : 'Убрать из приложения'}

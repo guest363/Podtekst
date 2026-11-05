@@ -22,8 +22,9 @@ use mr_ml::onnx::vad::{vad_segments_from_probs, SileroVad};
 use mr_ml::onnx::whisper::Whisper;
 
 pub use events::{
-    emit_model_event, finish_model_events, is_transcribe_running, spawn_transcription_worker,
-    start_model_download, take_new_events, transcribing_file,
+    clear_queue, emit_model_event, enqueue_transcription, finish_model_events, get_queue_status,
+    is_transcribe_running, remove_from_queue, spawn_transcription_worker, start_model_download,
+    take_new_events, transcribing_file,
 };
 
 fn models_root() -> PathBuf {
@@ -237,6 +238,7 @@ pub struct Sample {
     pub channel: Option<i32>,
 }
 
+#[derive(Clone, Debug)]
 pub struct TranscribeOptions {
     pub speaker_left: String,
     pub speaker_right: String,

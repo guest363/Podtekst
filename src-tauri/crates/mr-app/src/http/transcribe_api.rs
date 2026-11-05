@@ -184,14 +184,6 @@ pub(super) fn handle_transcribe_start(request: tiny_http::Request, body: serde_j
         );
         return;
     }
-    if crate::transcribe::is_transcribe_running() {
-        json_response(
-            request,
-            json!({"ok": false, "error": "Расшифровка уже выполняется"}),
-            409,
-        );
-        return;
-    }
     let opts = crate::transcribe::TranscribeOptions {
         speaker_left: my_name,
         speaker_right: "Собеседник".to_string(),
@@ -213,19 +205,33 @@ pub(super) fn handle_transcribe_start(request: tiny_http::Request, body: serde_j
             .and_then(|v| v.as_bool())
             .unwrap_or_else(crate::config::configured_ctc_enabled),
     };
-    if crate::transcribe::spawn_transcription_worker(PathBuf::from(audio_file), opts) {
-        json_response(
-            request,
-            json!({"ok": true, "message": "Расшифровка запущена"}),
-            200,
-        );
-    } else {
-        json_response(
-            request,
-            json!({"ok": false, "error": "Расшифровка уже выполняется"}),
-            409,
-        );
-    }
+    let (started, position) = crate::transcribe::enqueue_transcription(PathBuf::from(audio_file), opts);
+    json_response(
+        request,
+        json!({
+            "ok": true,
+            "queued": !started,
+            "position": position,
+            "message": if started { "Расшифровка запущена" } else { "Добавлено в очередь" }
+        }),
+        200,
+    );
+}
+
+pub(super) fn handle_queue_get(request: tiny_http::Request) {
+    let status = crate::transcribe::get_queue_status();
+    json_response(request, status, 200);
+}
+
+pub(super) fn handle_queue_remove(request: tiny_http::Request, body: serde_json::Value) {
+    let file = body.get("file").and_then(|v| v.as_str()).unwrap_or("");
+    let ok = crate::transcribe::remove_from_queue(file);
+    json_response(request, json!({"ok": ok}), 200);
+}
+
+pub(super) fn handle_queue_clear(request: tiny_http::Request) {
+    let count = crate::transcribe::clear_queue();
+    json_response(request, json!({"ok": true, "cleared": count}), 200);
 }
 
 #[cfg(not(feature = "onnx"))]

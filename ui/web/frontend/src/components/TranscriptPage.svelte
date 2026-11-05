@@ -3,6 +3,7 @@
   import { copyText, toast } from '../lib/toast.svelte.ts'
   import { closeTranscript, ui } from '../lib/ui.svelte.ts'
   import { emptyHint, engine, openTranscriptFile, startTranscription, transcript } from '../lib/transcript.svelte.ts'
+  import { isQueued } from '../lib/queue.svelte.ts'
   import { extractMp3 } from '../lib/recordings.svelte.ts'
   import { peopleState } from '../lib/people.svelte.ts'
   import { exportDocx, printTranscript } from '../lib/export.ts'
@@ -219,16 +220,28 @@
 
         <button
           class="btn-primary btn-sm btn-transcribe-header"
-          disabled={engine.running}
+          disabled={isQueued(ui.currentTranscriptPath)}
           title={otherRunning
-            ? `Уже расшифровывается «${baseName(engine.file)}»`
+            ? (isQueued(ui.currentTranscriptPath)
+              ? 'Запись уже в очереди'
+              : `Сейчас расшифровывается «${baseName(engine.file)}». Нажмите, чтобы поставить в очередь`)
             : transcript.hasText
               ? 'Текст будет распознан заново и заменит текущий'
               : ''}
           onclick={() => void startTranscription(ui.currentTranscriptPath)}
         >
-          <span class="btn-text-full">{transcript.hasText ? 'Повторить расшифровку' : 'Запустить расшифровку'}</span>
-          <span class="btn-text-short">Расшифровать</span>
+          <span class="btn-text-full">
+            {isQueued(ui.currentTranscriptPath)
+              ? 'В очереди'
+              : otherRunning
+                ? 'Поставить в очередь'
+                : transcript.hasText
+                  ? 'Повторить расшифровку'
+                  : 'Запустить расшифровку'}
+          </span>
+          <span class="btn-text-short">
+            {isQueued(ui.currentTranscriptPath) ? 'В очереди' : otherRunning ? 'В очередь' : 'Расшифровать'}
+          </span>
         </button>
 
         {#if transcript.extractVisible && !isMobile}
@@ -334,7 +347,11 @@
       <div class="transcript-empty-title">Здесь пока пусто</div>
       {#if otherRunning}
         <div class="help-text">
-          Дождитесь окончания расшифровки «{baseName(engine.file)}» – затем запустите эту.
+          {#if isQueued(ui.currentTranscriptPath)}
+            Запись уже ожидает очереди расшифровки (после «{baseName(engine.file)}»).
+          {:else}
+            Сейчас расшифровывается «{baseName(engine.file)}». Можно поставить эту запись в очередь.
+          {/if}
         </div>
       {:else}
         <div class="help-text">{emptyHint()}</div>
@@ -342,10 +359,14 @@
       <div class="row-start">
         <button
           class="btn-primary"
-          disabled={engine.running}
+          disabled={isQueued(ui.currentTranscriptPath)}
           onclick={() => void startTranscription(ui.currentTranscriptPath)}
         >
-          Запустить расшифровку
+          {isQueued(ui.currentTranscriptPath)
+            ? 'В очереди'
+            : otherRunning
+              ? 'Поставить в очередь'
+              : 'Запустить расшифровку'}
         </button>
       </div>
     </div>
