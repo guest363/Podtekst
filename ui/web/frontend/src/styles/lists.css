@@ -9,10 +9,14 @@
   position: relative;
 }
 #recordingsList {
+  min-height: 280px;
   max-height: clamp(360px, 58vh, 620px);
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 4px;
+}
+#recordingsList .empty-note {
+  padding: 36px 16px;
 }
 .rec-item {
   display: grid;

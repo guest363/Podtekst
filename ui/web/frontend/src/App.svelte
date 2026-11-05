@@ -298,7 +298,7 @@
         </div>
       </header>
 
-      <main class="main-column">
+      <main class="main-column shell-main">
         <CrashBanner />
         {#if update.isNewer && !update.dismissed}
           <section class="card update-card" aria-label="Доступно обновление">
@@ -684,7 +684,8 @@
       gap: 12px;
       overflow: hidden;
     }
-    .shell-main {
+    .shell-main,
+    .main-column {
       flex: 1 1 auto;
       min-height: 0;
       display: flex;
@@ -698,14 +699,15 @@
       display: flex;
       flex-direction: column;
       gap: 12px;
-      overflow: hidden;
+    }
+    .studio-view :global(.studio-deck) {
+      flex-shrink: 0;
     }
     .studio-view :global(#recordingsCard) {
       flex: 1 1 auto;
       min-height: 0;
       display: flex;
       flex-direction: column;
-      overflow: hidden;
     }
     .studio-view :global(#recordingsList) {
       flex: 1 1 auto;
