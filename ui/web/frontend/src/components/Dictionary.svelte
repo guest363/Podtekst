@@ -71,30 +71,32 @@
   </div>
 
   <div class="dict-input-wrap">
-    <input
-      type="text"
-      class="input-field dict-input"
-      placeholder="Поиск или новый термин (напр. «Docker» или «мерши = merge»)"
-      autocomplete="off"
-      aria-label="Поиск или новый термин"
-      bind:value={termInput}
-      onkeydown={(e) => {
-        if (e.key === 'Enter') void addTerm()
-        else if (e.key === 'Escape' && termInput) {
-          e.preventDefault()
-          termInput = ''
-        }
-      }}
-    />
-    {#if termInput}
-      <button
-        type="button"
-        class="dict-input-clear"
-        title="Очистить поиск (Esc)"
-        aria-label="Очистить поиск"
-        onclick={() => (termInput = '')}
-      >✕</button>
-    {/if}
+    <div class="dict-input-box">
+      <input
+        type="text"
+        class="input-field dict-input"
+        placeholder="Поиск или термин («Docker», «мерши = merge»)"
+        autocomplete="off"
+        aria-label="Поиск или новый термин"
+        bind:value={termInput}
+        onkeydown={(e) => {
+          if (e.key === 'Enter') void addTerm()
+          else if (e.key === 'Escape' && termInput) {
+            e.preventDefault()
+            termInput = ''
+          }
+        }}
+      />
+      {#if termInput}
+        <button
+          type="button"
+          class="dict-input-clear"
+          title="Очистить поиск (Esc)"
+          aria-label="Очистить поиск"
+          onclick={() => (termInput = '')}
+        >✕</button>
+      {/if}
+    </div>
     <button
       class="btn-primary"
       disabled={!termInput.trim() || isExactMatch}
@@ -187,18 +189,24 @@
     flex-shrink: 0;
   }
   .dict-input-wrap {
-    position: relative;
     display: flex;
     gap: 8px;
     align-items: center;
   }
-  .dict-input {
+  .dict-input-box {
+    position: relative;
     flex: 1;
-    padding-right: 36px;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+  }
+  .dict-input {
+    width: 100%;
+    padding-right: 32px;
   }
   .dict-input-clear {
     position: absolute;
-    right: 110px;
+    right: 8px;
     top: 50%;
     transform: translateY(-50%);
     border: none;
@@ -207,8 +215,11 @@
     color: var(--text-faint);
     font-size: 13px;
     line-height: 1;
-    padding: 4px;
+    padding: 6px;
     border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .dict-input-clear:hover {
     color: var(--text-primary);
@@ -304,10 +315,15 @@
     background: none;
     cursor: pointer;
     color: var(--text-faint);
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1;
-    padding: 3px 6px;
-    border-radius: 4px;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 6px;
+    border-radius: var(--radius-sm);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     transition: color 120ms ease, background 120ms ease;
   }
   .dict-del:hover {
@@ -322,5 +338,21 @@
     background: var(--bg-inset);
     border: 1px dashed var(--border-card);
     border-radius: var(--radius-inner);
+  }
+
+  @media (max-width: 640px) {
+    .card-title {
+      font-size: 15px;
+    }
+    .dict-head {
+      flex-direction: column;
+      gap: 6px;
+    }
+    .dict-count-badge {
+      align-self: flex-start;
+    }
+    .dict-row {
+      padding: 10px 12px;
+    }
   }
 </style>

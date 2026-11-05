@@ -91,6 +91,22 @@
           ? 'ok'
           : 'info'
   )
+  const statusLabel = $derived(
+    statusTone === 'error'
+      ? 'Есть проблема'
+      : statusTone === 'warn'
+        ? 'Замечание'
+        : system.snapshot
+          ? 'Всё в порядке'
+          : 'Проверка…'
+  )
+
+  const TAB_TITLES: Record<string, string> = {
+    studio: 'Запись',
+    people: 'Участники',
+    dict: 'Словарь',
+    settings: 'Настройки',
+  }
 
   function closeIntro(): void {
     introOpen = false
@@ -233,12 +249,12 @@
         <button
           type="button"
           class="status-pill sidebar-status"
-          title="Состояние системы"
+          title="Состояние системы: {statusLabel}"
           aria-label="Открыть состояние системы"
           onclick={openDiagnostics}
         >
           <span class="status-dot {statusTone}" aria-hidden="true"></span>
-          <span class="status-pill-text">Состояние</span>
+          <span class="status-pill-text">{statusLabel}</span>
         </button>
         <button
           type="button"
@@ -258,14 +274,14 @@
       <header class="mobile-header">
         <div class="app-title">
           <img src="/favicon.svg" class="app-brand-logo" alt="" width="20" height="20" />
-          <span class="app-title-text">Подтекст</span>
+          <span class="app-title-text">{TAB_TITLES[ui.activeTab] || 'Подтекст'}</span>
         </div>
         <div class="header-right">
           <button
             type="button"
             class="status-pill mobile-status-btn"
-            title="Состояние системы"
-            aria-label="Открыть состояние системы"
+            title="Состояние системы: {statusLabel}"
+            aria-label="Открыть состояние системы: {statusLabel}"
             onclick={openDiagnostics}
           >
             <span class="status-dot {statusTone}" aria-hidden="true"></span>
@@ -316,9 +332,6 @@
           </div>
         {:else if ui.activeTab === 'people'}
           <div class="card people-page-card">
-            <div class="card-header">
-              <span class="card-title">Участники и голоса</span>
-            </div>
             <People />
           </div>
         {:else if ui.activeTab === 'dict'}
@@ -326,7 +339,7 @@
             <Dictionary />
           </div>
         {:else if ui.activeTab === 'settings'}
-          <div class="settings-page-card">
+          <div class="card settings-page-card">
             <SettingsModal inline={true} />
           </div>
         {/if}
@@ -358,7 +371,7 @@
             <circle cx="12" cy="7" r="4" />
             <path d="M5.5 21a6.5 6.5 0 0 1 13 0" />
           </svg>
-          <span>Люди</span>
+          <span>Участники</span>
         </button>
 
         <button
@@ -600,7 +613,7 @@
     box-shadow: 0 1px 3px rgba(15, 30, 51, 0.05);
   }
   .sidebar-btn.active .nav-icon {
-    color: var(--accent-rec);
+    color: var(--text-primary);
   }
   .sidebar-count {
     margin-left: auto;
@@ -731,10 +744,16 @@
       display: flex;
       flex-direction: column;
       gap: 16px;
-      padding-bottom: 74px;
+      padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
     }
-    .people-page-card {
-      padding: 18px 20px;
+    .studio-view :global(#recordingsList) {
+      max-height: none !important;
+      overflow: visible !important;
+    }
+    .people-page-card,
+    .dict-page-card,
+    .settings-page-card {
+      padding: 14px 14px;
     }
     .mobile-header {
       display: flex !important;
@@ -750,17 +769,20 @@
       bottom: 0;
       left: 0;
       right: 0;
-      height: 56px;
+      height: calc(56px + env(safe-area-inset-bottom, 0px));
       z-index: 40;
-      background: #ffffff;
+      background: rgba(255, 255, 255, 0.94);
+      backdrop-filter: blur(12px);
       border-top: 1px solid var(--border-card);
-      align-items: stretch;
+      align-items: flex-start;
       justify-content: space-around;
+      padding-top: 6px;
       padding-bottom: env(safe-area-inset-bottom, 0px);
       box-shadow: 0 -2px 10px rgba(15, 30, 51, 0.04);
     }
     .mobile-tab-btn {
       flex: 1;
+      min-height: 44px;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -776,15 +798,15 @@
       transition: color 140ms ease;
     }
     .mobile-tab-btn.active {
-      color: var(--accent-rec);
+      color: var(--text-primary);
       font-weight: 700;
     }
     .mobile-tab-btn.active svg {
-      color: var(--accent-rec);
+      color: var(--text-primary);
     }
     .mobile-status-btn {
-      width: 38px;
-      height: 38px;
+      width: 44px;
+      height: 44px;
       padding: 0;
       border-radius: 50%;
       display: inline-flex;
@@ -797,8 +819,8 @@
       height: 9px;
     }
     .status-pill {
-      width: 38px;
-      height: 38px;
+      width: 44px;
+      height: 44px;
       padding: 0;
       border-radius: 50%;
       display: inline-flex;

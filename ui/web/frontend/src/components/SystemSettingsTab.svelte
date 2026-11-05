@@ -364,9 +364,9 @@
     flex-direction: column;
     gap: 10px;
     padding: 14px 16px;
-    border: 1px solid var(--border-card);
-    border-radius: var(--radius-card);
-    background: #fff;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-inner);
+    background: var(--bg-inset);
   }
   .system-card-head {
     display: flex;
@@ -377,7 +377,7 @@
   }
   .system-facts {
     display: grid;
-    grid-template-columns: minmax(90px, max-content) minmax(0, 1fr);
+    grid-template-columns: minmax(100px, max-content) minmax(0, 1fr);
     gap: 4px 12px;
     font-size: 12.5px;
   }
@@ -487,5 +487,23 @@
   }
   .pt-2 {
     padding-top: 8px;
+  }
+
+  @media (max-width: 640px) {
+    .system-section {
+      padding: 12px 12px;
+    }
+    .system-path-row {
+      grid-template-columns: 1fr;
+      gap: 2px;
+    }
+    .system-probe-inline {
+      margin-left: 0;
+      width: 100%;
+    }
+    .system-hero-actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
   }
 </style>

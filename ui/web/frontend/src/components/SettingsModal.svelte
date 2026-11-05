@@ -420,7 +420,7 @@
 {/snippet}
 
 {#if inline}
-  <div class="card settings-inline-card">
+  <div class="settings-inline-wrap">
     {@render settingsContent()}
   </div>
 {:else if ui.settingsOpen}
@@ -442,18 +442,21 @@
 {/if}
 
 <style>
-  .settings-inline-card {
-    padding: 18px 20px;
+  .settings-inline-wrap {
+    display: flex;
+    flex-direction: column;
     gap: 14px;
+    width: 100%;
+    min-width: 0;
   }
-  .settings-inline-card :global(.app-drawer-top) {
+  .settings-inline-wrap :global(.app-drawer-top) {
     padding: 0 0 14px;
   }
-  .settings-inline-card :global(.app-drawer-body) {
+  .settings-inline-wrap :global(.app-drawer-body) {
     overflow: visible;
     padding: 6px 0;
   }
-  .settings-inline-card :global(.app-drawer-bottom) {
+  .settings-inline-wrap :global(.app-drawer-bottom) {
     padding: 14px 0 0;
     border-top: 1px solid var(--border-soft);
     background: transparent;
@@ -547,7 +550,7 @@
   }
   .system-facts {
     display: grid;
-    grid-template-columns: minmax(110px, max-content) minmax(0, 1fr);
+    grid-template-columns: minmax(100px, max-content) minmax(0, 1fr);
     gap: 4px 12px;
     font-size: 12.5px;
   }
