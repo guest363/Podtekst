@@ -143,11 +143,11 @@ async def main():
     await client.connect()
 
     try:
-        print("[1/5] Загрузка шаблона…")
+        print("[1/6] Загрузка шаблона…")
         await client.navigate(f"{HTML_URL}#main-console")
 
         # 1. main-console.png (1240 x 820)
-        print("[2/5] Скриншот main-console.png (1240x820)…")
+        print("[2/6] Скриншот main-console.png (1240x820)…")
         await client.set_viewport(1240, 820, 1.0)
         await client.evaluate("window.location.hash = 'main-console'; updateRoute();")
         await asyncio.sleep(0.3)
@@ -155,8 +155,17 @@ async def main():
             os.path.join(SCREENSHOTS_DIR, "main-console.png")
         )
 
-        # 2. settings-models.png (1240 x 820)
-        print("[3/5] Скриншот settings-models.png (1240x820)…")
+        # 2. queue-hub.png (1240 x 820)
+        print("[3/6] Скриншот queue-hub.png (1240x820)…")
+        await client.set_viewport(1240, 820, 1.0)
+        await client.evaluate("window.location.hash = 'queue'; updateRoute();")
+        await asyncio.sleep(0.3)
+        await client.capture_screenshot(
+            os.path.join(SCREENSHOTS_DIR, "queue-hub.png")
+        )
+
+        # 3. settings-models.png (1240 x 820)
+        print("[4/6] Скриншот settings-models.png (1240x820)…")
         await client.set_viewport(1240, 820, 1.0)
         await client.evaluate("window.location.hash = 'settings-models'; updateRoute();")
         await asyncio.sleep(0.3)
@@ -164,8 +173,8 @@ async def main():
             os.path.join(SCREENSHOTS_DIR, "settings-models.png")
         )
 
-        # 3. transcript-view.png (2480 x 1640 retina)
-        print("[4/5] Скриншот transcript-view.png (2480x1640 retina)…")
+        # 4. transcript-view.png (2480 x 1640 retina)
+        print("[5/6] Скриншот transcript-view.png (2480x1640 retina)…")
         await client.set_viewport(1240, 820, 2.0)
         await client.evaluate("window.location.hash = 'transcript'; updateRoute();")
         await asyncio.sleep(0.3)
@@ -173,8 +182,8 @@ async def main():
             os.path.join(SCREENSHOTS_DIR, "transcript-view.png")
         )
 
-        # 4. demo-walkthrough.gif (880 x 609, 28 кадров + 1 финальный)
-        print("[5/5] Рендеринг demo-walkthrough.gif и screen-recording-demo.gif…")
+        # 5. demo-walkthrough.gif (880 x 609, 28 кадров + 1 финальный)
+        print("[6/6] Рендеринг demo-walkthrough.gif и screen-recording-demo.gif…")
         wt_durations = [
             1000,
             160,
@@ -198,12 +207,12 @@ async def main():
             1200,
             800,
             800,
-            360,
             800,
-            920,
-            880,
-            1520,
-            520,
+            1000,
+            1200,
+            900,
+            900,
+            800,
             40,
         ]
 

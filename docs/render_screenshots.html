@@ -47,6 +47,40 @@
       flex-direction: column;
     }
 
+    /* Queue page mock */
+    .queue-hub { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
+    .queue-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .queue-head-left { display: flex; flex-direction: column; gap: 2px; }
+    .queue-sub { font-size: 12px; color: var(--text-muted); }
+    .queue-head-actions { display: flex; align-items: center; gap: 8px; }
+    .queue-dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 24px 16px; border: 2px dashed var(--border-card); border-radius: var(--radius-inner); background: var(--bg-inset); text-align: center; }
+    .drop-icon { color: var(--accent-blue); }
+    .drop-label { font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
+    .drop-hint { font-size: 11.5px; color: var(--text-faint); }
+    .queue-section { display: flex; flex-direction: column; gap: 8px; }
+    .queue-section-title { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+    .active-task-card { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--accent-blue); border-radius: var(--radius-inner); background: #f8fbff; }
+    .active-task-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+    .task-file-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .task-name { font-size: 13px; font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .task-msg { font-size: 11.5px; color: var(--accent-blue); }
+    .task-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+    .task-pct { font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--accent-blue); }
+    .queue-table-wrap { border: 1px solid var(--border-card); border-radius: var(--radius-inner); overflow: hidden; background: var(--bg-card); }
+    .queue-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .queue-table th { text-align: left; padding: 8px 12px; background: var(--bg-inset); color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--border-soft); }
+    .queue-table td { padding: 9px 12px; border-bottom: 1px solid var(--border-soft); color: var(--text-primary); }
+    .queue-table tr:last-child td { border-bottom: none; }
+    .pos-col { font-family: var(--font-mono); color: var(--text-faint); font-weight: 600; }
+    .name-col { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .task-item-name { font-weight: 500; }
+    .tag-engine { display: inline-block; padding: 2px 6px; border-radius: var(--radius-sm); background: var(--bg-inset); font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+    .badge-waiting { display: inline-block; padding: 2px 7px; border-radius: var(--radius-pill); background: var(--accent-amber-bg); color: var(--accent-amber); font-size: 11px; font-weight: 600; }
+    .unparsed-list { display: flex; flex-direction: column; gap: 6px; }
+    .unparsed-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--bg-card); font-size: 12px; }
+    .unparsed-title { font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+    .unparsed-dur { font-family: var(--font-mono); color: var(--text-faint); font-size: 11px; }
+
     /* App Shell Layout */
     .app-shell {
       display: flex;
@@ -415,6 +449,17 @@
               <span class="sidebar-btn-label">Запись</span>
             </button>
             <button type="button" class="sidebar-btn">
+              <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="8" y1="6" x2="21" y2="6" />
+                <line x1="8" y1="12" x2="21" y2="12" />
+                <line x1="8" y1="18" x2="21" y2="18" />
+                <line x1="3" y1="6" x2="3.01" y2="6" />
+                <line x1="3" y1="12" x2="3.01" y2="12" />
+                <line x1="3" y1="18" x2="3.01" y2="18" />
+              </svg>
+              <span class="sidebar-btn-label">Очередь</span>
+            </button>
+            <button type="button" class="sidebar-btn">
               <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <circle cx="12" cy="7" r="4" />
                 <path d="M5.5 21a6.5 6.5 0 0 1 13 0" />
@@ -539,7 +584,173 @@
       </div>
     </div>
 
-    <!-- 2. TRANSCRIPT VIEW (2480 x 1640 retina) -->
+    <!-- 2. QUEUE VIEW (1240 x 820) -->
+    <div class="view-container" id="view-queue">
+      <div class="app-shell">
+        <aside class="shell-sidebar" aria-label="Разделы приложения">
+          <div class="sidebar-brand">
+            <img src="../ui/web/static/favicon.svg" class="app-brand-logo" alt="" width="22" height="22" />
+            <span class="app-title-text">Подтекст</span>
+          </div>
+          <nav class="sidebar-nav" aria-label="Основная навигация">
+            <button type="button" class="sidebar-btn">
+              <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="22" />
+              </svg>
+              <span class="sidebar-btn-label">Запись</span>
+            </button>
+            <button type="button" class="sidebar-btn active">
+              <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="8" y1="6" x2="21" y2="6" />
+                <line x1="8" y1="12" x2="21" y2="12" />
+                <line x1="8" y1="18" x2="21" y2="18" />
+                <line x1="3" y1="6" x2="3.01" y2="6" />
+                <line x1="3" y1="12" x2="3.01" y2="12" />
+                <line x1="3" y1="18" x2="3.01" y2="18" />
+              </svg>
+              <span class="sidebar-btn-label">Очередь</span>
+              <span class="sidebar-count">3</span>
+            </button>
+            <button type="button" class="sidebar-btn">
+              <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="12" cy="7" r="4" />
+                <path d="M5.5 21a6.5 6.5 0 0 1 13 0" />
+              </svg>
+              <span class="sidebar-btn-label">Участники</span>
+            </button>
+            <button type="button" class="sidebar-btn">
+              <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z" />
+                <path d="M6 6h10" />
+                <path d="M6 10h10" />
+              </svg>
+              <span class="sidebar-btn-label">Словарь</span>
+              <span class="sidebar-count">12</span>
+            </button>
+            <button type="button" class="sidebar-btn">
+              <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <path d="M4 6h9M18 6h2M4 12h3M12 12h8M4 18h11M20 18h0" />
+                <circle cx="15.5" cy="6" r="2.5" />
+                <circle cx="9.5" cy="12" r="2.5" />
+                <circle cx="17.5" cy="18" r="2.5" />
+              </svg>
+              <span class="sidebar-btn-label">Настройки</span>
+            </button>
+          </nav>
+          <div class="sidebar-footer">
+            <button type="button" class="status-pill sidebar-status" aria-label="Состояние системы: Всё в порядке">
+              <span class="status-dot ok" aria-hidden="true"></span>
+              <span class="status-pill-text">Всё в порядке</span>
+            </button>
+            <button type="button" class="icon-btn help-btn" aria-label="Справка">?</button>
+          </div>
+        </aside>
+
+        <div class="shell-workspace">
+          <main class="main-column">
+            <div class="card" style="flex: 1; min-height: 0; padding: 18px 20px; overflow-y: auto;">
+              <div class="queue-hub">
+                <div class="queue-head">
+                  <div class="queue-head-left">
+                    <div class="card-title">Очередь расшифровки</div>
+                    <div class="queue-sub">1 выполняется, 2 в очереди</div>
+                  </div>
+                  <div class="queue-head-actions">
+                    <button class="btn-secondary btn-sm">Очистить очередь</button>
+                    <button class="btn-primary btn-sm">+ Добавить файлы</button>
+                  </div>
+                </div>
+
+                <div class="queue-dropzone">
+                  <svg class="drop-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                  <div class="drop-label">Перетащите сюда аудио или видео файлы для пакетной обработки</div>
+                  <div class="drop-hint">Поддерживаются WAV, MP3, M4A, OGG, FLAC, MP4</div>
+                </div>
+
+                <div class="queue-section">
+                  <div class="queue-section-title">
+                    <span class="status-dot active" aria-hidden="true"></span>
+                    <span>Выполняется сейчас</span>
+                  </div>
+                  <div class="active-task-card">
+                    <div class="active-task-row">
+                      <div class="task-file-info">
+                        <span class="task-name">Встреча_2026-11-05_Планирование.mp3</span>
+                        <span class="task-msg">Распознавание речи: 47%</span>
+                      </div>
+                      <div class="task-right">
+                        <span class="task-pct">47%</span>
+                        <button class="btn-secondary btn-sm">Открыть</button>
+                      </div>
+                    </div>
+                    <div class="progress-track" role="progressbar" aria-valuenow="47" aria-valuemin="0" aria-valuemax="100">
+                      <div class="vu-bar" style="width: 47%"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="queue-section">
+                  <div class="queue-section-title">В очереди (2)</div>
+                  <div class="queue-table-wrap">
+                    <table class="queue-table">
+                      <thead>
+                        <tr>
+                          <th style="width: 44px">#</th>
+                          <th>Файл</th>
+                          <th style="width: 120px">Движок</th>
+                          <th style="width: 90px">Статус</th>
+                          <th style="width: 44px; text-align: right"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td class="pos-col">#2</td>
+                          <td class="name-col"><span class="task-item-name">Интервью_2026-11-04_Продукт.mp3</span></td>
+                          <td><span class="tag-engine">auto</span></td>
+                          <td><span class="badge-waiting">Ожидание</span></td>
+                          <td style="text-align: right"><button class="rec-delete-icon" title="Снять с очереди">✕</button></td>
+                        </tr>
+                        <tr>
+                          <td class="pos-col">#3</td>
+                          <td class="name-col"><span class="task-item-name">Синхронизация_2026-11-03.wav</span></td>
+                          <td><span class="tag-engine">auto</span></td>
+                          <td><span class="badge-waiting">Ожидание</span></td>
+                          <td style="text-align: right"><button class="rec-delete-icon" title="Снять с очереди">✕</button></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div class="queue-section">
+                  <div class="queue-section-title">Записи без расшифровки (2)</div>
+                  <div class="unparsed-list">
+                    <div class="unparsed-row">
+                      <span class="unparsed-title">Демонстрация_2026-11-02_Прототип.m4a</span>
+                      <span class="unparsed-dur">12:40</span>
+                      <button class="btn-secondary btn-sm">В очередь</button>
+                    </div>
+                    <div class="unparsed-row">
+                      <span class="unparsed-title">Совещание_2026-11-01_Ретро.wav</span>
+                      <span class="unparsed-dur">24:18</span>
+                      <button class="btn-secondary btn-sm">В очередь</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. TRANSCRIPT VIEW (2480 x 1640 retina) -->
     <div class="view-container" id="view-transcript">
       <div class="page transcript-page">
         <header class="transcript-page-header">
@@ -568,7 +779,7 @@
           <div class="transcript-sub-player is-expanded">
             <div class="video-player-container">
               <div class="mock-video-slide">
-                <h3>Подтекст (Podtekst) — Локальная архитектура v0.5.0</h3>
+                <h3>Подтекст (Podtekst) — Локальная архитектура v0.6.0</h3>
                 <p>GigaAM RNNT int8 • CTC Hotwords • Silero VAD • ERes2NetV2 192-dim • Tauri v2</p>
                 <div class="play-overlay-badge">▶ 00:18 / 14:22 • Слайд 3: Модули диаризации</div>
               </div>
@@ -613,7 +824,7 @@
                 </div>
               </div>
               <div class="markdown-body">
-                <div class="utt utterance" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.06);"><button class="utt-time-btn">00:02</button><div class="utt-body"><div class="utt-speaker">Алексей Смирнов (Team Lead)</div><div class="utt-text">Всем привет! Сверяемся по архитектуре локального распознавания и релизу версии 0.5.0.</div></div></div>
+                <div class="utt utterance" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.06);"><button class="utt-time-btn">00:02</button><div class="utt-body"><div class="utt-speaker">Алексей Смирнов (Team Lead)</div><div class="utt-text">Всем привет! Сверяемся по архитектуре локального распознавания и релизу версии 0.6.0.</div></div></div>
                 <div class="utt utterance" style="--spk: #0e7a55; --spk-bg: rgba(14, 122, 85, 0.06);"><button class="utt-time-btn">00:09</button><div class="utt-body"><div class="utt-speaker">Иван Петров (Backend Lead)</div><div class="utt-text">GigaAM RNNT в int8 готов. Второй проход CTC со словарём терминов даёт точные названия и уверенность каждого слова. Инференс полностью на CPU.</div></div></div>
                 <div class="utt utterance active" style="--spk: #d97706; --spk-bg: rgba(217, 119, 6, 0.06);"><button class="utt-time-btn">00:18</button><div class="utt-body"><div class="utt-speaker">Мария Сидорова (QA Lead)</div><div class="utt-text">Проверили диаризацию на стереозаписях: ERes2NetV2 разделяет спикеров без ошибок даже при наложении фраз.</div></div></div>
                 <div class="utt utterance" style="--spk: #0e7a55; --spk-bg: rgba(14, 122, 85, 0.06);"><button class="utt-time-btn">00:27</button><div class="utt-body"><div class="utt-speaker">Иван Петров (Backend Lead)</div><div class="utt-text">Мульти-прототипные отпечатки устойчивы. Голосовые пакеты можно подключать и переносить между машинами через Voice Packs.</div></div></div>
@@ -626,7 +837,7 @@
       </div>
     </div>
 
-    <!-- 3. SETTINGS & MODELS VIEW (1240 x 820) - Flat App Shell layout -->
+    <!-- 4. SETTINGS & MODELS VIEW (1240 x 820) - Flat App Shell layout -->
     <div class="view-container" id="view-settings-models">
       <div class="app-shell">
         <aside class="shell-sidebar" aria-label="Разделы приложения">
@@ -642,6 +853,17 @@
                 <line x1="12" y1="19" x2="12" y2="22" />
               </svg>
               <span class="sidebar-btn-label">Запись</span>
+            </button>
+            <button type="button" class="sidebar-btn">
+              <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="8" y1="6" x2="21" y2="6" />
+                <line x1="8" y1="12" x2="21" y2="12" />
+                <line x1="8" y1="18" x2="21" y2="18" />
+                <line x1="3" y1="6" x2="3.01" y2="6" />
+                <line x1="3" y1="12" x2="3.01" y2="12" />
+                <line x1="3" y1="18" x2="3.01" y2="18" />
+              </svg>
+              <span class="sidebar-btn-label">Очередь</span>
             </button>
             <button type="button" class="sidebar-btn">
               <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -682,7 +904,7 @@
           <div class="settings-page-card">
             <div class="settings-heading">
               <h2 class="modal-title" style="margin: 0; font-size: 18px; font-weight: 800;">Настройки</h2>
-              <div class="settings-version">Версия 0.5.0 · <span style="color: var(--accent-blue); cursor: pointer;">Проверить обновления</span></div>
+              <div class="settings-version">Версия 0.6.0 · <span style="color: var(--accent-blue); cursor: pointer;">Проверить обновления</span></div>
             </div>
 
             <div class="settings-tabs" role="tablist">
@@ -779,7 +1001,7 @@
       </div>
     </div>
 
-    <!-- 4. WALKTHROUGH VIEW (880 x 609, animated frames) -->
+    <!-- 5. WALKTHROUGH VIEW (880 x 609, animated frames) -->
     <div class="view-container" id="view-wt">
       <div id="wt-cursor" style="position: absolute; left: 100px; top: 100px; z-index: 99999; pointer-events: none; transition: none;">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style="filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35));">
@@ -802,6 +1024,17 @@
                 <line x1="12" y1="19" x2="12" y2="22" />
               </svg>
               <span>Запись</span>
+            </button>
+            <button type="button" class="sidebar-btn">
+              <svg class="nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="8" y1="6" x2="21" y2="6" />
+                <line x1="8" y1="12" x2="21" y2="12" />
+                <line x1="8" y1="18" x2="21" y2="18" />
+                <line x1="3" y1="6" x2="3.01" y2="6" />
+                <line x1="3" y1="12" x2="3.01" y2="12" />
+                <line x1="3" y1="18" x2="3.01" y2="18" />
+              </svg>
+              <span>Очередь</span>
             </button>
             <button type="button" class="sidebar-btn">
               <svg class="nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -988,10 +1221,154 @@
 
           <main class="transcript-content" style="overflow-y: auto; padding-right: 4px;">
             <div class="markdown-body" style="font-size: 12px;">
-              <div class="utt utterance" id="wt-utt-1" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.06); padding: 6px 9px; margin-bottom: 5px;"><button class="utt-time-btn">00:02</button><div class="utt-body"><div class="utt-speaker">Алексей Смирнов (Team Lead)</div><div class="utt-text">Всем привет! Сверяемся по архитектуре локального распознавания и релизу версии 0.5.0.</div></div></div>
+              <div class="utt utterance" id="wt-utt-1" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.06); padding: 6px 9px; margin-bottom: 5px;"><button class="utt-time-btn">00:02</button><div class="utt-body"><div class="utt-speaker">Алексей Смирнов (Team Lead)</div><div class="utt-text">Всем привет! Сверяемся по архитектуре локального распознавания и релизу версии 0.6.0.</div></div></div>
               <div class="utt utterance active" id="wt-utt-2" style="--spk: #0e7a55; --spk-bg: rgba(14, 122, 85, 0.06); padding: 6px 9px; margin-bottom: 5px;"><button class="utt-time-btn">00:09</button><div class="utt-body"><div class="utt-speaker">Иван Петров (Backend Lead)</div><div class="utt-text">GigaAM RNNT в int8 готов. Потребление памяти снизили до 226 МБ, инференс полностью на CPU.</div></div></div>
               <div class="utt utterance" id="wt-utt-3" style="--spk: #d97706; --spk-bg: rgba(217, 119, 6, 0.06); padding: 6px 9px; margin-bottom: 5px;"><button class="utt-time-btn">00:18</button><div class="utt-body"><div class="utt-speaker">Мария Сидорова (QA Lead)</div><div class="utt-text">Проверили диаризацию на стереозаписях: ERes2NetV2 разделяет спикеров без ошибок даже при наложении фраз.</div></div></div>
               <div class="utt utterance" id="wt-utt-4" style="--spk: #0e7a55; --spk-bg: rgba(14, 122, 85, 0.06); padding: 6px 9px; margin-bottom: 5px;"><button class="utt-time-btn">00:27</button><div class="utt-body"><div class="utt-speaker">Иван Петров (Backend Lead)</div><div class="utt-text">Мульти-прототипные отпечатки устойчивы. Голосовые пакеты можно подключать и переносить между машинами через Voice Packs.</div></div></div>
+            </div>
+          </main>
+        </div>
+      </div>
+
+      <!-- Queue Screen in Walkthrough -->
+      <div id="wt-screen-queue" class="app-shell" style="display: none;">
+        <aside class="shell-sidebar">
+          <div class="sidebar-brand">
+            <img src="../ui/web/static/favicon.svg" class="app-brand-logo" alt="" width="18" height="18" />
+            <span class="app-title-text">Подтекст</span>
+          </div>
+          <nav class="sidebar-nav">
+            <button type="button" class="sidebar-btn">
+              <svg class="nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="22" />
+              </svg>
+              <span>Запись</span>
+            </button>
+            <button type="button" class="sidebar-btn active" id="wt-btn-sidebar-queue">
+              <svg class="nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="8" y1="6" x2="21" y2="6" />
+                <line x1="8" y1="12" x2="21" y2="12" />
+                <line x1="8" y1="18" x2="21" y2="18" />
+                <line x1="3" y1="6" x2="3.01" y2="6" />
+                <line x1="3" y1="12" x2="3.01" y2="12" />
+                <line x1="3" y1="18" x2="3.01" y2="18" />
+              </svg>
+              <span>Очередь</span>
+              <span class="sidebar-count">3</span>
+            </button>
+            <button type="button" class="sidebar-btn">
+              <svg class="nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="7" r="4" />
+                <path d="M5.5 21a6.5 6.5 0 0 1 13 0" />
+              </svg>
+              <span>Участники</span>
+            </button>
+            <button type="button" class="sidebar-btn">
+              <svg class="nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z" />
+                <path d="M6 6h10" />
+                <path d="M6 10h10" />
+              </svg>
+              <span>Словарь</span>
+            </button>
+            <button type="button" class="sidebar-btn">
+              <svg class="nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <path d="M4 6h9M18 6h2M4 12h3M12 12h8M4 18h11M20 18h0" />
+                <circle cx="15.5" cy="6" r="2.5" />
+                <circle cx="9.5" cy="12" r="2.5" />
+                <circle cx="17.5" cy="18" r="2.5" />
+              </svg>
+              <span>Настройки</span>
+            </button>
+          </nav>
+          <div class="sidebar-footer">
+            <button type="button" class="status-pill sidebar-status">
+              <span class="status-dot ok"></span>
+              <span class="status-pill-text">Всё в порядке</span>
+            </button>
+            <button type="button" class="icon-btn help-btn" style="width: 28px; height: 28px; font-size: 12px;">?</button>
+          </div>
+        </aside>
+
+        <div class="shell-workspace">
+          <main class="main-column">
+            <div class="card" style="flex: 1; min-height: 0; padding: 14px 16px; overflow-y: auto;">
+              <div class="queue-hub" style="gap: 12px;">
+                <div class="queue-head">
+                  <div class="queue-head-left">
+                    <div class="card-title" style="font-size: 16px;">Очередь расшифровки</div>
+                    <div class="queue-sub">1 выполняется, 2 в очереди</div>
+                  </div>
+                  <div class="queue-head-actions">
+                    <button class="btn-secondary btn-sm" id="wt-queue-clear">Очистить очередь</button>
+                    <button class="btn-primary btn-sm" id="wt-queue-add">+ Добавить файлы</button>
+                  </div>
+                </div>
+
+                <div class="queue-dropzone" style="padding: 14px 16px;">
+                  <svg class="drop-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                  <div class="drop-label">Перетащите сюда аудио или видео файлы</div>
+                  <div class="drop-hint">WAV, MP3, M4A, OGG, FLAC, MP4</div>
+                </div>
+
+                <div class="queue-section">
+                  <div class="queue-section-title">
+                    <span class="status-dot active" aria-hidden="true"></span>
+                    <span>Выполняется сейчас</span>
+                  </div>
+                  <div class="active-task-card" style="padding: 10px 12px;">
+                    <div class="active-task-row">
+                      <div class="task-file-info">
+                        <span class="task-name">Встреча_2026-11-05_Планирование.mp3</span>
+                        <span class="task-msg">Распознавание речи: <span id="wt-queue-pct">34%</span></span>
+                      </div>
+                      <div class="task-right">
+                        <span class="task-pct" id="wt-queue-pct-label">34%</span>
+                        <button class="btn-secondary btn-sm">Открыть</button>
+                      </div>
+                    </div>
+                    <div class="progress-track" role="progressbar" aria-valuenow="34" aria-valuemin="0" aria-valuemax="100">
+                      <div class="vu-bar" id="wt-queue-progress" style="width: 34%"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="queue-section">
+                  <div class="queue-section-title">В очереди (2)</div>
+                  <div class="queue-table-wrap">
+                    <table class="queue-table">
+                      <thead>
+                        <tr>
+                          <th style="width: 40px">#</th>
+                          <th>Файл</th>
+                          <th style="width: 70px">Движок</th>
+                          <th style="width: 86px">Статус</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td class="pos-col">#2</td>
+                          <td class="name-col"><span class="task-item-name">Интервью_2026-11-04_Продукт.mp3</span></td>
+                          <td><span class="tag-engine">auto</span></td>
+                          <td><span class="badge-waiting">Ожидание</span></td>
+                        </tr>
+                        <tr>
+                          <td class="pos-col">#3</td>
+                          <td class="name-col"><span class="task-item-name">Синхронизация_2026-11-03.wav</span></td>
+                          <td><span class="tag-engine">auto</span></td>
+                          <td><span class="badge-waiting">Ожидание</span></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
             </div>
           </main>
         </div>
@@ -1012,6 +1389,17 @@
                 <line x1="12" y1="19" x2="12" y2="22" />
               </svg>
               <span>Запись</span>
+            </button>
+            <button type="button" class="sidebar-btn">
+              <svg class="nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="8" y1="6" x2="21" y2="6" />
+                <line x1="8" y1="12" x2="21" y2="12" />
+                <line x1="8" y1="18" x2="21" y2="18" />
+                <line x1="3" y1="6" x2="3.01" y2="6" />
+                <line x1="3" y1="12" x2="3.01" y2="12" />
+                <line x1="3" y1="18" x2="3.01" y2="18" />
+              </svg>
+              <span>Очередь</span>
             </button>
             <button type="button" class="sidebar-btn">
               <svg class="nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1051,7 +1439,7 @@
           <div class="settings-page-card">
             <div class="settings-heading">
               <h2 class="modal-title" style="margin: 0; font-size: 16px; font-weight: 800;">Настройки</h2>
-              <div class="settings-version">Версия 0.5.0 · <span style="color: var(--accent-blue); cursor: pointer;">Проверить обновления</span></div>
+              <div class="settings-version">Версия 0.6.0 · <span style="color: var(--accent-blue); cursor: pointer;">Проверить обновления</span></div>
             </div>
 
             <div class="settings-tabs" role="tablist">
@@ -1118,7 +1506,7 @@
       </div>
     </div>
 
-    <!-- 5. SCREEN RECORDING DEMO FRAMES (880 x 520) -->
+    <!-- 6. SCREEN RECORDING DEMO FRAMES (880 x 520) -->
     <div class="view-container" id="view-sc-1">
       <div class="app-shell">
         <aside class="shell-sidebar">
@@ -1134,6 +1522,17 @@
                 <line x1="12" y1="19" x2="12" y2="22" />
               </svg>
               <span>Запись</span>
+            </button>
+            <button type="button" class="sidebar-btn">
+              <svg class="nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="8" y1="6" x2="21" y2="6" />
+                <line x1="8" y1="12" x2="21" y2="12" />
+                <line x1="8" y1="18" x2="21" y2="18" />
+                <line x1="3" y1="6" x2="3.01" y2="6" />
+                <line x1="3" y1="12" x2="3.01" y2="12" />
+                <line x1="3" y1="18" x2="3.01" y2="18" />
+              </svg>
+              <span>Очередь</span>
             </button>
             <button type="button" class="sidebar-btn">
               <svg class="nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1201,6 +1600,17 @@
                 <line x1="12" y1="19" x2="12" y2="22" />
               </svg>
               <span>Запись</span>
+            </button>
+            <button type="button" class="sidebar-btn">
+              <svg class="nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="8" y1="6" x2="21" y2="6" />
+                <line x1="8" y1="12" x2="21" y2="12" />
+                <line x1="8" y1="18" x2="21" y2="18" />
+                <line x1="3" y1="6" x2="3.01" y2="6" />
+                <line x1="3" y1="12" x2="3.01" y2="12" />
+                <line x1="3" y1="18" x2="3.01" y2="18" />
+              </svg>
+              <span>Очередь</span>
             </button>
             <button type="button" class="sidebar-btn">
               <svg class="nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1273,6 +1683,17 @@
                 <line x1="12" y1="19" x2="12" y2="22" />
               </svg>
               <span>Запись</span>
+            </button>
+            <button type="button" class="sidebar-btn">
+              <svg class="nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="8" y1="6" x2="21" y2="6" />
+                <line x1="8" y1="12" x2="21" y2="12" />
+                <line x1="8" y1="18" x2="21" y2="18" />
+                <line x1="3" y1="6" x2="3.01" y2="6" />
+                <line x1="3" y1="12" x2="3.01" y2="12" />
+                <line x1="3" y1="18" x2="3.01" y2="18" />
+              </svg>
+              <span>Очередь</span>
             </button>
             <button type="button" class="sidebar-btn">
               <svg class="nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1350,6 +1771,7 @@
       const cursor = document.getElementById('wt-cursor');
       const screenMain = document.getElementById('wt-screen-main');
       const screenTranscript = document.getElementById('wt-screen-transcript');
+      const screenQueue = document.getElementById('wt-screen-queue');
       const screenSettings = document.getElementById('wt-screen-settings');
 
       const deckStatus = document.getElementById('wt-deck-status');
@@ -1364,11 +1786,11 @@
       const newRec = document.getElementById('wt-new-rec');
       const newRecBtn = document.getElementById('wt-new-rec-btn');
       const rec3 = document.getElementById('wt-rec-3');
-      const btnSidebarSettings = document.getElementById('wt-btn-sidebar-settings');
       const btnSidebarStudioReturn = document.getElementById('wt-btn-sidebar-studio-return');
 
       screenMain.style.display = 'flex';
       screenTranscript.style.display = 'none';
+      screenQueue.style.display = 'none';
       screenSettings.style.display = 'none';
       cursor.style.display = 'block';
 
@@ -1499,42 +1921,43 @@
           cursor.style.left = '835px'; cursor.style.top = '30px';
         }
       }
-      else if (f === 22) {
-        // Return to main layout, move cursor to "Настройки" in sidebar
-        deckStatus.className = 'deck-status';
-        statusDot.className = 'status-dot';
-        statusText.textContent = 'Готов к записи';
-        deckTimer.className = 'deck-timer';
-        deckTimer.textContent = '00:00:00';
-        deckLevels.innerHTML = '<span class="levels-idle">Микрофон + система</span>';
-        deckBtn.className = 'btn-action-round';
-        deckBtn.innerHTML = '<span>● Начать запись</span>';
-        setWaveBars(deckWave, WAVE_IDLE, null);
-        newRec.style.display = 'grid';
-        rec3.style.display = 'none';
-        recCount.textContent = '4';
+      else if (f <= 24) {
+        screenMain.style.display = 'none';
+        screenTranscript.style.display = 'none';
+        screenQueue.style.display = 'flex';
+        screenSettings.style.display = 'none';
 
-        btnSidebarSettings.style.background = 'var(--bg-inset)';
-        cursor.style.left = '75px'; cursor.style.top = '140px';
+        const pct = f === 22 ? 34 : f === 23 ? 58 : 82;
+        const bar = document.getElementById('wt-queue-progress');
+        const pctText = document.getElementById('wt-queue-pct');
+        const pctLabel = document.getElementById('wt-queue-pct-label');
+        if (bar) bar.style.width = pct + '%';
+        if (pctText) pctText.textContent = pct + '%';
+        if (pctLabel) pctLabel.textContent = pct + '%';
+
+        if (f === 22) {
+          cursor.style.left = '75px'; cursor.style.top = '100px';
+        } else if (f === 23) {
+          cursor.style.left = '790px'; cursor.style.top = '70px';
+        } else {
+          cursor.style.left = '685px'; cursor.style.top = '70px';
+        }
       }
       else {
         // Settings page in App Shell
         screenMain.style.display = 'none';
         screenTranscript.style.display = 'none';
+        screenQueue.style.display = 'none';
         screenSettings.style.display = 'flex';
 
         const btnWhisper = document.getElementById('wt-btn-dl-whisper');
 
-        if (f === 23) {
+        if (f === 25) {
           cursor.style.left = '320px'; cursor.style.top = '80px';
-        } else if (f === 24) {
-          cursor.style.left = '520px'; cursor.style.top = '220px';
-        } else if (f === 25) {
+        } else if (f === 26) {
           cursor.style.left = '740px'; cursor.style.top = '235px';
           if (btnWhisper) btnWhisper.style.transform = 'translateY(-1px)';
-        } else if (f === 26) {
-          cursor.style.left = '200px'; cursor.style.top = '100px';
-        } else if (f === 27) {
+        } else {
           cursor.style.left = '75px'; cursor.style.top = '55px';
           if (btnSidebarStudioReturn) btnSidebarStudioReturn.style.background = 'var(--bg-inset)';
         }
