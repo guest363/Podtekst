@@ -165,12 +165,22 @@ fn apply_edit(data: &mut Value, body: &Value) -> Result<(), String> {
         .expect("массив создан выше");
     if renaming {
         let old = body["old_speaker"].as_str().unwrap_or("").trim();
+        let unmatch = body.get("unmatch").and_then(|v| v.as_bool()).unwrap_or(false);
         for info in speakers_info.iter_mut() {
+            let hit = info["name"].as_str() == Some(old)
+                || info["matched_name"].as_str() == Some(old)
+                || info["name"].as_str() == Some(new_speaker);
             if info["name"].as_str() == Some(old) {
                 info["name"] = json!(new_speaker);
             }
             if info["matched_name"].as_str() == Some(old) {
                 info["matched_name"] = json!(new_speaker);
+            }
+            if unmatch && hit {
+                info["matched"] = json!(false);
+                info["matched_name"] = serde_json::Value::Null;
+                info["matched_pack_id"] = serde_json::Value::Null;
+                info["matched_pack_name"] = serde_json::Value::Null;
             }
         }
     }
@@ -275,6 +285,16 @@ mod tests {
             .all(|u| u["speaker"] == "Ведущий"));
         assert_eq!(data["stats"]["words"], 3);
         assert_eq!(data["meta"]["speakers_info"][1]["total_speech_sec"], 5.0);
+
+        data["meta"]["speakers_info"][1]["matched"] = json!(true);
+        data["meta"]["speakers_info"][1]["matched_name"] = json!("Ведущий");
+        apply_edit(
+            &mut data,
+            &json!({"old_speaker": "Ведущий", "speaker": "Ведущий", "unmatch": true}),
+        )
+        .unwrap();
+        assert_eq!(data["meta"]["speakers_info"][1]["matched"], json!(false));
+        assert!(data["meta"]["speakers_info"][1]["matched_name"].is_null());
     }
 
     #[test]

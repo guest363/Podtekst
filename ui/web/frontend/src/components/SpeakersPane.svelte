@@ -208,22 +208,25 @@
     }
   }
 
-  async function deleteVoiceprint(name: string): Promise<void> {
-    if (!name) return
+  async function unmatchSpeaker(speakerName: string): Promise<void> {
+    if (!ui.currentTranscriptPath || !speakerName) return
     try {
-      const r = await fetch('/api/voiceprints/delete', {
+      const r = await fetch('/api/transcript/edit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, audio_file: ui.currentTranscriptPath }),
+        body: JSON.stringify({
+          audio_file: ui.currentTranscriptPath,
+          old_speaker: speakerName,
+          speaker: speakerName,
+          unmatch: true,
+        }),
       })
       const d = await readJsonSafe(r)
       if (d.ok) {
-        toast(`Голос «${name}» удалён из базы`)
-        await loadPeople()
+        toast(`Опознание спикера «${speakerName}» снято в этой записи`)
         emit('transcript-reload')
-        emit('voiceprints-changed')
       } else {
-        toast('Этот голос уже удалён из базы', 'error')
+        toast('Не удалось снять опознание: ' + (d.error || 'ошибка'), 'error')
       }
     } catch (e) {
       toast('Сетевая ошибка: ' + (e as Error).message, 'error')
@@ -431,6 +434,7 @@
         {@const cardVal = getCardValue(spk.key, matchedName)}
         {@const meta = [
           spk.utterances_count ? `реплик: ${spk.utterances_count}` : '',
+          spk.matched_pack_name ? spk.matched_pack_name : '',
           typeof spk.silhouette === 'number' ? `силуэт: ${spk.silhouette.toFixed(2)}` : '',
         ].filter(Boolean).join(' • ')}
         <div
@@ -441,7 +445,15 @@
             <div class="speaker-top">
               <span class="speaker-name">{displayName}</span>
               {#if spk.matched}
-                <span class="speaker-status ok">узнан{spk.matched_pack_name ? ` · ${spk.matched_pack_name}` : ''}{typeof spk.similarity === 'number' ? ` · ${spk.similarity.toFixed(2)}` : ''}</span>
+                <span class="speaker-status ok">
+                  узнан{typeof spk.similarity === 'number' ? ` · ${spk.similarity.toFixed(2)}` : ''}
+                  <button
+                    type="button"
+                    class="btn-unmatch-speaker"
+                    title="Снять опознание в этой записи"
+                    onclick={() => void unmatchSpeaker(spk.name || displayName)}
+                  >✕</button>
+                </span>
               {/if}
             </div>
             {#if meta}
@@ -558,20 +570,6 @@
               Запомнить
             </button>
           </div>
-          {#if spk.matched}
-            <button
-              class="link-danger"
-              title="Удалить голос из базы"
-              onclick={() =>
-                toastConfirm(
-                  `Удалить голос «${spk.matched_name || spk.name}» из базы?`,
-                  'Удалить',
-                  () => void deleteVoiceprint(spk.matched_name || spk.name),
-                )}
-            >
-              Это не тот голос
-            </button>
-          {/if}
         </div>
       {/each}
     {/if}

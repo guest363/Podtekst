@@ -1,6 +1,7 @@
 <script lang="ts">
   import { renderMarkdown } from '../lib/markdown'
-  import { system, collectDiagnostics, fmtBytes, fmtDateTime, loadSystem } from '../lib/system.svelte.ts'
+  import { collectDiagnostics, fmtBytes, fmtDateTime, loadSystem, system } from '../lib/system.svelte.ts'
+  import { copyText, toast } from '../lib/toast.svelte.ts'
   import {
     applyUpdate,
     checkUpdate,
@@ -16,11 +17,21 @@
 
   const isRecording = $derived(recording ?? system.snapshot?.recording?.active === true)
   const releaseUrl = $derived(update.url || 'https://github.com/guest363/podtekst/releases/latest')
-  const hasDetails = $derived(Boolean(update.errorCode || update.hint || update.attempt))
+  const hasDetails = $derived(Boolean(update.errorCode || update.hint || update.attempt || !update.sourcesAgree || update.stale))
 
   // Владелец пропа может не передать состояние записи: читаем его из снимка системы.
   $effect(() => {
     if (update.modalOpen && recording === undefined && !system.snapshot) void loadSystem()
+  })
+
+  // Очистка заметок от универсальных шаблонов установки других ОС и diff-ссылок
+  const cleanedNotes = $derived.by(() => {
+    if (!update.notes) return ''
+    return update.notes
+      .replace(/##?\s*Как обновиться[\s\S]*?(?=##|\Z)/gi, '')
+      .replace(/Инструкция по установке без подписи ОС:.*$/gmi, '')
+      .replace(/Полный список изменений:.*$/gmi, '')
+      .trim()
   })
 
   const STAGE_LABELS: Record<string, string> = {
@@ -32,11 +43,6 @@
     apply: 'Установка',
   }
 
-  const INSTALL_MODES: Record<string, string> = {
-    self: 'самообновление',
-    manual: 'установка вручную',
-  }
-
   const ATTEMPT_OUTCOMES: Record<string, string> = {
     started: 'запущена',
     installed: 'установлено',
@@ -46,6 +52,7 @@
 
   const detailRows = $derived.by(() => {
     const rows: Array<[string, string]> = []
+    rows.push(['Режим запуска', update.selfUpdate ? 'самообновление (AppImage)' : 'исходники (run.sh)'])
     if (update.errorCode) rows.push(['Код ошибки', update.errorCode])
     if (update.hint) rows.push(['Подсказка', update.hint])
     if (update.retryAfterSec > 0) rows.push(['Повтор через', `${update.retryAfterSec} с`])
@@ -67,10 +74,6 @@
     return STAGE_LABELS[stage] || 'Обновление'
   }
 
-  function installText(mode: string): string {
-    return INSTALL_MODES[mode] || mode || 'неизвестен'
-  }
-
   function progressSize(): string {
     if (update.total > 0) {
       return ` · ${fmtBytes(update.downloaded) || '0 Б'} из ${fmtBytes(update.total)}`
@@ -82,6 +85,11 @@
   function retry(): void {
     if (update.stage === 'check') void checkUpdate(true, true)
     else void applyUpdate()
+  }
+
+  async function copyPullCommand(): Promise<void> {
+    const ok = await copyText('git pull && ./run.sh')
+    toast(ok ? 'Команда скопирована' : 'Не удалось скопировать', ok ? '' : 'error')
   }
 
   async function diagnostics(): Promise<void> {
@@ -114,29 +122,36 @@
   >
     <div class="modal-box update-box">
       <div class="modal-top">
-        <div class="modal-title">Обновление</div>
+        <div class="modal-title">Обновление приложения</div>
         <button class="icon-btn" aria-label="Закрыть окно обновления" onclick={closeUpdateModal}>✕</button>
       </div>
 
-      <div class="update-meta">
-        <div class="update-version">Установлена версия {update.current || '…'}</div>
+      <div class="update-version-row">
+        <span>Установлена версия {update.current || '…'}</span>
         {#if update.isNewer}
-          <div class="update-version">
+          <span class="update-version-avail">
             Доступна {update.latest}
-            {#if update.date} · {fmtDateTime(update.date)}{/if}
-            {#if update.sizeBytes} · {fmtBytes(update.sizeBytes)}{/if}
-          </div>
+            {#if update.date}<span class="update-date"> · {fmtDateTime(update.date)}</span>{/if}
+            {#if update.sizeBytes}<span class="update-date"> · {fmtBytes(update.sizeBytes)}</span>{/if}
+          </span>
         {/if}
-        <div class="help-text">
-          Режим установки: {installText(update.installMode)}
-          {#if update.stale} · данные проверки могли устареть{/if}
-          {#if !update.sourcesAgree} · источники расходятся{/if}
-        </div>
       </div>
 
-      {#if update.notes && update.isNewer && !update.error}
+      {#if update.isNewer && !update.selfUpdate && !update.applying}
+        <div class="help-text">
+          Приложение запущено из репозитория через <code>./run.sh</code>.
+          Встроенный перезапуск доступен только в готовом пакете AppImage.
+          Чтобы обновить текущую сборку, выполните в терминале:
+        </div>
+        <div class="cmd-field-group">
+          <input class="input-field" readonly value="git pull && ./run.sh" />
+          <button class="btn-secondary btn-sm" onclick={copyPullCommand}>Скопировать</button>
+        </div>
+      {/if}
+
+      {#if cleanedNotes && update.isNewer && !update.error}
         <div class="update-notes md-body">
-          {@html renderMarkdown(update.notes)}
+          {@html renderMarkdown(cleanedNotes)}
         </div>
         {#if update.notesTruncated}
           <div class="help-text">
@@ -165,16 +180,11 @@
           </div>
         </div>
       {:else if update.error}
-        <div class="update-error" role="alert">
-          <div class="update-error-text">{update.error}</div>
+        <div class="help-text error-text" role="alert">
+          {update.error}
           {#if update.stage === 'check' && update.retryable}
-            <div class="help-text">Проверка не удалась. Повторите позже.</div>
+            <div>Проверка не удалась. Повторите позже.</div>
           {/if}
-        </div>
-      {:else if update.isNewer && !update.selfUpdate}
-        <div class="help-text">
-          Эта сборка не обновляет себя сама. Скачайте пакет со страницы релиза
-          и установите вручную.
         </div>
       {:else if !update.isNewer && !update.checking}
         <div class="help-text">
@@ -183,47 +193,59 @@
       {/if}
 
       {#if isRecording && update.isNewer && update.selfUpdate && !update.applying}
-        <div class="update-warn">
+        <div class="help-text warn-text">
           Идёт запись. Остановите её перед обновлением: приложение перезапустится.
         </div>
       {/if}
 
-      {#if detailsOpen}
-        <dl class="update-details">
-          {#each detailRows as [label, value] (label)}
-            <dt>{label}</dt>
-            <dd>{value}</dd>
-          {/each}
-        </dl>
-      {/if}
-
-      <div class="update-footer">
-        <div class="row-start">
-          <button class="btn-secondary btn-sm" disabled={diagBusy} onclick={() => void diagnostics()}>
-            {diagBusy ? 'Собираю…' : 'Собрать диагностику'}
+      {#if hasDetails}
+        <div class="update-details-wrap">
+          <button
+            type="button"
+            class="details-toggle-btn"
+            aria-expanded={detailsOpen}
+            onclick={() => (detailsOpen = !detailsOpen)}
+          >
+            <span>Технические подробности</span>
+            <span class="details-chevron {detailsOpen ? 'open' : ''}" aria-hidden="true">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </span>
           </button>
-          {#if hasDetails}
-            <button
-              class="details-toggle"
-              aria-expanded={detailsOpen}
-              onclick={() => (detailsOpen = !detailsOpen)}
-            >
-              {detailsOpen ? 'Скрыть подробности' : 'Подробности'}
-            </button>
+          {#if detailsOpen}
+            <dl class="update-details">
+              {#each detailRows as [label, value] (label)}
+                <dt>{label}</dt>
+                <dd>{value}</dd>
+              {/each}
+              <dt>Диагностика</dt>
+              <dd>
+                <button class="link-btn" disabled={diagBusy} onclick={() => void diagnostics()}>
+                  {diagBusy ? 'Собираю…' : 'Собрать отчёт системы'}
+                </button>
+              </dd>
+            </dl>
           {/if}
         </div>
-        <div class="update-actions">
+      {/if}
+
+      <div class="row-between">
+        <div>
           {#if update.isNewer && !update.error && !update.applying}
             {#if update.skippedVersion === update.latest}
-              <button class="btn-secondary btn-sm" onclick={() => void skipVersion(null)}>
+              <button class="link-btn muted" onclick={() => void skipVersion(null)}>
                 Вернуть эту версию
               </button>
             {:else}
-              <button class="btn-secondary btn-sm" onclick={() => void skipVersion(update.latest)}>
+              <button class="link-btn muted" onclick={() => void skipVersion(update.latest)}>
                 Пропустить эту версию
               </button>
             {/if}
           {/if}
+        </div>
+        <div class="row-start">
+          <button class="btn-secondary" onclick={closeUpdateModal}>Позже</button>
           {#if update.applying}
             <!-- Идёт скачивание: отмены нет, ждём перезапуска. -->
           {:else if update.error && update.retryable}
@@ -234,7 +256,7 @@
             </button>
           {:else if update.isNewer}
             <a class="btn-primary" href={releaseUrl} target="_blank" rel="noopener noreferrer">
-              Скачать со страницы релиза
+              Страница релиза
             </a>
           {/if}
           {#if update.error && update.isNewer}
@@ -242,7 +264,6 @@
               Страница релиза
             </a>
           {/if}
-          <button class="btn-secondary" onclick={closeUpdateModal}>Позже</button>
         </div>
       </div>
     </div>
@@ -251,20 +272,43 @@
 
 <style>
   .update-box {
-    max-width: 620px;
+    max-width: 520px;
+    gap: 14px;
   }
-  .update-meta {
+  .update-version-row {
     display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-  .update-version {
+    justify-content: space-between;
+    align-items: baseline;
     font-size: 13px;
     font-weight: 700;
     color: var(--text-primary);
   }
+  .update-version-avail {
+    color: var(--accent-ok);
+  }
+  .update-date {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+  }
+  .cmd-field-group {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .input-field {
+    padding: 7px 12px;
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-inner);
+    font-size: 12.5px;
+    font-family: var(--font-mono);
+    outline: none;
+    background: var(--bg-inset);
+    width: 100%;
+    color: var(--text-primary);
+  }
   .update-notes {
-    max-height: 220px;
+    max-height: 200px;
     overflow-y: auto;
     padding: 8px 0;
     border-top: 1px solid var(--border-soft);
@@ -275,29 +319,48 @@
     flex-direction: column;
     gap: 6px;
   }
-  .update-error {
-    border-left: 3px solid var(--accent-rec);
-    padding-left: 10px;
+  .update-details-wrap {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 8px;
+    border-top: 1px solid var(--border-soft);
+    padding-top: 8px;
   }
-  .update-error-text {
-    font-size: 12.5px;
+  .details-toggle-btn {
+    border: none;
+    background: none;
+    padding: 0;
+    font: inherit;
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    line-height: 1;
+    width: fit-content;
+  }
+  .details-toggle-btn:hover {
     color: var(--text-primary);
-    word-break: break-word;
   }
-  .update-warn {
-    font-size: 12.5px;
-    color: var(--accent-amber);
+  .details-chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-faint);
+    transition: transform 160ms var(--ease-spring);
+    flex-shrink: 0;
+    width: 12px;
+    height: 12px;
+  }
+  .details-chevron.open {
+    transform: rotate(180deg);
   }
   .update-details {
     display: grid;
     grid-template-columns: minmax(110px, max-content) minmax(0, 1fr);
     gap: 3px 12px;
     font-size: 11.5px;
-    border-top: 1px solid var(--border-soft);
-    padding-top: 8px;
   }
   .update-details dt {
     color: var(--text-muted);
@@ -306,32 +369,16 @@
     color: var(--text-primary);
     word-break: break-word;
   }
-  .update-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
+  .error-text {
+    color: var(--accent-rec);
   }
-  .update-actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    margin-left: auto;
+  .warn-text {
+    color: var(--accent-amber);
   }
-  .details-toggle {
-    border: none;
-    background: none;
-    padding: 0;
-    font: inherit;
-    font-size: 12px;
-    color: var(--accent-blue);
-    cursor: pointer;
-    text-decoration: underline;
-    text-underline-offset: 2px;
+  .link-btn.muted {
+    color: var(--text-faint);
   }
-  .details-toggle:hover {
+  .link-btn.muted:hover {
     color: var(--text-primary);
   }
 </style>
