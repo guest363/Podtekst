@@ -419,6 +419,20 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
                                 });
                             },
                         ));
+                        crate::diagnostics::set_share_handler(Box::new(move |path| {
+                            let path = path.to_string_lossy().into_owned();
+                            handle.exec(move |env, activity, _| {
+                                let Ok(jpath) = env.new_string(&path) else {
+                                    return;
+                                };
+                                let _ = env.call_method(
+                                    activity,
+                                    "shareFile",
+                                    "(Ljava/lang/String;)V",
+                                    &[(&jpath).into()],
+                                );
+                            });
+                        }));
                     }
                 }
             }

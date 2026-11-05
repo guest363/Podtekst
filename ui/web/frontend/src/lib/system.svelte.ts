@@ -393,6 +393,10 @@ export async function collectDiagnostics(): Promise<void> {
   try {
     const d = await readJsonSafe(await fetch('/api/diagnostics', { method: 'POST' }))
     if (d.ok === false) throw new Error(String(d.error || 'Не удалось собрать отчёт'))
+    if (d.shared === true) {
+      toast('Отчёт готов. Выберите, куда его отправить.')
+      return
+    }
     toast('Отчёт диагностики сохранён: ' + String(d.path || ''))
   } catch (e) {
     toast('Отчёт не собрался: ' + (e as Error).message, 'error')

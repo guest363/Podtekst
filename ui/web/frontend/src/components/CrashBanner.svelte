@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { isMobile } from '../lib/api'
   import { copyText, toast } from '../lib/toast.svelte.ts'
   import {
     ackCrash,
@@ -59,7 +60,7 @@
     </div>
     <div class="crash-actions">
       <button class="btn-secondary btn-sm" onclick={() => void collectDiagnostics()}>
-        Собрать отчёт
+        {isMobile ? 'Собрать и отправить' : 'Собрать отчёт'}
       </button>
       <button class="btn-secondary btn-sm" onclick={() => void openTarget('crashes')}>
         Открыть папку

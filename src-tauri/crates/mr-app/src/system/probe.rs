@@ -1,12 +1,16 @@
+#[cfg(not(target_os = "android"))]
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use crate::config::app_data_dir;
 
+#[cfg(not(target_os = "android"))]
 use super::checks::Outcome;
 
+#[cfg(not(target_os = "android"))]
 struct ProbeDir(PathBuf);
 
+#[cfg(not(target_os = "android"))]
 impl Drop for ProbeDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -36,6 +40,7 @@ pub(crate) fn cleanup_stale() {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 pub(super) fn run() -> Outcome {
     let catalog = mr_audio::capture::devices();
     let Some(mic) = catalog.default_input.clone() else {
@@ -106,6 +111,7 @@ pub(super) fn run() -> Outcome {
     outcome
 }
 
+#[cfg(not(target_os = "android"))]
 fn now_nanos() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

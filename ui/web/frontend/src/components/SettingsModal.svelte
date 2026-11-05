@@ -212,13 +212,19 @@
               <span class="system-val">{system.snapshot?.devices?.platform || settings.platform || 'Нативная'}</span>
             </div>
             <div class="row-start pt-2">
-              <button
-                class="btn-secondary btn-sm"
-                disabled={system.checksLoading}
-                onclick={() => void runChecks(true)}
-              >
-                {system.checksLoading ? 'Проверка…' : 'Проверить микрофон (тест 5 сек)'}
-              </button>
+              {#if isMobile}
+                <div class="help-text">
+                  На телефоне микрофон проверяется короткой записью на главном экране.
+                </div>
+              {:else}
+                <button
+                  class="btn-secondary btn-sm"
+                  disabled={system.checksLoading}
+                  onclick={() => void runChecks(true)}
+                >
+                  {system.checksLoading ? 'Проверка…' : 'Проверить микрофон (тест 5 сек)'}
+                </button>
+              {/if}
             </div>
           </div>
         </div>

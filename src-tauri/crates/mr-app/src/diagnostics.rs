@@ -6,6 +6,13 @@ use serde_json::Value;
 
 use crate::privacy::redact_text;
 
+#[cfg(target_os = "android")]
+type ShareHandler = Box<dyn Fn(&Path) + Send + Sync + 'static>;
+
+#[cfg(target_os = "android")]
+static SHARE_HANDLER: std::sync::OnceLock<std::sync::Mutex<Option<ShareHandler>>> =
+    std::sync::OnceLock::new();
+
 const LOG_TAIL_BYTES: usize = 200 * 1024;
 const LOG_TAIL_LINES: usize = 500;
 const SAFE_CONFIG_KEYS: [&str; 7] = [
@@ -20,6 +27,38 @@ const SAFE_CONFIG_KEYS: [&str; 7] = [
 
 pub(crate) fn output_dir() -> PathBuf {
     crate::config::app_data_dir().join("diagnostics")
+}
+
+/// Android: системное меню «Поделиться» открывает JNI-мост из Tauri-окна.
+#[cfg(target_os = "android")]
+pub(crate) fn set_share_handler(handler: ShareHandler) {
+    let slot = SHARE_HANDLER.get_or_init(|| std::sync::Mutex::new(None));
+    if let Ok(mut guard) = slot.lock() {
+        *guard = Some(handler);
+    }
+}
+
+/// true — отчёт передан обработчику, который откроет меню «Поделиться».
+pub(crate) fn share(path: &Path) -> bool {
+    #[cfg(target_os = "android")]
+    {
+        let Some(slot) = SHARE_HANDLER.get() else {
+            return false;
+        };
+        let Ok(guard) = slot.lock() else {
+            return false;
+        };
+        let Some(handler) = guard.as_ref() else {
+            return false;
+        };
+        handler(path);
+        true
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = path;
+        false
+    }
 }
 
 pub(crate) fn collect() -> Result<PathBuf, String> {
