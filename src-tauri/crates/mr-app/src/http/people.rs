@@ -1288,7 +1288,11 @@ pub(super) fn handle_voiceprint_sample_delete(
             });
             if hit {
                 if let Some(id) = pack_id_of(vp_file) {
-                    let canon_id = if id.is_empty() { "default".to_string() } else { id };
+                    let canon_id = if id.is_empty() {
+                        "default".to_string()
+                    } else {
+                        id
+                    };
                     if !pack_ids.contains(&canon_id) {
                         pack_ids.push(canon_id);
                     }
@@ -1655,7 +1659,11 @@ mod tests {
 
         let person_name = "Участник 1";
         ensure_person_in_pack(person_name, Some("Спикер"), "default");
-        let emb = l2_normalize(&(0..EMBEDDING_DIM).map(|i| (i + 1) as f64).collect::<Vec<_>>());
+        let emb = l2_normalize(
+            &(0..EMBEDDING_DIM)
+                .map(|i| (i + 1) as f64)
+                .collect::<Vec<_>>(),
+        );
         store_voiceprint(person_name, Some("default"), emb, "", None, None, None);
 
         let vps_before = load_all_voiceprints();
