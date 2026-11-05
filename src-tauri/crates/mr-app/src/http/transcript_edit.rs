@@ -165,7 +165,10 @@ fn apply_edit(data: &mut Value, body: &Value) -> Result<(), String> {
         .expect("массив создан выше");
     if renaming {
         let old = body["old_speaker"].as_str().unwrap_or("").trim();
-        let unmatch = body.get("unmatch").and_then(|v| v.as_bool()).unwrap_or(false);
+        let unmatch = body
+            .get("unmatch")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         for info in speakers_info.iter_mut() {
             let hit = info["name"].as_str() == Some(old)
                 || info["matched_name"].as_str() == Some(old)
