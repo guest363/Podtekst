@@ -55,8 +55,12 @@ class ChromeRunner:
             try:
                 req = urllib.request.urlopen(f"http://127.0.0.1:{self.port}/json", timeout=1)
                 tabs = json.loads(req.read().decode())
-                if tabs and "webSocketDebuggerUrl" in tabs[0]:
-                    return tabs[0]["webSocketDebuggerUrl"]
+                page_tab = next(
+                    (t for t in tabs if t.get("type") == "page" and "webSocketDebuggerUrl" in t),
+                    None,
+                )
+                if page_tab:
+                    return page_tab["webSocketDebuggerUrl"]
             except Exception:
                 pass
         raise RuntimeError("Не удалось запустить headless Chrome и подключиться по CDP")
