@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-11-05
+
 ### Исправлено
 
 * macOS: предупреждение «Системный звук: нужно разрешение» больше не остаётся при выданном доступе — разрешение подтверждается реальным вызовом ScreenCaptureKit, а не только `CGPreflightScreenCaptureAccess`.
@@ -388,6 +390,7 @@
 * Linux-бинарники собраны на Ubuntu 24.04 (glibc 2.38+), macOS - Apple Silicon
   и 13.4+: этого требует предсобранный ONNX Runtime.
 
+[0.5.3]: https://github.com/guest363/Podtekst/releases/tag/v0.5.3
 [0.5.2]: https://github.com/guest363/Podtekst/releases/tag/v0.5.2
 [0.5.1]: https://github.com/guest363/Podtekst/releases/tag/v0.5.1
 [0.5.0]: https://github.com/guest363/Podtekst/releases/tag/v0.5.0
