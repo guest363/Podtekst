@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { toast } from '../lib/toast.svelte.ts'
-  import { on, ui } from '../lib/ui.svelte.ts'
+  import { on, selectTab, ui } from '../lib/ui.svelte.ts'
   import { downloadModel, engine, ensureStream } from '../lib/transcript.svelte.ts'
   import {
     createPack,
@@ -11,9 +10,7 @@
     hasSystemAudio,
     importPack,
     loadFfmpeg,
-    loadHotwords,
     loadModels,
-    saveHotwords,
     setAutoTranscribe,
     setRecordMode,
     settings,
@@ -24,75 +21,61 @@
   import type { ModelInfo } from '../lib/api'
   import { checkUpdate, update } from '../lib/update.svelte.ts'
   import { peopleState } from '../lib/people.svelte.ts'
-  import People from './People.svelte'
+  import SystemSettingsTab from './SystemSettingsTab.svelte'
+  import { system, runChecks, openTarget } from '../lib/system.svelte.ts'
+  import type { DevicesInfo } from '../lib/system.svelte.ts'
 
-  let tab = $state<'record' | 'people' | 'voices' | 'dict' | 'models'>('record')
+  interface Props {
+    inline?: boolean
+  }
+  let { inline = false }: Props = $props()
+
+  let tab = $state<'record' | 'voices' | 'models' | 'system'>('record')
   let packFileInput: HTMLInputElement | null = $state(null)
-  let termInput = $state('')
 
-  const filteredHotwords = $derived.by(() => {
-    const q = termInput.trim().toLowerCase()
-    if (!q) return settings.hotwords
-    const norm = q.replace(/\s*(=>|->|=)\s*/, ' => ')
-    return settings.hotwords.filter(
-      (x) => x.toLowerCase().includes(q) || x.toLowerCase().includes(norm),
-    )
-  })
-
-  const isExactMatch = $derived.by(() => {
-    const q = termInput.trim().toLowerCase()
-    if (!q) return false
-    const norm = q.replace(/\s*(=>|->|=)\s*/, ' => ')
-    return settings.hotwords.some(
-      (x) => x.toLowerCase() === q || x.toLowerCase() === norm,
-    )
-  })
+  function defaultName(devices: DevicesInfo | undefined, id?: string | null): string {
+    if (!id) return ''
+    const all = [...(devices?.inputs || []), ...(devices?.system || [])]
+    return all.find((device) => device.id === id)?.name || id
+  }
+  const micName = $derived(defaultName(system.snapshot?.devices, system.snapshot?.devices?.default_input))
+  const systemAudio = $derived(system.snapshot?.devices?.has_system_audio === true)
+  const systemAudioText = $derived(
+    systemAudio
+      ? 'доступен'
+      : settings.platform === 'macos'
+        ? 'нужен BlackHole'
+        : 'не найден',
+  )
+  const coreReady = $derived(system.snapshot?.models?.core_ready === true)
+  const allInstalled = $derived(
+    Boolean(
+      system.snapshot?.models?.items?.length &&
+      system.snapshot.models.items.every((m) => m.is_installed),
+    ),
+  )
+  const modelsBadgeKind = $derived(
+    allInstalled ? 'ok' : coreReady ? 'ok' : 'warn',
+  )
+  const modelsBadgeLabel = $derived(
+    allInstalled ? 'Все готовы' : coreReady ? 'Базовые готовы' : 'Не всё',
+  )
 
   async function openModelsTab(): Promise<void> {
     tab = 'models'
   }
 
-  async function openDictTab(): Promise<void> {
-    tab = 'dict'
-    if (!settings.hotwordsLoaded) await loadHotwords()
-  }
-
-  async function addTerm(): Promise<void> {
-    let t = termInput.trim()
-    if (!t) return
-    // Нормализация разделителей: «было = стало» или «было -> стало» преобразуем в «было => стало»
-    if (t.includes('=')) {
-      t = t.replace(/\s*=>\s*|\s*=\s*/, ' => ')
-    } else if (t.includes('->')) {
-      t = t.replace(/\s*->\s*/, ' => ')
-    }
-    if (settings.hotwords.some((x) => x.toLowerCase() === t.toLowerCase())) {
-      toast(`«${t}» уже в словаре`)
-      return
-    }
-    if (settings.hotwords.length >= 500) {
-      toast('Словарь полон: 500 из 500. Удалите лишнее.', 'error')
-      return
-    }
-    termInput = ''
-    await saveHotwords([t, ...settings.hotwords], settings.ctcEnabled)
-  }
-
-  async function removeTerm(t: string): Promise<void> {
-    await saveHotwords(
-      settings.hotwords.filter((x) => x !== t),
-      settings.ctcEnabled,
-    )
-  }
-
-  async function setCtcEnabled(enabled: boolean): Promise<void> {
-    settings.ctcEnabled = enabled
-    await saveHotwords(settings.hotwords, enabled)
-  }
-
   on('models-changed', () => void loadModels())
   on('open-settings', (value) => {
-    if (value === 'record' || value === 'people' || value === 'voices' || value === 'dict' || value === 'models') {
+    if (value === 'people') {
+      selectTab('people')
+      return
+    }
+    if (value === 'dict') {
+      selectTab('dict')
+      return
+    }
+    if (value === 'record' || value === 'voices' || value === 'models' || value === 'system') {
       tab = value
     }
     ui.settingsOpen = true
@@ -102,7 +85,7 @@
   void loadFfmpeg()
 
   function onWindowKey(e: KeyboardEvent): void {
-    if (ui.settingsOpen && !ui.donateOpen && e.key === 'Escape') {
+    if (!inline && ui.settingsOpen && !ui.donateOpen && e.key === 'Escape') {
       ui.settingsOpen = false
     }
   }
@@ -110,81 +93,62 @@
 
 <svelte:window onkeydown={onWindowKey} />
 
-{#if ui.settingsOpen}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div
-    class="app-drawer-overlay"
-    role="presentation"
-    onclick={() => (ui.settingsOpen = false)}
-  ></div>
-  <div
-    class="app-drawer settings-drawer"
-    role="dialog"
-    tabindex="-1"
-    aria-modal="true"
-    aria-label="Настройки"
-  >
-    <div class="app-drawer-top">
-      <div class="settings-heading">
-        <div class="modal-title">Настройки</div>
-        <div class="settings-version">
-          Версия {update.current || '…'} ·
-          <button
-            class="link-btn"
-            disabled={update.checking}
-            onclick={() => void checkUpdate(true, true)}
-          >
-            {update.checking ? 'Проверяю…' : 'Проверить обновления'}
-          </button>
-        </div>
+{#snippet settingsContent()}
+  <div class="app-drawer-top">
+    <div class="settings-heading">
+      <div class="modal-title">Настройки</div>
+      <div class="settings-version">
+        Версия {update.current || '…'} ·
+        <button
+          class="link-btn"
+          disabled={update.checking}
+          onclick={() => void checkUpdate(true, true)}
+        >
+          {update.checking ? 'Проверяю…' : 'Проверить обновления'}
+        </button>
       </div>
+    </div>
+    {#if !inline}
       <button class="icon-btn" aria-label="Закрыть настройки" onclick={() => (ui.settingsOpen = false)}>✕</button>
-    </div>
+    {/if}
+  </div>
 
-    <div class="settings-tabs" role="tablist" aria-label="Разделы настроек">
-      <button
-        class="settings-tab {tab === 'record' ? 'active' : ''}"
-        role="tab"
-        aria-selected={tab === 'record'}
-        onclick={() => (tab = 'record')}
-      >
-        Запись
-      </button>
-      <button
-        class="settings-tab {tab === 'people' ? 'active' : ''}"
-        role="tab"
-        aria-selected={tab === 'people'}
-        onclick={() => (tab = 'people')}
-      >
-        Участники
-      </button>
-      <button
-        class="settings-tab {tab === 'voices' ? 'active' : ''}"
-        role="tab"
-        aria-selected={tab === 'voices'}
-        onclick={() => (tab = 'voices')}
-      >
-        Голоса
-      </button>
-      <button
-        class="settings-tab {tab === 'dict' ? 'active' : ''}"
-        role="tab"
-        aria-selected={tab === 'dict'}
-        onclick={() => void openDictTab()}
-      >
-        Словарь
-      </button>
-      <button
-        class="settings-tab {tab === 'models' ? 'active' : ''}"
-        role="tab"
-        aria-selected={tab === 'models'}
-        onclick={() => void openModelsTab()}
-      >
-        Компоненты
-      </button>
-    </div>
+  <div class="settings-tabs" role="tablist" aria-label="Разделы настроек">
+    <button
+      class="settings-tab {tab === 'record' ? 'active' : ''}"
+      role="tab"
+      aria-selected={tab === 'record'}
+      onclick={() => (tab = 'record')}
+    >
+      Запись и звук
+    </button>
+    <button
+      class="settings-tab {tab === 'voices' ? 'active' : ''}"
+      role="tab"
+      aria-selected={tab === 'voices'}
+      onclick={() => (tab = 'voices')}
+    >
+      Голосовые пакеты
+    </button>
+    <button
+      class="settings-tab {tab === 'models' ? 'active' : ''}"
+      role="tab"
+      aria-selected={tab === 'models'}
+      onclick={() => (tab = 'models')}
+    >
+      Модели ИИ
+    </button>
+    <button
+      class="settings-tab {tab === 'system' ? 'active' : ''}"
+      role="tab"
+      aria-selected={tab === 'system'}
+      onclick={() => (tab = 'system')}
+    >
+      Система и логи
+    </button>
+  </div>
 
-    <div class="app-drawer-body">
+  <div class="app-drawer-body">
       {#if tab === 'record'}
         <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Запись">
           <div class="card-title">Режим записи</div>
@@ -236,10 +200,27 @@
           <div class="help-text">
             После остановки запись сама уйдёт в расшифровку. Результат появится в «Тексте и спикерах».
           </div>
-        </div>
-      {:else if tab === 'people'}
-        <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Участники">
-          <People />
+
+          <div class="audio-diag-block pt-2">
+            <div class="card-title">Состояние звукового тракта</div>
+            <div class="system-facts">
+              <span class="system-key">Микрофон</span>
+              <span class="system-val">{micName || 'не выбран'}</span>
+              <span class="system-key">Системный звук</span>
+              <span class="system-val">{systemAudioText}</span>
+              <span class="system-key">Платформа</span>
+              <span class="system-val">{system.snapshot?.devices?.platform || settings.platform || 'Нативная'}</span>
+            </div>
+            <div class="row-start pt-2">
+              <button
+                class="btn-secondary btn-sm"
+                disabled={system.checksLoading}
+                onclick={() => void runChecks(true)}
+              >
+                {system.checksLoading ? 'Проверка…' : 'Проверить микрофон (тест 5 сек)'}
+              </button>
+            </div>
+          </div>
         </div>
       {:else if tab === 'voices'}
         <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Голосовые пакеты">
@@ -290,7 +271,7 @@
                         class="link-meta-btn"
                         title="Показать участников этого пакета"
                         onclick={() => {
-                          tab = 'people'
+                          selectTab('people')
                           peopleState.selectedPackFilter = p.id
                         }}
                       >
@@ -319,11 +300,12 @@
         </div>
       {:else if tab === 'models'}
         <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Компоненты">
-          <div class="card-title">Модели и компоненты</div>
+          <div class="row-between">
+            <div class="card-title">Модели и компоненты</div>
+            {@html statusBadge(modelsBadgeKind, modelsBadgeLabel)}
+          </div>
           <div class="help-text">
-            Локальные модели для распознавания речи: GigaAM (русский язык), Whisper (30+ языков),
-            Silero VAD (детектор речи) и ERes2NetV2 (разделение голосов). Для первой
-            расшифровки скачайте Silero VAD и одну модель распознавания.
+            Нейросети работают полностью офлайн на вашем процессоре. Для первой расшифровки достаточно Silero VAD и GigaAM.
           </div>
           <div class="recordings-list" id="modelsListSettings">
             {#if !isMobile && ffmpeg.known && (!ffmpeg.available || ffmpeg.downloading || ffmpeg.error)}
@@ -390,9 +372,6 @@
                   <div class="rec-info">
                     <span class="rec-name">{m.title}</span>
                     <span class="rec-meta">{m.description || m.id}</span>
-                    {#if m.license}
-                      <span class="rec-meta">Лицензия: {m.license}</span>
-                    {/if}
                     {#if pct !== undefined}
                       <div class="vu-track progress-track" role="progressbar" aria-valuenow={pct} aria-label={`Прогресс скачивания ${m.title}`}>
                         <div class="vu-bar" style={`width: ${pct}%`}></div>
@@ -401,13 +380,23 @@
                   </div>
                   <div class="rec-actions">
                     {@html badge}
-                    <button
-                      class="btn-secondary btn-sm"
-                      disabled={pct !== undefined}
-                      onclick={() => void downloadModel(m)}
-                    >
-                      {m.is_installed ? 'Обновить' : 'Скачать'}
-                    </button>
+                    {#if !m.is_installed}
+                      <button
+                        class="btn-secondary btn-sm"
+                        disabled={pct !== undefined}
+                        onclick={() => void downloadModel(m)}
+                      >
+                        Скачать
+                      </button>
+                    {:else if m.has_update}
+                      <button
+                        class="btn-primary btn-sm"
+                        disabled={pct !== undefined}
+                        onclick={() => void downloadModel(m)}
+                      >
+                        Обновить
+                      </button>
+                    {/if}
                   </div>
                 </div>
               {/each}
@@ -415,118 +404,68 @@
           </div>
           <div class="row-start">
             <button class="btn-secondary" onclick={() => void loadModels()}>Обновить список</button>
-          </div>
-        </div>
-      {:else if tab === 'dict'}
-        <div class="settings-pane" role="tabpanel" tabindex="0" aria-label="Словарь терминов">
-          <div class="dict-head">
-            <div class="card-title">Словарь терминов</div>
-            <span class="rec-meta">{settings.hotwords.length} из 500</span>
-          </div>
-          <div class="help-text">
-            Подсказки на слух отдают предпочтение терминам, именам и сленгу.
-            Автозамена («было = стало» или «было -> стало») исправляет частые ошибки распознавания.
-          </div>
-          <div class="dict-input-wrap">
-            <input
-              type="text"
-              class="input-field dict-input"
-              placeholder="Поиск или новый термин (напр. «Docker» или «мерши = merge»)"
-              autocomplete="off"
-              aria-label="Поиск или новый термин"
-              bind:value={termInput}
-              onkeydown={(e) => {
-                if (e.key === 'Enter') void addTerm()
-                else if (e.key === 'Escape' && termInput) {
-                  e.preventDefault()
-                  termInput = ''
-                }
-              }}
-            />
-            {#if termInput}
-              <button
-                type="button"
-                class="dict-input-clear"
-                title="Очистить поиск (Esc)"
-                aria-label="Очистить поиск"
-                onclick={() => (termInput = '')}
-              >✕</button>
+            {#if !isMobile}
+              <button class="btn-secondary" onclick={() => void openTarget('models')}>
+                Открыть папку моделей
+              </button>
             {/if}
-            <button
-              class="btn-secondary"
-              disabled={!termInput.trim() || isExactMatch}
-              onclick={() => void addTerm()}
-            >Добавить</button>
-          </div>
-
-          {#if termInput.trim() && !isExactMatch}
-            {@const preview = termInput.trim().replace(/\s*(=>|->|=)\s*/, ' → ')}
-            <div class="dict-add-bar">
-              Нажмите <strong>Enter</strong>, чтобы добавить «{preview}»
-            </div>
-          {/if}
-
-          {#if filteredHotwords.length > 0}
-            <div class="dict-list" role="list" aria-label="Термины в словаре">
-              {#each filteredHotwords as t (t)}
-                {@const isPair = t.includes(' => ')}
-                <div class="dict-row" role="listitem">
-                  <div class="dict-row-text">
-                    {#if isPair}
-                      {@const [src, dst] = t.split(' => ')}
-                      <span class="dict-heard">{src}</span>
-                      <span class="dict-arrow">→</span>
-                      <span class="dict-correct">{dst}</span>
-                    {:else}
-                      <span class="dict-word">{t}</span>
-                    {/if}
-                  </div>
-                  <div class="dict-row-actions">
-                    <span class="dict-kind {isPair ? 'dict-kind-sub' : 'dict-kind-word'}">
-                      {isPair ? 'замена' : 'на слух'}
-                    </span>
-                    <button
-                      type="button"
-                      class="dict-del"
-                      title={`Убрать «${t}» из словаря`}
-                      aria-label={`Убрать «${t}» из словаря`}
-                      onclick={() => void removeTerm(t)}
-                    >✕</button>
-                  </div>
-                </div>
-              {/each}
-            </div>
-          {:else if termInput.trim()}
-            <div class="empty-note">Ничего не найдено. Нажмите Enter или «Добавить», чтобы создать.</div>
-          {:else}
-            <div class="empty-note">Пока пусто. Добавьте первый термин полем выше.</div>
-          {/if}
-
-          <label class="setting-check">
-            <input
-              type="checkbox"
-              checked={settings.ctcEnabled}
-              onchange={(e) => void setCtcEnabled(e.currentTarget.checked)}
-            />
-            <span class="setting-switch" aria-hidden="true"></span>
-            <span>Второй проход (уверенность слов + словарь)</span>
-          </label>
-          <div class="help-text">
-            Требует модель «GigaAM-v3 e2e CTC int8» из вкладки «Компоненты».
-            Без неё второй проход пропускается.
           </div>
         </div>
+      {:else if tab === 'system'}
+        <SystemSettingsTab />
       {/if}
     </div>
 
     <div class="app-drawer-bottom">
       <button class="support-link" onclick={() => (ui.donateOpen = true)}>Поддержать проект</button>
-      <button class="btn-primary" onclick={() => (ui.settingsOpen = false)}>Готово</button>
+      {#if !inline}
+        <button class="btn-primary" onclick={() => (ui.settingsOpen = false)}>Готово</button>
+      {/if}
     </div>
+{/snippet}
+
+{#if inline}
+  <div class="settings-inline-wrap">
+    {@render settingsContent()}
+  </div>
+{:else if ui.settingsOpen}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div
+    class="app-drawer-overlay"
+    role="presentation"
+    onclick={() => (ui.settingsOpen = false)}
+  ></div>
+  <div
+    class="app-drawer settings-drawer"
+    role="dialog"
+    tabindex="-1"
+    aria-modal="true"
+    aria-label="Настройки"
+  >
+    {@render settingsContent()}
   </div>
 {/if}
 
 <style>
+  .settings-inline-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    width: 100%;
+    min-width: 0;
+  }
+  .settings-inline-wrap :global(.app-drawer-top) {
+    padding: 0 0 14px;
+  }
+  .settings-inline-wrap :global(.app-drawer-body) {
+    overflow: visible;
+    padding: 6px 0;
+  }
+  .settings-inline-wrap :global(.app-drawer-bottom) {
+    padding: 14px 0 0;
+    border-top: 1px solid var(--border-soft);
+    background: transparent;
+  }
   .settings-heading {
     display: flex; flex-direction: column; gap: 1px; min-width: 0;
   }
@@ -542,78 +481,6 @@
     text-decoration: underline; text-underline-offset: 3px;
   }
   .support-link:hover { color: var(--text-muted); }
-  .dict-head {
-    display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
-  }
-  .dict-input-wrap {
-    position: relative; display: flex; gap: 8px; align-items: center;
-  }
-  .dict-input {
-    flex: 1; padding-right: 32px;
-  }
-  .dict-input-clear {
-    position: absolute; right: 104px; top: 50%; transform: translateY(-50%);
-    border: none; background: transparent; cursor: pointer;
-    color: var(--text-faint); font-size: 13px; line-height: 1; padding: 4px;
-    border-radius: 4px;
-  }
-  .dict-input-clear:hover { color: var(--text-primary); }
-  .dict-add-bar {
-    font-size: 12px; color: var(--accent-blue);
-    background: var(--bg-inset); border: 1px solid var(--border-soft);
-    border-radius: var(--radius-sm); padding: 7px 12px; margin-top: -4px;
-  }
-  .dict-list {
-    display: flex; flex-direction: column;
-    border: 1px solid var(--border-card);
-    border-radius: var(--radius-inner);
-    background: #fff;
-    max-height: 290px;
-    overflow-y: auto;
-  }
-  .dict-row {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 7px 12px; gap: 10px; font-size: 13px;
-    border-bottom: 1px solid var(--border-soft);
-    transition: background 120ms ease;
-  }
-  .dict-row:last-child { border-bottom: none; }
-  .dict-row:hover { background: var(--bg-inset); }
-  .dict-row-text {
-    display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden;
-  }
-  .dict-word {
-    font-weight: 600; color: var(--text-primary); word-break: break-word;
-  }
-  .dict-heard {
-    color: var(--text-muted); text-decoration: line-through; text-decoration-color: var(--text-faint);
-  }
-  .dict-arrow {
-    color: var(--text-faint); font-weight: 700; user-select: none;
-  }
-  .dict-correct {
-    font-weight: 700; color: var(--text-primary); word-break: break-word;
-  }
-  .dict-row-actions {
-    display: flex; align-items: center; gap: 8px; flex-shrink: 0;
-  }
-  .dict-kind {
-    font-size: 10.5px; font-weight: 700; padding: 2px 7px;
-    border-radius: var(--radius-pill); border: 1px solid transparent; letter-spacing: 0.02em;
-  }
-  .dict-kind-word {
-    color: var(--accent-blue); background: #f0f4ff; border-color: #dbe4fe;
-  }
-  .dict-kind-sub {
-    color: var(--accent-amber); background: var(--accent-amber-bg); border-color: #f6e6be;
-  }
-  .dict-del {
-    border: none; background: none; cursor: pointer;
-    color: var(--text-faint); font-size: 12px; line-height: 1;
-    padding: 3px 5px; border-radius: 4px;
-    transition: color 120ms ease, background 120ms ease;
-  }
-  .dict-del:hover { color: var(--accent-rec); background: #fee2e2; }
   .settings-tabs {
     display: flex;
     gap: 6px;
@@ -677,5 +544,29 @@
   }
   .link-meta-btn:hover {
     color: #1a4299;
+  }
+  .audio-diag-block {
+    border-top: 1px solid var(--border-soft);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 14px;
+    margin-top: 6px;
+  }
+  .system-facts {
+    display: grid;
+    grid-template-columns: minmax(100px, max-content) minmax(0, 1fr);
+    gap: 4px 12px;
+    font-size: 12.5px;
+  }
+  .system-key {
+    color: var(--text-muted);
+  }
+  .system-val {
+    color: var(--text-primary);
+    word-break: break-word;
+  }
+  .pt-2 {
+    padding-top: 8px;
   }
 </style>

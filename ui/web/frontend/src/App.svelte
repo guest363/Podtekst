@@ -19,20 +19,60 @@
   import { loadSupportInfo } from './lib/support.svelte.ts'
   import { system } from './lib/system.svelte.ts'
   import { checkUpdate, dismissUpdate, openUpdateModal, update } from './lib/update.svelte.ts'
-  import { initRouting, on, ui } from './lib/ui.svelte.ts'
+  import { emit, initRouting, on, openTranscript, selectTab, ui } from './lib/ui.svelte.ts'
   import { renderMarkdown } from './lib/markdown'
   import RecordingDeck from './components/RecordingDeck.svelte'
   import Recordings from './components/Recordings.svelte'
+  import People from './components/People.svelte'
+  import Dictionary from './components/Dictionary.svelte'
   import TranscriptPage from './components/TranscriptPage.svelte'
   import SettingsModal from './components/SettingsModal.svelte'
   import DonateModal from './components/DonateModal.svelte'
   import UpdateModal from './components/UpdateModal.svelte'
-  import SystemPane from './components/SystemPane.svelte'
   import CrashBanner from './components/CrashBanner.svelte'
   import Toasts from './components/Toasts.svelte'
   import { isMobile, isCoreModel, remainingMb } from './lib/api'
 
   let introOpen = $state(false)
+
+  function openDiagnostics(): void {
+    selectTab('settings')
+    if (system.summary?.status === 'error' || system.summary?.status === 'warn') {
+      const hasAudio = system.checks.some(
+        (c) =>
+          (c.id.includes('audio') || c.id.includes('mic')) &&
+          (c.status === 'warn' || c.status === 'error'),
+      )
+      const hasModel = system.checks.some(
+        (c) =>
+          (c.id.includes('model') || c.id.includes('vad') || c.id.includes('asr')) &&
+          (c.status === 'warn' || c.status === 'error'),
+      )
+      if (hasAudio) {
+        emit('open-settings', 'record')
+        return
+      }
+      if (hasModel) {
+        emit('open-settings', 'models')
+        return
+      }
+    }
+    emit('open-settings', 'system')
+  }
+
+  $effect(() => {
+    if (ui.systemOpen) {
+      ui.systemOpen = false
+      openDiagnostics()
+    }
+  })
+
+  $effect(() => {
+    if (ui.settingsOpen) {
+      selectTab('settings')
+      ui.settingsOpen = false
+    }
+  })
 
   const coreModels = $derived(settings.models.filter(isCoreModel))
   const coreInstalled = $derived(
@@ -51,6 +91,22 @@
           ? 'ok'
           : 'info'
   )
+  const statusLabel = $derived(
+    statusTone === 'error'
+      ? 'Есть проблема'
+      : statusTone === 'warn'
+        ? 'Замечание'
+        : system.snapshot
+          ? 'Всё в порядке'
+          : 'Проверка…'
+  )
+
+  const TAB_TITLES: Record<string, string> = {
+    studio: 'Запись',
+    people: 'Участники',
+    dict: 'Словарь',
+    settings: 'Настройки',
+  }
 
   function closeIntro(): void {
     introOpen = false
@@ -120,22 +176,88 @@
 {#if ui.transcriptOpen && ui.currentTranscriptPath}
   <TranscriptPage />
 {:else}
-  <div class="page">
-    <header class="app-header">
-      <div class="app-title">
+  <div class="app-shell">
+    <!-- Десктопный сайдбар: строгий левый фрейм, скрыт на мобильных -->
+    <aside class="shell-sidebar" aria-label="Разделы приложения">
+      <div class="sidebar-brand">
+        <img src="/favicon.svg" class="app-brand-logo" alt="" width="22" height="22" />
         <span class="app-title-text">Подтекст</span>
       </div>
-      <div class="header-right">
+
+      <nav class="sidebar-nav" aria-label="Основная навигация">
         <button
-          class="status-pill"
-          title="Состояние системы"
+          type="button"
+          class="sidebar-btn"
+          class:active={ui.activeTab === 'studio'}
+          onclick={() => selectTab('studio')}
+        >
+          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+            <line x1="12" y1="19" x2="12" y2="22" />
+          </svg>
+          <span class="sidebar-btn-label">Запись</span>
+        </button>
+
+        <button
+          type="button"
+          class="sidebar-btn"
+          class:active={ui.activeTab === 'people'}
+          onclick={() => selectTab('people')}
+        >
+          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="12" cy="7" r="4" />
+            <path d="M5.5 21a6.5 6.5 0 0 1 13 0" />
+          </svg>
+          <span class="sidebar-btn-label">Участники</span>
+        </button>
+
+        <button
+          type="button"
+          class="sidebar-btn"
+          class:active={ui.activeTab === 'dict'}
+          onclick={() => selectTab('dict')}
+        >
+          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z" />
+            <path d="M6 6h10" />
+            <path d="M6 10h10" />
+          </svg>
+          <span class="sidebar-btn-label">Словарь</span>
+          {#if settings.hotwords.length > 0}
+            <span class="sidebar-count">{settings.hotwords.length}</span>
+          {/if}
+        </button>
+
+        <button
+          type="button"
+          class="sidebar-btn"
+          class:active={ui.activeTab === 'settings'}
+          onclick={() => selectTab('settings')}
+        >
+          <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M4 6h9M18 6h2M4 12h3M12 12h8M4 18h11M20 18h0" />
+            <circle cx="15.5" cy="6" r="2.5" />
+            <circle cx="9.5" cy="12" r="2.5" />
+            <circle cx="17.5" cy="18" r="2.5" />
+          </svg>
+          <span class="sidebar-btn-label">Настройки</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button
+          type="button"
+          class="status-pill sidebar-status"
+          title="Состояние системы: {statusLabel}"
           aria-label="Открыть состояние системы"
-          onclick={() => (ui.systemOpen = true)}
+          onclick={openDiagnostics}
         >
           <span class="status-dot {statusTone}" aria-hidden="true"></span>
-          <span class="status-pill-text">Состояние</span>
+          <span class="status-pill-text">{statusLabel}</span>
         </button>
         <button
+          type="button"
           class="icon-btn help-btn"
           title="Как это работает"
           aria-label="Справка"
@@ -143,60 +265,145 @@
         >
           ?
         </button>
-        <button
-          class="icon-btn"
-          title="Настройки"
-          aria-label="Открыть настройки"
-          onclick={() => (ui.settingsOpen = true)}
-        >
-          <svg
-            width="17"
-            height="17"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            aria-hidden="true"
+      </div>
+    </aside>
+
+    <!-- Рабочая область приложения -->
+    <div class="shell-workspace">
+      <!-- Мобильная шапка: отображается только на смартфонах -->
+      <header class="mobile-header">
+        <div class="app-title">
+          <img src="/favicon.svg" class="app-brand-logo" alt="" width="20" height="20" />
+          <span class="app-title-text">{TAB_TITLES[ui.activeTab] || 'Подтекст'}</span>
+        </div>
+        <div class="header-right">
+          <button
+            type="button"
+            class="status-pill mobile-status-btn"
+            title="Состояние системы: {statusLabel}"
+            aria-label="Открыть состояние системы: {statusLabel}"
+            onclick={openDiagnostics}
           >
+            <span class="status-dot {statusTone}" aria-hidden="true"></span>
+          </button>
+          <button
+            type="button"
+            class="icon-btn help-btn"
+            title="Как это работает"
+            aria-label="Справка"
+            onclick={() => (introOpen = true)}
+          >
+            ?
+          </button>
+        </div>
+      </header>
+
+      <main class="main-column">
+        <CrashBanner />
+        {#if update.isNewer && !update.dismissed}
+          <section class="card update-card" aria-label="Доступно обновление">
+            <div class="card-header">
+              <span class="card-title">Доступна версия {update.latest}</span>
+              <button class="icon-btn" aria-label="Скрыть предложение обновления" onclick={dismissUpdate}>
+                ✕
+              </button>
+            </div>
+            <div class="help-text">
+              У вас установлена версия {update.current}.
+              {#if update.applying}
+                Скачиваю обновление… {update.pct}%.
+              {:else if update.selfUpdate}
+                Обновление скачается и установится здесь.
+              {:else}
+                Новую версию можно скачать со страницы релиза.
+              {/if}
+            </div>
+            <div class="row-start">
+              <button class="btn-primary" onclick={openUpdateModal}>Что нового и обновить</button>
+              <button class="btn-secondary" onclick={dismissUpdate}>Позже</button>
+            </div>
+          </section>
+        {/if}
+
+        {#if ui.activeTab === 'studio'}
+          <div class="studio-view">
+            <RecordingDeck />
+            <Recordings />
+          </div>
+        {:else if ui.activeTab === 'people'}
+          <div class="card people-page-card">
+            <People />
+          </div>
+        {:else if ui.activeTab === 'dict'}
+          <div class="card dict-page-card">
+            <Dictionary />
+          </div>
+        {:else if ui.activeTab === 'settings'}
+          <div class="card settings-page-card">
+            <SettingsModal inline={true} />
+          </div>
+        {/if}
+      </main>
+
+      <!-- Мобильный таббар: отображается только на смартфонах -->
+      <nav class="mobile-bottom-nav" aria-label="Мобильная навигация">
+        <button
+          type="button"
+          class="mobile-tab-btn"
+          class:active={ui.activeTab === 'studio'}
+          onclick={() => selectTab('studio')}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+            <line x1="12" y1="19" x2="12" y2="22" />
+          </svg>
+          <span>Запись</span>
+        </button>
+
+        <button
+          type="button"
+          class="mobile-tab-btn"
+          class:active={ui.activeTab === 'people'}
+          onclick={() => selectTab('people')}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="12" cy="7" r="4" />
+            <path d="M5.5 21a6.5 6.5 0 0 1 13 0" />
+          </svg>
+          <span>Участники</span>
+        </button>
+
+        <button
+          type="button"
+          class="mobile-tab-btn"
+          class:active={ui.activeTab === 'dict'}
+          onclick={() => selectTab('dict')}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z" />
+            <path d="M6 6h10" />
+            <path d="M6 10h10" />
+          </svg>
+          <span>Словарь</span>
+        </button>
+
+        <button
+          type="button"
+          class="mobile-tab-btn"
+          class:active={ui.activeTab === 'settings'}
+          onclick={() => selectTab('settings')}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
             <path d="M4 6h9M18 6h2M4 12h3M12 12h8M4 18h11M20 18h0" />
             <circle cx="15.5" cy="6" r="2.5" />
             <circle cx="9.5" cy="12" r="2.5" />
             <circle cx="17.5" cy="18" r="2.5" />
           </svg>
+          <span>Настройки</span>
         </button>
-      </div>
-    </header>
-
-    <main class="main-column">
-      <CrashBanner />
-      {#if update.isNewer && !update.dismissed}
-        <section class="card update-card" aria-label="Доступно обновление">
-          <div class="card-header">
-            <span class="card-title">Доступна версия {update.latest}</span>
-            <button class="icon-btn" aria-label="Скрыть предложение обновления" onclick={dismissUpdate}>
-              ✕
-            </button>
-          </div>
-          <div class="help-text">
-            У вас установлена версия {update.current}.
-            {#if update.applying}
-              Скачиваю обновление… {update.pct}%.
-            {:else if update.selfUpdate}
-              Обновление скачается и установится здесь.
-            {:else}
-              Новую версию можно скачать со страницы релиза.
-            {/if}
-          </div>
-          <div class="row-start">
-            <button class="btn-primary" onclick={openUpdateModal}>Что нового и обновить</button>
-            <button class="btn-secondary" onclick={dismissUpdate}>Позже</button>
-          </div>
-        </section>
-      {/if}
-      <RecordingDeck />
-      <Recordings />
-    </main>
+      </nav>
+    </div>
   </div>
 {/if}
 
@@ -352,10 +559,268 @@
   .status-dot.ok { background: var(--accent-ok); }
   .status-dot.warn { background: var(--accent-amber); }
   .status-dot.error { background: var(--accent-rec); }
+
+  /* ---------- App Shell Desktop ---------- */
+  :global(html) {
+    height: 100%;
+  }
+
+  .app-brand-logo {
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+    display: block;
+    border-radius: 4px;
+  }
+
+  .sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 4px 14px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .sidebar-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: var(--radius-inner);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+    transition: all 140ms ease;
+    width: 100%;
+  }
+  .sidebar-btn:hover {
+    background: var(--bg-inset);
+    color: var(--text-primary);
+  }
+  .sidebar-btn.active {
+    background: #fff;
+    color: var(--text-primary);
+    border-color: var(--border-card);
+    box-shadow: 0 1px 3px rgba(15, 30, 51, 0.05);
+  }
+  .sidebar-btn.active .nav-icon {
+    color: var(--text-primary);
+  }
+  .sidebar-count {
+    margin-left: auto;
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-faint);
+    background: var(--bg-inset);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-pill);
+    padding: 0 6px;
+  }
+  .sidebar-footer {
+    margin-top: auto;
+    padding-top: 14px;
+    border-top: 1px solid var(--border-soft);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .sidebar-status {
+    flex: 1;
+    min-width: 0;
+  }
+  .sidebar-status .status-pill-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* Десктоп: окно строго зафиксировано, никакого скролла окна/body */
+  @media (min-width: 641px) {
+    :global(body) {
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden !important;
+      padding: 0 !important;
+      margin: 0 !important;
+    }
+    .app-shell {
+      display: flex;
+      align-items: stretch;
+      gap: 20px;
+      max-width: 1400px;
+      width: 100%;
+      height: 100vh;
+      height: 100dvh;
+      margin: 0 auto;
+      padding: 12px 16px;
+      box-sizing: border-box;
+      overflow: hidden;
+    }
+    .shell-sidebar {
+      width: 200px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      height: 100%;
+      padding: 4px 16px 8px 0;
+      border-right: 1px solid var(--border-soft);
+      box-sizing: border-box;
+    }
+    .shell-workspace {
+      flex: 1 1 auto;
+      min-width: 0;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow: hidden;
+    }
+    .shell-main {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow: hidden;
+    }
+    .studio-view {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow: hidden;
+    }
+    .studio-view :global(#recordingsCard) {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .studio-view :global(#recordingsList) {
+      flex: 1 1 auto;
+      min-height: 0;
+      max-height: none !important;
+      overflow-y: auto;
+    }
+    .people-page-card,
+    .dict-page-card,
+    .settings-page-card {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 18px 20px;
+    }
+  }
+
+  /* На десктопе мобильная шапка и мобильный таббар СТРОГО скрыты */
+  .mobile-header {
+    display: none !important;
+  }
+  .mobile-bottom-nav {
+    display: none !important;
+  }
+
   @media (max-width: 640px) {
+    .app-shell {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .shell-sidebar {
+      display: none !important;
+    }
+    .shell-workspace {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+    }
+    .studio-view :global(#recordingsList) {
+      max-height: none !important;
+      overflow: visible !important;
+    }
+    .people-page-card,
+    .dict-page-card,
+    .settings-page-card {
+      padding: 14px 14px;
+    }
+    .mobile-header {
+      display: flex !important;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      padding: 2px 2px;
+      width: 100%;
+    }
+    .mobile-bottom-nav {
+      display: flex !important;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: calc(56px + env(safe-area-inset-bottom, 0px));
+      z-index: 40;
+      background: rgba(255, 255, 255, 0.94);
+      backdrop-filter: blur(12px);
+      border-top: 1px solid var(--border-card);
+      align-items: flex-start;
+      justify-content: space-around;
+      padding-top: 6px;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      box-shadow: 0 -2px 10px rgba(15, 30, 51, 0.04);
+    }
+    .mobile-tab-btn {
+      flex: 1;
+      min-height: 44px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      background: transparent;
+      border: none;
+      color: var(--text-faint);
+      font: inherit;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: color 140ms ease;
+    }
+    .mobile-tab-btn.active {
+      color: var(--text-primary);
+      font-weight: 700;
+    }
+    .mobile-tab-btn.active svg {
+      color: var(--text-primary);
+    }
+    .mobile-status-btn {
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .mobile-status-btn .status-dot {
+      width: 9px;
+      height: 9px;
+    }
     .status-pill {
-      width: 38px;
-      height: 38px;
+      width: 44px;
+      height: 44px;
       padding: 0;
       border-radius: 50%;
       display: inline-flex;
@@ -371,9 +836,7 @@
   }
 </style>
 
-<SettingsModal />
 <UpdateModal />
-<SystemPane />
 <DonateModal />
 <Toasts />
 
