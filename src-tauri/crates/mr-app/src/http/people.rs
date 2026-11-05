@@ -257,8 +257,8 @@ pub(super) fn update_people(
     found
 }
 
-/// Убирает человека из пакетов и списка гостей. Голосовой отпечаток остаётся:
-/// удалить голос отдельно можно в «Текст и спикеры» → «Это не тот голос».
+/// Убирает человека из пакетов, списка гостей и удаляет отпечатки голоса,
+/// чтобы автосинхронизация не восстанавливала удалённого участника.
 pub(super) fn remove_person(name: &str) -> bool {
     let mut found = false;
     for file in people_json_files() {
@@ -287,7 +287,8 @@ pub(super) fn remove_person(name: &str) -> bool {
         found = true;
         save_external_people(&ext);
     }
-    found
+    let vp_found = delete_voiceprint_internal(name, None);
+    found || vp_found
 }
 
 /// Профиль пригоден для текущего embedding-пространства: есть центроид или
@@ -958,13 +959,8 @@ pub(super) fn handle_voiceprint_delete(request: tiny_http::Request, body: serde_
         .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("")
-        .trim()
-        .to_lowercase();
-    let audio_file = body
-        .get("audio_file")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+        .trim();
+    let audio_file = body.get("audio_file").and_then(|v| v.as_str());
     if name.is_empty() {
         json_response(
             request,
@@ -973,51 +969,7 @@ pub(super) fn handle_voiceprint_delete(request: tiny_http::Request, body: serde_
         );
         return;
     }
-    let mut files: Vec<std::path::PathBuf> = vec![
-        app_data_dir().join("voiceprints.json"),
-        app_data_dir().join("packs/default/voiceprints.json"),
-    ];
-    if let Ok(packs) = packs::get_active_packs(&app_data_dir()) {
-        for dir in packs {
-            let f = dir.join("voiceprints.json");
-            if !files.contains(&f) {
-                files.push(f);
-            }
-        }
-    }
-    let mut found = false;
-    for vp_file in files {
-        let _guard = lock_voiceprints();
-        if let Ok(t) = std::fs::read_to_string(&vp_file) {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
-                let arr = parse_profiles(&v);
-                let before = arr.len();
-                let kept: Vec<_> = arr
-                    .into_iter()
-                    .filter(|p| {
-                        p.get("name")
-                            .and_then(|x| x.as_str())
-                            .unwrap_or("")
-                            .trim()
-                            .to_lowercase()
-                            != name
-                    })
-                    .collect();
-                if kept.len() != before {
-                    found = true;
-                    let _ = write_atomic(
-                        &vp_file,
-                        serde_json::to_string_pretty(&vp_v3(kept))
-                            .unwrap_or_default()
-                            .as_bytes(),
-                    );
-                }
-            }
-        }
-    }
-    if found && !audio_file.is_empty() {
-        clear_matched_in_transcript(Path::new(&audio_file), &name);
-    }
+    let found = delete_voiceprint_internal(name, audio_file);
     json_response(request, json!({"ok": found}), 200);
 }
 
@@ -1091,6 +1043,62 @@ fn voiceprint_files() -> Vec<std::path::PathBuf> {
         }
     }
     files
+}
+
+pub(super) fn delete_voiceprint_internal(name: &str, audio_file: Option<&str>) -> bool {
+    let clean = name.trim();
+    if clean.is_empty() {
+        return false;
+    }
+    let mut found = false;
+    for vp_file in voiceprint_files() {
+        let _guard = lock_voiceprints();
+        let Ok(t) = std::fs::read_to_string(&vp_file) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) else {
+            continue;
+        };
+        let arr = parse_profiles(&v);
+        let before = arr.len();
+        let mut snippets_to_remove = Vec::new();
+        let kept: Vec<_> = arr
+            .into_iter()
+            .filter(|p| {
+                let hit = same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), clean);
+                if hit {
+                    if let Some(protos) = p.get("prototypes").and_then(|x| x.as_array()) {
+                        for pr in protos {
+                            if let Some(sn) = pr.get("snippet_relpath").and_then(|x| x.as_str()) {
+                                snippets_to_remove.push(sn.to_string());
+                            }
+                        }
+                    }
+                }
+                !hit
+            })
+            .collect();
+        if kept.len() != before {
+            found = true;
+            let _ = write_atomic(
+                &vp_file,
+                serde_json::to_string_pretty(&vp_v3(kept))
+                    .unwrap_or_default()
+                    .as_bytes(),
+            );
+            if let Some(parent) = vp_file.parent() {
+                for sn in snippets_to_remove {
+                    remove_snippet(parent, &sn);
+                }
+            }
+        }
+    }
+    if found {
+        if let Some(af) = audio_file.filter(|s| !s.is_empty()) {
+            clear_matched_in_transcript(Path::new(af), clean);
+        }
+    }
+    found
 }
 
 /// pack_id для URL сниппета: "" — корень app_data, иначе имя папки пакета.
@@ -1248,7 +1256,11 @@ pub(super) fn handle_voiceprint_sample_delete(
     let files: Vec<PathBuf> = match requested_pack {
         Some(id) => all_files
             .into_iter()
-            .filter(|f| pack_id_of(f).as_deref() == Some(id))
+            .filter(|f| {
+                let pid = pack_id_of(f).unwrap_or_default();
+                let canon = if pid.is_empty() { "default" } else { &pid };
+                canon == id || pid == id
+            })
             .collect(),
         None => all_files,
     };
@@ -1276,8 +1288,9 @@ pub(super) fn handle_voiceprint_sample_delete(
             });
             if hit {
                 if let Some(id) = pack_id_of(vp_file) {
-                    if !pack_ids.contains(&id) {
-                        pack_ids.push(id);
+                    let canon_id = if id.is_empty() { "default".to_string() } else { id };
+                    if !pack_ids.contains(&canon_id) {
+                        pack_ids.push(canon_id);
                     }
                 }
             }
@@ -1615,6 +1628,54 @@ mod tests {
         let t2 = std::fs::read_to_string(&p2_file).unwrap_or_default();
         assert!(t2.contains("Инженер 1 (Старший)"));
         assert!(t2.contains("Лид"));
+
+        if let Some(p) = prev {
+            std::env::set_var("MEETING_RECORDER_DATA_DIR", p);
+        } else {
+            std::env::remove_var("MEETING_RECORDER_DATA_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_person_deletes_voiceprints_and_prevents_resurrection() {
+        let _guard = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!(
+            "mr-remove-person-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let prev = std::env::var("MEETING_RECORDER_DATA_DIR").ok();
+        std::env::set_var("MEETING_RECORDER_DATA_DIR", &dir);
+
+        let person_name = "Участник 1";
+        ensure_person_in_pack(person_name, Some("Спикер"), "default");
+        let emb = l2_normalize(&(0..EMBEDDING_DIM).map(|i| (i + 1) as f64).collect::<Vec<_>>());
+        store_voiceprint(person_name, Some("default"), emb, "", None, None, None);
+
+        let vps_before = load_all_voiceprints();
+        assert!(vps_before.iter().any(|v| same_name(
+            v.get("name").and_then(|x| x.as_str()).unwrap_or(""),
+            person_name
+        )));
+
+        let ok = remove_person(person_name);
+        assert!(ok);
+
+        let vps_after = load_all_voiceprints();
+        assert!(!vps_after.iter().any(|v| same_name(
+            v.get("name").and_then(|x| x.as_str()).unwrap_or(""),
+            person_name
+        )));
+
+        let p_file = dir.join("packs/default/people.json");
+        let text = std::fs::read_to_string(&p_file).unwrap_or_default();
+        assert!(!text.contains(person_name));
 
         if let Some(p) = prev {
             std::env::set_var("MEETING_RECORDER_DATA_DIR", p);

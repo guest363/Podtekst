@@ -1,6 +1,7 @@
 <script lang="ts">
   import { readJsonSafe } from '../lib/api'
   import {
+    deleteVoice,
     deleteVoiceSample,
     hasVoiceprint,
     loadPeople,
@@ -314,8 +315,24 @@
       </div>
       {#if editingPerson && editingPerson.name && peopleState.voiceDetailName === editingPerson.name}
         <div class="voice-list">
-          <div class="voice-list-title">
-            Голоса в базе: {peopleState.voiceDetail?.prototypes?.length || 0}
+          <div class="voice-list-header">
+            <span class="voice-list-title">
+              Голоса в базе: {peopleState.voiceDetail?.prototypes?.length || 0}
+            </span>
+            {#if (peopleState.voiceDetail?.prototypes?.length || 0) > 0}
+              <button
+                type="button"
+                class="link-danger"
+                onclick={() =>
+                  toastConfirm(
+                    `Удалить все образцы голоса у «${editingPerson?.name}»? Участник останется в списке.`,
+                    'Удалить',
+                    () => void deleteVoice(String(editingPerson?.name || '')),
+                  )}
+              >
+                Удалить голос
+              </button>
+            {/if}
           </div>
           {#if !peopleState.voiceDetail}
             <div class="empty-note">Загружаю образцы…</div>
@@ -357,7 +374,7 @@
                       toastConfirm(
                         `Удалить образец «Голос ${i + 1}» у «${editingPerson?.name}»? Остальные голоса сохранятся.`,
                         'Удалить',
-                        () => void deleteVoiceSample(String(editingPerson?.name || ''), pid),
+                        () => void deleteVoiceSample(String(editingPerson?.name || ''), pid, peopleState.voiceDetail?.pack_id),
                       )}
                   >
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -654,6 +671,12 @@
     background: var(--bg-inset);
     border: 1px solid var(--border-card);
     border-radius: var(--radius-inner);
+  }
+  .voice-list-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
   }
   .voice-list-title {
     font-size: 12.5px;
