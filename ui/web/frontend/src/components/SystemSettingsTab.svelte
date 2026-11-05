@@ -23,7 +23,7 @@
   import type { CheckFix, JournalSession, SystemCheck } from '../lib/system.svelte.ts'
 
   let journalExpanded = $state(false)
-  let probeAudio = $state(true)
+  let probeAudio = $state(false)
 
   const snap = $derived(system.snapshot)
   const lastCrash = $derived(system.crashes.find(crashUnacknowledged) ?? null)

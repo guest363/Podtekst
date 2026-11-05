@@ -305,9 +305,7 @@
             {@html statusBadge(modelsBadgeKind, modelsBadgeLabel)}
           </div>
           <div class="help-text">
-            Локальные модели для распознавания речи: GigaAM (русский язык), Whisper (30+ языков),
-            Silero VAD (детектор речи) и ERes2NetV2 (разделение голосов). Для первой
-            расшифровки скачайте Silero VAD и одну модель распознавания.
+            Нейросети работают полностью офлайн на вашем процессоре. Для первой расшифровки достаточно Silero VAD и GigaAM.
           </div>
           <div class="recordings-list" id="modelsListSettings">
             {#if !isMobile && ffmpeg.known && (!ffmpeg.available || ffmpeg.downloading || ffmpeg.error)}
@@ -374,9 +372,6 @@
                   <div class="rec-info">
                     <span class="rec-name">{m.title}</span>
                     <span class="rec-meta">{m.description || m.id}</span>
-                    {#if m.license}
-                      <span class="rec-meta">Лицензия: {m.license}</span>
-                    {/if}
                     {#if pct !== undefined}
                       <div class="vu-track progress-track" role="progressbar" aria-valuenow={pct} aria-label={`Прогресс скачивания ${m.title}`}>
                         <div class="vu-bar" style={`width: ${pct}%`}></div>
@@ -385,13 +380,23 @@
                   </div>
                   <div class="rec-actions">
                     {@html badge}
-                    <button
-                      class="btn-secondary btn-sm"
-                      disabled={pct !== undefined}
-                      onclick={() => void downloadModel(m)}
-                    >
-                      {m.is_installed ? 'Обновить' : 'Скачать'}
-                    </button>
+                    {#if !m.is_installed}
+                      <button
+                        class="btn-secondary btn-sm"
+                        disabled={pct !== undefined}
+                        onclick={() => void downloadModel(m)}
+                      >
+                        Скачать
+                      </button>
+                    {:else if m.has_update}
+                      <button
+                        class="btn-primary btn-sm"
+                        disabled={pct !== undefined}
+                        onclick={() => void downloadModel(m)}
+                      >
+                        Обновить
+                      </button>
+                    {/if}
                   </div>
                 </div>
               {/each}
