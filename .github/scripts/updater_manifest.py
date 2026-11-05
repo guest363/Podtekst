@@ -24,6 +24,11 @@ REQUIRED_PLATFORMS = set(PLATFORMS.values())
 NOTES_LIMIT = 16 * 1024
 UNSIGNED_DOC = "docs/UNSIGNED-INSTALL.md"
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 
 def fail(message):
     print(f"::error::{message}")

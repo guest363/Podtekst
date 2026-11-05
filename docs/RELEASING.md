@@ -131,7 +131,8 @@ workflow с `::error::`, а не собирает релиз без автооб
 
 ### Android release keystore
 
-Для тега обязательны четыре секрета:
+Для подписанного release APK можно настроить четыре секрета (если не заданы —
+workflow собирает APK с debug-подписью и предупреждением в логе):
 
 * `ANDROID_KEYSTORE_BASE64` - base64 от release keystore;
 * `ANDROID_KEYSTORE_PASSWORD` - пароль хранилища;
@@ -140,9 +141,9 @@ workflow с `::error::`, а не собирает релиз без автооб
 
 Workflow декодирует keystore в `$RUNNER_TEMP` и передаёт Gradle пути через
 `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
-`ANDROID_KEY_PASSWORD`. Без них на теге сборка падает. Локально переменные
-можно не задавать: release APK соберётся с debug-подписью и предупреждением
-в логе. Debug-сборка не меняется.
+`ANDROID_KEY_PASSWORD`. Без них релиз не блокируется: release APK собирается
+с debug-подписью и предупреждением в логе. Локально переменные также можно
+не задавать.
 
 ## 5. Сухой прогон
 
