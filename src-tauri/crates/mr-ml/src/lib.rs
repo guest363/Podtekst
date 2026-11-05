@@ -393,7 +393,13 @@ pub fn match_voiceprints_matrix(
         if s < threshold {
             continue;
         }
-        let margin = results[r].margin;
+        let other_max = sim[r]
+            .iter()
+            .enumerate()
+            .filter(|&(idx, _)| idx != c)
+            .map(|(_, &val)| val)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let margin = s - other_max;
         if profiles.len() > 1
             && (margin < MIN_MATCH_MARGIN_FLOOR
                 || (margin < min_margin && s < HIGH_CONFIDENCE_THRESHOLD))
@@ -413,6 +419,7 @@ pub fn match_voiceprints_matrix(
             Some(profiles[c].pack_name.clone())
         };
         results[r].similarity = (s * 1000.0).round() / 1000.0;
+        results[r].margin = (margin.max(0.0) * 1000.0).round() / 1000.0;
     }
     let assigned: std::collections::HashMap<usize, usize> = results
         .iter()
@@ -445,6 +452,16 @@ pub fn match_voiceprints_matrix(
                     if inter >= SAME_SPEAKER_MERGE_SIM {
                         results[i].matched = true;
                         results[i].name = Some(profiles[pi].name.clone());
+                        results[i].pack_id = if profiles[pi].pack_id.is_empty() {
+                            None
+                        } else {
+                            Some(profiles[pi].pack_id.clone())
+                        };
+                        results[i].pack_name = if profiles[pi].pack_name.is_empty() {
+                            None
+                        } else {
+                            Some(profiles[pi].pack_name.clone())
+                        };
                         results[i].similarity = (best_s * 1000.0).round() / 1000.0;
                     }
                 }
@@ -502,6 +519,34 @@ mod tests {
         let res = match_voiceprints_matrix(&[c1, c2], &[ivan], 0.45, 0.06);
         assert_eq!(res.len(), 2);
         assert!(res.iter().filter(|r| r.matched).count() <= 1);
+    }
+
+    #[test]
+    fn hungarian_never_assigns_inferior_candidate_over_better_alternative() {
+        let mk = |name: &str, v: Vec<f64>| SpeakerProfile {
+            name: name.to_string(),
+            pack_id: String::new(),
+            pack_name: String::new(),
+            embedding: v.clone(),
+            samples_count: 1,
+            updated_at: String::new(),
+            prototypes: vec![Prototype {
+                id: "p1".to_string(),
+                embedding: v,
+                duration_sec: 4.0,
+                quality: 1.0,
+                created_at: String::new(),
+                snippet_relpath: None,
+            }],
+        };
+        let prof_a = mk("Профиль A", unit(8, 0));
+        let prof_b = mk("Профиль B", unit(8, 1));
+        let c1 = l2(vec![0.95, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        let c2 = l2(vec![0.85, 0.47, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        let res = match_voiceprints_matrix(&[c1, c2], &[prof_a, prof_b], 0.45, 0.06);
+        assert_eq!(res.len(), 2);
+        assert_eq!(res[0].name.as_deref(), Some("Профиль A"));
+        assert_ne!(res[1].name.as_deref(), Some("Профиль B"));
     }
 
     #[test]
