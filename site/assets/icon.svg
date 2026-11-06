@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
+  <defs>
+    <filter id="card-shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#0f1e33" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <!-- Squircle Base Plate (Light & Clean) -->
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="#ffffff" stroke="#e2e8f0" stroke-width="4" filter="url(#card-shadow)"/>
+
+  <!-- Bubble 1: Голос (Глубокий индиго с органичной Безье-дугой хвостика) -->
+  <path d="M 172 100 
+           L 326 100 C 374 100, 400 126, 400 174 
+           L 400 214 C 400 262, 374 288, 326 288 
+           L 172 288 
+           C 142 288, 120 296, 96 320 
+           C 106 300, 110 282, 110 258 
+           L 110 174 C 110 126, 136 100, 172 100 Z" 
+        fill="#0f1e33"/>
+
+  <!-- Звуковая волна (Лазурный + Неоново-голубой + Белый центр) -->
+  <g fill="#0284c7">
+    <rect x="150" y="174" width="16" height="48" rx="8"/>
+    <rect x="180" y="142" width="16" height="112" rx="8" fill="#38bdf8"/>
+    <rect x="210" y="124" width="16" height="148" rx="8" fill="#ffffff"/>
+    <rect x="240" y="138" width="16" height="120" rx="8" fill="#38bdf8"/>
+    <rect x="270" y="160" width="16" height="76" rx="8"/>
+    <rect x="300" y="180" width="16" height="36" rx="8"/>
+  </g>
+
+  <!-- Bubble 2: Карточка расшифровки (Белая, скругленный сквиркл БЕЗ паразитного хвостика) -->
+  <rect x="168" y="214" width="244" height="166" rx="58" fill="#ffffff" stroke="#0f1e33" stroke-width="11"/>
+
+  <!-- Строки расшифровки и аватары спикеров -->
+  <g fill="#64748b">
+    <!-- Спикер 1 -->
+    <circle cx="210" cy="272" r="13" fill="#0284c7"/>
+    <rect x="242" y="261" width="130" height="22" rx="11" fill="#0f1e33"/>
+    
+    <!-- Спикер 2 -->
+    <circle cx="210" cy="320" r="13" fill="#8b5cf6"/>
+    <rect x="242" y="309" width="94" height="22" rx="11" fill="#94a3b8"/>
+  </g>
+</svg>

@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://guest363.github.io/Podtekst/sitemap.xml
