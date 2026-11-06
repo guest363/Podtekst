@@ -1083,27 +1083,15 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     handle_upload(request);
                 }
                 (tiny_http::Method::Post, "/api/record/start") => {
-                    #[cfg(feature = "onnx")]
-                    let transcribing = crate::transcribe::is_transcribe_running();
-                    #[cfg(not(feature = "onnx"))]
-                    let transcribing = false;
-                    if transcribing {
-                        json_response(
-                            request,
-                            json!({"ok": false, "error": "Дождитесь окончания расшифровки"}),
-                            409,
-                        );
-                    } else {
-                        let body = read_body_to_json(&mut request);
-                        let mode = body.get("mode").and_then(|m| m.as_str()).unwrap_or("split");
-                        let screen = body
-                            .get("screen")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-                        let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-                        let res = start_recording_inner(&mut st, mode, screen);
-                        json_response(request, res, 200);
-                    }
+                    let body = read_body_to_json(&mut request);
+                    let mode = body.get("mode").and_then(|m| m.as_str()).unwrap_or("split");
+                    let screen = body
+                        .get("screen")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
+                    let res = start_recording_inner(&mut st, mode, screen);
+                    json_response(request, res, 200);
                 }
                 (tiny_http::Method::Post, "/api/record/stop") => {
                     let body = read_body_to_json(&mut request);
