@@ -405,6 +405,10 @@ jobs:
             echo "::error::В APK нет versionCode"; exit 1; }
           echo "$badging" | grep -q "native-code:.*arm64-v8a" || {
             echo "::error::В APK нет ABI arm64-v8a"; exit 1; }
+          # Rust вызывает эти методы MainActivity через JNI по имени. R8 в release
+          # вырезает их без keep-правила, и запись падает с NoSuchMethodError.
+          unzip -p "$apk" 'classes*.dex' | strings | grep -q 'startRecordingService' || {
+            echo "::error::R8 удалил JNI-методы MainActivity (проверьте proguard-rules.pro)"; exit 1; }
           # Сертификат в лог не печатаем: только результат проверки схем подписи.
           "$apksigner" verify --print-certs --verbose "$apk" > "$RUNNER_TEMP/apksigner.txt"
           grep -E "Verified using v[0-9]+ scheme .*: true" "$RUNNER_TEMP/apksigner.txt" || {

@@ -19,3 +19,13 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Rust вызывает эти методы MainActivity по имени через JNI. Без keep R8
+# вырезает их из release-APK, и старт записи падает с NoSuchMethodError.
+-keepclassmembers class io.github.guest363.podtekst.MainActivity {
+    public void startRecordingService();
+    public void startProcessingService();
+    public void stopRecordingService();
+    public void stopProcessingService();
+    public void shareFile(java.lang.String);
+}

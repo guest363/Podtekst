@@ -414,7 +414,12 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
                                         (true, true) => "startProcessingService",
                                         (true, false) => "startRecordingService",
                                     };
-                                    let _ = env.call_method(activity, method, "()V", &[]);
+                                    if let Err(e) = env.call_method(activity, method, "()V", &[]) {
+                                        // Ошибка JNI оставляет Java-исключение в потоке;
+                                        // без clear следующая JNI-операция роняет процесс.
+                                        let _ = env.exception_clear();
+                                        crate::note!("[ANDROID] {method}: {e}");
+                                    }
                                 });
                             },
                         ));
@@ -424,12 +429,15 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
                                 let Ok(jpath) = env.new_string(&path) else {
                                     return;
                                 };
-                                let _ = env.call_method(
+                                if let Err(e) = env.call_method(
                                     activity,
                                     "shareFile",
                                     "(Ljava/lang/String;)V",
                                     &[(&jpath).into()],
-                                );
+                                ) {
+                                    let _ = env.exception_clear();
+                                    crate::note!("[ANDROID] shareFile: {e}");
+                                }
                             });
                         }));
                     }

@@ -33,6 +33,7 @@ class RecordingService : Service() {
 
     private var recording = false
     private var processing = false
+    private var pendingStarts = 0
 
     @JvmStatic
     fun startRecording(context: Context) {
@@ -59,7 +60,9 @@ class RecordingService : Service() {
     }
 
     private fun stopIfIdle(context: Context) {
-      if (recording || processing) {
+      // Сервис ещё не дошёл до onStartCommand: stopService до startForeground
+      // система считает провалом запуска FGS и убивает процесс.
+      if (recording || processing || pendingStarts > 0) {
         runCatching {
           val manager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -74,6 +77,7 @@ class RecordingService : Service() {
 
     private fun start(context: Context) {
       val intent = Intent(context, RecordingService::class.java)
+      pendingStarts++
       runCatching {
         if (Build.VERSION.SDK_INT >= 26) {
           context.startForegroundService(intent)
@@ -81,6 +85,7 @@ class RecordingService : Service() {
           context.startService(intent)
         }
       }.onFailure {
+        pendingStarts = (pendingStarts - 1).coerceAtLeast(0)
         // Из фона Android запрещает старт FGS. Не роняем приложение: запись
         // в таком состоянии всё равно не получит микрофон, но UI покажет статус.
         Log.e("Podtekst", "start foreground service: $it")
@@ -92,12 +97,14 @@ class RecordingService : Service() {
       val title = when {
         both -> "Идёт запись и расшифровка"
         recording -> "Идёт запись"
-        else -> "Идёт расшифровка"
+        processing -> "Идёт расшифровка"
+        else -> "Подтекст"
       }
       val text = when {
         both -> "Можно погасить экран — запись и расшифровка продолжатся"
         recording -> "Можно погасить экран — запись продолжится"
-        else -> "Можно свернуть приложение — обработка продолжится"
+        processing -> "Можно свернуть приложение — обработка продолжится"
+        else -> "Завершаю работу"
       }
       val openIntent = Intent(context, MainActivity::class.java).apply {
         addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -143,14 +150,25 @@ class RecordingService : Service() {
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    if (!recording && !processing) {
+    // startForeground обязателен после каждого startForegroundService. Если
+    // сервис успел стать idle и вызвать stopSelf до startForeground, система
+    // убивает процесс с ForegroundServiceDidNotStartInTimeException.
+    val started = runCatching {
+      if (Build.VERSION.SDK_INT >= 29) {
+        startForeground(NOTIFICATION_ID, notification(this), foregroundType())
+      } else {
+        startForeground(NOTIFICATION_ID, notification(this))
+      }
+    }
+    pendingStarts = (pendingStarts - 1).coerceAtLeast(0)
+    if (started.isFailure) {
+      Log.e("Podtekst", "startForeground: ${started.exceptionOrNull()}")
       stopSelf(startId)
       return START_NOT_STICKY
     }
-    if (Build.VERSION.SDK_INT >= 29) {
-      startForeground(NOTIFICATION_ID, notification(this), foregroundType())
-    } else {
-      startForeground(NOTIFICATION_ID, notification(this))
+    if (!recording && !processing) {
+      stopSelf(startId)
+      return START_NOT_STICKY
     }
     return START_NOT_STICKY
   }
