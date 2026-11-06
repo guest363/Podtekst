@@ -3,6 +3,14 @@
 Все заметные изменения проекта. Формат - [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии - [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [0.6.3] - 2026-11-06
+
+### Исправлено
+
+* Android: release-APK больше не закрывается при начале записи. R8 удалял методы `MainActivity`, которые Rust вызывает через JNI; теперь они защищены keep-правилами, а ошибки JNI очищаются без падения процесса.
+* Android: foreground service не останавливается до `startForeground` — устранён `ForegroundServiceDidNotStartInTimeException` при остановке записи и запуске расшифровки.
+* Android: кнопка «Собрать и отправить отчёт» снова работает в release-сборке.
+
 ## [0.6.2] - 2026-11-06
 
 ### Исправлено
