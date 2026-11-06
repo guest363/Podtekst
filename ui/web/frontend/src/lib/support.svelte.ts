@@ -10,6 +10,8 @@ export interface DonateMethod {
 
 export const support = $state({
   methods: [] as DonateMethod[],
+  transcribedCount: 0,
+  savedMinutes: 0,
 })
 
 export async function loadSupportInfo(): Promise<void> {
@@ -20,6 +22,9 @@ export async function loadSupportInfo(): Promise<void> {
     if (d.donation && d.donation.methods) {
       support.methods = d.donation.methods as DonateMethod[]
     }
+    const stats = d.stats || {}
+    support.transcribedCount = Number(stats.transcribed_count) || 0
+    support.savedMinutes = Number(stats.total_saved_minutes) || 0
   } catch {
   }
 }
