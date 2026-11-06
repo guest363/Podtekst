@@ -50,7 +50,12 @@ class MainActivity : TauriActivity() {
 
   @Suppress("unused")
   fun stopRecordingService() {
-    RecordingService.stop(this)
+    RecordingService.stopRecording(this)
+  }
+
+  @Suppress("unused")
+  fun stopProcessingService() {
+    RecordingService.stopProcessing(this)
   }
 
   // Отчёт диагностики лежит во внутренней песочнице: без этой передачи файл

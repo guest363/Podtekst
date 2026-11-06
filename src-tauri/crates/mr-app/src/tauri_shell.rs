@@ -408,12 +408,11 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
                         mr_audio::capture::set_foreground_handler(Box::new(
                             move |processing, start| {
                                 handle.exec(move |env, activity, _| {
-                                    let method = if !start {
-                                        "stopRecordingService"
-                                    } else if processing {
-                                        "startProcessingService"
-                                    } else {
-                                        "startRecordingService"
+                                    let method = match (start, processing) {
+                                        (false, true) => "stopProcessingService",
+                                        (false, false) => "stopRecordingService",
+                                        (true, true) => "startProcessingService",
+                                        (true, false) => "startRecordingService",
                                     };
                                     let _ = env.call_method(activity, method, "()V", &[]);
                                 });
