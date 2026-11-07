@@ -23,6 +23,64 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+fn private_options() -> std::fs::OpenOptions {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    // Права выставляются при создании: окно «файл уже виден, но ещё 0644»
+    // иначе существует на shared-машинах.
+    o.mode(0o600);
+    o
+}
+
+#[cfg(not(unix))]
+fn private_options() -> std::fs::OpenOptions {
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    o
+}
+
+#[cfg(windows)]
+fn apply_private_acl(path: &Path) {
+    // Фолбэк из §16: полный SetNamedSecurityInfoW не оправдан для двух файлов.
+    let user = std::env::var("USERNAME").unwrap_or_default();
+    if user.is_empty() {
+        return;
+    }
+    let _ = std::process::Command::new("icacls")
+        .arg(path)
+        .args(["/inheritance:r", "/grant:r"])
+        .arg(format!("{user}:F"))
+        .status();
+}
+
+#[cfg(not(windows))]
+fn apply_private_acl(_path: &Path) {}
+
+/// Итоги содержат личный текст встречи: файл создаётся 0600 (Unix) и с
+/// DACL только для текущего пользователя (Windows), в отличие от записей.
+pub(crate) fn write_atomic_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = parent.join(format!(".{name}.{}.{seq}.tmp", std::process::id()));
+    {
+        use std::io::Write as _;
+        let mut file = private_options().create_new(true).open(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    apply_private_acl(&tmp);
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    apply_private_acl(path);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -36,6 +94,28 @@ mod tests {
         write_atomic(&p, b"one").unwrap();
         write_atomic(&p, b"two").unwrap();
         assert_eq!(std::fs::read(&p).unwrap(), b"two");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_write_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("mr-fsutil-priv-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("s.summary.json");
+        write_atomic_private(&p, b"{}").unwrap();
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "summary-артефакт должен быть только для владельца"
+        );
+        write_atomic_private(&p, b"[]").unwrap();
+        assert_eq!(
+            std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

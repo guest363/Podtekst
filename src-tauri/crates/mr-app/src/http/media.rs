@@ -162,6 +162,7 @@ pub(super) fn recordings_list() -> Vec<serde_json::Value> {
             .unwrap_or_default();
         let jp = dir.join(format!("{stem}.transcript.json"));
         let has_transcript = jp.exists() && dir.join(format!("{stem}.md")).exists();
+        let has_summary = crate::summary::has_summary(&dir, &stem);
         let (jp_len, jp_mtime) = jp
             .metadata()
             .ok()
@@ -198,6 +199,7 @@ pub(super) fn recordings_list() -> Vec<serde_json::Value> {
             "mtime": mtime,
             "date": date,
             "has_transcript": has_transcript,
+            "has_summary": has_summary,
             "speakers_count": speakers_count,
             "owned": registry.is_owned(&p),
         }));
@@ -637,7 +639,7 @@ fn save_dir_canon() -> PathBuf {
 
 /// Путь обязан лежать внутри папки записей: иначе 404.
 /// Файл может ещё не существовать (транскрипта нет) — тогда проверяем родителя.
-pub(super) fn inside_save_dir(p: &Path) -> bool {
+pub(crate) fn inside_save_dir(p: &Path) -> bool {
     let dir = save_dir_canon();
     let abs = if p.is_absolute() {
         p.to_path_buf()

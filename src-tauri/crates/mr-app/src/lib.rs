@@ -18,6 +18,7 @@ mod media_registry;
 mod privacy;
 mod recording;
 pub(crate) mod screen;
+mod summary;
 mod sysmem;
 mod system;
 #[cfg(feature = "tauri-ui")]
@@ -118,7 +119,9 @@ pub(crate) fn opener_url(url: &str) {
 pub fn mobile_main() {
     let state = Arc::new(Mutex::new(recording::RecordingState::default()));
     cleanup_stale_files();
+    summary::init();
     let code = tauri_shell::run_tauri_window(state, DEFAULT_HTTP_PORT, true);
+    summary::shutdown();
     std::process::exit(code);
 }
 
@@ -379,6 +382,7 @@ pub fn run_cli() {
     };
     cleanup_stale_files();
     system::cleanup_stale();
+    summary::init();
     crash::begin_run();
 
     if start_on_launch {
@@ -400,6 +404,7 @@ pub fn run_cli() {
     if !cli.web && !cli.browser && !cli.no_browser {
         let visible = cli.show || !cli.tray;
         let code = tauri_shell::run_tauri_window(state.clone(), cli.port, visible);
+        summary::shutdown();
         if code != 0 {
             std::process::exit(code);
         }
@@ -702,6 +707,10 @@ mod live_api_tests {
         );
         assert_eq!(
             item.get("has_transcript").and_then(|x| x.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            item.get("has_summary").and_then(|x| x.as_bool()),
             Some(false)
         );
         assert!(

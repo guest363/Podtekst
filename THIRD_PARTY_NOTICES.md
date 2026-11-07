@@ -15,11 +15,20 @@
 | GigaAM-v3 e2e RNNT (int8, ONNX) | MIT | https://github.com/salute-developers/GigaAM , конвертация https://huggingface.co/istupakov/gigaam-v3-onnx |
 | Whisper large-v3-turbo (int8, ONNX) | MIT (базовая модель OpenAI) | https://github.com/openai/whisper , конвертация https://huggingface.co/onnx-community/whisper-large-v3-turbo |
 | ERes2NetV2 192-dim (speech_eres2netv2_sv_zh-cn_16k-common) | Apache-2.0 | https://github.com/modelscope/3D-Speaker , конвертация https://huggingface.co/protocolvoice/asr-models |
+| Qwen3-4B-Instruct-2507 Q4_K_M (локальные итоги) | Apache-2.0 (базовая модель Qwen) | https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507 , веса https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF |
 
 Модели не входят в репозиторий и не распространяются вместе с бинарником:
 приложение скачивает их с указанных источников по HTTPS и проверяет SHA-256.
 Названия моделей и компаний принадлежат их правообладателям; проект не
-аффилирован с Sber, OpenAI, Alibaba и Silero Team.
+аффилирован с Sber, OpenAI, Alibaba, Silero Team и Qwen/Alibaba Cloud.
+
+## Runtime локальных итогов (скачивается отдельно, в репозиторий не входит)
+
+`llama.cpp llama-server` pin `b12182` (commit `fd27b2034`) распространяется по
+лицензии MIT: https://github.com/ggml-org/llama.cpp/blob/master/LICENSE ,
+сборка https://github.com/ggml-org/llama.cpp/releases/tag/b12182 . Каталог
+ресурсов (`.so`/`.dylib`/`.dll`) не входит в git; SHA архивов зафиксирован в
+`src-tauri/crates/mr-app/summary-runtime-manifest.json`.
 
 ## Тестовые фикстуры
 

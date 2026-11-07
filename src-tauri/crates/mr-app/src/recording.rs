@@ -751,6 +751,7 @@ pub(crate) mod shutdown {
                 if st.is_recording {
                     let _ = super::stop_recording_inner(&mut st, false);
                 }
+                crate::summary::shutdown();
                 crate::crash::mark_clean();
                 std::process::exit(0);
             }
