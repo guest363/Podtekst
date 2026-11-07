@@ -171,7 +171,7 @@ pub(super) fn soft_claim_unsupported(
     ) {
         return true;
     }
-    if contains_any(&text, &["отвечает", "владелец", "owner", "делает"])
+    if contains_any(&text, &["отвечает", "владелец", "owner", " делает"])
         && !has_explicit_name(utterances, indices)
     {
         return true;
@@ -230,22 +230,5 @@ pub(super) fn contains_any(text: &str, needles: &[&str]) -> bool {
 }
 
 pub(super) fn decision_cue(support: &str) -> bool {
-    contains_any(
-        support,
-        &[
-            "решили",
-            "решение",
-            "договорились",
-            "зафиксировали",
-            "фиксируем",
-            "утвердили",
-            "согласовали",
-            "приняли",
-            "постановили",
-            "decided",
-            "decision",
-            "agreed",
-            "approved",
-        ],
-    )
+    crate::cues::decision_cue(support)
 }

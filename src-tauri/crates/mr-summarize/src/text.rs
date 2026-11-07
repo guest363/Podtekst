@@ -130,6 +130,30 @@ pub fn token_set(input: &str) -> HashSet<String> {
     tokens(input).into_iter().collect()
 }
 
+/// Грубый стем для русской морфологии: первые 5 кириллических / 4 латинских
+/// символа. Достаточно для «обновить»/«обновлю», не ломает числа и даты.
+pub fn stem_token(token: &str) -> String {
+    let mut chars = token.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    let take = if first.is_ascii_alphabetic() {
+        4
+    } else if first.is_alphabetic() {
+        5
+    } else {
+        return token.to_owned();
+    };
+    token.chars().take(take).collect()
+}
+
+pub fn stem_set(input: &str) -> HashSet<String> {
+    token_set(input)
+        .into_iter()
+        .map(|token| stem_token(&token))
+        .collect()
+}
+
 /// Стем-матч группы: токен начинается со стема, фраза — точная с пробелами.
 pub fn stem_hit(normalized: &str, stem: &str) -> bool {
     let tokens: Vec<&str> = normalized.split_whitespace().collect();
@@ -237,6 +261,14 @@ mod tests {
     #[test]
     fn tokens_drop_short_and_stopwords() {
         assert_eq!(tokens("Я и ты решили задачу"), vec!["решили", "задачу"]);
+    }
+
+    #[test]
+    fn stems_match_russian_and_latin_inflections() {
+        let a = stem_set("обновить доделать документацию");
+        let b = stem_set("обновлю доделаю документацию");
+        assert!(a.intersection(&b).count() >= 2, "{a:?} != {b:?}");
+        assert_eq!(stem_token("updated"), stem_token("update"));
     }
 
     #[test]

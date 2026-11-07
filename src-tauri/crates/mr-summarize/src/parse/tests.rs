@@ -99,3 +99,50 @@ fn quote_is_extracted() {
 fn output_without_items_is_invalid() {
     assert!(parse("## Кратко\n", p("meeting")).is_err());
 }
+
+#[test]
+fn flat_output_infers_decisions_tasks_questions() {
+    let output = "\
+Решили перенести запуск на следующую неделю.
+Борис доделает отчёт до среды.
+Что осталось по бюджету?
+Обсудили сроки и риски.
+";
+    let parsed = parse(output, p("meeting")).unwrap();
+    let ids: Vec<&str> = parsed
+        .sections
+        .iter()
+        .filter(|s| !s.items.is_empty())
+        .map(|s| s.id)
+        .collect();
+    assert!(ids.contains(&"decisions"), "{ids:?}");
+    assert!(ids.contains(&"tasks"), "{ids:?}");
+    assert!(ids.contains(&"questions"), "{ids:?}");
+    assert!(ids.contains(&"brief"), "{ids:?}");
+    assert!(parsed.warnings.contains(&Warning::ParserRecovered));
+    assert!(parsed.parser_recovered >= 4);
+    let tasks = parsed.sections.iter().find(|s| s.id == "tasks").unwrap();
+    assert_eq!(tasks.items.len(), 1);
+    assert!(tasks.items[0].task.is_some());
+}
+
+#[test]
+fn bare_colon_headings_are_sections() {
+    let output = "Кратко:\n- Обсудили запуск.\nОткрытые вопросы:\n- Когда старт?\n";
+    let parsed = parse(output, p("meeting")).unwrap();
+    assert_eq!(parsed.sections[0].items.len(), 1);
+    assert_eq!(parsed.sections[3].items.len(), 1);
+}
+
+#[test]
+fn recognized_headings_detection() {
+    assert!(!has_recognized_headings(
+        "Решили запуск.\nПроверить отчёт.",
+        p("meeting")
+    ));
+    assert!(has_recognized_headings(
+        "## Кратко\n- Пункт.\n",
+        p("meeting")
+    ));
+    assert!(has_recognized_headings("Кратко:\n- Пункт.\n", p("meeting")));
+}

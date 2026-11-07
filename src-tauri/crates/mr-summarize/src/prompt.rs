@@ -64,6 +64,16 @@ pub fn build_with_nonce(
         user.push_str(title);
         user.push('\n');
     }
+    if let Some(first) = titles.first() {
+        user.push_str(&format!(
+            "\nНачни ответ с «## {first}». Не пропускай заголовки разделов и не объединяй секции.\n"
+        ));
+        user.push_str("Пример структуры:\n");
+        user.push_str(&format!("## {first}\n- <пункт>\n"));
+        if let Some(second) = titles.get(1) {
+            user.push_str(&format!("## {second}\n- <пункт>\n"));
+        }
+    }
     user.push_str("\nПиши только пункты «- <text>», без вложенных списков.\n");
     if preset.sections.iter().any(|s| s.role.is_task()) {
         user.push_str("В секциях задач: «- <что>; Кто: <...>; Срок: <...>».\n");
@@ -136,6 +146,64 @@ pub fn build_reduce_with_nonce(
         .enumerate()
         .map(|(i, text)| serde_json::json!({"i": i, "text": text}))
         .collect();
+    let json = serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_owned());
+    user.push_str(&format!(
+        "\n<<<DATA_{nonce}_BEGIN>>>\n{json}\n<<<DATA_{nonce}_END>>>\n"
+    ));
+    Prompt {
+        system,
+        user,
+        nonce: nonce.to_owned(),
+        prompt_version: preset.prompt_version.to_owned(),
+    }
+}
+
+/// Переписать плоский ответ без заголовков в точный контракт секций.
+pub fn build_repair(preset: &Preset, language: Language, flat_output: &str) -> Prompt {
+    let nonce = new_nonce(&[]);
+    build_repair_with_nonce(preset, language, flat_output, &nonce)
+}
+
+pub fn build_repair_with_nonce(
+    preset: &Preset,
+    language: Language,
+    flat_output: &str,
+    nonce: &str,
+) -> Prompt {
+    let mut system = SYSTEM_PROMPT.to_owned();
+    system.push_str(" Ты переписываешь плоский список в точный формат разделов. Не добавляй факты, которых нет во входном тексте.");
+    if language == Language::En {
+        system.push(' ');
+        system.push_str(ENGLISH_SUFFIX);
+    }
+    let titles: Vec<&str> = preset
+        .sections
+        .iter()
+        .map(|s| {
+            if language == Language::En {
+                s.title_en
+            } else {
+                s.title_ru
+            }
+        })
+        .collect();
+    let mut user = String::new();
+    for title in &titles {
+        user.push_str("## ");
+        user.push_str(title);
+        user.push('\n');
+    }
+    if let Some(first) = titles.first() {
+        user.push_str(&format!(
+            "\nПерепиши текст из DATA в разделы шаблона. Начни с «## {first}»; не пропускай заголовки. Каждый пункт — отдельная строка «- <text>».\n"
+        ));
+        user.push_str("Пример структуры:\n");
+        user.push_str(&format!("## {first}\n- <пункт>\n"));
+        if let Some(second) = titles.get(1) {
+            user.push_str(&format!("## {second}\n- <пункт>\n"));
+        }
+    }
+    let rows = serde_json::json!([{"i": 0, "text": flat_output}]);
     let json = serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_owned());
     user.push_str(&format!(
         "\n<<<DATA_{nonce}_BEGIN>>>\n{json}\n<<<DATA_{nonce}_END>>>\n"
@@ -279,6 +347,35 @@ mod tests {
         );
         assert!(prompt.user.contains("## Brief"));
         assert!(prompt.system.contains("Output language: English"));
+    }
+
+    #[test]
+    fn prompt_starts_with_first_title_instruction() {
+        let prompt = build_with_nonce(
+            preset::get("meeting").unwrap(),
+            &utterances(),
+            Language::Ru,
+            "0123456789abcdef0123456789abcdef",
+        );
+        assert!(prompt.user.contains("Начни ответ с «## Кратко»"));
+        assert!(prompt.user.contains("Не пропускай заголовки"));
+        assert!(prompt.user.contains("Пример структуры"));
+    }
+
+    #[test]
+    fn repair_prompt_wraps_flat_output() {
+        let prompt = build_repair_with_nonce(
+            preset::get("meeting").unwrap(),
+            Language::Ru,
+            "- Обсудили срок.\n- Решили перенести запуск.",
+            "0123456789abcdef0123456789abcdef",
+        );
+        assert!(prompt.user.contains("Перепиши текст из DATA"));
+        assert!(prompt.system.contains("Не добавляй факты"));
+        assert!(prompt.user.contains("Решили перенести запуск."));
+        assert!(prompt
+            .user
+            .contains("<<<DATA_0123456789abcdef0123456789abcdef_BEGIN>>>"));
     }
 
     #[test]

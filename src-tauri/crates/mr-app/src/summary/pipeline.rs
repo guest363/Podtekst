@@ -110,6 +110,7 @@ pub fn run(
         cancel,
         on_event: &mut *on_event,
         retry: &mut retry,
+        language,
     };
     let (parsed, last_req) = if single {
         let prompt = prompt::build(preset, &transcript.utterances, language);
@@ -400,6 +401,7 @@ struct GenCtx<'a> {
     cancel: &'a CancelToken,
     on_event: &'a mut dyn FnMut(BackendEvent),
     retry: &'a mut RetryState,
+    language: text::Language,
 }
 
 struct Generated {
@@ -417,6 +419,27 @@ fn generate_with_retry(
     let out = backend
         .generate(req, ctx.cancel, ctx.on_event)
         .map_err(map_backend)?;
+    if !out.trim().is_empty() && !parse::has_recognized_headings(&out, preset) {
+        ctx.retry.retries += 1;
+        ctx.retry.reason = Some("flat_format".to_string());
+        let repair_prompt = prompt::build_repair(preset, ctx.language, &out);
+        let repair_req = request_seed(&request(ctx.info, &repair_prompt, ctx.max_tokens), 43);
+        match backend.generate(&repair_req, ctx.cancel, ctx.on_event) {
+            Ok(repaired) => {
+                if let Ok(parsed) = parse::parse(&repaired, preset) {
+                    return Ok(Generated {
+                        raw: repaired,
+                        parsed,
+                        req: repair_req,
+                    });
+                }
+            }
+            Err(BackendError::Cancelled) => {
+                return Err(super::SummaryJobError::Cancelled);
+            }
+            Err(_) => {}
+        }
+    }
     match parse::parse(&out, preset) {
         Ok(parsed) => Ok(Generated {
             raw: out,
@@ -565,6 +588,59 @@ mod tests {
     #[test]
     fn ten_minute_source_stays_single_pass() {
         assert!(estimate_single_pass(9_500, 768));
+    }
+
+    #[test]
+    fn fake_flat_output_is_repaired_and_recovered() {
+        let dir = std::env::temp_dir().join(format!(
+            "mr-pipeline-flat-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let utterances = vec![
+            serde_json::json!({"start":0.0,"end":1.0,"speaker":"Анна","text":"Решили перенести запуск."}),
+            serde_json::json!({"start":1.0,"end":2.0,"speaker":"Борис","text":"Борис доделает отчёт до среды."}),
+            serde_json::json!({"start":2.0,"end":3.0,"speaker":"Анна","text":"Что осталось по бюджету?"}),
+        ];
+        let paths = super::super::store::summary_paths(&dir, "flat", "flat.wav".into());
+        std::fs::write(
+            &paths.transcript,
+            serde_json::to_vec(&serde_json::json!({"utterances": utterances})).unwrap(),
+        )
+        .unwrap();
+        let spec = JobSpec {
+            paths,
+            preset_id: "meeting".to_string(),
+            detail: Detail::Normal,
+            confirmed_sensitive: false,
+            allow_downgrade: false,
+        };
+        let mut backend = super::super::fake::FakeBackend::new("flat_once");
+        let cancel = CancelToken::new();
+        let mut on_event = |_event: BackendEvent| {};
+        let output = super::run(&spec, &mut backend, &cancel, &mut on_event)
+            .expect("flat repair должен дать артефакт");
+        assert_eq!(
+            output.artifact.provenance.retry_reason.as_deref(),
+            Some("flat_format")
+        );
+        let sections = &output.artifact.summary.sections;
+        assert!(sections
+            .iter()
+            .any(|s| s.id == "decisions" && !s.items.is_empty()));
+        let task = sections
+            .iter()
+            .find(|s| s.id == "tasks")
+            .and_then(|s| s.items.first())
+            .and_then(|i| i.task.as_ref())
+            .expect("task потерян");
+        assert_eq!(task.assignee.as_deref(), Some("Борис"));
+        assert_eq!(task.deadline.as_deref(), Some("до среды"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

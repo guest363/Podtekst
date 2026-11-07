@@ -3,6 +3,7 @@ use std::sync::OnceLock;
 use regex::Regex;
 
 use crate::artifact::{DeadlineSource, TaskMeta, Warning};
+use crate::cues;
 use crate::error::SummaryError;
 use crate::preset::{Preset, SectionRole};
 
@@ -53,6 +54,11 @@ pub fn empty(preset: &Preset) -> ParsedSummary {
 }
 
 pub fn parse(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryError> {
+    if !has_recognized_headings(output, preset)
+        && output.lines().any(|line| !line.trim().is_empty())
+    {
+        return parse_flat(output, preset);
+    }
     let mut sections: Vec<ParsedSection> = preset
         .sections
         .iter()
@@ -92,6 +98,16 @@ pub fn parse(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErro
             last = None;
             last_raw = trimmed.to_owned();
             continue;
+        }
+        // Bare «Кратко:» / «Открытые вопросы:» — тоже заголовок, но только
+        // если он есть в каталоге; иначе это обычная строка.
+        if let Some(name) = bare_heading(trimmed) {
+            if let Some(id) = resolve_heading(preset, &name) {
+                current = sections.iter().position(|s| s.id == id);
+                last = None;
+                last_raw = trimmed.to_owned();
+                continue;
+            }
         }
 
         let current = *current.get_or_insert(default_index);
@@ -204,6 +220,102 @@ pub fn parse(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErro
         parser_recovered: recovered,
         injection_flagged: injection,
     })
+}
+
+pub fn has_recognized_headings(output: &str, preset: &Preset) -> bool {
+    output.lines().any(|line| {
+        let candidate = heading(line.trim()).or_else(|| bare_heading(line.trim()));
+        candidate
+            .and_then(|name| resolve_heading(preset, &name))
+            .is_some()
+    })
+}
+
+fn parse_flat(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryError> {
+    let mut doc = empty(preset);
+    let default_index = doc
+        .sections
+        .iter()
+        .position(|s| s.id == "brief")
+        .unwrap_or(0);
+    let decisions = section_index(preset, &["decisions"]);
+    let task = section_index(preset, &["tasks", "next_steps", "todo"]);
+    let questions = section_index(preset, &["questions"]);
+    let mut recovered = 0usize;
+    let mut injection = 0usize;
+
+    for raw in output.lines() {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let (label, text) = match label_line(trimmed) {
+            Some((label, value)) => (Some(label), clean_text(value)),
+            None => (None, clean_text(item_line(trimmed).unwrap_or(trimmed))),
+        };
+        if text.is_empty() {
+            continue;
+        }
+        if contains_injection(&text) {
+            injection += 1;
+            continue;
+        }
+        let (text, quote) = split_quote(&text);
+        let normalized = crate::text::normalize(&text);
+        let decision_label = label.as_deref() == Some("решение");
+        let task_label = matches!(label.as_deref(), Some("задача") | Some("что"));
+        let target = if decision_label {
+            decisions.unwrap_or(default_index)
+        } else if task_label {
+            task.unwrap_or(default_index)
+        } else if cues::decision_cue(&normalized) {
+            decisions.unwrap_or(default_index)
+        } else if cues::question_line(&normalized) {
+            questions.unwrap_or(default_index)
+        } else if cues::task_cue(&normalized) || looks_like_task(&normalized) {
+            task.unwrap_or(default_index)
+        } else {
+            default_index
+        };
+        let role = doc.sections[target].role;
+        let (text, task_meta) = if role == SectionRole::Task {
+            let (text, task_meta) = parse_task(&text);
+            (text, Some(task_meta.unwrap_or_else(empty_task)))
+        } else {
+            (text, None)
+        };
+        push_item(&mut doc.sections[target], text, role, task_meta, quote);
+        recovered += 1;
+    }
+    let items: usize = doc.sections.iter().map(|s| s.items.len()).sum();
+    if items == 0 {
+        return Err(SummaryError::InvalidOutput("no sections or items".into()));
+    }
+    doc.parser_recovered = recovered;
+    doc.warnings.push(Warning::ParserRecovered);
+    if injection > 0 {
+        doc.injection_flagged = injection;
+        doc.warnings.push(Warning::InjectionSuspected);
+    }
+    Ok(doc)
+}
+
+fn section_index(preset: &Preset, ids: &[&str]) -> Option<usize> {
+    ids.iter()
+        .find_map(|id| preset.sections.iter().position(|s| s.id == *id))
+}
+
+fn looks_like_task(normalized: &str) -> bool {
+    (normalized.contains("кто ") || normalized.contains("срок ")) && cues::action_verb(normalized)
+}
+
+fn empty_task() -> TaskMeta {
+    TaskMeta {
+        assignee: None,
+        deadline: None,
+        deadline_ref: None,
+        deadline_source: DeadlineSource::Model,
+    }
 }
 
 fn push_item(
@@ -339,6 +451,15 @@ fn heading(line: &str) -> Option<String> {
     h.captures(line)
         .or_else(|| b.captures(line))
         .map(|c| c[1].trim().to_owned())
+}
+
+fn bare_heading(line: &str) -> Option<String> {
+    static BARE: OnceLock<Regex> = OnceLock::new();
+    let re = BARE.get_or_init(|| {
+        Regex::new(r"^\s*\*{0,2}([A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё \-]{1,40})\*{0,2}\s*:\s*$")
+            .unwrap()
+    });
+    re.captures(line).map(|c| c[1].trim().to_owned())
 }
 
 fn item_line(line: &str) -> Option<&str> {

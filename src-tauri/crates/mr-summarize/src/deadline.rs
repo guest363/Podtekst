@@ -22,26 +22,29 @@ pub struct DeadlineOutcome {
 
 pub fn find(utterances: &[Utterance], indices: &[usize]) -> Option<DeadlineMatch> {
     let mut best: Option<(usize, usize, usize, DeadlineMatch)> = None;
-    for index in indices {
+    for (rank, index) in indices.iter().enumerate() {
         let Some(utterance) = utterances.get(*index) else {
             continue;
         };
         for (start, len, end) in matches_in(&utterance.text) {
-            let candidate = (
-                start,
-                usize::MAX - len,
-                *index,
-                DeadlineMatch {
-                    phrase: utterance.text[start..end].to_owned(),
-                    utterance_index: *index,
-                    start: utterance.start,
-                },
-            );
             let better = best
                 .as_ref()
-                .is_none_or(|(bs, bl, bi, _)| (*index, start, usize::MAX - len) < (*bi, *bs, *bl));
+                .is_none_or(|(best_rank, best_start, best_len, _)| {
+                    rank < *best_rank
+                        || (rank == *best_rank
+                            && (start < *best_start || (start == *best_start && len > *best_len)))
+                });
             if better {
-                best = Some((start, usize::MAX - len, *index, candidate.3));
+                best = Some((
+                    rank,
+                    start,
+                    len,
+                    DeadlineMatch {
+                        phrase: utterance.text[start..end].to_owned(),
+                        utterance_index: *index,
+                        start: utterance.start,
+                    },
+                ));
             }
         }
     }
@@ -202,5 +205,13 @@ mod tests {
     fn leftmost_longest_prefers_earlier_phrase() {
         let utterances = [u("Сделаю до среды или 14.11.2026.")];
         assert_eq!(find(&utterances, &[0]).unwrap().phrase, "до среды");
+    }
+
+    #[test]
+    fn supplied_ref_order_wins_over_utterance_index() {
+        let utterances = [u("Сделаю до среды."), u("Позвоню в пятницу.")];
+        let found = find(&utterances, &[1, 0]).unwrap();
+        assert_eq!(found.utterance_index, 1);
+        assert_eq!(found.phrase, "в пятницу");
     }
 }

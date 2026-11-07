@@ -47,6 +47,10 @@ impl SummaryBackend for FakeBackend {
         if self.mode == "thin" || (self.mode == "thin_once" && call == 0) {
             return Ok("## Кратко\n- нет данных.\n".to_string());
         }
+        if self.mode == "flat_once" {
+            let flat = all_texts(&req.prompt).join("\n");
+            return self.finish(cancel, on_event, flat);
+        }
         let reduce = req.prompt.contains("Сведи пункты");
         if self.mode == "reduce_invalid" && reduce {
             return self.finish(cancel, on_event, String::new());
@@ -63,6 +67,7 @@ impl SummaryBackend for FakeBackend {
             .map(str::trim)
             .filter(|line| !line.is_empty())
             .collect();
+        titles.dedup();
         if self.mode == "no_decisions" && call == 0 {
             titles.retain(|title| !title.starts_with("Решения"));
         }
@@ -133,16 +138,19 @@ fn data_json(prompt: &str) -> Option<Vec<serde_json::Value>> {
     serde_json::from_str(json).ok()
 }
 
-fn utterance_texts(prompt: &str) -> Vec<String> {
+fn all_texts(prompt: &str) -> Vec<String> {
     data_json(prompt)
         .unwrap_or_default()
         .iter()
         .filter_map(|row| row.get("text").and_then(|v| v.as_str()))
         .map(str::trim)
         .filter(|t| !t.is_empty())
-        .take(2)
         .map(str::to_string)
         .collect()
+}
+
+fn utterance_texts(prompt: &str) -> Vec<String> {
+    all_texts(prompt).into_iter().take(2).collect()
 }
 
 fn reduce_text(prompt: &str) -> Option<String> {

@@ -23,6 +23,96 @@ fn run(preset: &str, output: &str, utterances: Vec<Utterance>) -> GroundedSummar
 }
 
 #[test]
+fn russian_morphology_supports_task_stems() {
+    let summary = run(
+        "meeting",
+        "## Кратко\n- Обсудили работу.\n## Задачи\n- Обновить документацию.\n- Доделать отчёт.\n",
+        vec![
+            u(0.0, "Анна", "Обсудили работу."),
+            u(1.0, "Борис", "Обновлю документацию."),
+            u(2.0, "Борис", "Доделаю отчёт."),
+        ],
+    );
+    let tasks: Vec<_> = summary
+        .sections
+        .iter()
+        .find(|s| s.id == "tasks")
+        .map(|s| s.items.iter().map(|i| i.text.as_str()).collect())
+        .unwrap_or_default();
+    assert_eq!(tasks, vec!["Обновить документацию.", "Доделать отчёт."]);
+    assert!(!summary.warnings.contains(&Warning::ItemsDroppedUnsupported));
+}
+
+#[test]
+fn task_assignee_from_speaker_and_text() {
+    let summary = run(
+        "meeting",
+        "## Кратко\n- Обсудили работу.\n## Задачи\n- Борис доделает отчёт до среды.\n",
+        vec![
+            u(0.0, "Анна", "Обсудили работу."),
+            u(1.0, "Борис", "Борис доделает отчёт до среды."),
+        ],
+    );
+    let task = &summary
+        .sections
+        .iter()
+        .find(|s| s.id == "tasks")
+        .unwrap_or_else(|| panic!("{summary:#?}"))
+        .items[0]
+        .task
+        .as_ref()
+        .unwrap();
+    assert_eq!(task.assignee.as_deref(), Some("Борис"));
+    assert_eq!(task.deadline.as_deref(), Some("до среды"));
+}
+
+#[test]
+fn task_assignee_from_inverted_name_and_verb() {
+    let summary = run(
+        "meeting",
+        "## Кратко\n- Обсудили работу.\n## Задачи\n- Отчёт подготовит Борис до пятницы.\n",
+        vec![
+            u(0.0, "Анна", "Обсудили работу."),
+            u(1.0, "Борис", "Отчёт подготовит Борис до пятницы."),
+        ],
+    );
+    let task = &summary
+        .sections
+        .iter()
+        .find(|s| s.id == "tasks")
+        .unwrap()
+        .items[0]
+        .task
+        .as_ref()
+        .unwrap();
+    assert_eq!(task.assignee.as_deref(), Some("Борис"));
+}
+
+#[test]
+fn adjacent_unrelated_deadline_is_not_attached() {
+    let summary = run(
+        "meeting",
+        "## Кратко\n- Обсудили работу.\n## Задачи\n- Подготовить отчёт; Кто: Борис; Срок: на пятницу\n",
+        vec![
+            u(0.0, "Борис", "Борис подготовит отчёт."),
+            u(1.0, "Анна", "Встреча на пятницу перенесена."),
+        ],
+    );
+    let task = &summary
+        .sections
+        .iter()
+        .find(|s| s.id == "tasks")
+        .unwrap()
+        .items[0]
+        .task
+        .as_ref()
+        .unwrap();
+    assert!(task.deadline.is_none(), "чужой срок приклеен: {task:?}");
+    assert_eq!(task.assignee.as_deref(), Some("Борис"));
+    assert!(summary.warnings.contains(&Warning::DeadlineNotStated));
+}
+
+#[test]
 fn decision_cue_detection_uses_full_source() {
     let with_cue = Transcript {
         utterances: vec![u(0.0, "Анна", "Решили перенести запуск.")],

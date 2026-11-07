@@ -6,7 +6,7 @@ use crate::text::{self, Transcript, Utterance};
 use std::collections::HashSet;
 
 mod rules;
-use rules::{contains_any, decision_cue, hard_facts_supported, soft_claim_unsupported};
+use rules::{decision_cue, hard_facts_supported, soft_claim_unsupported};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GroundedSummary {
@@ -75,12 +75,7 @@ pub fn ground(
                 quote,
             };
             if section.role == SectionRole::Task {
-                let task = reconcile_task(
-                    &mut output,
-                    &transcript.utterances,
-                    &support_indices,
-                    &mut warnings,
-                );
+                let task = reconcile_task(&mut output, &transcript.utterances, &mut warnings);
                 if !task {
                     soft += 1;
                     continue;
@@ -114,6 +109,12 @@ pub fn ground(
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| *i != brief)
+                .filter(|(i, _)| {
+                    matches!(
+                        parsed.sections[*i].id,
+                        "decisions" | "tasks" | "next_steps" | "todo"
+                    )
+                })
                 .flat_map(|(i, items)| {
                     items
                         .iter()
@@ -175,13 +176,13 @@ pub fn ground(
 }
 
 fn support(item: &ParsedItem, utterances: &[Utterance]) -> Option<(Vec<SummaryRef>, f64)> {
-    let item_tokens: HashSet<String> = text::token_set(&item.text);
+    let item_tokens: HashSet<String> = text::stem_set(&item.text);
     if item_tokens.is_empty() {
         return None;
     }
     let mut matches: Vec<(usize, usize, f64)> = Vec::new();
     for (index, utterance) in utterances.iter().enumerate() {
-        let utterance_tokens = text::token_set(&utterance.text);
+        let utterance_tokens = text::stem_set(&utterance.text);
         let intersection = item_tokens.intersection(&utterance_tokens).count();
         if intersection < 2 {
             continue;
@@ -260,24 +261,15 @@ fn validated_quote(
 fn reconcile_task(
     output: &mut SummaryItem,
     utterances: &[Utterance],
-    indices: &[usize],
     warnings: &mut Vec<Warning>,
 ) -> bool {
-    let support = support_text(utterances, indices);
-    if !contains_any(
-        &support,
-        &[
-            "сделаю",
-            "подготовлю",
-            "беру",
-            "отвечаю",
-            "нужно",
-            "надо",
-            "will update",
-            "task",
-            "deadline",
-        ],
-    ) {
+    let primary = output
+        .refs
+        .first()
+        .map(|r| adjacent(std::slice::from_ref(r), utterances.len()))
+        .unwrap_or_default();
+    let support = support_text(utterances, &primary);
+    if !crate::cues::task_cue(&support) {
         return false;
     }
     if output.task.is_none() {
@@ -289,7 +281,10 @@ fn reconcile_task(
         });
     }
     let task = output.task.as_mut().expect("task was just set");
-    let found = deadline::find(utterances, indices);
+    // Дедлайн — только из лучшей реплики: соседняя реплика часто про другую
+    // задачу, а «на пятницу» из неё — ложный срок (наблюдение E2E).
+    let best_index = output.refs.first().map(|r| r.utterance_index);
+    let found = best_index.and_then(|index| deadline::find(utterances, &[index]));
     let outcome = deadline::reconcile(task.deadline.as_deref(), found.as_ref());
     task.deadline = outcome.deadline;
     task.deadline_ref = outcome.reference;
@@ -298,30 +293,151 @@ fn reconcile_task(
         push_once(warnings, warning);
     }
 
+    let normalized_support = text::normalize(&support);
+    let normalized_text = text::normalize(&output.text);
+    let speaker = primary
+        .iter()
+        .filter_map(|index| utterances.get(*index))
+        .map(|u| u.speaker.trim())
+        .find(|s| !s.is_empty())
+        .map(str::to_owned);
     if let Some(assignee) = task.assignee.clone() {
-        if !support.contains(&text::normalize(&assignee)) {
+        let normalized = text::normalize(&assignee);
+        let speaker_match = speaker
+            .as_deref()
+            .map(|s| text::normalize(s) == normalized)
+            .unwrap_or(false);
+        if !normalized_support.contains(&normalized)
+            && !normalized_text.contains(&normalized)
+            && !speaker_match
+        {
             task.assignee = None;
             push_once(warnings, Warning::AssigneeNotStated);
         }
     }
-    if task.assignee.is_none()
-        && contains_any(&support, &["я сделаю", "я подготовлю", "беру", "отвечаю"])
-    {
-        if let Some(index) = indices.first() {
-            if let Some(u) = utterances.get(*index) {
-                task.assignee = Some(u.speaker.clone());
-            }
+    if task.assignee.is_none() {
+        task.assignee = speaker_assignee(speaker.as_deref(), &normalized_support, &normalized_text);
+        if task.assignee.is_none() {
+            task.assignee = extract_assignee_name(&output.text);
         }
     }
     true
 }
 
+fn speaker_assignee(speaker: Option<&str>, support: &str, task_text: &str) -> Option<String> {
+    let speaker = speaker?;
+    let normalized = text::normalize(speaker);
+    let placeholder = normalized.starts_with("спикер")
+        || normalized.starts_with("speaker")
+        || normalized == "гость"
+        || normalized == "участник";
+    if !placeholder && (support.contains(&normalized) || task_text.contains(&normalized)) {
+        return Some(speaker.to_owned());
+    }
+    if crate::cues::task_cue(support)
+        && (support.contains("я сделаю")
+            || support.contains("я подготовлю")
+            || support.contains("я проверю")
+            || support.contains("я обновлю")
+            || support.contains("я доделаю")
+            || support.contains("беру")
+            || support.contains("отвечаю"))
+    {
+        return Some(speaker.to_owned());
+    }
+    None
+}
+
+/// «Имя + verb» из текста задачи без `Кто:`. Имя — заглавное слово, рядом с
+/// которым стоит глагол-обязательство; даты/дни/служебные метки не имена.
+fn extract_assignee_name(text: &str) -> Option<String> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    for (index, word) in words.iter().enumerate() {
+        let clean = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
+        let mut chars = clean.chars();
+        let Some(first) = chars.next() else {
+            continue;
+        };
+        if !first.is_uppercase() || !chars.any(char::is_lowercase) {
+            continue;
+        }
+        let normalized = text::normalize(clean);
+        if is_not_name(&normalized) {
+            continue;
+        }
+        let prev_verb = index
+            .checked_sub(1)
+            .and_then(|i| words.get(i))
+            .map(|w| crate::cues::action_verb(w))
+            .unwrap_or(false);
+        let next_verb = words
+            .iter()
+            .skip(index + 1)
+            .take(2)
+            .any(|w| crate::cues::action_verb(w));
+        if prev_verb || next_verb {
+            return Some(clean.to_owned());
+        }
+    }
+    None
+}
+
+fn is_not_name(normalized: &str) -> bool {
+    matches!(
+        normalized,
+        "срок"
+            | "кто"
+            | "что"
+            | "задача"
+            | "решение"
+            | "отчет"
+            | "встреча"
+            | "план"
+            | "документ"
+            | "документация"
+            | "проект"
+            | "бюджет"
+            | "вопрос"
+            | "итог"
+            | "текст"
+            | "письмо"
+            | "звонок"
+            | "тест"
+            | "релиз"
+            | "презентация"
+            | "макет"
+            | "баг"
+            | "тикет"
+            | "сегодня"
+            | "завтра"
+            | "послезавтра"
+            | "понедельник"
+            | "вторник"
+            | "среда"
+            | "четверг"
+            | "пятница"
+            | "суббота"
+            | "воскресенье"
+    ) || normalized.starts_with("январ")
+        || normalized.starts_with("феврал")
+        || normalized.starts_with("март")
+        || normalized.starts_with("апрел")
+        || normalized.starts_with("май")
+        || normalized.starts_with("июн")
+        || normalized.starts_with("июл")
+        || normalized.starts_with("август")
+        || normalized.starts_with("сентябр")
+        || normalized.starts_with("октябр")
+        || normalized.starts_with("ноябр")
+        || normalized.starts_with("декабр")
+}
+
 fn dedupe(items: &mut Vec<Scored>) {
     let mut kept: Vec<Scored> = Vec::new();
     for candidate in items.drain(..) {
-        let tokens = text::token_set(&candidate.item.text);
+        let tokens = text::stem_set(&candidate.item.text);
         let duplicate = kept.iter_mut().find(|existing| {
-            let other = text::token_set(&existing.item.text);
+            let other = text::stem_set(&existing.item.text);
             jaccard(&tokens, &other) >= 0.8
         });
         match duplicate {

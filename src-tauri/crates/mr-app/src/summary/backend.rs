@@ -104,6 +104,7 @@ pub fn fake_mode() -> Option<&'static str> {
         "invalid" => Some("invalid"),
         "thin" => Some("thin"),
         "thin_once" => Some("thin_once"),
+        "flat_once" => Some("flat_once"),
         "no_decisions" => Some("no_decisions"),
         "reduce_invalid" => Some("reduce_invalid"),
         "slow" => Some("slow"),

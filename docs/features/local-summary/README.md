@@ -4,7 +4,8 @@
 кто что делает, что осталось — без сети, облака и телеметрии. Полная спецификация:
 [`SPEC.md`](SPEC.md). Baseline: [`G0-BASELINE.md`](G0-BASELINE.md); проверка домена:
 [`G1-REPORT.md`](G1-REPORT.md); runtime/HTTP/SSE: [`G2-G3-REPORT.md`](G2-G3-REPORT.md);
-матрица промптов: [`PROMPT_MATRIX.md`](PROMPT_MATRIX.md).
+E2E-фикс: [`E2E-QUALITY-FIX.md`](E2E-QUALITY-FIX.md); матрица промптов:
+[`PROMPT_MATRIX.md`](PROMPT_MATRIX.md).
 
 ## Область v1
 
