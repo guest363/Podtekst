@@ -16,6 +16,7 @@
 - `src/http/` - модули HTTP REST API (`media`, `files`, `people`, `transcribe_api`, `update`).
 - `src/transcribe/` - сквозной конвейер транскрибации: `mod.rs` (координатор), `diarize.rs` (чистые от перекрытий эмбеддинги и кластеризация), `speaker_assignment.rs` (Венгерский алгоритм для локальных спикеров PyAnnote), `word_speakers.rs` (интервальное дерево и пословная атрибуция), `events.rs` (SSE-события), `report.rs` (генерация Markdown и JSON).
 - `src/recording.rs` - управление активной сессией записи и таймерами памяти.
+- `src/summary/` - локальные итоги (G2/G3): `mod.rs` (флаги/ошибки/SSE-активность), `job.rs` (один job, cancel, preflight), `runner.rs` (worker и RAII-сброс), `view.rs` (`GET /api/summary`, classify), `catalog.rs` (модель/настройки/presets), `sidecar.rs` + `sidecar/helpers.rs` (pinned `llama-server`, токен 0600, stderr без текста, idle 120 с), `process.rs` (PID-файл и orphan cleanup по per-OS start_time), `runtime_locator.rs` (env/adjacent/Resources/Tauri/dev + `--version`/`--help`), `memory.rs` (12 ГиБ/6,5 ГиБ, VmHWM), `store.rs` (`<stem>.summary.json/.md`, 0600, stale/corrupt/unsupported), `pipeline.rs` (prompt → parse → ground → artifact), `config.rs` (D15: heuristic по умолчанию, manual_only — fallback). HTTP-адаптер — `src/http/summary_api.rs` (64 КиБ, коды §11); все summary-роуты безусловны, Android — 501, headless без runtime — 503.
 - `src/media_registry.rs` - реестр записанных и внешних импортированных файлов.
 - `src/desktop.rs` - управление системным треем, глобальным хоткеем и автозапуском.
 - `src/ipc.rs` - локальный сокет IPC для команд управления записью из терминала.
@@ -35,4 +36,13 @@ cargo clippy -p mr-app --all-targets --locked -- -D warnings
 
 # Проверка со сборкой нативного окна Tauri (требуются системные webkit-пакеты)
 cargo clippy -p mr-app --features tauri-ui --all-targets --locked -- -D warnings
+
+# Summary: контракт на fake backend и живой smoke на модели (env gate)
+cargo test -p mr-app --test summary_api_contract --locked
+MR_SUMMARY_RUNTIME=<dir> MR_SUMMARY_MODEL=<file>.gguf \
+  MR_TEST_TRANSCRIPT=<file>.transcript.json SUMMARY_REQUIRE_REAL=1 \
+  cargo test -p mr-app --test summary_real --locked -- --nocapture
 ```
+`MR_SUMMARY_FAKE_BACKEND` (только debug) — тестовый шов: `1|model_load|invalid|thin|slow`.
+Секреты итогов пишутся через `write_atomic_private` (0600/ACL); sidecar-токен — только в
+файле, не в argv. Реальные транскрипты и `.gguf` в тесты/репозиторий не попадают (P12).

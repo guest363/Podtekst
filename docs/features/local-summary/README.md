@@ -3,7 +3,8 @@
 Назначение: после локальной расшифровки собрать короткий протокол встречи — что решили,
 кто что делает, что осталось — без сети, облака и телеметрии. Полная спецификация:
 [`SPEC.md`](SPEC.md). Baseline: [`G0-BASELINE.md`](G0-BASELINE.md); проверка домена:
-[`G1-REPORT.md`](G1-REPORT.md); матрица промптов: [`PROMPT_MATRIX.md`](PROMPT_MATRIX.md).
+[`G1-REPORT.md`](G1-REPORT.md); runtime/HTTP/SSE: [`G2-G3-REPORT.md`](G2-G3-REPORT.md);
+матрица промптов: [`PROMPT_MATRIX.md`](PROMPT_MATRIX.md).
 
 ## Область v1
 
@@ -46,6 +47,10 @@ cargo test -p mr-summarize --locked --manifest-path src-tauri/Cargo.toml
 cargo clippy -p mr-summarize --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
 cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
 cargo test --workspace --locked --manifest-path src-tauri/Cargo.toml
+cargo test -p mr-app --test summary_api_contract --locked --manifest-path src-tauri/Cargo.toml
+MR_SUMMARY_RUNTIME=<dir>/llama-server MR_SUMMARY_MODEL=<dir>/Qwen3-4B-Instruct-2507-Q4_K_M.gguf \
+  MR_TEST_TRANSCRIPT=<file>.transcript.json SUMMARY_REQUIRE_REAL=1 \
+  cargo test -p mr-app --test summary_real --locked --manifest-path src-tauri/Cargo.toml -- --nocapture
 ```
 
 Домен `mr-summarize` не делает файлового ввода-вывода и не обращается к сети. Сетевые

@@ -125,6 +125,18 @@ pub fn mobile_main() {
     std::process::exit(code);
 }
 
+#[doc(hidden)]
+pub fn spawn_test_http_server(port: u16) {
+    summary::init();
+    let state = Arc::new(Mutex::new(recording::RecordingState::default()));
+    std::thread::spawn(move || run_http_server(state, port));
+}
+
+#[doc(hidden)]
+pub fn shutdown_summary_for_test() {
+    summary::shutdown();
+}
+
 // TCC и реальный SCK иначе проверяются только руками на живом Mac.
 #[cfg(target_os = "macos")]
 fn macos_selftest() -> i32 {
@@ -867,6 +879,42 @@ mod live_api_tests {
         );
         assert!(v.get("arch").and_then(|x| x.as_str()).is_some());
         assert!(v.get("self_update").and_then(|x| x.as_bool()).is_some());
+        assert_eq!(v["features"]["summary"].as_bool(), Some(true));
+        assert!(v
+            .get("summary_supported")
+            .and_then(|x| x.as_bool())
+            .is_some());
+        assert_eq!(v["summarizing"].as_bool(), Some(false));
+
+        // Summary: каталог и настройки живы без модели/runtime; отсутствующие
+        // маршруты не resurrect-ятся как «новые» эндпоинты.
+        let (st, v) = json(http(port, "GET", "/api/summary/presets", &[], &[]));
+        assert_eq!(st, 200, "summary presets: {v}");
+        assert_eq!(v["presets"].as_array().map(Vec::len), Some(7));
+        let (st, v) = json(http(port, "GET", "/api/summary/settings", &[], &[]));
+        assert_eq!(st, 200, "summary settings: {v}");
+        assert_eq!(v["capabilities"]["classifier"].as_str(), Some("heuristic"));
+        let (st, v) = json(http(port, "GET", "/api/summary", &[], &[]));
+        assert_eq!((st, v["code"].as_str()), (400, Some("no_file")));
+        let (st, v) = json(http(port, "GET", "/api/summary?file=nope.wav", &[], &[]));
+        assert_eq!((st, v["code"].as_str()), (404, Some("no_transcript")));
+        for (method, path) in [
+            ("GET", "/api/summary/status"),
+            ("GET", "/api/summary_stream"),
+            ("POST", "/api/summary/edit"),
+        ] {
+            let (st, _, _) = http(port, method, path, &[], b"{}");
+            assert_eq!(st, 404, "{method} {path} должен быть 404");
+        }
+        let too_big = vec![b'{'; 65 * 1024 + 1];
+        let (st, v) = json(http(
+            port,
+            "POST",
+            "/api/summary/classify",
+            &[("Content-Type", "application/json")],
+            &too_big,
+        ));
+        assert_eq!((st, v["code"].as_str()), (413, Some("body_too_large")));
 
         let (st, v) = json(http(port, "GET", "/api/transcribe/queue", &[], &[]));
         assert_eq!(st, 200);

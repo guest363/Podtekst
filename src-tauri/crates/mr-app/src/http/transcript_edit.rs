@@ -28,6 +28,9 @@ fn edit_transcript(body: &Value) -> Result<Value, (u16, String)> {
         .map_err(|e| (400, format!("Некорректные реплики: {e}")))?;
     let markdown = report::build_markdown(&data["meta"], &utterances);
     let text = report::build_text(&utterances);
+    let rev = serde_json::from_value::<Vec<mr_summarize::Utterance>>(data["utterances"].clone())
+        .ok()
+        .map(|items| mr_summarize::artifact::source_rev(&items));
     let json = serde_json::to_string_pretty(&data).map_err(|e| (500, e.to_string()))?;
     for (path, contents) in [
         (&json_path, json),
@@ -43,6 +46,7 @@ fn edit_transcript(body: &Value) -> Result<Value, (u16, String)> {
         "utterances": data["utterances"],
         "speakers_info": data["meta"]["speakers_info"],
         "markdown": markdown,
+        "rev": rev,
     }))
 }
 

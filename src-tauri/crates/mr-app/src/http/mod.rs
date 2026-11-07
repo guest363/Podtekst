@@ -3,6 +3,7 @@ pub(crate) mod files;
 pub(crate) mod journal_api;
 pub(crate) mod media;
 pub(crate) mod people;
+pub(crate) mod summary_api;
 pub(crate) mod system_api;
 pub(crate) mod transcribe_api;
 #[cfg(feature = "onnx")]
@@ -428,13 +429,23 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 let _ = request.respond(tiny_http::Response::empty(204));
                 return;
             }
+            // Android: любой /api/summary* — 501, не 404 (P09).
+            #[cfg(target_os = "android")]
+            if path.starts_with("/api/summary") {
+                summary_api::unsupported(request);
+                return;
+            }
             if (method == tiny_http::Method::Get || method == tiny_http::Method::Head)
                 && path.starts_with("/audio/")
             {
                 serve_audio_file(request, &path);
                 return;
             }
-            match (method, path.as_str()) {
+            match (method.clone(), path.as_str()) {
+                (_, p) if p == "/api/summary" || p.starts_with("/api/summary/") => {
+                    let recording = state.lock().unwrap_or_else(|e| e.into_inner()).is_recording;
+                    summary_api::dispatch(request, &method, p, &query, recording);
+                }
                 (tiny_http::Method::Get, "/") | (tiny_http::Method::Get, "/index.html") => {
                     serve_static(request, "index.html")
                 }
@@ -468,31 +479,37 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     let transcribing = false;
                     #[cfg(not(feature = "onnx"))]
                     let transcribing_file = String::new();
-                    json_response(
-                        request,
-                        json!({
-                            "recording": st.is_recording,
-                            "version": env!("CARGO_PKG_VERSION"),
-                            "arch": std::env::consts::ARCH,
-                            "self_update": update::available_for_status(),
-                            "transcribing": transcribing,
-                            "transcribing_file": transcribing_file,
-                            "elapsed": elapsed,
-                            "current_file": st.current_file,
-                            "mode": st.mode,
-                            "device": dev,
-                            "platform": std::env::consts::OS,
-                            "recordings_dir": save_dir().to_string_lossy(),
-                            "mic_level": mic_level,
-                            "sys_level": sys_level,
-                            "screen_recording": st.screen_session.is_some(),
-                            "screen_supported": crate::screen::is_screen_capture_supported(),
-                            "system_audio_permission": mr_audio::capture::system_audio_permission(),
-                            "ffmpeg": crate::ffmpeg_dl::status_json(),
-                            "core": "rust",
-                        }),
-                        200,
-                    );
+                    let mut status = json!({
+                        "recording": st.is_recording,
+                        "version": env!("CARGO_PKG_VERSION"),
+                        "arch": std::env::consts::ARCH,
+                        "self_update": update::available_for_status(),
+                        "transcribing": transcribing,
+                        "transcribing_file": transcribing_file,
+                        "elapsed": elapsed,
+                        "current_file": st.current_file,
+                        "mode": st.mode,
+                        "device": dev,
+                        "platform": std::env::consts::OS,
+                        "recordings_dir": save_dir().to_string_lossy(),
+                        "mic_level": mic_level,
+                        "sys_level": sys_level,
+                        "screen_recording": st.screen_session.is_some(),
+                        "screen_supported": crate::screen::is_screen_capture_supported(),
+                        "system_audio_permission": mr_audio::capture::system_audio_permission(),
+                        "ffmpeg": crate::ffmpeg_dl::status_json(),
+                        "core": "rust",
+                    });
+                    status["features"] = json!({"summary": crate::summary::supported()});
+                    if let (Some(target), Some(extra)) = (
+                        status.as_object_mut(),
+                        crate::summary::status_fields().as_object(),
+                    ) {
+                        for (key, value) in extra {
+                            target.insert(key.clone(), value.clone());
+                        }
+                    }
+                    json_response(request, status, 200);
                 }
                 (tiny_http::Method::Post, "/api/tools/ffmpeg/download") => {
                     // Тело не парсим, но сливаем, чтобы соединение не зависло
