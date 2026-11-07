@@ -22,6 +22,12 @@ struct Scored {
     ev: f64,
 }
 
+/// Есть ли в источнике явный decision-cue: нужен для `decision_missed`
+/// retry/flag без дублирования таблицы cue в mr-app.
+pub fn has_decision_cue(transcript: &Transcript) -> bool {
+    decision_cue(&text::normalize(&transcript.full_text()))
+}
+
 pub fn ground(
     parsed: &ParsedSummary,
     transcript: &Transcript,

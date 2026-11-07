@@ -23,6 +23,18 @@ fn run(preset: &str, output: &str, utterances: Vec<Utterance>) -> GroundedSummar
 }
 
 #[test]
+fn decision_cue_detection_uses_full_source() {
+    let with_cue = Transcript {
+        utterances: vec![u(0.0, "Анна", "Решили перенести запуск.")],
+    };
+    let without = Transcript {
+        utterances: vec![u(0.0, "Анна", "Обсудили запуск.")],
+    };
+    assert!(has_decision_cue(&with_cue));
+    assert!(!has_decision_cue(&without));
+}
+
+#[test]
 fn unsupported_items_are_dropped() {
     let summary = run(
         "meeting",

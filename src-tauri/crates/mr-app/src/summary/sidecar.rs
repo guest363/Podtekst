@@ -79,6 +79,7 @@ pub struct SidecarBackend {
     runtime: RuntimeInfo,
     model_sha: String,
     threads: u32,
+    load_ms: u64,
 }
 
 impl SidecarBackend {
@@ -87,11 +88,12 @@ impl SidecarBackend {
             runtime: runtime.clone(),
             model_sha,
             threads,
+            load_ms: 0,
         }
     }
 
     fn ensure_loaded(
-        &self,
+        &mut self,
         req: &GenerateRequest,
         cancel: &CancelToken,
     ) -> Result<(), BackendError> {
@@ -106,6 +108,7 @@ impl SidecarBackend {
         };
         if reuse {
             drop(cell);
+            self.load_ms = 0;
             touch();
             return Ok(());
         }
@@ -124,6 +127,7 @@ impl SidecarBackend {
             .stderr(Stdio::piped());
         prepend_lib_path(&mut cmd, &self.runtime.dir);
         hide_window(&mut cmd);
+        let load_started = Instant::now();
         let child = cmd.spawn().map_err(|e| BackendError::Load(e.to_string()))?;
         let pid = child.id();
         let start = super::process::start_time(pid).unwrap_or_default();
@@ -135,6 +139,7 @@ impl SidecarBackend {
             let _ = std::fs::remove_file(&token_path);
             return Err(e);
         }
+        self.load_ms = load_started.elapsed().as_millis() as u64;
         if let Err(error) = super::memory::check_peak(pid) {
             let _ = child.kill();
             let _ = child.wait();
@@ -167,7 +172,7 @@ impl SidecarBackend {
     }
 
     fn run_generate(
-        &self,
+        &mut self,
         req: &GenerateRequest,
         cancel: &CancelToken,
         on_event: &mut dyn FnMut(BackendEvent),
@@ -276,6 +281,10 @@ impl SummaryBackend for SidecarBackend {
     fn shutdown(&mut self) {
         // Жизненным циклом владеет idle-монитор/`summary::shutdown`: job не
         // должен гасить загруженную модель между запросами.
+    }
+
+    fn last_load_ms(&self) -> u64 {
+        self.load_ms
     }
 }
 

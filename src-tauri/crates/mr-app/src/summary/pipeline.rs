@@ -99,29 +99,23 @@ pub fn run(
 
     let generate_started = Instant::now();
     let prepare_ms = prepare_started.elapsed().as_millis() as u64;
-    let mut parser_retries = 0usize;
-    let mut retry_reason: Option<String> = None;
+    let mut retry = RetryState::default();
     let mut truncated = false;
     let mut coverage = 1.0f64;
     let mut chunk_count = 1usize;
-    let parsed = if single {
+    let mut reduce_levels = 0usize;
+    let mut ctx = GenCtx {
+        info: &info,
+        max_tokens,
+        cancel,
+        on_event: &mut *on_event,
+        retry: &mut retry,
+    };
+    let (parsed, last_req) = if single {
         let prompt = prompt::build(preset, &transcript.utterances, language);
-        let req = request(&spec.paths, &info, &prompt, max_tokens);
-        let out = backend
-            .generate(&req, cancel, on_event)
-            .map_err(map_backend)?;
-        match parse::parse(&out, preset) {
-            Ok(parsed) => parsed,
-            Err(_) => {
-                parser_retries += 1;
-                retry_reason = Some("invalid_output".to_string());
-                let retry = request_seed(&req, 43);
-                let out = backend
-                    .generate(&retry, cancel, on_event)
-                    .map_err(map_backend)?;
-                parse::parse(&out, preset).map_err(|_| super::SummaryJobError::InvalidOutput)?
-            }
-        }
+        let req = request(&info, &prompt, max_tokens);
+        let generated = generate_with_retry(backend, &req, preset, &mut ctx)?;
+        (generated.parsed, generated.req)
     } else {
         let plan = mr_summarize::chunk::plan(&transcript, mr_summarize::chunk::MAX_CHUNKS);
         truncated = plan.truncated;
@@ -131,36 +125,22 @@ pub fn run(
             return Err(super::SummaryJobError::InvalidOutput);
         }
         let total = plan.chunks.len() as u32;
-        let mut merged = parse::parse("", preset)
-            .map_err(|e| super::SummaryJobError::Internal(e.to_string()))?;
+        let mut merged = parse::empty(preset);
+        let mut partials: Vec<String> = Vec::new();
         let mut empty_chunks = 0usize;
         for (index, chunk) in plan.chunks.iter().enumerate() {
             cancel.check().map_err(map_backend)?;
-            on_event(BackendEvent {
+            (ctx.on_event)(BackendEvent {
                 phase: Phase::Map,
                 tokens_done: index as u32,
                 tokens_total: total,
             });
             let slice = &transcript.utterances[chunk.start..chunk.end];
             let prompt = prompt::build(preset, slice, language);
-            let req = request(&spec.paths, &info, &prompt, max_tokens);
-            let mut out = backend
-                .generate(&req, cancel, on_event)
-                .map_err(map_backend)?;
-            let mut parsed = parse::parse(&out, preset);
-            if parsed.is_err() {
-                parser_retries += 1;
-                retry_reason = Some("invalid_output".to_string());
-                out = backend
-                    .generate(&request_seed(&req, 43), cancel, on_event)
-                    .map_err(map_backend)?;
-                parsed = parse::parse(&out, preset);
-            }
-            let Ok(chunk_parsed) = parsed else {
-                empty_chunks += 1;
-                continue;
-            };
-            let items = chunk_parsed
+            let req = request(&info, &prompt, max_tokens);
+            let generated = generate_with_retry(backend, &req, preset, &mut ctx)?;
+            let items = generated
+                .parsed
                 .sections
                 .iter()
                 .map(|s| s.items.len())
@@ -168,10 +148,11 @@ pub fn run(
             if items == 0 {
                 empty_chunks += 1;
             }
-            for (target, source) in merged.sections.iter_mut().zip(chunk_parsed.sections) {
+            partials.push(generated.raw);
+            for (target, source) in merged.sections.iter_mut().zip(generated.parsed.sections) {
                 target.items.extend(source.items);
             }
-            merged.parser_recovered += chunk_parsed.parser_recovered;
+            merged.parser_recovered += generated.parsed.parser_recovered;
         }
         if empty_chunks * 10 > plan.chunks.len() * 3 {
             warnings.push(Warning::CoverageLow);
@@ -179,25 +160,105 @@ pub fn run(
         if merged.sections.iter().all(|s| s.items.is_empty()) {
             return Err(super::SummaryJobError::InvalidOutput);
         }
-        on_event(BackendEvent {
+        (ctx.on_event)(BackendEvent {
             phase: Phase::Reduce,
             tokens_done: 0,
             tokens_total: 0,
         });
-        merged
+        let repair_req = reduce_request(preset, language, &partials, &info, max_tokens);
+        match reduce_all(
+            backend,
+            preset,
+            language,
+            &partials,
+            &mut ctx,
+            &mut reduce_levels,
+        )? {
+            Some((parsed, req)) => (parsed, req),
+            None => {
+                // Reduce не дал валидных секций: не теряем job, отдаём
+                // заземлённый merge частичных ответов (§9).
+                merged.parser_recovered += 1;
+                warnings.push(Warning::ParserRecovered);
+                ctx.retry.reason = Some("reduce_invalid".to_string());
+                (merged, repair_req)
+            }
+        }
     };
-    let generate_ms = generate_started.elapsed().as_millis() as u64;
-    let verify_started = Instant::now();
-    on_event(BackendEvent {
+
+    (ctx.on_event)(BackendEvent {
         phase: Phase::Verify,
         tokens_done: 0,
         tokens_total: 0,
     });
-    let grounded = mr_summarize::grounding::ground(&parsed, &transcript, preset, spec.detail);
-    let items_total: usize = grounded.sections.iter().map(|s| s.items.len()).sum();
+    let mut verify_ms = 0u64;
+    let started_grounding = Instant::now();
+    let mut grounded = mr_summarize::grounding::ground(&parsed, &transcript, preset, spec.detail);
+    verify_ms += started_grounding.elapsed().as_millis() as u64;
+    let mut items_total: usize = grounded.sections.iter().map(|s| s.items.len()).sum();
+    let decision_cue = mr_summarize::grounding::has_decision_cue(&transcript);
+    let decisions_empty = |grounded: &mr_summarize::grounding::GroundedSummary| {
+        !grounded
+            .sections
+            .iter()
+            .any(|s| s.id == "decisions" && !s.items.is_empty())
+    };
+    let thin = items_total == 0 || (chars >= 1000 && items_total < 2);
+    let decision_missed = decision_cue && decisions_empty(&grounded);
+    if thin || decision_missed {
+        let mut reasons: Vec<&str> = Vec::new();
+        if thin {
+            reasons.push("output_thin");
+        }
+        if decision_missed {
+            reasons.push("decision_missed");
+        }
+        ctx.retry.retries += 1;
+        ctx.retry.reason = Some(reasons.join(","));
+        let repair = repair_request(&last_req, thin, decision_missed);
+        match backend.generate(&repair, ctx.cancel, &mut *ctx.on_event) {
+            Ok(out) => match parse::parse(&out, preset) {
+                Ok(parsed2) => {
+                    let retry_grounding = Instant::now();
+                    let grounded2 =
+                        mr_summarize::grounding::ground(&parsed2, &transcript, preset, spec.detail);
+                    verify_ms += retry_grounding.elapsed().as_millis() as u64;
+                    let items2: usize = grounded2.sections.iter().map(|s| s.items.len()).sum();
+                    let thin2 = items2 == 0 || (chars >= 1000 && items2 < 2);
+                    if thin2 {
+                        if thin {
+                            return Err(super::SummaryJobError::OutputThin);
+                        }
+                    } else {
+                        grounded = grounded2;
+                        items_total = items2;
+                    }
+                }
+                Err(_) => {
+                    if thin {
+                        return Err(super::SummaryJobError::OutputThin);
+                    }
+                }
+            },
+            Err(BackendError::Cancelled) => {
+                return Err(super::SummaryJobError::Cancelled);
+            }
+            Err(error) => {
+                if thin {
+                    return Err(map_backend(error));
+                }
+            }
+        }
+    }
     if items_total == 0 || (chars >= 1000 && items_total < 2) {
         return Err(super::SummaryJobError::OutputThin);
     }
+    if decision_cue && decisions_empty(&grounded) {
+        warnings.push(Warning::DecisionMissed);
+    }
+    let load_ms = backend.last_load_ms();
+    let generation_elapsed = generate_started.elapsed().as_millis() as u64;
+    let generate_ms = generation_elapsed.saturating_sub(verify_ms.saturating_add(load_ms));
     warnings.extend(grounded.warnings.iter().cloned());
     if truncated {
         warnings.push(Warning::Truncated);
@@ -208,7 +269,6 @@ pub fn run(
     warnings.sort_by_key(|w| format!("{w:?}"));
     warnings.dedup();
 
-    let verify_ms = verify_started.elapsed().as_millis() as u64;
     let total_ms = started.elapsed().as_millis() as u64;
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let mut artifact = SummaryArtifact {
@@ -254,7 +314,7 @@ pub fn run(
             prompt_version: preset.prompt_version.to_string(),
             duration_ms: total_ms,
             timings_ms: Timings {
-                load: 0,
+                load: load_ms,
                 prepare: prepare_ms,
                 generate: generate_ms,
                 verify: verify_ms,
@@ -271,12 +331,12 @@ pub fn run(
         provenance: Provenance {
             mode: if single { "single_pass" } else { "map_reduce" }.to_string(),
             chunks: chunk_count,
-            reduce_levels: 0,
+            reduce_levels,
             items_dropped: grounded.items_dropped,
             soft_claims_dropped: grounded.soft_claims_dropped,
-            parser_retries,
+            parser_retries: retry.retries,
             parser_recovered: grounded.parser_recovered,
-            retry_reason,
+            retry_reason: retry.reason,
         },
     };
     artifact
@@ -321,8 +381,138 @@ pub fn run(
     })
 }
 
+#[derive(Default)]
+struct RetryState {
+    retries: usize,
+    reason: Option<String>,
+}
+
+struct GenCtx<'a> {
+    info: &'a BackendInfo,
+    max_tokens: u32,
+    cancel: &'a CancelToken,
+    on_event: &'a mut dyn FnMut(BackendEvent),
+    retry: &'a mut RetryState,
+}
+
+struct Generated {
+    raw: String,
+    parsed: mr_summarize::parse::ParsedSummary,
+    req: GenerateRequest,
+}
+
+fn generate_with_retry(
+    backend: &mut dyn SummaryBackend,
+    req: &GenerateRequest,
+    preset: &preset::Preset,
+    ctx: &mut GenCtx<'_>,
+) -> Result<Generated, super::SummaryJobError> {
+    let out = backend
+        .generate(req, ctx.cancel, ctx.on_event)
+        .map_err(map_backend)?;
+    match parse::parse(&out, preset) {
+        Ok(parsed) => Ok(Generated {
+            raw: out,
+            parsed,
+            req: req.clone(),
+        }),
+        Err(_) => {
+            ctx.retry.retries += 1;
+            ctx.retry.reason = Some("invalid_output".to_string());
+            let retry = request_seed(req, 43);
+            let out = backend
+                .generate(&retry, ctx.cancel, ctx.on_event)
+                .map_err(map_backend)?;
+            let parsed =
+                parse::parse(&out, preset).map_err(|_| super::SummaryJobError::InvalidOutput)?;
+            Ok(Generated {
+                raw: out,
+                parsed,
+                req: retry,
+            })
+        }
+    }
+}
+
+fn reduce_request(
+    preset: &preset::Preset,
+    language: text::Language,
+    partials: &[String],
+    info: &BackendInfo,
+    max_tokens: u32,
+) -> GenerateRequest {
+    let prompt = prompt::build_reduce(preset, language, partials);
+    request(info, &prompt, max_tokens)
+}
+
+/// Один или два уровня reduce. `None` — reduce не дал валидных секций;
+/// вызывающий обязан отдать заземлённый merge частичных ответов.
+fn reduce_all(
+    backend: &mut dyn SummaryBackend,
+    preset: &preset::Preset,
+    language: text::Language,
+    partials: &[String],
+    ctx: &mut GenCtx<'_>,
+    reduce_levels: &mut usize,
+) -> Result<Option<(mr_summarize::parse::ParsedSummary, GenerateRequest)>, super::SummaryJobError> {
+    if partials.len() < 2 {
+        return Ok(None);
+    }
+    let mut inputs = partials.to_vec();
+    loop {
+        let groups: Vec<Vec<String>> = if inputs.len() > 10 {
+            inputs.chunks(10).map(|chunk| chunk.to_vec()).collect()
+        } else {
+            vec![inputs.clone()]
+        };
+        let mut next: Vec<String> = Vec::new();
+        let mut final_gen: Option<Generated> = None;
+        for group in groups {
+            if group.len() == 1 {
+                next.push(group[0].clone());
+                continue;
+            }
+            let prompt = prompt::build_reduce(preset, language, &group);
+            let req = request(ctx.info, &prompt, ctx.max_tokens);
+            match generate_with_retry(backend, &req, preset, ctx) {
+                Ok(generated) => {
+                    next.push(generated.raw.clone());
+                    final_gen = Some(generated);
+                }
+                Err(super::SummaryJobError::InvalidOutput) => return Ok(None),
+                Err(error) => return Err(error),
+            }
+        }
+        *reduce_levels += 1;
+        if next.len() == 1 {
+            let generated = final_gen.ok_or_else(|| {
+                super::SummaryJobError::Internal("reduce without output".to_string())
+            })?;
+            return Ok(Some((generated.parsed, generated.req)));
+        }
+        inputs = next;
+        if *reduce_levels >= 2 {
+            return Ok(None);
+        }
+    }
+}
+
+fn repair_request(req: &GenerateRequest, thin: bool, decision_missed: bool) -> GenerateRequest {
+    let mut retry = request_seed(req, 43);
+    if thin {
+        retry.prompt.push_str(
+            "\n\nПредыдущий ответ был слишком коротким. Верни минимум два содержательных пункта, если в источнике есть факты; не добавляй факты.",
+        );
+    }
+    if decision_missed {
+        retry.prompt.push_str(
+            "\n\nВ источнике есть явное решение. Обязательно заполни секцию решений дословным решением из источника или не выводи её, если cue нет.",
+        );
+    }
+    retry
+}
+
 fn request(
-    _paths: &Paths,
     info: &BackendInfo,
     prompt: &mr_summarize::prompt::Prompt,
     max_tokens: u32,
@@ -373,5 +563,47 @@ mod tests {
     #[test]
     fn long_source_goes_map_reduce() {
         assert!(!estimate_single_pass(120_000, 768));
+    }
+
+    #[test]
+    fn fake_long_source_uses_reduce_and_grounds() {
+        let dir = std::env::temp_dir().join(format!(
+            "mr-pipeline-reduce-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let utterances: Vec<serde_json::Value> = (0..200)
+            .map(|i| {
+                serde_json::json!({
+                    "start": i as f64,
+                    "end": i as f64 + 0.9,
+                    "speaker": "Спикер 1",
+                    "text": format!("Обсудили пункт {i}: решили подготовить отчёт и проверить срок до среды."),
+                })
+            })
+            .collect();
+        let transcript = serde_json::json!({"utterances": utterances});
+        let paths = super::super::store::summary_paths(&dir, "long", "long.wav".into());
+        std::fs::write(&paths.transcript, serde_json::to_vec(&transcript).unwrap()).unwrap();
+        let spec = JobSpec {
+            paths,
+            preset_id: "meeting".to_string(),
+            detail: Detail::Normal,
+            confirmed_sensitive: false,
+            allow_downgrade: false,
+        };
+        let mut backend = super::super::fake::FakeBackend::new("ok");
+        let cancel = CancelToken::new();
+        let mut on_event = |_event: BackendEvent| {};
+        let output = super::run(&spec, &mut backend, &cancel, &mut on_event)
+            .expect("fake map-reduce должен завершиться");
+        assert_eq!(output.artifact.provenance.mode, "map_reduce");
+        assert_eq!(output.artifact.provenance.reduce_levels, 1);
+        assert!(!output.artifact.summary.sections.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

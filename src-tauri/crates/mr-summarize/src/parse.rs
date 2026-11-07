@@ -33,6 +33,25 @@ pub struct ParsedSummary {
     pub injection_flagged: usize,
 }
 
+/// Пустой каркас всех секций шаблона: база для merge частичных map-ответов.
+pub fn empty(preset: &Preset) -> ParsedSummary {
+    ParsedSummary {
+        sections: preset
+            .sections
+            .iter()
+            .map(|s| ParsedSection {
+                id: s.id,
+                title: s.title_ru.to_owned(),
+                role: s.role,
+                items: Vec::new(),
+            })
+            .collect(),
+        warnings: Vec::new(),
+        parser_recovered: 0,
+        injection_flagged: 0,
+    }
+}
+
 pub fn parse(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryError> {
     let mut sections: Vec<ParsedSection> = preset
         .sections

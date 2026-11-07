@@ -28,7 +28,8 @@
   придумывает срок. `deadline_source` — `model|extracted`.
 - **Промпт:** системные инварианты — дословно `SYSTEM_PROMPT`; данные — JSON внутри
   nonce-маркеров `<<<DATA_<32hex>_BEGIN>>>`; `prompt_version=<id>-v2`, вариант
-  `hybrid-v2`.
+  `hybrid-v2`. Для map-reduce есть `build_reduce`: те же инварианты, частичные
+  ответы — недоверенные DATA, без транскрипта.
 - **Размеры:** JSON <=1 МиБ, MD <=2 МиБ; optional-секции удаляются в фиксированном
   порядке, обязательные — никогда; иначе `OutputCapped`.
 

@@ -23,6 +23,16 @@
   `write_atomic_private` (0600 Unix / ACL-фолбэк Windows), stale/corrupt/
   unsupported/newer-major, бэкапы `.corrupt.<unix>`/`.newer.<unix>` (<=3) на
   commit point, caps JSON 1 МиБ/MD 2 МиБ.
+- Map-reduce: map по chunk-ам → реальный reduce-проход моделью
+  (`prompt::build_reduce`, те же инварианты и nonce DATA), парсинг и grounding
+  против полного транскрипта; >10 частичных — два уровня reduce. Невалидный
+  reduce → заземлённый merge частичных с `parser_recovered` и
+  `retry_reason="reduce_invalid"`, job не теряется. `reduce_levels` в provenance.
+- Retry: `invalid_output` (seed 43), `output_thin` и `decision_missed` — один
+  content-first repair-повтор; `parser_retries`/`retry_reason` записываются,
+  `decision_missed` остаётся предупреждением, если решение так и не найдено.
+- `timings_ms.load` — измеренное spawn→`/health` время sidecar (0 при повторном
+  job на уже загруженной модели); total/prepare/generate/verify измеряются.
 - Guards: total RAM 12 ГиБ, free 6.5 ГиБ, skip free-check при загруженном том же
   sidecar, post-load `VmHWM > 6656 MiB` -> kill/`oom`; threads `min(8,max(2,logical))`.
 - Модель: `kind:"summary"` в манифесте, не core; download precheck
@@ -40,17 +50,18 @@
 | `git diff --check -- src-tauri` | pass |
 | `cargo clippy --workspace --all-targets --locked ... -- -D warnings` | pass |
 | `cargo clippy -p mr-app --features tauri-ui --all-targets --locked ... -- -D warnings` | pass |
-| `cargo test --workspace --locked ...` | pass: 321 passed, 2 ignored (diar_local, property 100k) |
-| `cargo test -p mr-app --test summary_api_contract --locked` | pass: 1 suite (19 сценариев) |
+| `cargo test --workspace --locked ...` | pass: 325 passed, 2 ignored (diar_local, property 100k) |
+| `cargo test -p mr-app --test summary_api_contract --locked` | pass: 1 suite (24 сценария) |
 | `cargo test -p mr-app --test summary_real --locked` без env | pass (skip) |
 | `SUMMARY_REQUIRE_REAL=1 ... cargo test -p mr-app --test summary_real` | pass на модели |
 | Android: `cargo check -p mr-app --target aarch64-linux-android --features tauri-ui --locked` | pass (NDK 27.1.12297006 + llvm bin в PATH) |
 | `git diff --check` (весь репозиторий) | fail: trailing whitespace в `ui/web/static/js/app.js` от параллельного frontend-агента; `src-tauri` чист |
 
-Frontend-маркеры (`summary-block`, `summary-preset-picker`, `summary-result`)
-в `restored_endpoints_roundtrip` **не добавлялись** по coordination note:
-roundtrip расширен только backend-контрактом (presets/settings/404/413/status/
-`has_summary`). Интеграционная проверка маркеров — после коммита frontend.
+Frontend-маркеры проверяются в `restored_endpoints_roundtrip` по фактическому
+бандлу `3434072`: `summary-block`, `summary-picker`, `summary-result`. Класс
+`summary-preset-picker` в бандле отсутствует (компонент рендерится как
+`summary-picker`), поэтому используется реальный маркер; добавление нового
+класса потребовало бы правки frontend-agent.
 
 ## Живой smoke (Linux, реальная модель)
 
@@ -61,27 +72,27 @@ roundtrip расширен только backend-контрактом (presets/se
 
 | Метрика | Измерено |
 |---|---|
-| Успешная генерация, total `duration_ms` | финальный прогон на HEAD: `105 735 мс` wall / `105 657 мс` artifact (items=8) |
+| Успешная генерация, total `duration_ms` | follow-up smoke: `160 863 мс` wall / `160 673 мс` artifact; лучший прогон G3: `105 735 мс` |
+| `timings_ms.load` | `5 408 мс` (spawn→`/health`, follow-up smoke) |
 | Peak `VmHWM` sidecar | `5 291 MiB` (5.17 ГиБ) <= 6.5 ГиБ |
-| Cancel (POST -> `summarizing=false`) | `1 418 мс` (ранее `1 797–1 798 мс`) <= 2 с |
+| Cancel (POST -> `summarizing=false`) | `1 789 мс` (ранее `1 418`/`1 797–1 798 мс`) <= 2 с |
 | Артефакты | `.summary.json` + `.summary.md`, transcript bytes не изменены |
 | Generator | `llama.cpp/b12182`, commit `fd27b2034`, `model_sha256=3605803b…`, `prompt_version=meeting-v2` |
-| Разброс прогонов | `105.7 с`, `140.2 с`, `208.2 с`, `216.7 с`, `241.4 с` при load average 16–20; конкуренция CPU |
+| Разброс прогонов | `105.7`, `140.2`, `160.9`, `208.2`, `216.7`, `241.4 с` при load average 16–20 |
 
-Финальный прогон `105.7 с` уложился в бюджет §15 (`<=120 с` на `>=8` logical),
-но разброс между прогонами почти 2.3× из-за нагрузки хоста (load average 16–20).
-Цифра 65.05 с из спецификации не воспроизводилась; 4-core tier и 9.5k-кейс —
-G5. Cancel и peak — в бюджете во всех прогонах.
+Лучший прогон `105.7 с` уложился в бюджет §15 (`<=120 с` на `>=8` logical),
+follow-up smoke — `160.9 с` при load average ~20. Разброс почти 2.3× из-за
+нагрузки хоста; 65.05 с из спецификации не воспроизводилась. 4-core tier и
+9.5k-кейс — G5. Cancel и peak — в бюджете во всех прогонах.
 
 ## Ограничения / что осталось
 
-- Map-reduce на длинном входе использует детерминированный merge частичных
-  ответов (dedupe/grounding), без отдельного LLM-reduce; quality/coverage —
-  G5. `provenance.mode="map_reduce"`, `reduce_levels=0`.
-- Retry реализован только для `invalid_output` (seed 43); retry для
-  `output_thin`/`decision_missed` — G5.
-- `timings_ms.load` = 0 (загрузка модели не отделена от generate); total/prepare/
-  generate/verify измерены.
+- Map-reduce проверен fake-контрактом (2 уровня, fallback); качество и latency
+  реального reduce на длинном входе — G5 (нужен отдельный прогон на модели).
+- Retry `output_thin`/`decision_missed` проверен fake-контрактом; на реальной
+  модели качество repair-промпта — G5.
+- `timings_ms.load` заполняется из spawn→`/health`; в fake-тестах он 0, живой
+  замер — в real smoke/G5.
 - Windows ACL (`icacls` fallback), macOS `proc_pid_rusage`/`sysctl` и Windows
   `GetProcessTimes` скомпилированы условно, но не проверены на живых ОС (G6).
 - Диск-precheck скачивания модели реализован, но не прогонялся с реальной
@@ -95,4 +106,5 @@ G5. Cancel и peak — в бюджете во всех прогонах.
 ## Коммиты
 
 - G2: `ce7dcc1` — `feat(summary): add llama.cpp sidecar runtime and private artifact store`.
-- G3: этот коммит — `feat(summary): add summary service, HTTP API and SSE`.
+- G3: `4d4dd1d` — `feat(summary): add summary service, HTTP API and SSE`.
+- Follow-up: `fix(summary): add reduce pass, thin-output retry and load timing` (этот коммит).

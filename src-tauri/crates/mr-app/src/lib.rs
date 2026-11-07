@@ -677,6 +677,11 @@ mod live_api_tests {
             js.contains("transcript-grid"),
             "нет двухколоночной расшифровки"
         );
+        // Frontend-маркеры итогов (3434072): picker рендерится классом
+        // `summary-picker`; отдельного `summary-preset-picker` в бандле нет.
+        for marker in ["summary-block", "summary-picker", "summary-result"] {
+            assert!(js.contains(marker), "нет summary-маркера {marker}");
+        }
         assert!(js.contains("packsListSettings"), "нет меню настроек");
         let (st, _, css) = http(port, "GET", "/css/app.css", &[], &[]);
         assert_eq!(st, 200);

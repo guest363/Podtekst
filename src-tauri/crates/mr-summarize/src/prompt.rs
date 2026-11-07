@@ -90,6 +90,64 @@ pub fn build_with_nonce(
     }
 }
 
+/// Reduce-проход для map-reduce: сводит частичные ответы моделью, не
+/// добавляя фактов. Частичные ответы — такие же недоверенные DATA.
+pub fn build_reduce(preset: &Preset, language: Language, partials: &[String]) -> Prompt {
+    let nonce = new_nonce(&[]);
+    build_reduce_with_nonce(preset, language, partials, &nonce)
+}
+
+pub fn build_reduce_with_nonce(
+    preset: &Preset,
+    language: Language,
+    partials: &[String],
+    nonce: &str,
+) -> Prompt {
+    let mut system = SYSTEM_PROMPT.to_owned();
+    system.push_str(" Сейчас ты сводишь несколько частичных протоколов в один. Не добавляй факты, которых нет в частичных протоколах; не повторяй один и тот же пункт; при противоречии сохрани оба варианта с пометкой, если явной отмены нет.");
+    if language == Language::En {
+        system.push(' ');
+        system.push_str(ENGLISH_SUFFIX);
+    }
+    let titles: Vec<&str> = preset
+        .sections
+        .iter()
+        .map(|s| {
+            if language == Language::En {
+                s.title_en
+            } else {
+                s.title_ru
+            }
+        })
+        .collect();
+    let mut user = String::new();
+    for title in &titles {
+        user.push_str("## ");
+        user.push_str(title);
+        user.push('\n');
+    }
+    user.push_str("\nСведи пункты из фрагментов в один протокол. Не добавляй новые факты, имена, сроки, решения и задачи. Удали повторы. Верни только разделы шаблона и пункты «- <text>».\n");
+    if preset.sections.iter().any(|s| s.role.is_task()) {
+        user.push_str("В секциях задач: «- <что>; Кто: <...>; Срок: <...>».\n");
+    }
+    user.push_str("Решение выводи только при явном cue в источнике.\n");
+    let rows: Vec<serde_json::Value> = partials
+        .iter()
+        .enumerate()
+        .map(|(i, text)| serde_json::json!({"i": i, "text": text}))
+        .collect();
+    let json = serde_json::to_string(&rows).unwrap_or_else(|_| "[]".to_owned());
+    user.push_str(&format!(
+        "\n<<<DATA_{nonce}_BEGIN>>>\n{json}\n<<<DATA_{nonce}_END>>>\n"
+    ));
+    Prompt {
+        system,
+        user,
+        nonce: nonce.to_owned(),
+        prompt_version: preset.prompt_version.to_owned(),
+    }
+}
+
 pub fn new_nonce(utterances: &[Utterance]) -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -221,5 +279,26 @@ mod tests {
         );
         assert!(prompt.user.contains("## Brief"));
         assert!(prompt.system.contains("Output language: English"));
+    }
+
+    #[test]
+    fn reduce_prompt_keeps_invariants_and_wraps_partials() {
+        let partials = vec![
+            "## Кратко\n- Обсудили срок.".to_string(),
+            "## Кратко\n- Проверили отчёт.".to_string(),
+        ];
+        let prompt = build_reduce_with_nonce(
+            preset::get("meeting").unwrap(),
+            Language::Ru,
+            &partials,
+            "0123456789abcdef0123456789abcdef",
+        );
+        assert!(prompt.user.contains("## Кратко"));
+        assert!(prompt.user.contains("Сведи пункты"));
+        assert!(prompt.system.contains("Не добавляй факты"));
+        assert!(prompt
+            .user
+            .contains("<<<DATA_0123456789abcdef0123456789abcdef_BEGIN>>>"));
+        assert!(prompt.user.contains("Проверили отчёт."));
     }
 }

@@ -62,6 +62,9 @@ pub trait SummaryBackend: Send {
         on_event: &mut dyn FnMut(BackendEvent),
     ) -> Result<String, BackendError>;
     fn shutdown(&mut self);
+    fn last_load_ms(&self) -> u64 {
+        0
+    }
 }
 
 #[derive(Clone, Default)]
@@ -100,6 +103,9 @@ pub fn fake_mode() -> Option<&'static str> {
         "model_load" => Some("model_load"),
         "invalid" => Some("invalid"),
         "thin" => Some("thin"),
+        "thin_once" => Some("thin_once"),
+        "no_decisions" => Some("no_decisions"),
+        "reduce_invalid" => Some("reduce_invalid"),
         "slow" => Some("slow"),
         _ => None,
     }

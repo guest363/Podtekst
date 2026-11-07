@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use super::backend::{
     BackendError, BackendEvent, BackendInfo, CancelToken, GenerateRequest, Phase, SummaryBackend,
 };
@@ -5,11 +7,15 @@ use super::backend::{
 /// Детерминированный backend для контрактных тестов: без модели, runtime и сети.
 pub struct FakeBackend {
     mode: &'static str,
+    calls: AtomicUsize,
 }
 
 impl FakeBackend {
     pub fn new(mode: &'static str) -> Self {
-        Self { mode }
+        Self {
+            mode,
+            calls: AtomicUsize::new(0),
+        }
     }
 }
 
@@ -31,31 +37,35 @@ impl SummaryBackend for FakeBackend {
         cancel: &CancelToken,
         on_event: &mut dyn FnMut(BackendEvent),
     ) -> Result<String, BackendError> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
         if self.mode == "model_load" {
             return Err(BackendError::Load("fake load failure".to_string()));
         }
         if self.mode == "invalid" {
-            for pct in 10..=90 {
-                cancel.check()?;
-                on_event(BackendEvent {
-                    phase: Phase::Generate,
-                    tokens_done: pct,
-                    tokens_total: 100,
-                });
-            }
-            return Ok("no sections at all".to_string());
+            return self.finish(cancel, on_event, String::new());
         }
-        if self.mode == "thin" {
-            return Ok("## Кратко\n".to_string());
+        if self.mode == "thin" || (self.mode == "thin_once" && call == 0) {
+            return Ok("## Кратко\n- нет данных.\n".to_string());
         }
-        let text = first_utterance_text(&req.prompt).unwrap_or_default();
-        let titles: Vec<&str> = req
+        let reduce = req.prompt.contains("Сведи пункты");
+        if self.mode == "reduce_invalid" && reduce {
+            return self.finish(cancel, on_event, String::new());
+        }
+        if reduce {
+            let joined = reduce_text(&req.prompt).unwrap_or_default();
+            return self.finish(cancel, on_event, joined);
+        }
+        let texts = utterance_texts(&req.prompt);
+        let mut titles: Vec<&str> = req
             .prompt
             .lines()
             .filter_map(|line| line.strip_prefix("## "))
             .map(str::trim)
             .filter(|line| !line.is_empty())
             .collect();
+        if self.mode == "no_decisions" && call == 0 {
+            titles.retain(|title| !title.starts_with("Решения"));
+        }
         let steps = if self.mode == "slow" { 100 } else { 10 };
         for step in 1..=steps {
             cancel.check()?;
@@ -68,7 +78,7 @@ impl SummaryBackend for FakeBackend {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
         }
-        if titles.is_empty() || text.is_empty() {
+        if titles.is_empty() || texts.is_empty() {
             return Ok("## Кратко\n- нет данных.\n".to_string());
         }
         let mut out = String::new();
@@ -76,9 +86,11 @@ impl SummaryBackend for FakeBackend {
             out.push_str("## ");
             out.push_str(title);
             out.push('\n');
-            out.push_str("- ");
-            out.push_str(&text);
-            out.push('\n');
+            for text in &texts {
+                out.push_str("- ");
+                out.push_str(text);
+                out.push('\n');
+            }
         }
         // Хвост любого вывода не должен содержать nonce (проверка §9).
         Ok(out)
@@ -87,7 +99,30 @@ impl SummaryBackend for FakeBackend {
     fn shutdown(&mut self) {}
 }
 
-fn first_utterance_text(prompt: &str) -> Option<String> {
+impl FakeBackend {
+    fn finish(
+        &self,
+        cancel: &CancelToken,
+        on_event: &mut dyn FnMut(BackendEvent),
+        out: String,
+    ) -> Result<String, BackendError> {
+        let steps = if self.mode == "slow" { 100 } else { 10 };
+        for step in 1..=steps {
+            cancel.check()?;
+            on_event(BackendEvent {
+                phase: Phase::Generate,
+                tokens_done: step,
+                tokens_total: steps,
+            });
+            if self.mode == "slow" {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+        Ok(out)
+    }
+}
+
+fn data_json(prompt: &str) -> Option<Vec<serde_json::Value>> {
     let start = prompt.find("<<<DATA_")?;
     let marker_end = prompt[start..].find("_BEGIN>>>")? + start + "_BEGIN>>>".len();
     let rest = prompt.get(marker_end..)?;
@@ -95,13 +130,29 @@ fn first_utterance_text(prompt: &str) -> Option<String> {
     let body = rest.get(..end)?.trim();
     let json_end = body.rfind("<<<DATA_").unwrap_or(body.len());
     let json = body.get(..json_end)?.trim();
-    let rows: Vec<serde_json::Value> = serde_json::from_str(json).ok()?;
-    let text = rows
+    serde_json::from_str(json).ok()
+}
+
+fn utterance_texts(prompt: &str) -> Vec<String> {
+    data_json(prompt)
+        .unwrap_or_default()
         .iter()
-        .find_map(|row| row.get("text").and_then(|v| v.as_str()))
+        .filter_map(|row| row.get("text").and_then(|v| v.as_str()))
         .map(str::trim)
-        .filter(|t| !t.is_empty())?;
-    Some(text.to_string())
+        .filter(|t| !t.is_empty())
+        .take(2)
+        .map(str::to_string)
+        .collect()
+}
+
+fn reduce_text(prompt: &str) -> Option<String> {
+    let rows = data_json(prompt)?;
+    let parts: Vec<String> = rows
+        .iter()
+        .filter_map(|row| row.get("text").and_then(|v| v.as_str()))
+        .map(str::to_string)
+        .collect();
+    (!parts.is_empty()).then(|| parts.join("\n\n"))
 }
 
 #[cfg(test)]
@@ -109,12 +160,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extracts_first_non_empty_utterance() {
-        let prompt = "## Кратко\n<<<DATA_abc_BEGIN>>>\n[{\"i\":0,\"speaker\":\"S\",\"text\":\"Обсудили срок запуска.\"}]\n<<<DATA_abc_END>>>\n";
+    fn extracts_first_two_non_empty_utterances() {
+        let prompt = "## Кратко\n<<<DATA_abc_BEGIN>>>\n[{\"i\":0,\"speaker\":\"S\",\"text\":\"Обсудили срок запуска.\"},{\"i\":1,\"speaker\":\"S\",\"text\":\"Проверили отчёт.\"}]\n<<<DATA_abc_END>>>\n";
         assert_eq!(
-            first_utterance_text(prompt).as_deref(),
-            Some("Обсудили срок запуска.")
+            utterance_texts(prompt),
+            vec!["Обсудили срок запуска.", "Проверили отчёт."]
         );
-        assert!(first_utterance_text("no data").is_none());
+        assert!(utterance_texts("no data").is_empty());
+    }
+
+    #[test]
+    fn reduce_text_joins_partials() {
+        let prompt = "Сведи пункты\n<<<DATA_abc_BEGIN>>>\n[{\"i\":0,\"text\":\"## Кратко\\n- А.\"},{\"i\":1,\"text\":\"## Кратко\\n- Б.\"}]\n<<<DATA_abc_END>>>\n";
+        assert_eq!(
+            reduce_text(prompt).as_deref(),
+            Some("## Кратко\n- А.\n\n## Кратко\n- Б.")
+        );
     }
 }

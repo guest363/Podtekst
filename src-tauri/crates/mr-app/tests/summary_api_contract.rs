@@ -117,6 +117,11 @@ fn wait_idle(port: u16, timeout: std::time::Duration) -> bool {
     false
 }
 
+fn summary_artifact(dir: &std::path::Path, stem: &str) -> Value {
+    let bytes = std::fs::read(dir.join(format!("{stem}.summary.json"))).unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
 fn wait_state(port: u16, file: &str, expected: &str, timeout: std::time::Duration) -> Value {
     let started = std::time::Instant::now();
     loop {
@@ -125,7 +130,7 @@ fn wait_state(port: u16, file: &str, expected: &str, timeout: std::time::Duratio
             return v;
         }
         if started.elapsed() > timeout {
-            panic!("state не стал {expected}: {v}");
+            panic!("state для {file} не стал {expected}: {v}");
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
@@ -827,6 +832,155 @@ fn summary_contract_suite() {
         serde_json::from_slice(&std::fs::read(rec.join("legal.summary.json")).unwrap()).unwrap();
     assert_eq!(artifact["preset"]["confirmed_sensitive"], true);
     assert_eq!(artifact["preset"]["id"], "legal");
+
+    // 21. Map-reduce: реальный reduce-проход, а не merge.
+    let long: Vec<String> = (0..200)
+        .map(|i| format!("Обсудили пункт {i}: решили подготовить отчёт и проверить срок до среды."))
+        .collect();
+    let long_refs: Vec<&str> = long.iter().map(String::as_str).collect();
+    std::fs::write(
+        rec.join("long.transcript.json"),
+        serde_json::to_vec(&transcript_json(&long_refs)).unwrap(),
+    )
+    .unwrap();
+    let long_rev = v_rev(port, "long.wav");
+    let (mut sse, cursor) = open_sse(port);
+    let (st, v) = json_call(
+        port,
+        "POST",
+        "/api/summary/generate",
+        json!({"file": "long.wav", "preset_id": "meeting", "detail": "normal",
+               "source_rev": long_rev}),
+    );
+    assert_eq!(st, 202, "map-reduce: {v}");
+    assert!(wait_idle(port, std::time::Duration::from_secs(30)));
+    let capture = read_sse_until_terminal(&mut sse, cursor, std::time::Duration::from_secs(5));
+    assert!(
+        capture.contains("summary-done"),
+        "map-reduce завершился не done: {capture}"
+    );
+    wait_state(
+        port,
+        "long.wav",
+        "fresh",
+        std::time::Duration::from_secs(10),
+    );
+    let artifact = summary_artifact(&rec, "long");
+    assert_eq!(artifact["provenance"]["mode"], "map_reduce");
+    assert_eq!(artifact["provenance"]["reduce_levels"], 1);
+    assert!(artifact["provenance"]["chunks"].as_u64().unwrap() >= 2);
+    assert!(!artifact["summary"]["sections"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+
+    // 22. Невалидный reduce -> заземлённый merge, job не теряется.
+    std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "reduce_invalid");
+    let (st, v) = json_call(
+        port,
+        "POST",
+        "/api/summary/generate",
+        json!({"file": "long.wav", "preset_id": "meeting", "detail": "normal",
+               "source_rev": long_rev, "force": true}),
+    );
+    assert_eq!(st, 202, "reduce invalid: {v}");
+    assert!(wait_idle(port, std::time::Duration::from_secs(30)));
+    wait_state(
+        port,
+        "long.wav",
+        "fresh",
+        std::time::Duration::from_secs(10),
+    );
+    let artifact = summary_artifact(&rec, "long");
+    assert_eq!(artifact["provenance"]["mode"], "map_reduce");
+    assert_eq!(
+        artifact["provenance"]["retry_reason"], "reduce_invalid",
+        "{}",
+        artifact["provenance"]
+    );
+    assert!(artifact["provenance"]["parser_recovered"].as_u64().unwrap() >= 1);
+    assert!(!artifact["summary"]["sections"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "1");
+
+    // 23. output_thin: первый ответ пустой, repair-повтор даёт пункты.
+    let thin_texts: Vec<String> = (0..20)
+        .map(|i| format!("Обсудили пункт номер {i} и проверили отчёт по запуску проекта."))
+        .collect();
+    let thin_refs: Vec<&str> = thin_texts.iter().map(String::as_str).collect();
+    std::fs::write(
+        rec.join("thin.transcript.json"),
+        serde_json::to_vec(&transcript_json(&thin_refs)).unwrap(),
+    )
+    .unwrap();
+    let thin_rev = v_rev(port, "thin.wav");
+    std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "thin_once");
+    let (st, v) = json_call(
+        port,
+        "POST",
+        "/api/summary/generate",
+        json!({"file": "thin.wav", "preset_id": "meeting", "detail": "normal",
+               "source_rev": thin_rev}),
+    );
+    assert_eq!(st, 202, "thin_once: {v}");
+    assert!(wait_idle(port, std::time::Duration::from_secs(20)));
+    wait_state(
+        port,
+        "thin.wav",
+        "fresh",
+        std::time::Duration::from_secs(10),
+    );
+    let artifact = summary_artifact(&rec, "thin");
+    assert!(artifact["provenance"]["parser_retries"].as_u64().unwrap() >= 1);
+    assert!(artifact["provenance"]["retry_reason"]
+        .as_str()
+        .unwrap_or("")
+        .contains("output_thin"));
+    assert!(artifact["summary"]["items_total"].as_u64().unwrap() >= 2);
+    std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "1");
+
+    // 24. decision_missed: первый ответ без решений, repair возвращает cue.
+    let decision_texts = [
+        "Решили перенести запуск на следующую неделю.",
+        "Подготовить отчёт поручили коллегам.",
+        "Вопрос по бюджету остался открытым.",
+    ];
+    std::fs::write(
+        rec.join("decision.transcript.json"),
+        serde_json::to_vec(&transcript_json(&decision_texts)).unwrap(),
+    )
+    .unwrap();
+    let decision_rev = v_rev(port, "decision.wav");
+    std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "no_decisions");
+    let (st, v) = json_call(
+        port,
+        "POST",
+        "/api/summary/generate",
+        json!({"file": "decision.wav", "preset_id": "meeting", "detail": "normal",
+               "source_rev": decision_rev}),
+    );
+    assert_eq!(st, 202, "no_decisions: {v}");
+    assert!(wait_idle(port, std::time::Duration::from_secs(20)));
+    wait_state(
+        port,
+        "decision.wav",
+        "fresh",
+        std::time::Duration::from_secs(10),
+    );
+    let artifact = summary_artifact(&rec, "decision");
+    assert!(artifact["provenance"]["parser_retries"].as_u64().unwrap() >= 1);
+    assert!(artifact["provenance"]["retry_reason"]
+        .as_str()
+        .unwrap_or("")
+        .contains("decision_missed"));
+    assert!(artifact["summary"]["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s["id"] == "decisions" && !s["items"].as_array().unwrap().is_empty()));
+    std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "1");
 
     assert!(!first_job.is_empty());
     let _ = std::fs::remove_dir_all(&base);
