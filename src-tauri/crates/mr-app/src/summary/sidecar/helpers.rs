@@ -89,6 +89,8 @@ pub(super) fn build_args(
         "--api-key-file".to_string(),
         token_path.to_string_lossy().to_string(),
         "--log-disable".to_string(),
+        "--n-gpu-layers".to_string(),
+        "0".to_string(),
         "--alias".to_string(),
         MODEL_ID.to_string(),
     ]
@@ -190,6 +192,8 @@ mod tests {
             "off",
             "--api-key-file",
             "--log-disable",
+            "--n-gpu-layers",
+            "0",
             "--parallel",
             "1",
             "--ctx-size",
@@ -204,6 +208,11 @@ mod tests {
             assert!(args.iter().any(|a| a == flag), "нет {flag}");
         }
         assert!(!args.iter().any(|a| a == "--mlock"));
+        let ngl = args
+            .iter()
+            .position(|a| a == "--n-gpu-layers")
+            .expect("нет --n-gpu-layers");
+        assert_eq!(args[ngl + 1], "0", "GPU-слои обязаны быть выключены");
         let joined = args.join(" ");
         assert!(!joined.contains("Bearer"), "токен не должен быть в argv");
         assert!(!joined.contains("CANARY"));

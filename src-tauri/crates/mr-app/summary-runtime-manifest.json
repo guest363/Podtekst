@@ -14,6 +14,7 @@
     "--no-webui",
     "--api-key-file",
     "--log-disable",
+    "--n-gpu-layers",
     "--parallel",
     "--ctx-size",
     "-b",

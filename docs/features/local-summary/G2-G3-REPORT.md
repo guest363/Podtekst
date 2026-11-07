@@ -16,7 +16,8 @@
   `SUMMARY_ACTIVE` выставляется синхронно до `202` и снимается RAII-guard после
   терминала; `take_new_events` учитывает счётчик; grace-тик для stream-before-POST.
 - Sidecar: pin `b12182`/`fd27b2034`, флаги `--jinja --reasoning off --no-webui
-  --api-key-file --log-disable --parallel 1 --ctx-size 8192 -b 512 -ub 128`,
+  --api-key-file --log-disable --n-gpu-layers 0 --parallel 1 --ctx-size 8192
+  -b 512 -ub 128`,
   loopback + Bearer, токен 256 бит в файле 0600, stderr только bytes/SHA-256,
   idle kill 120 с, orphan cleanup по per-OS `start_time` и имени процесса.
 - Store: `<stem>.summary.json` + `.summary.md` только через
