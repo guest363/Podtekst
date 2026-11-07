@@ -1,8 +1,9 @@
 <script lang="ts">
   import { baseName, fmtClock, fmtClockShort, isMobile, pluralSpeakers } from '../lib/api'
-  import { copyText, toast } from '../lib/toast.svelte.ts'
+  import { copyText, toast, toastConfirm } from '../lib/toast.svelte.ts'
   import { closeTranscript, ui } from '../lib/ui.svelte.ts'
   import { emptyHint, engine, openTranscriptFile, startTranscription, transcript } from '../lib/transcript.svelte.ts'
+  import { cancelSummary, summaryState } from '../lib/summary.svelte.ts'
   import { isQueued } from '../lib/queue.svelte.ts'
   import { extractMp3 } from '../lib/recordings.svelte.ts'
   import { peopleState } from '../lib/people.svelte.ts'
@@ -10,6 +11,7 @@
   import SlimPlayer from './SlimPlayer.svelte'
   import SpeakersPane from './SpeakersPane.svelte'
   import TranscriptDoc from './TranscriptDoc.svelte'
+  import SummaryPanel from './SummaryPanel.svelte'
 
   let speakersOpen = $state(
     typeof localStorage !== 'undefined'
@@ -142,6 +144,22 @@
     }
   }
 
+  function requestTranscription(): void {
+    const path = ui.currentTranscriptPath
+    if (summaryState.generating && summaryState.file === path) {
+      toastConfirm(
+        'Идёт сборка итогов. Начать расшифровку заново? Итоги будут остановлены.',
+        'Начать',
+        () => {
+          void cancelSummary()
+          void startTranscription(path)
+        },
+      )
+      return
+    }
+    void startTranscription(path)
+  }
+
   function goBack(): void {
     document
       .querySelectorAll('.transcript-page audio, .transcript-page video')
@@ -230,7 +248,7 @@
               : transcript.hasText
                 ? 'Текст будет распознан заново и заменит текущий'
                 : ''}
-          onclick={() => void startTranscription(ui.currentTranscriptPath)}
+          onclick={requestTranscription}
         >
           <span class="btn-text-full">
             {thisRunning
@@ -370,7 +388,7 @@
         <button
           class="btn-primary"
           disabled={isQueued(ui.currentTranscriptPath)}
-          onclick={() => void startTranscription(ui.currentTranscriptPath)}
+          onclick={requestTranscription}
         >
           {isQueued(ui.currentTranscriptPath)
             ? 'В очереди'
@@ -381,6 +399,11 @@
       </div>
     </div>
   {:else}
+    <SummaryPanel
+      file={ui.currentTranscriptPath}
+      onseek={seekTo}
+      transcriptMarkdown={buildFullTranscriptMarkdown}
+    />
     <div class="transcript-grid {speakersOpen ? 'sidebar-open' : ''}">
       {#if isMobile && speakersOpen}
         <!-- svelte-ignore a11y_click_events_have_key_events -->

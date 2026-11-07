@@ -22,6 +22,7 @@
   import { checkUpdate, update } from '../lib/update.svelte.ts'
   import { peopleState } from '../lib/people.svelte.ts'
   import SystemSettingsTab from './SystemSettingsTab.svelte'
+  import SummarySettingsTab from './SummarySettingsTab.svelte'
   import { system, runChecks, openTarget } from '../lib/system.svelte.ts'
   import type { DevicesInfo } from '../lib/system.svelte.ts'
 
@@ -30,7 +31,7 @@
   }
   let { inline = false }: Props = $props()
 
-  let tab = $state<'record' | 'voices' | 'models' | 'system'>('record')
+  let tab = $state<'record' | 'voices' | 'models' | 'summary' | 'system'>('record')
   let packFileInput: HTMLInputElement | null = $state(null)
 
   function defaultName(devices: DevicesInfo | undefined, id?: string | null): string {
@@ -48,10 +49,15 @@
         : 'не найден',
   )
   const coreReady = $derived(system.snapshot?.models?.core_ready === true)
+  const summaryModels = $derived(settings.models.filter((m) => m.kind === 'summary'))
+  const visibleModels = $derived(settings.models.filter((m) => m.kind !== 'summary'))
+  const systemModels = $derived(
+    (system.snapshot?.models?.items || []).filter((m) => m.kind !== 'summary'),
+  )
   const allInstalled = $derived(
     Boolean(
-      system.snapshot?.models?.items?.length &&
-      system.snapshot.models.items.every((m) => m.is_installed),
+      systemModels.length &&
+      systemModels.every((m) => m.is_installed),
     ),
   )
   const modelsBadgeKind = $derived(
@@ -75,7 +81,7 @@
       selectTab('dict')
       return
     }
-    if (value === 'record' || value === 'voices' || value === 'models' || value === 'system') {
+    if (value === 'record' || value === 'voices' || value === 'models' || value === 'summary' || value === 'system') {
       tab = value
     }
     ui.settingsOpen = true
@@ -138,6 +144,16 @@
     >
       Модели ИИ
     </button>
+    {#if !isMobile}
+      <button
+        class="settings-tab {tab === 'summary' ? 'active' : ''}"
+        role="tab"
+        aria-selected={tab === 'summary'}
+        onclick={() => (tab = 'summary')}
+      >
+        Итоги
+      </button>
+    {/if}
     <button
       class="settings-tab {tab === 'system' ? 'active' : ''}"
       role="tab"
@@ -361,10 +377,10 @@
                 </div>
               </div>
             {/if}
-            {#if settings.models.length === 0}
+            {#if visibleModels.length === 0}
               <div class="empty-note">Не удалось загрузить модели</div>
             {:else}
-              {#each settings.models as m (m.id)}
+              {#each visibleModels as m (m.id)}
                 {@const sizeMb = remainingMb(m)}
                 {@const pct = engine.downloading[m.id]}
                 {@const badge = pct !== undefined
@@ -408,6 +424,12 @@
               {/each}
             {/if}
           </div>
+          {#if summaryModels.length > 0}
+            <div class="help-text">
+              Модель итогов — в разделе
+              <button class="link-btn" onclick={() => (tab = 'summary')}>«Итоги»</button>.
+            </div>
+          {/if}
           <div class="row-start">
             <button class="btn-secondary" onclick={() => void loadModels()}>Обновить список</button>
             {#if !isMobile}
@@ -417,6 +439,8 @@
             {/if}
           </div>
         </div>
+      {:else if tab === 'summary'}
+        <SummarySettingsTab />
       {:else if tab === 'system'}
         <SystemSettingsTab />
       {/if}

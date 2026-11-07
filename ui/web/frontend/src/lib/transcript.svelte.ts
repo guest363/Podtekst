@@ -10,6 +10,7 @@ export const transcript = $state({
   speakers: [] as SpeakerInfo[],
   utterances: [] as Utterance[],
   markdown: '',
+  rev: '',
   hasText: false,
   loadError: '',
   extractVisible: false,
@@ -20,6 +21,7 @@ export const transcript = $state({
 // выглядеть одинаково в любом месте интерфейса.
 export const engine = $state({
   running: false,
+  summaryRunning: false,
   file: '',
   msg: 'Обработка…',
   pct: 0,
@@ -30,6 +32,7 @@ export async function openTranscriptFile(rawPath: string): Promise<void> {
   transcript.speakers = []
   transcript.utterances = []
   transcript.markdown = ''
+  transcript.rev = ''
   transcript.hasText = false
   transcript.loadError = ''
   transcript.extractVisible = isVideoPath(rawPath)
@@ -47,6 +50,7 @@ export async function openTranscriptFile(rawPath: string): Promise<void> {
   transcript.utterances = d.utterances || []
   transcript.speakers = d.speakers_info || []
   transcript.markdown = d.markdown || ''
+  transcript.rev = typeof d.rev === 'string' ? d.rev : ''
   transcript.hasText = Boolean((d.markdown && d.markdown.trim()) || transcript.utterances.length > 0)
 }
 
@@ -64,7 +68,9 @@ export async function editTranscript(
   transcript.utterances = d.utterances || []
   transcript.speakers = d.speakers_info || []
   transcript.markdown = d.markdown || ''
+  transcript.rev = typeof d.rev === 'string' ? d.rev : transcript.rev
   transcript.hasText = Boolean(transcript.markdown.trim() || transcript.utterances.length)
+  emit('transcript-edited')
 }
 
 export function emptyHint(): string {
@@ -83,8 +89,8 @@ let evtSource: EventSource | null = null
 let finishedAt = 0
 let finishing = false
 
-function closeStreamIfIdle(): void {
-  if (!engine.running && Object.keys(engine.downloading).length === 0) {
+export function closeStreamIfIdle(): void {
+  if (!engine.running && !engine.summaryRunning && Object.keys(engine.downloading).length === 0) {
     evtSource?.close()
     evtSource = null
   }
@@ -92,13 +98,13 @@ function closeStreamIfIdle(): void {
 
 export function ensureStream(): void {
   if (evtSource) return
-  if (!engine.running && Object.keys(engine.downloading).length === 0) return
+  if (!engine.running && !engine.summaryRunning && Object.keys(engine.downloading).length === 0) return
   evtSource = new EventSource('/api/transcribe_stream')
   evtSource.onmessage = (e: MessageEvent) => handleEngineEvent(e)
   evtSource.onerror = () => {
-    // Если движок не работает и нет активных скачиваний — закрываем стрим,
-    // чтобы браузер не крутил бесконечный реконнект каждые 3 секунды.
-    if (!engine.running && Object.keys(engine.downloading).length === 0) {
+    // Если движок не работает, нет активных скачиваний и итогов — закрываем
+    // стрим, чтобы браузер не крутил бесконечный реконнект каждые 3 секунды.
+    if (!engine.running && !engine.summaryRunning && Object.keys(engine.downloading).length === 0) {
       evtSource?.close()
       evtSource = null
       return
@@ -121,6 +127,13 @@ function handleEngineEvent(e: MessageEvent): void {
   try {
     evt = JSON.parse(e.data)
   } catch {
+    return
+  }
+  if (typeof evt.type === 'string' && evt.type.startsWith('summary-')) {
+    emit('summary-event', evt)
+    // Слушатель итогов снимает engine.summaryRunning синхронно; после
+    // терминального события поток можно закрыть, если больше никто не работает.
+    if (evt.type === 'summary-done' || evt.type === 'summary-error') closeStreamIfIdle()
     return
   }
   if (evt.type === 'queue') {
@@ -225,7 +238,20 @@ export async function startTranscription(rawPath: string): Promise<void> {
  *  завершить мимо этой страницы (авто-расшифровка после записи, CLI, IPC,
  *  сон телефона). 2 секунды после done игнорируем — флаг ядра снимается
  *  чуть позже самого события, иначе опрос «оживил» бы завершённую задачу. */
-export function syncEngineFromStatus(running: boolean, file: string): void {
+export function syncEngineFromStatus(
+  running: boolean,
+  file: string,
+  summary?: { active: boolean; file?: string },
+): void {
+  if (summary && summary.active) {
+    engine.summaryRunning = true
+    ensureStream()
+  } else if (summary && !summary.active && engine.summaryRunning) {
+    // Задача могла завершиться, пока SSE был потерян. Итоговый экран
+    // обновится при следующем GET /api/summary.
+    engine.summaryRunning = false
+    closeStreamIfIdle()
+  }
   if (running && !engine.running) {
     if (Date.now() - finishedAt < 2000) return
     engine.running = true

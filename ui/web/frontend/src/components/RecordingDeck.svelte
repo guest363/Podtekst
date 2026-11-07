@@ -128,7 +128,10 @@
 
       // Движок един на всё приложение: опрос — запасной канал правды о нём
       // (расшифровку могли запустить авто-режимом, CLI или IPC мимо UI).
-      syncEngineFromStatus(!!d.transcribing, String(d.transcribing_file || ''))
+      syncEngineFromStatus(!!d.transcribing, String(d.transcribing_file || ''), {
+        active: d.summarizing === true,
+        file: String(d.summarizing_file || ''),
+      })
       if (typeof d.screen_recording === 'boolean') {
         screenRecorder.active = d.screen_recording
       }

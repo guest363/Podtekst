@@ -22,6 +22,7 @@ export interface Voicepack {
 
 export interface ModelInfo {
   id: string
+  kind?: string
   title: string
   version?: string
   installed_version?: string
@@ -31,6 +32,13 @@ export interface ModelInfo {
   on_disk_bytes?: number
   license?: string
   description?: string
+  ram_mb?: number
+  required_free_mb?: number
+  context_tokens?: number
+  native_context_tokens?: number
+  min_system_ram_mb?: number
+  license_url?: string
+  source_url?: string
 }
 
 /**
@@ -42,10 +50,196 @@ export function remainingMb(m: ModelInfo): number {
   return Math.round(left / 1048576)
 }
 
-/** Whisper и CTC — дополнения: без них распознавание и спикеры работают. */
+/** Whisper и CTC — дополнения: без них распознавание и спикеры работают.
+ *  Модель итогов не входит в базовый набор и не влияет на его готовность. */
 export function isCoreModel(m: ModelInfo): boolean {
+  if (m.kind === 'summary') return false
   const id = m.id.toLowerCase()
   return !id.includes('whisper') && !id.includes('ctc')
+}
+
+export type SummaryPhase = 'idle' | 'loading' | 'suggest' | 'confirm-sensitive' | 'generating' | 'result' | 'error'
+export type SummaryStateName = 'missing' | 'fresh' | 'stale' | 'unsupported' | 'corrupt'
+export type Confidence = 'high' | 'medium' | 'low'
+export type SummaryDetail = 'short' | 'normal' | 'long'
+export type Lang = 'ru' | 'en' | 'other'
+export type OutLang = 'ru' | 'en'
+export type SummaryRole = 'plain' | 'decision' | 'task' | 'status'
+export type InlineSegment = { kind: 'text' | 'bold' | 'code'; value: string }
+
+export interface SummaryRef {
+  utterance_index: number
+  start: number
+}
+
+export interface TaskMeta {
+  assignee: string | null
+  deadline: string | null
+  deadline_ref: SummaryRef | null
+  deadline_source: 'model' | 'extracted'
+}
+
+export interface SummaryItem {
+  text: string
+  role: SummaryRole
+  task?: TaskMeta
+  refs?: SummaryRef[]
+  quote?: string
+}
+
+export interface SummarySection {
+  id: string
+  title: string
+  role: SummaryRole
+  items: SummaryItem[]
+}
+
+export interface SummaryPreset {
+  id: string
+  label: string
+  short: string
+  caution: string
+  sections: string[]
+  sensitive: boolean
+}
+
+export interface SummaryModelInfo extends ModelInfo {
+  kind: 'summary'
+}
+
+export interface SummaryClassification {
+  preset_id: string | null
+  confidence: Confidence
+  alternatives: string[]
+  signals: string[]
+  ambiguous: boolean
+  style: 'monologue' | 'dialogue' | 'multi-party'
+  language: Lang
+  source_rev: string
+  classified_at: string
+  heuristic_version: number
+  spec_version: string
+  user_override: boolean
+  cache_hit?: boolean
+}
+
+export interface SummaryRecord {
+  id: string
+  job_id: string
+  file: string
+  preset_id: string
+  preset_label: string
+  model_id: string
+  model_title: string
+  created_at: string
+  duration_ms: number
+  source_rev: string
+  detail: SummaryDetail
+  language: Lang
+  output_language: OutLang
+  sections: SummarySection[]
+  markdown: string
+  truncated: boolean
+  warnings: string[]
+  schema: string
+  schema_minor: number
+}
+
+export interface SummarySettings {
+  auto_suggest: boolean
+  default_preset: string | null
+  detail: SummaryDetail
+}
+
+export interface SummaryCapabilities {
+  summary_supported: boolean
+  runtime: 'sidecar' | 'missing'
+  classifier: 'heuristic' | 'manual_only'
+}
+
+export interface SummaryBusy {
+  kind: 'transcribing' | 'recording' | 'summary'
+  file?: string
+  job_id?: string
+}
+
+export interface SummaryActive {
+  job_id: string
+  file: string
+  phase: string
+  pct: number
+  chunk?: number
+  chunks?: number
+  elapsed_sec?: number
+}
+
+export interface SummaryLimits {
+  max_chars: number
+  max_seconds: number
+  min_free_ram_mb: number
+  min_system_ram_mb: number
+  warn_chars: number
+}
+
+export type SummaryBlockReason =
+  | 'model_missing'
+  | 'model_download'
+  | 'transcribing'
+  | 'recording'
+  | 'busy_summary'
+  | 'unsupported'
+  | 'runtime_missing'
+  | 'low_memory'
+  | 'too_short'
+  | 'no_text'
+
+export interface SummaryResponse {
+  ok: boolean
+  state: SummaryStateName
+  source_rev: string
+  summary: SummaryRecord | null
+  classification: SummaryClassification | null
+  settings: SummarySettings
+  model: SummaryModelInfo | null
+  busy: SummaryBusy | null
+  active: SummaryActive | null
+  capabilities: SummaryCapabilities
+  limits: SummaryLimits
+  block_reason: SummaryBlockReason | null
+}
+
+export interface SummaryPresetsResponse {
+  ok: boolean
+  catalog_version: number
+  presets: SummaryPreset[]
+}
+
+export interface SummarySettingsResponse {
+  ok: boolean
+  settings: SummarySettings
+  presets: SummaryPreset[]
+  model: SummaryModelInfo | null
+  capabilities: SummaryCapabilities
+}
+
+export interface SummaryClassifyResponse {
+  ok: boolean
+  classification: SummaryClassification | null
+  source_rev: string
+  cache_hit?: boolean
+}
+
+export interface SummaryGenerateResponse {
+  ok: boolean
+  job_id?: string
+  started?: boolean
+  cached?: boolean
+  summary_id?: string
+}
+
+export interface SummaryCancelResponse {
+  ok: boolean
+  cancelled: boolean
 }
 
 export interface SpeakerSample {
@@ -125,6 +319,7 @@ export interface TranscriptData {
   speakers_info?: SpeakerInfo[]
   utterances?: Utterance[]
   markdown?: string
+  rev?: string
 }
 
 export interface RecordingItem {
@@ -135,6 +330,7 @@ export interface RecordingItem {
   duration_sec?: number
   date?: string
   has_transcript: boolean
+  has_summary?: boolean
   speakers_count?: number
   owned?: boolean
 }
