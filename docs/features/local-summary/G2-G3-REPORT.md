@@ -108,3 +108,4 @@ follow-up smoke — `160.9 с` при load average ~20. Разброс почт�
 - G2: `ce7dcc1` — `feat(summary): add llama.cpp sidecar runtime and private artifact store`.
 - G3: `4d4dd1d` — `feat(summary): add summary service, HTTP API and SSE`.
 - Follow-up: `17573b4` — `fix(summary): add reduce pass, thin-output retry and load timing`.
+- Follow-up: `f4dcacd` — `fix(summary): keep single-chunk map merge without reduce warning`.
