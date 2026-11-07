@@ -3,33 +3,31 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Подтекст - локальная расшифровка встреч без облака</title>
-  <meta name="description" content="Записывает микрофон и звук созвона раздельно, расшифровывает на компьютере через GigaAM-v3 и Whisper, различает спикеров. Бесплатно, без подписки, открытый код.">
+  <title>Подтекст - расшифровка аудио в текст без облака</title>
+  <meta name="description" content="Бесплатная локальная расшифровка аудио и встреч в текст. Спикеры, таймкоды, GigaAM-v3 и Whisper на вашем компьютере. Без облака и подписки.">
   <link rel="canonical" href="https://guest363.github.io/Podtekst/">
-  <meta name="theme-color" content="#f6f7f9">
+  <meta name="theme-color" content="#f7f7f4">
   <meta name="robots" content="index, follow">
-
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Подтекст">
   <meta property="og:locale" content="ru_RU">
-  <meta property="og:title" content="Подтекст - локальная расшифровка встреч без облака">
-  <meta property="og:description" content="Запись встреч и расшифровка на вашем компьютере. Микрофон и собеседники раздельно, спикеры, экспорт в Markdown. Бесплатно, без подписки, открытый код.">
+  <meta property="og:title" content="Подтекст - расшифровка аудио в текст без облака">
+  <meta property="og:description" content="Запись встреч, спикеры и готовый протокол на вашем компьютере. Бесплатно, без подписки и отправки аудио на сервер.">
   <meta property="og:url" content="https://guest363.github.io/Podtekst/">
   <meta property="og:image" content="https://guest363.github.io/Podtekst/assets/og-image.png">
-  <meta property="og:image:width" content="1280">
-  <meta property="og:image:height" content="640">
-  <meta property="og:image:alt" content="Подтекст: локальная запись встреч и расшифровка">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Подтекст: локальная расшифровка аудио и настоящий интерфейс приложения">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Подтекст - локальная расшифровка встреч без облака">
-  <meta name="twitter:description" content="Запись встреч и расшифровка на вашем компьютере. Без подписки, без телеметрии, открытый код.">
+  <meta name="twitter:title" content="Подтекст - расшифровка аудио в текст без облака">
+  <meta name="twitter:description" content="Локальная запись и расшифровка встреч. Открытый код, без подписки и телеметрии.">
   <meta name="twitter:image" content="https://guest363.github.io/Podtekst/assets/og-image.png">
-
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
   <link rel="icon" href="favicon.ico" sizes="any">
   <link rel="apple-touch-icon" href="assets/icon.png">
+  <link rel="preload" as="image" href="assets/screenshots/recording.webp" type="image/webp">
   <script>document.documentElement.classList.add("js");</script>
   <link rel="stylesheet" href="styles.css">
-
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -47,6 +45,7 @@
         "@id": "https://guest363.github.io/Podtekst/#website",
         "url": "https://guest363.github.io/Podtekst/",
         "name": "Подтекст",
+        "inLanguage": "ru-RU",
         "publisher": { "@id": "https://guest363.github.io/Podtekst/#organization" }
       },
       {
@@ -54,87 +53,77 @@
         "@id": "https://guest363.github.io/Podtekst/#app",
         "name": "Подтекст",
         "applicationCategory": "MultimediaApplication",
-        "operatingSystem": "Linux, Windows, macOS",
+        "operatingSystem": "Linux, Windows 10, Windows 11, macOS 13.4+",
         "description": "Локальная запись встреч и расшифровка речи на русском и других языках.",
         "url": "https://guest363.github.io/Podtekst/",
         "image": "https://guest363.github.io/Podtekst/assets/og-image.png",
+        "screenshot": "https://guest363.github.io/Podtekst/assets/screenshots/transcript.webp",
         "softwareVersion": "0.6.3",
         "license": "https://opensource.org/licenses/MIT",
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "RUB" },
         "publisher": { "@id": "https://guest363.github.io/Podtekst/#organization" }
-      }
-    ]
-  }
-  </script>
-
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "FAQPage",
-    "mainEntity": [
-      {
-        "@type": "Question",
-        "name": "Аудио правда не уходит в интернет?",
-        "acceptedAnswer": {
-          "@type": "Answer",
-          "text": "Да. Приложение не отправляет аудио, текст и голосовые отпечатки. В сеть уходят только загрузка моделей и проверка обновлений."
-        }
       },
       {
-        "@type": "Question",
-        "name": "Можно ли работать без интернета?",
-        "acceptedAnswer": {
-          "@type": "Answer",
-          "text": "Да. После первого запуска и загрузки моделей интернет не нужен."
-        }
-      },
-      {
-        "@type": "Question",
-        "name": "Сколько стоит приложение?",
-        "acceptedAnswer": {
-          "@type": "Answer",
-          "text": "Приложение бесплатное, без подписки. Лицензия MIT. Донаты добровольные и не открывают дополнительные функции."
-        }
-      },
-      {
-        "@type": "Question",
-        "name": "Какие системы поддерживаются?",
-        "acceptedAnswer": {
-          "@type": "Answer",
-          "text": "Linux, Windows 10 и 11, macOS 13.4 и новее на Apple Silicon. Android - экспериментальная версия, только микрофон."
-        }
-      },
-      {
-        "@type": "Question",
-        "name": "Нужна ли видеокарта?",
-        "acceptedAnswer": {
-          "@type": "Answer",
-          "text": "Нет. GigaAM-v3 int8 работает на процессоре. Whisper тоже работает на процессоре, но медленнее."
-        }
-      },
-      {
-        "@type": "Question",
-        "name": "Насколько точно распознаётся русский?",
-        "acceptedAnswer": {
-          "@type": "Answer",
-          "text": "GigaAM-v3 - открытая модель для русского языка. Качество зависит от записи: шума, микрофона и перекрытий. Текст можно править в приложении."
-        }
-      },
-      {
-        "@type": "Question",
-        "name": "Почему установщик без подписи?",
-        "acceptedAnswer": {
-          "@type": "Answer",
-          "text": "Проект не покупает платные сертификаты. Проверяйте контрольную сумму файла. Обновления подписаны ключом проекта. Инструкция есть в документации."
-        }
-      },
-      {
-        "@type": "Question",
-        "name": "Можно ли использовать приложение для конфиденциальных встреч?",
-        "acceptedAnswer": {
-          "@type": "Answer",
-          "text": "Локальная обработка снижает риск передачи данных. Но согласие, хранение и профессиональные обязанности остаются на вас. Это не юридическая консультация."
-        }
+        "@type": "FAQPage",
+        "@id": "https://guest363.github.io/Podtekst/#faq-schema",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Данные не покидают устройство?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Аудио, видео, расшифровки и голосовые отпечатки обрабатываются и хранятся локально. Сеть нужна только для скачивания открытых моделей и проверки новой версии на GitHub. Аудио и текст в этих запросах не передаются."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Расшифровка работает без интернета?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Да, после установки приложения и загрузки нужных моделей. Запись, распознавание речи, разделение спикеров и экспорт работают офлайн."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Приложение действительно бесплатное?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Да. Подтекст распространяется по лицензии MIT, без подписки и ограничения минут. Добровольная поддержка автора не открывает дополнительные функции."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Нужна ли мощная видеокарта?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Нет. Модели работают на процессоре. Для GigaAM-v3 нужно от 1,5 ГБ оперативной памяти, для Whisper - от 4 ГБ свободной памяти."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Можно расшифровать готовый аудиофайл?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Да. Перетащите файл в приложение или нажмите «Выбрать файл». Поддерживаются MP3, WAV, M4A, OGG, Opus, FLAC и MP4; для MKV, WebM, MOV и AVI нужен ffmpeg."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Какие операционные системы поддерживаются?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Windows 10 и 11, Linux и macOS 13.4+ на Apple Silicon. Android-версия экспериментальная: запись только с микрофона, без системного звука и видео."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Можно использовать программу для конфиденциальных разговоров?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Локальная обработка исключает отправку записей на серверы проекта, но не заменяет правила вашей организации и закон. Предупреждайте участников о записи, защищайте диск и соблюдайте профессиональные обязанности."
+            }
+          }
+        ]
       }
     ]
   }
@@ -142,451 +131,218 @@
 </head>
 <body>
   <a class="skip-link" href="#main">Перейти к содержанию</a>
-
   <header class="site-header" id="top">
-    <div class="header-inner">
+    <div class="container header-inner">
       <a class="brand" href="#top" aria-label="Подтекст, на главную">
-        <img src="assets/icon.svg" alt="" width="30" height="30">
+        <img src="assets/icon.svg" alt="" width="34" height="34">
         <span>Подтекст</span>
       </a>
-
       <nav class="nav" aria-label="Основная навигация">
-        <a href="#capabilities">Возможности</a>
-        <a href="#compare">Сравнение</a>
+        <a href="#how">Как это работает</a>
+        <a href="#privacy">Приватность</a>
         <a href="#faq">Вопросы</a>
         <a href="https://github.com/guest363/Podtekst" rel="noopener">GitHub</a>
       </nav>
-
-      <a class="button button-small header-cta" href="https://github.com/guest363/Podtekst/releases/latest" data-download>Скачать</a>
-
+      <a class="button button-primary button-small header-cta" href="https://github.com/guest363/Podtekst/releases/latest" rel="noopener">Скачать</a>
       <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="mobile-menu" aria-label="Открыть меню">
-        <span></span>
-        <span></span>
+        <span></span><span></span>
       </button>
     </div>
   </header>
-
   <div class="mobile-menu" id="mobile-menu" role="dialog" aria-modal="true" aria-label="Меню" hidden>
     <nav aria-label="Мобильная навигация">
-      <a href="#capabilities">Возможности</a>
-      <a href="#compare">Сравнение</a>
+      <a href="#how">Как это работает</a>
+      <a href="#privacy">Приватность</a>
       <a href="#faq">Вопросы</a>
+      <a href="support/">Поддержать проект</a>
       <a href="https://github.com/guest363/Podtekst" rel="noopener">GitHub</a>
     </nav>
-    <a class="button button-primary" href="https://github.com/guest363/Podtekst/releases/latest" data-download>Скачать бесплатно</a>
-    <p>Бесплатно. Открытый код. Без подписки.</p>
+    <a class="button button-primary" href="https://github.com/guest363/Podtekst/releases/latest" rel="noopener">Скачать бесплатно</a>
+    <p>Windows · macOS · Linux<br>Открытый код · без подписки</p>
   </div>
 
   <main id="main" tabindex="-1">
     <section class="hero" aria-labelledby="hero-title">
       <div class="container hero-grid">
         <div class="hero-copy">
-          <p class="eyebrow"><span class="record-dot" aria-hidden="true"></span>Локальная запись встреч</p>
-          <h1 id="hero-title">Расшифровка встреч без облака <span>на вашем компьютере</span></h1>
-          <p class="lead">Записывайте звонки в Zoom, Meet или Telegram. Подтекст пишет микрофон и звук звонка раздельно, расшифровывает на устройстве и различает спикеров.</p>
-
+          <p class="eyebrow"><span class="record-dot" aria-hidden="true"></span>Локальная расшифровка встреч</p>
+          <h1 id="hero-title">Расшифровка аудио в текст. <span>Без облака.</span></h1>
+          <p class="lead">Записывайте встречи или загружайте готовые файлы. Подтекст распознаёт речь на вашем компьютере, разделяет спикеров и сохраняет протокол с таймкодами.</p>
           <div class="actions">
-            <a class="button button-primary" href="https://github.com/guest363/Podtekst/releases/latest" data-download>Скачать бесплатно</a>
-            <a class="button button-secondary" href="https://github.com/guest363/Podtekst" rel="noopener">Исходный код</a>
+            <a class="button button-primary" href="https://github.com/guest363/Podtekst/releases/latest" rel="noopener" data-download>Скачать бесплатно</a>
+            <a class="text-link" href="https://github.com/guest363/Podtekst" rel="noopener">Исходный код на GitHub <span aria-hidden="true">↗</span></a>
           </div>
-
           <ul class="trust-list" aria-label="Условия использования">
-            <li>открытый код</li>
-            <li>без подписки</li>
-            <li>без телеметрии</li>
+            <li>Без подписки</li>
+            <li>Без телеметрии</li>
+            <li>Открытый код MIT</li>
           </ul>
-
-          <p class="hero-note">Windows 10 и 11, macOS 13.4 и новее, Linux. Установщик 10-95&nbsp;МБ. Модели скачиваются один раз.</p>
+          <p class="hero-note">Windows 10/11 · macOS 13.4+ · Linux<br>Модели скачиваются один раз, дальше работают офлайн.</p>
         </div>
+        <figure class="product-shot hero-shot">
+          <img src="assets/screenshots/recording.webp" alt="Настоящий экран Подтекст: запись микрофона и системного звука, список аудиозаписей" width="2160" height="1200" fetchpriority="high">
+          <figcaption>Настоящий интерфейс приложения · демонстрационные данные</figcaption>
+        </figure>
+      </div>
+    </section>
 
-        <div class="hero-visual">
-          <div class="product-window" role="img" aria-label="Окно приложения: идёт запись, таймер 14 минут 22 секунды, расшифровка реплик по спикерам">
-            <div class="window-bar">
-              <span class="record-dot" aria-hidden="true"></span>
-              <span class="window-state">Запись</span>
-              <span class="timer">00:14:22</span>
-              <span class="mini-wave" aria-hidden="true">
-                <i style="--h:22%"></i><i style="--h:46%"></i><i style="--h:34%"></i><i style="--h:72%"></i>
-                <i style="--h:54%"></i><i style="--h:88%"></i><i style="--h:42%"></i><i style="--h:64%"></i>
-                <i style="--h:30%"></i><i style="--h:58%"></i><i style="--h:78%"></i><i style="--h:48%"></i>
-                <i style="--h:26%"></i><i style="--h:66%"></i><i style="--h:38%"></i><i style="--h:52%"></i>
-              </span>
-              <span class="window-source">микрофон + система</span>
+    <section class="privacy section" id="privacy" aria-labelledby="privacy-title">
+      <div class="container split-layout">
+        <div class="section-intro">
+          <p class="eyebrow">Приватность по архитектуре</p>
+          <h2 id="privacy-title">Записи остаются вашими</h2>
+          <p class="lead">Не «надёжное облако», а отсутствие облака для записей и текста. Обработка идёт на вашем процессоре.</p>
+          <a class="text-link" href="https://github.com/guest363/Podtekst/blob/main/PRIVACY.md" rel="noopener">Политика конфиденциальности <span aria-hidden="true">↗</span></a>
+        </div>
+        <div class="privacy-details">
+          <div class="data-flow" aria-label="Путь данных">
+            <span>Микрофон или файл</span><span aria-hidden="true">→</span><strong>Ваш компьютер</strong><span aria-hidden="true">→</span><span>Готовый протокол</span>
+          </div>
+          <div class="privacy-lists">
+            <div>
+              <h3>Остаётся на устройстве</h3>
+              <ul class="check-list">
+                <li>Аудио- и видеозаписи</li>
+                <li>Текст, таймкоды и экспорт</li>
+                <li>Участники и голосовые отпечатки</li>
+                <li>Статистика использования</li>
+              </ul>
             </div>
-
-            <div class="window-body">
-              <div class="transcript">
-                <div class="transcript-head">
-                  <span>Расшифровка</span>
-                  <span class="mono">3 спикера · 14:22</span>
-                </div>
-
-                <div class="line">
-                  <span class="time">00:02</span>
-                  <div class="line-body">
-                    <div class="speaker"><i class="dot dot-blue" aria-hidden="true"></i>Спикер 1</div>
-                    <p>Сначала обсудим сроки запуска, потом бюджет и риски.</p>
-                  </div>
-                </div>
-
-                <div class="line line-active">
-                  <span class="time">00:09</span>
-                  <div class="line-body">
-                    <div class="speaker"><i class="dot dot-green" aria-hidden="true"></i>Спикер 2</div>
-                    <p>Модель работает на процессоре. Второй проход уточняет термины.</p>
-                  </div>
-                </div>
-
-                <div class="line">
-                  <span class="time">00:18</span>
-                  <div class="line-body">
-                    <div class="speaker"><i class="dot dot-amber" aria-hidden="true"></i>Спикер 3</div>
-                    <p>Диаризация разделяет голоса даже при наложении фраз.</p>
-                  </div>
-                </div>
-
-                <div class="line">
-                  <span class="time">00:27</span>
-                  <div class="line-body">
-                    <div class="speaker"><i class="dot dot-green" aria-hidden="true"></i>Спикер 2</div>
-                    <p>Экспорт в Markdown лежит рядом с записью.</p>
-                  </div>
-                </div>
-              </div>
-
-              <aside class="speakers" aria-hidden="true">
-                <p class="speakers-title">Спикеры</p>
-                <div class="speaker-row"><i class="dot dot-blue"></i><span>Спикер 1</span><small>узнан</small></div>
-                <div class="speaker-row"><i class="dot dot-green"></i><span>Спикер 2</span><small>узнан</small></div>
-                <div class="speaker-row"><i class="dot dot-amber"></i><span>Спикер 3</span><small>новый</small></div>
-              </aside>
-            </div>
-
-            <div class="window-foot">
-              <span class="local-badge">Локально</span>
-              <span class="mono">встреча.md</span>
+            <div>
+              <h3>Сеть нужна только для</h3>
+              <ul class="plain-list">
+                <li>Загрузки открытых моделей по вашей команде</li>
+                <li>Проверки новой версии на GitHub</li>
+              </ul>
+              <p class="small-note">В этих запросах нет аудио, расшифровок и идентификаторов пользователя. Обновление устанавливается только по кнопке.</p>
             </div>
           </div>
-          <p class="visual-caption">Запись, расшифровка и спикеры в одном окне. Пример интерфейса.</p>
         </div>
       </div>
     </section>
 
-    <section class="privacy-band" id="privacy" aria-labelledby="privacy-title">
+    <section class="section how" id="how" aria-labelledby="how-title">
       <div class="container">
-        <div class="section-head section-head-inverse">
+        <div class="section-heading">
           <div>
-            <p class="eyebrow eyebrow-inverse">Приватность по умолчанию</p>
-            <h2 id="privacy-title">Аудио не покидает компьютер</h2>
+            <p class="eyebrow">От звука к протоколу</p>
+            <h2 id="how-title">Три шага - всё в одном окне</h2>
           </div>
-          <p class="lead">Расшифровка идёт на устройстве. В сеть уходят только загрузка моделей и проверка обновлений.</p>
+          <p class="lead">Можно записать звонок с раздельными каналами или взять готовый файл. После распознавания текст легко проверить и забрать в свою систему.</p>
         </div>
-
-        <ol class="path">
-          <li class="path-node">
-            <span class="node-num">01</span>
-            <h3>Запись</h3>
-            <p>Микрофон и звук звонка в двух каналах.</p>
-          </li>
-          <li class="path-node">
-            <span class="node-num">02</span>
-            <h3>Расшифровка</h3>
-            <p>GigaAM-v3 или Whisper работают на устройстве.</p>
-          </li>
-          <li class="path-node">
-            <span class="node-num">03</span>
-            <h3>Файлы</h3>
-            <p>Текст, таймкоды и голосовые профили на диске.</p>
-          </li>
+        <ol class="steps">
+          <li><span>01</span><h3>Запишите или выберите файл</h3><p>Микрофон и звук звонка сохраняются раздельно. Поддерживаются популярные аудиоформаты и MP4.</p></li>
+          <li><span>02</span><h3>Запустите расшифровку</h3><p>Выберите GigaAM-v3 для русского или Whisper Turbo для более чем 30 языков. Модели работают локально на процессоре.</p></li>
+          <li><span>03</span><h3>Проверьте и экспортируйте</h3><p>Исправьте реплики, уточните спикеры и сохраните результат в Markdown, TXT, DOCX или JSON.</p></li>
         </ol>
-
-        <div class="proof-grid">
-          <div class="proof">
-            <p class="proof-label">Уходит в сеть</p>
-            <ul>
-              <li>Загрузка моделей</li>
-              <li>Проверка обновлений</li>
-            </ul>
-          </div>
-          <div class="proof">
-            <p class="proof-label">Остаётся на диске</p>
-            <ul>
-              <li>Аудио и видео</li>
-              <li>Текст и таймкоды</li>
-              <li>Спикеры и голосовые профили</li>
-            </ul>
-          </div>
-        </div>
+        <figure class="product-shot transcript-shot">
+          <img src="assets/screenshots/transcript.webp" alt="Настоящий экран расшифровки Подтекст: таймкоды, два спикера, поиск, редактирование и экспорт" width="2160" height="1280" loading="lazy">
+          <figcaption>Реплики, спикеры, таймкоды и экспорт в настоящем интерфейсе · демонстрационные данные</figcaption>
+        </figure>
       </div>
     </section>
 
-    <section class="section capabilities" id="capabilities" aria-labelledby="capabilities-title">
-      <div class="container">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Что важно на встрече</p>
-            <h2 id="capabilities-title">Три вещи, которые решают</h2>
-          </div>
-          <p class="lead">Не только текст. Каналы, спикеры и модель для русского языка определяют, насколько протокол будет полезен.</p>
-        </div>
-
-        <div class="bento">
-          <article class="card card-wide">
-            <p class="card-label">Каналы</p>
-            <h3>Микрофон и собеседники раздельно</h3>
-            <p>Левый канал - вы, правый - звонок. Голоса не смешиваются, а диаризация, то есть разделение реплик по спикерам, работает точнее.</p>
-
-            <div class="channels" aria-hidden="true">
-              <div class="channel">
-                <span class="channel-label">Вы</span>
-                <span class="channel-wave">
-                  <i style="--h:28%"></i><i style="--h:54%"></i><i style="--h:38%"></i><i style="--h:76%"></i>
-                  <i style="--h:44%"></i><i style="--h:62%"></i><i style="--h:34%"></i><i style="--h:82%"></i>
-                  <i style="--h:48%"></i><i style="--h:58%"></i><i style="--h:30%"></i><i style="--h:68%"></i>
-                  <i style="--h:40%"></i><i style="--h:52%"></i><i style="--h:26%"></i><i style="--h:64%"></i>
-                </span>
-              </div>
-              <div class="channel">
-                <span class="channel-label">Звонок</span>
-                <span class="channel-wave">
-                  <i style="--h:18%"></i><i style="--h:32%"></i><i style="--h:56%"></i><i style="--h:40%"></i>
-                  <i style="--h:70%"></i><i style="--h:36%"></i><i style="--h:60%"></i><i style="--h:28%"></i>
-                  <i style="--h:50%"></i><i style="--h:74%"></i><i style="--h:42%"></i><i style="--h:58%"></i>
-                  <i style="--h:24%"></i><i style="--h:66%"></i><i style="--h:38%"></i><i style="--h:54%"></i>
-                </span>
-              </div>
-            </div>
-          </article>
-
-          <article class="card">
-            <p class="card-label">Спикеры</p>
-            <h3>Знакомые голоса</h3>
-            <p>Приложение делит запись на реплики и узнаёт участников по голосовым профилям.</p>
-
-            <div class="chips" aria-hidden="true">
-              <span class="chip"><i class="dot dot-blue"></i>Спикер 1</span>
-              <span class="chip"><i class="dot dot-green"></i>Спикер 2</span>
-              <span class="chip"><i class="dot dot-amber"></i>Спикер 3</span>
-            </div>
-          </article>
-
-          <article class="card">
-            <p class="card-label">Модели</p>
-            <h3>Русский на GigaAM-v3</h3>
-            <p>226&nbsp;МБ, int8, работает на процессоре. Для других языков - Whisper turbo.</p>
-
-            <dl class="spec">
-              <div><dt>Модель</dt><dd>GigaAM-v3</dd></div>
-              <div><dt>Размер</dt><dd>226&nbsp;МБ</dd></div>
-              <div><dt>Языки приложения</dt><dd>30+</dd></div>
-            </dl>
-          </article>
-        </div>
-      </div>
-    </section>
-
-    <section class="section protocol" id="protocol" aria-labelledby="protocol-title">
-      <div class="container protocol-grid">
-        <div class="protocol-copy">
-          <p class="eyebrow">Экспорт</p>
-          <h2 id="protocol-title">На выходе - готовый протокол</h2>
-          <p class="lead">После записи рядом с файлом появляются Markdown, TXT и JSON. Внутри - спикеры, таймкоды и текст, который можно править.</p>
-
-          <ul class="format-list">
-            <li><strong>Markdown</strong> для Obsidian, Notion и Logseq.</li>
-            <li><strong>TXT</strong> для локальных языковых моделей.</li>
-            <li><strong>Word (DOCX)</strong> для отправки клиенту.</li>
-            <li><strong>JSON</strong> с таймкодами и голосовыми векторами.</li>
+    <section class="section details-section" aria-labelledby="details-title">
+      <div class="container details-grid">
+        <div>
+          <p class="eyebrow">Для повседневной работы</p>
+          <h2 id="details-title">Не просто текст, а рабочий протокол</h2>
+          <ul class="feature-list">
+            <li><strong>Спикеры и знакомые голоса.</strong> Разделение реплик, голосовые профили и ручная привязка участников.</li>
+            <li><strong>Поиск и проверка по звуку.</strong> Таймкоды, переход к фрагменту, редактирование текста и словарь терминов.</li>
+            <li><strong>Открытые форматы.</strong> Markdown для базы знаний, TXT для локальных моделей, DOCX для документов, JSON для автоматизации.</li>
           </ul>
         </div>
-
-        <div class="protocol-code" aria-label="Пример экспорта в Markdown">
-          <div class="code-head">
-            <span class="mono">protocol.md</span>
-            <span>пример</span>
-          </div>
-          <pre><code># Встреча, 14:22
-
-## 00:02 · Спикер 1
-Сначала обсудим сроки запуска.
-
-## 00:09 · Спикер 2
-Модель работает на процессоре.
-Второй проход уточняет термины.
-
-## 00:18 · Спикер 3
-Диаризация разделяет голоса
-даже при наложении фраз.</code></pre>
-        </div>
-      </div>
-      <div class="container">
-        <p class="fine-print">Пример. Данные вымышлены.</p>
-      </div>
-    </section>
-
-    <section class="section compare" id="compare" aria-labelledby="compare-title">
-      <div class="container">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Сравнение</p>
-            <h2 id="compare-title">Чем отличается от облачных сервисов</h2>
-          </div>
-          <p class="lead">Облачные сервисы удобны для команд. Локальное приложение выигрывает, когда запись не должна покидать компьютер.</p>
-        </div>
-
-        <p class="table-hint">Прокрутите таблицу вбок, чтобы увидеть все три колонки.</p>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th scope="col">Параметр</th>
-                <th scope="col" class="own">Подтекст</th>
-                <th scope="col">Облачные сервисы</th>
-                <th scope="col">Whisper-приложения</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <th scope="row">Где обрабатывается аудио</th>
-                <td class="own">На вашем компьютере</td>
-                <td>На сервере</td>
-                <td>На вашем компьютере</td>
-              </tr>
-              <tr>
-                <th scope="row">Подписка</th>
-                <td class="own">Нет</td>
-                <td>Обычно есть</td>
-                <td>Зависит</td>
-              </tr>
-              <tr>
-                <th scope="row">Бот в звонке</th>
-                <td class="own">Не нужен</td>
-                <td>Часто нужен</td>
-                <td>Не нужен</td>
-              </tr>
-              <tr>
-                <th scope="row">Микрофон и собеседник раздельно</th>
-                <td class="own">Да</td>
-                <td>Да</td>
-                <td>Обычно нет</td>
-              </tr>
-              <tr>
-                <th scope="row">Спикеры</th>
-                <td class="own">Да, с узнаванием</td>
-                <td>Да</td>
-                <td>Редко</td>
-              </tr>
-              <tr>
-                <th scope="row">Linux</th>
-                <td class="own">Да</td>
-                <td>Редко</td>
-                <td>Редко</td>
-              </tr>
-              <tr>
-                <th scope="row">Запись экрана</th>
-                <td class="own">Да</td>
-                <td>Да</td>
-                <td>Редко</td>
-              </tr>
-              <tr>
-                <th scope="row">Открытый код</th>
-                <td class="own">MIT</td>
-                <td>Нет</td>
-                <td>Зависит</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <p class="table-note">Сравнение категорий, не конкретных тарифов. Данные на ноябрь 2026. Проверяйте условия у сервисов.</p>
+        <aside class="requirements" aria-labelledby="requirements-title">
+          <p class="eyebrow">Перед установкой</p>
+          <h3 id="requirements-title">Обычного компьютера достаточно</h3>
+          <dl>
+            <div><dt>Основная модель</dt><dd>GigaAM-v3 int8</dd></div>
+            <div><dt>Оперативная память для GigaAM</dt><dd>от 1,5&nbsp;ГБ</dd></div>
+            <div><dt>Базовые модели на диске</dt><dd>около 300&nbsp;МБ</dd></div>
+            <div><dt>Свободная память для Whisper</dt><dd>от 4&nbsp;ГБ</dd></div>
+            <div><dt>Видеокарта</dt><dd>не нужна</dd></div>
+          </dl>
+          <p class="small-note">macOS - Apple Silicon, версия на этапе тестирования. Android - экспериментально, только микрофон и импорт аудио.</p>
+        </aside>
       </div>
     </section>
 
     <section class="section faq" id="faq" aria-labelledby="faq-title">
       <div class="container faq-grid">
-        <div class="faq-intro">
-          <p class="eyebrow">Вопросы</p>
-          <h2 id="faq-title">Коротко о главном</h2>
-          <p class="lead">Если чего-то не хватает, напишите в GitHub Issues. Мы читаем.</p>
+        <div class="section-intro">
+          <p class="eyebrow">Вопросы и ответы</p>
+          <h2 id="faq-title">Перед первой записью</h2>
+          <p class="lead">Коротко о данных, моделях и совместимости. Не нашли ответ? Задайте вопрос на GitHub.</p>
+          <a class="text-link" href="https://github.com/guest363/Podtekst/issues" rel="noopener">Задать вопрос <span aria-hidden="true">↗</span></a>
         </div>
-
         <div class="faq-list">
-          <details>
-            <summary>Аудио правда не уходит в интернет?</summary>
-            <p>Да. Приложение не отправляет аудио, текст и голосовые отпечатки. В сеть уходят только загрузка моделей и проверка обновлений.</p>
+          <details open>
+            <summary>Данные не покидают устройство?</summary>
+            <p>Аудио, видео, расшифровки и голосовые отпечатки обрабатываются и хранятся локально. Сеть нужна только для скачивания открытых моделей и проверки новой версии на GitHub. Аудио и текст в этих запросах не передаются.</p>
           </details>
           <details>
-            <summary>Можно ли работать без интернета?</summary>
-            <p>Да. После первого запуска и загрузки моделей интернет не нужен.</p>
+            <summary>Расшифровка работает без интернета?</summary>
+            <p>Да, после установки приложения и загрузки нужных моделей. Запись, распознавание речи, разделение спикеров и экспорт работают офлайн.</p>
           </details>
           <details>
-            <summary>Сколько стоит приложение?</summary>
-            <p>Приложение бесплатное, без подписки. Лицензия MIT. Донаты добровольные и не открывают дополнительные функции.</p>
+            <summary>Приложение действительно бесплатное?</summary>
+            <p>Да. Подтекст распространяется по лицензии MIT, без подписки и ограничения минут. Добровольная поддержка автора не открывает дополнительные функции.</p>
           </details>
           <details>
-            <summary>Какие системы поддерживаются?</summary>
-            <p>Linux, Windows 10 и 11, macOS 13.4 и новее на Apple Silicon. Android - экспериментальная версия, только микрофон.</p>
+            <summary>Нужна ли мощная видеокарта?</summary>
+            <p>Нет. Модели работают на процессоре. Для GigaAM-v3 нужно от 1,5&nbsp;ГБ оперативной памяти, для Whisper - от 4&nbsp;ГБ свободной памяти.</p>
           </details>
           <details>
-            <summary>Нужна ли видеокарта?</summary>
-            <p>Нет. GigaAM-v3 int8 работает на процессоре. Whisper тоже работает на процессоре, но медленнее.</p>
+            <summary>Можно расшифровать готовый аудиофайл?</summary>
+            <p>Да. Перетащите файл в приложение или нажмите «Выбрать файл». Поддерживаются MP3, WAV, M4A, OGG, Opus, FLAC и MP4; для MKV, WebM, MOV и AVI нужен ffmpeg.</p>
           </details>
           <details>
-            <summary>Насколько точно распознаётся русский?</summary>
-            <p>GigaAM-v3 - открытая модель для русского языка. Качество зависит от записи: шума, микрофона и перекрытий. Текст можно править в приложении.</p>
+            <summary>Какие операционные системы поддерживаются?</summary>
+            <p>Windows 10 и 11, Linux и macOS 13.4+ на Apple Silicon. Android-версия экспериментальная: запись только с микрофона, без системного звука и видео.</p>
           </details>
           <details>
-            <summary>Почему установщик без подписи?</summary>
-            <p>Проект не покупает платные сертификаты. Проверяйте контрольную сумму файла. Обновления подписаны ключом проекта. Инструкция есть в документации.</p>
-          </details>
-          <details>
-            <summary>Можно ли использовать приложение для конфиденциальных встреч?</summary>
-            <p>Локальная обработка снижает риск передачи данных. Но согласие, хранение и профессиональные обязанности остаются на вас. Это не юридическая консультация.</p>
+            <summary>Можно использовать программу для конфиденциальных разговоров?</summary>
+            <p>Локальная обработка исключает отправку записей на серверы проекта, но не заменяет правила вашей организации и закон. Предупреждайте участников о записи, защищайте диск и соблюдайте профессиональные обязанности.</p>
           </details>
         </div>
       </div>
     </section>
 
-    <section class="section support" id="support" aria-labelledby="support-title">
-      <div class="container support-grid">
+    <section class="support-cta" aria-labelledby="support-title">
+      <div class="container support-cta-inner">
         <div>
-          <p class="eyebrow">Поддержка</p>
-          <h2 id="support-title">Проект живёт на время автора и донаты</h2>
+          <p class="eyebrow">Независимая разработка</p>
+          <h2 id="support-title">Пользуетесь - помогите проекту расти</h2>
+          <p>Подтекст бесплатен для всех. Можно поддержать автора чаевыми, звездой на GitHub или отчётом об ошибке.</p>
         </div>
-        <div>
-          <p class="lead">Подтекст бесплатный, без подписки и скрытых платежей. Донат не открывает функции и не является оплатой услуг.</p>
-          <div class="actions">
-            <a class="button button-primary" href="https://tips.tips/000490393" rel="noopener">Поддержать проект</a>
-            <a class="button button-secondary" href="https://github.com/guest363/Podtekst" rel="noopener">Поставить звезду</a>
-          </div>
-          <p class="support-note">Донат добровольный. Платёжный сервис может взять комиссию. Другие способы помочь: баг-репорт, перевод, статья.</p>
-        </div>
+        <a class="button button-secondary" href="support/">Поддержать проект</a>
       </div>
     </section>
   </main>
 
   <footer class="site-footer">
     <div class="container footer-grid">
-      <div class="footer-brand">
-        <a class="brand" href="#top" aria-label="Подтекст, на главную">
-          <img src="assets/icon.svg" alt="" width="28" height="28">
+      <div>
+        <a class="brand" href="#top" aria-label="Подтекст, наверх">
+          <img src="assets/icon.svg" alt="" width="30" height="30">
           <span>Подтекст</span>
         </a>
-        <p>Локальная запись встреч и расшифровка. Без облака.</p>
+        <p>Локальная запись и расшифровка речи.<br>Без облака, подписки и телеметрии.</p>
       </div>
-      <nav aria-label="Подвал">
+      <nav aria-label="Документы и проект">
         <a href="https://github.com/guest363/Podtekst" rel="noopener">GitHub</a>
         <a href="https://github.com/guest363/Podtekst/releases/latest" rel="noopener">Релизы</a>
         <a href="https://github.com/guest363/Podtekst/blob/main/PRIVACY.md" rel="noopener">Приватность</a>
-        <a href="https://github.com/guest363/Podtekst/blob/main/LICENSE" rel="noopener">Лицензия</a>
-        <a href="#support">Поддержать</a>
+        <a href="https://github.com/guest363/Podtekst/blob/main/LICENSE" rel="noopener">Лицензия MIT</a>
+        <a href="support/">Поддержать</a>
       </nav>
     </div>
     <div class="container footer-bottom">
-      <p>© 2026 Подтекст. Лицензия MIT.</p>
-      <p>Записывая разговор, предупредите собеседников и соблюдайте закон. Сайт не использует cookies и аналитику.</p>
+      <p>© 2026 Подтекст</p>
+      <p>Предупреждайте собеседников о записи и соблюдайте закон. Сайт не использует cookies и аналитику.</p>
     </div>
   </footer>
-
   <script src="app.js" defer></script>
 </body>
 </html>
