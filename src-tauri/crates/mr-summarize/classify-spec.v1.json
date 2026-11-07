@@ -27,7 +27,7 @@
   },
   "normalization": {
     "steps": "NFC -> lowercase -> ё->е -> non-alphanumeric to space -> collapse whitespace",
-    "nfc_note": "NFC is assumed: transcripts are already composed; no normalization dependency is in the crate allowlist."
+    "nfc_note": "NFC is applied via unicode-normalization before lowercase and ё-folding."
   },
   "token": {
     "min_len": 3,

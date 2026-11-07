@@ -12,7 +12,7 @@ mod spec;
 
 pub const HEURISTIC_VERSION: u32 = 1;
 pub const SPEC_VERSION: &str = "classify-spec.v1";
-pub const SPEC_SHA256: &str = "27599505935b6332ced237e4e4c48d2590ecf427fcba1eb2b87341ca6026f343";
+pub const SPEC_SHA256: &str = "99745fa2467133c9cd0f8c6fcb2d0c3c5dc1da0a28385251eca41c011bf3a2d2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

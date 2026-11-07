@@ -48,8 +48,8 @@ cap 6); расхождения с golden-таблицей нет. Cue-матч �
 
 - Prompt matrix §7 (3 формулировки × 4 фикстуры) — G5: в G1 нет модели, метрики не
   выдумываются; реализован победитель `hybrid-v2`.
-- NFC предполагается выполненной: `unicode-normalization` не входит в разрешённый
-  список зависимостей (см. blockers).
+- NFC реализован через `unicode-normalization` до lowercase/ё-folding; добавлен тест
+  на decomposed Cyrillic. Blocker закрыт.
 - Список EN stopwords в спецификации содержит 61 слово при заявленных 60; сохранены
   все перечисленные слова.
 - `manual_only`, sidecar, HTTP/SSE, frontend — не этот gate.

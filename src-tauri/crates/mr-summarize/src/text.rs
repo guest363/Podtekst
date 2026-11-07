@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
+use unicode_normalization::UnicodeNormalization;
 
 use crate::error::SummaryError;
 
@@ -79,11 +80,9 @@ impl Language {
     }
 }
 
-/// shortcut: NFC считается выполненной — расшифровки приходят составленными,
-/// а `unicode-normalization` нет в разрешённом списке зависимостей. Апгрейд — при
-/// первом реальном decomposed-входе.
 pub fn normalize(input: &str) -> String {
-    let lowered = input.to_lowercase();
+    let composed: String = input.nfc().collect();
+    let lowered = composed.to_lowercase();
     let mut out = String::with_capacity(lowered.len());
     let mut pending_space = false;
     for ch in lowered.chars() {
@@ -227,6 +226,12 @@ mod tests {
     #[test]
     fn normalize_folds_case_yo_and_punctuation() {
         assert_eq!(normalize("  ЁЖИК, «тест»!  "), "ежик тест");
+    }
+
+    #[test]
+    fn normalize_composes_decomposed_cyrillic_before_folding() {
+        assert_eq!(normalize("И\u{0306}"), "й");
+        assert_eq!(normalize("е\u{0308}"), "е");
     }
 
     #[test]
