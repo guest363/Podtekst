@@ -1,0 +1,86 @@
+{
+  "meta": {
+    "title": "Weekly product sync",
+    "audio": "Weekly product sync.wav",
+    "duration": "00:30",
+    "duration_sec": 30.8,
+    "engine": "test",
+    "speaker_method": "test",
+    "speakers": [
+      "Alice",
+      "Bob"
+    ],
+    "speakers_info": []
+  },
+  "stats": {
+    "utterances": 6
+  },
+  "utterances": [
+    {
+      "start": 0.0,
+      "end": 4.93,
+      "speaker": "Alice",
+      "channel": null,
+      "text": "Let us review the launch plan. The beta is scheduled for November 20.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 5.33,
+      "end": 10.04,
+      "speaker": "Bob",
+      "channel": null,
+      "text": "The settings screen is done. I still need to test the empty state.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 10.44,
+      "end": 16.23,
+      "speaker": "Alice",
+      "channel": null,
+      "text": "Decision: we keep the summary block inside the transcript page. No separate page.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 16.63,
+      "end": 20.27,
+      "speaker": "Bob",
+      "channel": null,
+      "text": "I will update the copy by Tuesday. That is my task.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 20.67,
+      "end": 26.74,
+      "speaker": "Alice",
+      "channel": null,
+      "text": "Open question: do we need a separate model for classification? We will measure first.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 27.14,
+      "end": 30.36,
+      "speaker": "Bob",
+      "channel": null,
+      "text": "Agreed. No invented deadlines in the summary.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    }
+  ]
+}

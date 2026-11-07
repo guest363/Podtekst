@@ -1,0 +1,998 @@
+{
+  "spec_version": "classify-spec.v1",
+  "heuristic_version": 1,
+  "presets": [
+    "meeting",
+    "scrum",
+    "legal",
+    "lecture",
+    "psychology",
+    "personal"
+  ],
+  "tie_break": [
+    "meeting",
+    "scrum",
+    "lecture",
+    "personal",
+    "legal",
+    "psychology"
+  ],
+  "universal_preset": "universal",
+  "lexical_window": {
+    "max_chars": 24000,
+    "head_chars": 10000,
+    "middle_chars": 8000,
+    "tail_chars": 6000,
+    "join": "\\n"
+  },
+  "normalization": {
+    "steps": "NFC -> lowercase -> ё->е -> non-alphanumeric to space -> collapse whitespace",
+    "nfc_note": "NFC is assumed: transcripts are already composed; no normalization dependency is in the crate allowlist."
+  },
+  "token": {
+    "min_len": 3,
+    "stopwords_file": "stopwords-v1.txt",
+    "stopwords_sha256": "2c608f9202bccb0338221947674be569f96cdfc0343408b4ce8766e07cf4f226",
+    "stopwords_total": 212,
+    "stopwords_ru": 151,
+    "stopwords_en": 61
+  },
+  "keyword_match": "token starts_with stem; multi-word stem is an exact padded phrase",
+  "cue_match": "normalized substring contains (multi-word cues included); role labels match speaker tokens by starts_with",
+  "keyword_groups": {
+    "meeting": [
+      [
+        "задач",
+        1
+      ],
+      [
+        "срок",
+        2
+      ],
+      [
+        "дедлайн",
+        1
+      ],
+      [
+        "реши",
+        2
+      ],
+      [
+        "договор",
+        1
+      ],
+      [
+        "согласова",
+        1
+      ],
+      [
+        "план",
+        1
+      ],
+      [
+        "встреч",
+        1
+      ],
+      [
+        "обсуд",
+        1
+      ],
+      [
+        "вопрос",
+        1
+      ],
+      [
+        "итог",
+        1
+      ],
+      [
+        "коллег",
+        1
+      ],
+      [
+        "task",
+        1
+      ],
+      [
+        "deadline",
+        2
+      ],
+      [
+        "decision",
+        2
+      ],
+      [
+        "agree",
+        1
+      ],
+      [
+        "plan",
+        1
+      ],
+      [
+        "meeting",
+        1
+      ],
+      [
+        "discuss",
+        1
+      ],
+      [
+        "question",
+        1
+      ]
+    ],
+    "scrum": [
+      [
+        "спринт",
+        3
+      ],
+      [
+        "стендап",
+        3
+      ],
+      [
+        "блокер",
+        2
+      ],
+      [
+        "бэклог",
+        2
+      ],
+      [
+        "задач",
+        1
+      ],
+      [
+        "сделано",
+        2
+      ],
+      [
+        "в работе",
+        2
+      ],
+      [
+        "вчера",
+        1
+      ],
+      [
+        "сегодня",
+        1
+      ],
+      [
+        "статус",
+        1
+      ],
+      [
+        "релиз",
+        1
+      ],
+      [
+        "тестир",
+        1
+      ],
+      [
+        "дедлайн",
+        1
+      ],
+      [
+        "sprint",
+        3
+      ],
+      [
+        "standup",
+        3
+      ],
+      [
+        "blocker",
+        2
+      ],
+      [
+        "backlog",
+        2
+      ],
+      [
+        "done",
+        2
+      ],
+      [
+        "in progress",
+        2
+      ],
+      [
+        "yesterday",
+        1
+      ],
+      [
+        "today",
+        1
+      ],
+      [
+        "status",
+        1
+      ],
+      [
+        "release",
+        1
+      ],
+      [
+        "testing",
+        1
+      ]
+    ],
+    "legal": [
+      [
+        "суд",
+        2
+      ],
+      [
+        "истц",
+        2
+      ],
+      [
+        "ответчик",
+        2
+      ],
+      [
+        "заседани",
+        2
+      ],
+      [
+        "статья",
+        2
+      ],
+      [
+        "доказательств",
+        2
+      ],
+      [
+        "жалоб",
+        2
+      ],
+      [
+        "норм",
+        2
+      ],
+      [
+        "договор",
+        1
+      ],
+      [
+        "сторон",
+        1
+      ],
+      [
+        "ходатайств",
+        2
+      ],
+      [
+        "решение суда",
+        2
+      ],
+      [
+        "право",
+        1
+      ],
+      [
+        "юрист",
+        1
+      ],
+      [
+        "court",
+        2
+      ],
+      [
+        "plaintiff",
+        2
+      ],
+      [
+        "defendant",
+        2
+      ],
+      [
+        "hearing",
+        2
+      ],
+      [
+        "article",
+        2
+      ],
+      [
+        "evidence",
+        2
+      ],
+      [
+        "claim",
+        2
+      ],
+      [
+        "contract",
+        1
+      ],
+      [
+        "party",
+        1
+      ],
+      [
+        "motion",
+        2
+      ],
+      [
+        "ruling",
+        2
+      ],
+      [
+        "law",
+        1
+      ],
+      [
+        "lawyer",
+        1
+      ]
+    ],
+    "lecture": [
+      [
+        "лекц",
+        2
+      ],
+      [
+        "определен",
+        2
+      ],
+      [
+        "например",
+        1
+      ],
+      [
+        "запомн",
+        2
+      ],
+      [
+        "тема",
+        1
+      ],
+      [
+        "поняти",
+        2
+      ],
+      [
+        "пример",
+        1
+      ],
+      [
+        "студент",
+        2
+      ],
+      [
+        "аудитор",
+        2
+      ],
+      [
+        "слайд",
+        1
+      ],
+      [
+        "курс",
+        1
+      ],
+      [
+        "теори",
+        1
+      ],
+      [
+        "lecture",
+        2
+      ],
+      [
+        "definition",
+        2
+      ],
+      [
+        "for example",
+        1
+      ],
+      [
+        "remember",
+        2
+      ],
+      [
+        "topic",
+        1
+      ],
+      [
+        "concept",
+        2
+      ],
+      [
+        "example",
+        1
+      ],
+      [
+        "student",
+        2
+      ],
+      [
+        "audience",
+        2
+      ],
+      [
+        "slide",
+        1
+      ],
+      [
+        "course",
+        1
+      ],
+      [
+        "theory",
+        1
+      ]
+    ],
+    "psychology": [
+      [
+        "сесси",
+        2
+      ],
+      [
+        "терап",
+        2
+      ],
+      [
+        "чувств",
+        2
+      ],
+      [
+        "тревог",
+        2
+      ],
+      [
+        "клиент",
+        2
+      ],
+      [
+        "пережива",
+        2
+      ],
+      [
+        "запрос",
+        2
+      ],
+      [
+        "детств",
+        2
+      ],
+      [
+        "отношени",
+        1
+      ],
+      [
+        "поддержк",
+        1
+      ],
+      [
+        "границ",
+        1
+      ],
+      [
+        "эмоци",
+        2
+      ],
+      [
+        "боюсь",
+        2
+      ],
+      [
+        "страх",
+        2
+      ],
+      [
+        "стыдно",
+        2
+      ],
+      [
+        "сплю",
+        2
+      ],
+      [
+        "сон",
+        1
+      ],
+      [
+        "помощ",
+        2
+      ],
+      [
+        "ответственност",
+        1
+      ],
+      [
+        "session",
+        2
+      ],
+      [
+        "therapy",
+        2
+      ],
+      [
+        "feeling",
+        2
+      ],
+      [
+        "anxiety",
+        2
+      ],
+      [
+        "client",
+        2
+      ],
+      [
+        "experience",
+        2
+      ],
+      [
+        "request",
+        2
+      ],
+      [
+        "childhood",
+        2
+      ],
+      [
+        "relationship",
+        1
+      ],
+      [
+        "support",
+        1
+      ],
+      [
+        "boundaries",
+        1
+      ],
+      [
+        "emotion",
+        2
+      ],
+      [
+        "afraid",
+        2
+      ],
+      [
+        "ashamed",
+        2
+      ],
+      [
+        "sleep",
+        2
+      ],
+      [
+        "help",
+        2
+      ]
+    ],
+    "personal": [
+      [
+        "я дума",
+        1
+      ],
+      [
+        "решил",
+        1
+      ],
+      [
+        "план",
+        1
+      ],
+      [
+        "заметк",
+        2
+      ],
+      [
+        "дневник",
+        2
+      ],
+      [
+        "мысл",
+        2
+      ],
+      [
+        "вывод",
+        1
+      ],
+      [
+        "себе",
+        1
+      ],
+      [
+        "хочу",
+        1
+      ],
+      [
+        "получилось",
+        1
+      ],
+      [
+        "понял",
+        1
+      ],
+      [
+        "i think",
+        1
+      ],
+      [
+        "decided",
+        1
+      ],
+      [
+        "plan",
+        1
+      ],
+      [
+        "note",
+        2
+      ],
+      [
+        "diary",
+        2
+      ],
+      [
+        "thoughts",
+        2
+      ],
+      [
+        "conclusion",
+        1
+      ],
+      [
+        "myself",
+        1
+      ],
+      [
+        "want",
+        1
+      ],
+      [
+        "managed",
+        1
+      ],
+      [
+        "realized",
+        1
+      ]
+    ],
+    "universal": []
+  },
+  "structure": {
+    "meeting": [
+      {
+        "n_speakers_gte": 2
+      },
+      {
+        "n_speakers_gte": 3,
+        "short_turn_ratio_lt": 0.5
+      },
+      {
+        "chars_per_utt_gte": 100,
+        "short_turn_ratio_lt": 0.6
+      }
+    ],
+    "scrum": [
+      {
+        "n_speakers_gte": 2
+      },
+      {
+        "short_turn_ratio_gte": 0.55
+      },
+      {
+        "short_turn_ratio_gte": 0.7
+      }
+    ],
+    "legal": [
+      {
+        "n_speakers_gte": 2
+      },
+      {
+        "role_label": true
+      },
+      {
+        "any": [
+          {
+            "monologue_ratio_gte": 0.35
+          },
+          {
+            "dur_sec_gte": 1800
+          }
+        ]
+      }
+    ],
+    "lecture": [
+      {
+        "n_speakers_lte": 2
+      },
+      {
+        "short_turn_ratio_lt": 0.4
+      },
+      {
+        "chars_per_utt_gte": 120
+      }
+    ],
+    "psychology": [
+      {
+        "n_speakers_eq": 2
+      },
+      {
+        "short_turn_ratio_gte": 0.5
+      },
+      {
+        "question_ratio_gte": 0.15
+      }
+    ],
+    "personal": [
+      {
+        "n_speakers_eq": 1
+      },
+      {
+        "monologue_ratio_gte": 0.7
+      },
+      {
+        "dur_sec_lte": 1800
+      }
+    ],
+    "universal": []
+  },
+  "cues": {
+    "meeting": {
+      "a": [
+        "решили",
+        "решение",
+        "договорились",
+        "зафиксировали",
+        "фиксируем",
+        "утвердили",
+        "согласовали",
+        "приняли",
+        "постановили",
+        "decided",
+        "decision",
+        "agreed",
+        "approved"
+      ],
+      "b": [
+        "надо",
+        "нужно",
+        "сделать",
+        "подготовить",
+        "проверить",
+        "отправить",
+        "созвон",
+        "срок",
+        "will update",
+        "task",
+        "deadline"
+      ],
+      "role_labels": []
+    },
+    "scrum": {
+      "a": [
+        "сделано",
+        "готово",
+        "в работе",
+        "закрыл",
+        "закрыто",
+        "сделал",
+        "взял",
+        "начал",
+        "завершил",
+        "тестирую",
+        "проверяю",
+        "работаю над",
+        "done",
+        "in progress",
+        "finished",
+        "started"
+      ],
+      "b": [
+        "блокер",
+        "мешает",
+        "не могу",
+        "ждём",
+        "зависит",
+        "застрял",
+        "blocker",
+        "blocked",
+        "waiting"
+      ],
+      "role_labels": []
+    },
+    "legal": {
+      "a": [
+        "суд",
+        "заседание",
+        "стороны",
+        "истец",
+        "ответчик",
+        "ходатайство",
+        "судья",
+        "зал",
+        "court",
+        "hearing",
+        "plaintiff",
+        "defendant",
+        "motion",
+        "judge"
+      ],
+      "b": [
+        "статья",
+        "норма",
+        "закон",
+        "договор",
+        "пункт",
+        "кодекс",
+        "article",
+        "law",
+        "contract",
+        "clause"
+      ],
+      "role_labels": [
+        "судья",
+        "истец",
+        "ответчик",
+        "юрист",
+        "judge",
+        "plaintiff",
+        "defendant",
+        "lawyer"
+      ]
+    },
+    "lecture": {
+      "a": [
+        "это называется",
+        "определяется как",
+        "означает",
+        "термин",
+        "понятие",
+        "is called",
+        "defined as",
+        "means",
+        "term",
+        "concept"
+      ],
+      "b": [
+        "например",
+        "пример",
+        "к примеру",
+        "допустим",
+        "for example",
+        "example",
+        "suppose"
+      ],
+      "role_labels": [
+        "лектор",
+        "преподаватель",
+        "студент",
+        "lecturer",
+        "teacher",
+        "student"
+      ]
+    },
+    "psychology": {
+      "a": [
+        "чувств",
+        "тревог",
+        "страх",
+        "злюсь",
+        "обид",
+        "устал",
+        "больно",
+        "стыдно",
+        "afraid",
+        "anxious",
+        "ashamed",
+        "feeling"
+      ],
+      "b": [
+        "запрос",
+        "хочу",
+        "хотел бы",
+        "цель",
+        "что делать",
+        "request",
+        "want",
+        "goal",
+        "what to do"
+      ],
+      "role_labels": [
+        "терапевт",
+        "психолог",
+        "клиент",
+        "пациент",
+        "therapist",
+        "psychologist",
+        "client",
+        "patient"
+      ]
+    },
+    "personal": {
+      "a": [
+        "я понял",
+        "я решил",
+        "я думаю",
+        "мне кажется",
+        "вывод",
+        "получилось",
+        "i think",
+        "i realized",
+        "i decided",
+        "conclusion",
+        "managed"
+      ],
+      "b": [
+        "собираюсь",
+        "планирую",
+        "сделаю",
+        "надо",
+        "хочу",
+        "going to",
+        "plan",
+        "will",
+        "want"
+      ],
+      "role_labels": []
+    },
+    "universal": {
+      "a": [],
+      "b": [],
+      "role_labels": []
+    }
+  },
+  "scoring": {
+    "base_cap": 6,
+    "max_score": 11,
+    "high": {
+      "score_gte": 7,
+      "margin_gte": 2
+    },
+    "medium": {
+      "score_gte": 5,
+      "margin_gte": 1
+    },
+    "low": {
+      "score_gte": 3
+    },
+    "ambiguous": {
+      "top_gte": 3,
+      "margin_lte": 1
+    },
+    "scrum_meeting_takeover": {
+      "meeting_within": 1,
+      "min_score": 3
+    },
+    "sensitive_primary": {
+      "confidence": "high",
+      "base_gte": 4,
+      "else": "suppress_to_highest_non_sensitive_score_gte_3"
+    },
+    "alternatives": {
+      "min_score": 4,
+      "within_top": 3,
+      "max": 2,
+      "sensitive_allowed": false
+    }
+  },
+  "language": {
+    "ru_cyrillic_ratio_gte": 0.6,
+    "en_latin_ratio_gte": 0.8,
+    "en_cyrillic_ratio_lt": 0.1
+  },
+  "style": {
+    "monologue": "n_speakers==1",
+    "dialogue": "n_speakers==2",
+    "multi_party": "n_speakers>=3"
+  },
+  "source_validation": {
+    "hard_min_chars": 40,
+    "hard_min_utterances": 2,
+    "short_max_chars": 400
+  },
+  "golden": "tests/golden/classify-golden.v1.json"
+}

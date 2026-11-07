@@ -1,0 +1,57 @@
+use super::SummaryArtifact;
+use crate::text::Language;
+
+pub(super) fn render(artifact: &SummaryArtifact) -> String {
+    let mut out = String::new();
+    let title = if artifact.output_language == Language::En {
+        "Meeting summary"
+    } else {
+        "Итоги встречи"
+    };
+    out.push_str(&format!("# {title}\n\n"));
+    out.push_str(&format!(
+        "Шаблон: «{}» · {} · Модель: {} · {:.0} с\n\n",
+        artifact.preset.label,
+        format_date(&artifact.generated_at),
+        artifact.generator.model_title,
+        artifact.generator.duration_ms as f64 / 1000.0
+    ));
+    for section in &artifact.summary.sections {
+        if section.items.is_empty() {
+            continue;
+        }
+        out.push_str(&format!("## {}\n\n", section.title));
+        for item in &section.items {
+            out.push_str("- ");
+            out.push_str(&item.text);
+            if let Some(task) = &item.task {
+                out.push_str(&format!(
+                    " — Кто: {}; Срок: {}",
+                    task.assignee.as_deref().unwrap_or("не назначен"),
+                    task.deadline.as_deref().unwrap_or("срок не назван")
+                ));
+            }
+            for r in &item.refs {
+                out.push_str(&format!(" [{}]", format_ref(r.start)));
+            }
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    out.push_str("---\n");
+    out.push_str(
+            "Итоги собраны локальной моделью. Проверьте имена, сроки и решения по ссылкам на реплики.\n",
+        );
+    out
+}
+
+pub(super) fn format_ref(start: f64) -> String {
+    let total = start.max(0.0) as u64;
+    format!("{:02}:{:02}", total / 60, total % 60)
+}
+
+fn format_date(rfc3339: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(rfc3339)
+        .map(|d| d.format("%d.%m.%Y, %H:%M").to_string())
+        .unwrap_or_else(|_| rfc3339.to_owned())
+}

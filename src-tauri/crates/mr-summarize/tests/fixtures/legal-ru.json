@@ -1,0 +1,120 @@
+{
+  "meta": {
+    "title": "Консультация по делу",
+    "audio": "Консультация по делу.wav",
+    "duration": "00:50",
+    "duration_sec": 51.0,
+    "engine": "test",
+    "speaker_method": "test",
+    "speakers": [
+      "Юрист",
+      "Клиент",
+      "Судья"
+    ],
+    "speakers_info": []
+  },
+  "stats": {
+    "utterances": 9
+  },
+  "utterances": [
+    {
+      "start": 0.0,
+      "end": 3.14,
+      "speaker": "Судья",
+      "channel": null,
+      "text": "Слушаем стороны. Истец, изложите требования.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 3.54,
+      "end": 10.61,
+      "speaker": "Клиент",
+      "channel": null,
+      "text": "Я прошу взыскать задолженность по договору и неустойку. Договор был подписан двенадцатого сентября.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 11.01,
+      "end": 18.16,
+      "speaker": "Юрист",
+      "channel": null,
+      "text": "Подтверждаю. В материалах есть акт и переписка. Ссылаемся на статью пятнадцать Гражданского кодекса.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 18.56,
+      "end": 20.56,
+      "speaker": "Судья",
+      "channel": null,
+      "text": "Ответчик, ваша позиция?",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 20.96,
+      "end": 25.31,
+      "speaker": "Клиент",
+      "channel": null,
+      "text": "Я не согласен с суммой неустойки. Считаю, что расчёт завышен.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 25.71,
+      "end": 31.5,
+      "speaker": "Юрист",
+      "channel": null,
+      "text": "Готовы представить контррасчёт. Просим отложить заседание, чтобы уточнить период.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 31.9,
+      "end": 39.61,
+      "speaker": "Судья",
+      "channel": null,
+      "text": "Хорошо. Откладываем заседание. Сторонам представить расчёты до следующего заседания. Дату сообщит секретарь.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 40.01,
+      "end": 44.09,
+      "speaker": "Клиент",
+      "channel": null,
+      "text": "Понял. Мне нужно проверить, есть ли у меня оригинал акта.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 44.49,
+      "end": 50.56,
+      "speaker": "Юрист",
+      "channel": null,
+      "text": "Проверьте, пожалуйста. Если оригинала нет, подготовим ходатайство. Это следующий шаг.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    }
+  ]
+}
