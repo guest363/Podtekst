@@ -17,6 +17,11 @@ impl FakeBackend {
             calls: AtomicUsize::new(0),
         }
     }
+
+    #[cfg(test)]
+    pub fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
 }
 
 impl SummaryBackend for FakeBackend {
@@ -52,7 +57,8 @@ impl SummaryBackend for FakeBackend {
             return self.finish(cancel, on_event, flat);
         }
         let reduce = req.prompt.contains("Сведи пункты");
-        if self.mode == "reduce_invalid" && reduce {
+        let repair = req.prompt.contains("Перепиши текст из DATA");
+        if self.mode == "reduce_invalid" && (reduce || repair) {
             return self.finish(cancel, on_event, String::new());
         }
         if reduce {

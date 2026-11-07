@@ -430,7 +430,7 @@ fn split_quote(text: &str) -> (String, Option<String>) {
     (text.to_owned(), None)
 }
 
-fn contains_injection(text: &str) -> bool {
+pub(crate) fn contains_injection(text: &str) -> bool {
     let low = text.to_lowercase();
     const MARKERS: &[&str] = &[
         "<|im_start|>",

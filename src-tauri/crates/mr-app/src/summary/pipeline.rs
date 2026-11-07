@@ -419,27 +419,8 @@ fn generate_with_retry(
     let out = backend
         .generate(req, ctx.cancel, ctx.on_event)
         .map_err(map_backend)?;
-    if !out.trim().is_empty() && !parse::has_recognized_headings(&out, preset) {
-        ctx.retry.retries += 1;
-        ctx.retry.reason = Some("flat_format".to_string());
-        let repair_prompt = prompt::build_repair(preset, ctx.language, &out);
-        let repair_req = request_seed(&request(ctx.info, &repair_prompt, ctx.max_tokens), 43);
-        match backend.generate(&repair_req, ctx.cancel, ctx.on_event) {
-            Ok(repaired) => {
-                if let Ok(parsed) = parse::parse(&repaired, preset) {
-                    return Ok(Generated {
-                        raw: repaired,
-                        parsed,
-                        req: repair_req,
-                    });
-                }
-            }
-            Err(BackendError::Cancelled) => {
-                return Err(super::SummaryJobError::Cancelled);
-            }
-            Err(_) => {}
-        }
-    }
+    // Плоский ответ с пунктами parser восстанавливает сам; repair нужен
+    // только когда пунктов нет (иначе лишний вызов 60–140 с).
     match parse::parse(&out, preset) {
         Ok(parsed) => Ok(Generated {
             raw: out,
@@ -449,14 +430,15 @@ fn generate_with_retry(
         Err(_) => {
             ctx.retry.retries += 1;
             ctx.retry.reason = Some("invalid_output".to_string());
-            let retry = request_seed(req, 43);
-            let out = backend
+            let repair_prompt = prompt::build_repair(preset, ctx.language, &out);
+            let retry = request_seed(&request(ctx.info, &repair_prompt, ctx.max_tokens), 43);
+            let repaired = backend
                 .generate(&retry, ctx.cancel, ctx.on_event)
                 .map_err(map_backend)?;
-            let parsed =
-                parse::parse(&out, preset).map_err(|_| super::SummaryJobError::InvalidOutput)?;
+            let parsed = parse::parse(&repaired, preset)
+                .map_err(|_| super::SummaryJobError::InvalidOutput)?;
             Ok(Generated {
-                raw: out,
+                raw: repaired,
                 parsed,
                 req: retry,
             })
@@ -591,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    fn fake_flat_output_is_repaired_and_recovered() {
+    fn fake_flat_output_is_recovered_without_repair() {
         let dir = std::env::temp_dir().join(format!(
             "mr-pipeline-flat-{}-{}",
             std::process::id(),
@@ -623,11 +605,9 @@ mod tests {
         let cancel = CancelToken::new();
         let mut on_event = |_event: BackendEvent| {};
         let output = super::run(&spec, &mut backend, &cancel, &mut on_event)
-            .expect("flat repair должен дать артефакт");
-        assert_eq!(
-            output.artifact.provenance.retry_reason.as_deref(),
-            Some("flat_format")
-        );
+            .expect("flat parser должен дать артефакт без repair");
+        assert_eq!(backend.calls(), 1, "лишний repair-вызов для flat output");
+        assert_eq!(output.artifact.provenance.retry_reason, None);
         let sections = &output.artifact.summary.sections;
         assert!(sections
             .iter()

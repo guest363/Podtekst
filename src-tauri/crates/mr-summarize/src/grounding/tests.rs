@@ -62,7 +62,7 @@ fn task_assignee_from_speaker_and_text() {
         .task
         .as_ref()
         .unwrap();
-    assert_eq!(task.assignee.as_deref(), Some("Борис"));
+    assert_eq!(task.assignee.as_deref(), Some("Борис"), "{task:?}");
     assert_eq!(task.deadline.as_deref(), Some("до среды"));
 }
 
@@ -110,6 +110,63 @@ fn adjacent_unrelated_deadline_is_not_attached() {
     assert!(task.deadline.is_none(), "чужой срок приклеен: {task:?}");
     assert_eq!(task.assignee.as_deref(), Some("Борис"));
     assert!(summary.warnings.contains(&Warning::DeadlineNotStated));
+}
+
+#[test]
+fn structured_fallback_fills_missing_tasks_without_duplicates() {
+    let transcript = Transcript {
+        utterances: vec![
+            u(0.0, "Анна", "Решили перенести запуск на следующую неделю."),
+            u(1.0, "Борис", "Борис доделает отчёт до среды."),
+            u(2.0, "Вера", "Вера проверит журнал завтра."),
+            u(3.0, "Анна", "Анна обновит документацию к пятнице."),
+            u(4.0, "Борис", "Я подготовлю план."),
+            u(5.0, "Анна", "Что осталось по бюджету?"),
+        ],
+    };
+    let output = "## Кратко\n- Обсудили запуск.\n## Задачи\n- Подготовить отчёт; Кто: Борис; Срок: до среды\n";
+    let preset = crate::preset::get("meeting").unwrap();
+    let parsed = parse::parse(output, preset).unwrap();
+    let summary = ground(&parsed, &transcript, preset, Detail::Long);
+
+    let tasks = summary
+        .sections
+        .iter()
+        .find(|s| s.id == "tasks")
+        .expect("tasks потеряны");
+    assert_eq!(tasks.items.len(), 4, "{:?}", tasks.items);
+    let assignees: Vec<_> = tasks
+        .items
+        .iter()
+        .map(|i| i.task.as_ref().unwrap().assignee.as_deref())
+        .collect();
+    assert_eq!(
+        assignees,
+        vec![Some("Борис"), Some("Вера"), Some("Анна"), Some("Борис")]
+    );
+    let deadlines: Vec<_> = tasks
+        .items
+        .iter()
+        .map(|i| i.task.as_ref().unwrap().deadline.as_deref())
+        .collect();
+    assert_eq!(
+        deadlines,
+        vec![Some("до среды"), Some("завтра"), Some("к пятнице"), None]
+    );
+    let mut texts: Vec<&str> = tasks.items.iter().map(|i| i.text.as_str()).collect();
+    texts.sort_unstable();
+    texts.dedup();
+    assert_eq!(texts.len(), tasks.items.len(), "дубли задач: {texts:?}");
+    assert!(summary
+        .sections
+        .iter()
+        .any(|s| s.id == "decisions" && s.items[0].text == transcript.utterances[0].text));
+    assert!(summary
+        .sections
+        .iter()
+        .any(|s| s.id == "questions" && s.items[0].text == transcript.utterances[5].text));
+    assert!(summary.warnings.contains(&Warning::FallbackExtracted));
+    assert!(summary.warnings.contains(&Warning::BriefDerived));
 }
 
 #[test]
@@ -247,7 +304,13 @@ fn hard_fact_missing_from_source_drops_item() {
     );
     assert_eq!(summary.items_dropped, 1);
     assert!(summary.warnings.contains(&Warning::ItemsDroppedUnsupported));
-    assert!(summary.sections.is_empty());
+    let tasks = summary
+        .sections
+        .iter()
+        .find(|s| s.id == "tasks")
+        .expect("fallback task из источника");
+    assert_eq!(tasks.items[0].text, "Подготовить отчёт.");
+    assert!(!tasks.items[0].text.contains("14.11"));
 }
 
 #[test]

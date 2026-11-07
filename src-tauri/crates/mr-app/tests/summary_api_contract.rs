@@ -941,7 +941,7 @@ fn summary_contract_suite() {
     assert!(artifact["summary"]["items_total"].as_u64().unwrap() >= 2);
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "1");
 
-    // 24. decision_missed: первый ответ без решений, repair возвращает cue.
+    // 24. decision_missed: fallback extraction возвращает решение из источника.
     let decision_texts = [
         "Решили перенести запуск на следующую неделю.",
         "Подготовить отчёт поручили коллегам.",
@@ -970,11 +970,11 @@ fn summary_contract_suite() {
         std::time::Duration::from_secs(10),
     );
     let artifact = summary_artifact(&rec, "decision");
-    assert!(artifact["provenance"]["parser_retries"].as_u64().unwrap() >= 1);
-    assert!(artifact["provenance"]["retry_reason"]
-        .as_str()
-        .unwrap_or("")
-        .contains("decision_missed"));
+    assert!(artifact["summary"]["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|w| w == "fallback_extracted"));
     assert!(artifact["summary"]["sections"]
         .as_array()
         .unwrap()

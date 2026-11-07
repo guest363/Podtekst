@@ -104,6 +104,7 @@ pub enum Warning {
     MdWriteFailed,
     InjectionSuspected,
     DetailLongShortSource,
+    FallbackExtracted,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
