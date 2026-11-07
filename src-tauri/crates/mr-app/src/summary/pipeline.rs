@@ -166,21 +166,28 @@ pub fn run(
             tokens_total: 0,
         });
         let repair_req = reduce_request(preset, language, &partials, &info, max_tokens);
-        match reduce_all(
-            backend,
-            preset,
-            language,
-            &partials,
-            &mut ctx,
-            &mut reduce_levels,
-        )? {
+        let reduced = if partials.len() < 2 {
+            None
+        } else {
+            reduce_all(
+                backend,
+                preset,
+                language,
+                &partials,
+                &mut ctx,
+                &mut reduce_levels,
+            )?
+        };
+        match reduced {
             Some((parsed, req)) => (parsed, req),
             None => {
-                // Reduce не дал валидных секций: не теряем job, отдаём
-                // заземлённый merge частичных ответов (§9).
-                merged.parser_recovered += 1;
-                warnings.push(Warning::ParserRecovered);
-                ctx.retry.reason = Some("reduce_invalid".to_string());
+                if partials.len() >= 2 {
+                    // Reduce не дал валидных секций: не теряем job, отдаём
+                    // заземлённый merge частичных ответов (§9).
+                    merged.parser_recovered += 1;
+                    warnings.push(Warning::ParserRecovered);
+                    ctx.retry.reason = Some("reduce_invalid".to_string());
+                }
                 (merged, repair_req)
             }
         }
