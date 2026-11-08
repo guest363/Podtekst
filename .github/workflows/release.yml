@@ -242,6 +242,209 @@ jobs:
           if-no-files-found: error
           path: bundle-pkg/*
 
+  # H06/M18: живой прогон pinned runtime + Qwen3-4B на релизном теге.
+  # Этот workflow запускается только тегом или workflow_dispatch; на PR
+  # тяжёлая модель не скачивается. Без манифеста и живой генерации релиз
+  # не публикуется.
+  real-summary:
+    needs: meta
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      MC_RUNTIME: ${{ github.workspace }}/src-tauri/binaries/runtime/x86_64-unknown-linux-gnu
+      MR_TEST_FIXTURES: ${{ github.workspace }}/src-tauri/crates/mr-summarize/tests/fixtures
+      MR_TEST_TRANSCRIPT: ${{ github.workspace }}/src-tauri/crates/mr-summarize/tests/fixtures/scrum-ru.json
+      SUMMARY_REQUIRE_REAL: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Fetch pinned llama.cpp runtime
+        shell: bash
+        run: |
+          .github/scripts/fetch_summary_runtime.sh --target linux-x86_64
+          test -x "$MC_RUNTIME/llama-server"
+      - name: Fetch Qwen3-4B model (SHA-256 from manifest)
+        id: model
+        shell: bash
+        run: |
+          set -euo pipefail
+          eval "$(python3 - <<'PY'
+          import json
+          import shlex
+
+          manifest = json.load(open("src-tauri/crates/mr-models/models-manifest.json", encoding="utf-8"))
+          entry = next(m for m in manifest["models"] if m["id"] == "sum-qwen3-4b-instruct-2507-q4km")
+          item = entry["files"][0]
+          print(f"MODEL_FILE={shlex.quote(item['filename'])}")
+          print(f"MODEL_URL={shlex.quote(item['url_hf'])}")
+          print(f"MODEL_SHA={shlex.quote(item['sha256'])}")
+          print(f"MODEL_BYTES={int(item['size_bytes'])}")
+          PY
+          )"
+          model_dir="$RUNNER_TEMP/summary-model"
+          mkdir -p "$model_dir"
+          model="$model_dir/$MODEL_FILE"
+          if [ ! -f "$model" ]; then
+            curl -fL --retry 3 --retry-delay 5 -o "$model.part" "$MODEL_URL"
+            mv "$model.part" "$model"
+          fi
+          actual="$(sha256sum "$model" | awk '{print $1}')"
+          if [ "$actual" != "$MODEL_SHA" ]; then
+            echo "::error::SHA-256 модели $actual != $MODEL_SHA"
+            exit 1
+          fi
+          size="$(stat -Lc %s "$model")"
+          if [ "$size" != "$MODEL_BYTES" ]; then
+            echo "::error::размер модели $size != $MODEL_BYTES"
+            exit 1
+          fi
+          echo "MR_SUMMARY_MODEL=$model" >> "$GITHUB_ENV"
+          echo "model=$model" >> "$GITHUB_OUTPUT"
+          echo "model_sha=$MODEL_SHA" >> "$GITHUB_OUTPUT"
+          echo "→ Модель: $model ($size байт, SHA-256 $MODEL_SHA)"
+      - name: Real model smoke (SUMMARY_REQUIRE_REAL=1)
+        shell: bash
+        env:
+          MR_SUMMARY_RUNTIME: ${{ github.workspace }}/src-tauri/binaries/runtime/x86_64-unknown-linux-gnu
+        run: |
+          set -o pipefail
+          mkdir -p verification
+          cargo test -p mr-app --test summary_real --locked \
+            --manifest-path src-tauri/Cargo.toml -- --nocapture 2>&1 \
+            | tee verification/summary-real.log
+          grep -q "summary_real: total=" verification/summary-real.log || {
+            echo "::error::summary_real не дошёл до живой генерации"; exit 1; }
+          if grep -q "summary_real: skip" verification/summary-real.log; then
+            echo "::error::summary_real пропущен, а не выполнен"; exit 1
+          fi
+      - name: Build headless binary for the matrix
+        run: cargo build -p mr-app --locked --manifest-path src-tauri/Cargo.toml
+      - name: 10-minute synthetic real case
+        shell: bash
+        env:
+          MR_SUMMARY_RUNTIME: ${{ github.workspace }}/src-tauri/binaries/runtime/x86_64-unknown-linux-gnu
+        run: |
+          python3 .github/scripts/summary_real_matrix.py \
+            --exe src-tauri/target/debug/podtekst \
+            --runtime "$MR_SUMMARY_RUNTIME" \
+            --model "$MR_SUMMARY_MODEL" \
+            --fixtures "$MR_TEST_FIXTURES" \
+            --out verification/summary-real-matrix.json
+      - name: Write real-model manifest
+        shell: bash
+        env:
+          TAG: ${{ needs.meta.outputs.tag }}
+          MR_SUMMARY_RUNTIME: ${{ github.workspace }}/src-tauri/binaries/runtime/x86_64-unknown-linux-gnu
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          def sha256(path):
+              digest = hashlib.sha256()
+              with Path(path).open("rb") as handle:
+                  for block in iter(lambda: handle.read(1024 * 1024), b""):
+                      digest.update(block)
+              return digest.hexdigest()
+
+          def stop(message):
+              print(f"::error::{message}")
+              sys.exit(1)
+
+          root = Path(".")
+          log = Path("verification/summary-real.log").read_text(encoding="utf-8", errors="replace")
+          if "summary_real: total=" not in log or "summary_real: skip" in log:
+              stop("нет доказательства живого summary_real")
+          matrix_path = Path("verification/summary-real-matrix.json")
+          if not matrix_path.is_file():
+              stop("нет verification/summary-real-matrix.json")
+          matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
+          ten = [
+              case for case in matrix.get("cases", [])
+              if case.get("duration_min") == 10 and case.get("status") == "pass"
+          ]
+          if not ten:
+              stop("в матрице нет пройденного 10-минутного кейса")
+
+          runtime = Path(os.environ["MR_SUMMARY_RUNTIME"])
+          launcher = runtime / "llama-server"
+          if not launcher.is_file():
+              stop(f"нет runtime launcher: {launcher}")
+
+          models = json.loads(
+              (root / "src-tauri/crates/mr-models/models-manifest.json").read_text(encoding="utf-8")
+          )
+          model_entry = next(
+              m for m in models["models"] if m["id"] == "sum-qwen3-4b-instruct-2507-q4km"
+          )
+          model_file = Path(os.environ["MR_SUMMARY_MODEL"])
+          model_sha = sha256(model_file)
+          pinned_sha = model_entry["files"][0]["sha256"]
+          if model_sha != pinned_sha:
+              stop(f"model sha {model_sha} != pinned {pinned_sha}")
+
+          runtime_manifest = json.loads(
+              (root / "src-tauri/crates/mr-app/summary-runtime-manifest.json").read_text(encoding="utf-8")
+          )
+          target = runtime_manifest["targets"]["linux-x86_64"]
+          fixtures = sorted(
+              {case["fixture"] for case in matrix.get("cases", [])}
+              | {"scrum-ru.json"}
+          )
+          manifest = {
+              "spec": "SPEC §17 H06/M18",
+              "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+              "tag": os.environ.get("TAG"),
+              "commit": os.environ.get("GITHUB_SHA"),
+              "reviewer": os.environ.get("GITHUB_ACTOR"),
+              "second_rater": None,
+              "runtime": {
+                  "version": runtime_manifest["version"],
+                  "build": runtime_manifest["build"],
+                  "commit": runtime_manifest["commit"],
+                  "archive_sha256": target["sha256"],
+                  "launcher_sha256": sha256(launcher),
+              },
+              "model": {
+                  "id": model_entry["id"],
+                  "filename": model_file.name,
+                  "sha256": model_sha,
+                  "size_bytes": model_file.stat().st_size,
+              },
+              "fixture_ids": [Path(name).stem for name in fixtures],
+              "real_test": {
+                  "test": "summary_real",
+                  "fixture": "scrum-ru",
+                  "status": "pass",
+                  "log": "verification/summary-real.log",
+              },
+              "matrix": matrix,
+              "unrun_cases": matrix.get("not_run", []),
+          }
+          Path("verification/summary-real-manifest.json").write_text(
+              json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+          )
+          print("→ verification/summary-real-manifest.json")
+          PY
+      - name: Upload real-model evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: summary-real-evidence
+          if-no-files-found: error
+          path: |
+            verification/summary-real-manifest.json
+            verification/summary-real-matrix.json
+            verification/summary-real.log
+
   smoke-linux:
     needs: [meta, build-tauri]
     runs-on: ubuntu-24.04
@@ -282,6 +485,35 @@ jobs:
             esac
           done
           du -sb "$runtime"
+          # L09: бюджет 60 МБ относится к установленному pruned-runtime.
+          # Полный AppImage фиксируем как метрику, а не как бюджет.
+          runtime_bytes=$(find "$runtime" -type f -printf '%s\n' | awk '{s+=$1} END {print s+0}')
+          appimage_bytes=$(stat -c %s "$appimage")
+          budget=$((60 * 1024 * 1024))
+          echo "bundle: runtime=$runtime_bytes bytes, AppImage=$appimage_bytes bytes, budget=$budget bytes"
+          if [ "$runtime_bytes" -gt "$budget" ]; then
+            echo "::error::runtime $runtime_bytes байт больше бюджета $budget"
+            exit 1
+          fi
+          python3 - "$runtime_bytes" "$appimage_bytes" "$budget" > "$GITHUB_WORKSPACE/bundle-size.json" <<'PY'
+          import json
+          import sys
+
+          runtime, appimage, budget = map(int, sys.argv[1:4])
+          print(json.dumps({
+              "metric": "installed_runtime_bytes",
+              "runtime_bytes": runtime,
+              "appimage_bytes": appimage,
+              "budget_bytes": budget,
+              "within_budget": runtime <= budget,
+          }, ensure_ascii=False))
+          PY
+      - name: Upload Linux bundle size
+        uses: actions/upload-artifact@v7
+        with:
+          name: bundle-size-linux
+          if-no-files-found: error
+          path: bundle-size.json
       - name: Smoke AppImage over HTTP
         shell: bash
         env:
@@ -386,21 +618,27 @@ jobs:
           }
           $installDir = Join-Path $env:RUNNER_TEMP "podtekst-install"
           Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$installDir" -Wait
+          # Приложение выбираем по известному имени. В установке лежит и
+          # runtime\llama-server.exe: выбор «первого exe» проверял бы runtime.
           $exe = Get-ChildItem -Path $installDir -Filter '*.exe' -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -ne 'uninstall.exe' } |
+            Where-Object { $_.Name -ieq 'podtekst.exe' -and $_.FullName -notmatch '\\runtime\\' } |
             Select-Object -First 1
           if (-not $exe) {
             $fallback = Join-Path $env:LOCALAPPDATA 'Podtekst'
             $exe = Get-ChildItem -Path $fallback -Filter '*.exe' -Recurse -ErrorAction SilentlyContinue |
-              Where-Object { $_.Name -ne 'uninstall.exe' } |
+              Where-Object { $_.Name -ieq 'podtekst.exe' -and $_.FullName -notmatch '\\runtime\\' } |
               Select-Object -First 1
           }
           if (-not $exe) {
-            Write-Error "exe приложения не найден после установки"
+            Write-Error "podtekst.exe приложения не найден после установки"
+            exit 1
+          }
+          if ($exe.BaseName -notmatch '^podtekst$' -or $exe.FullName -match '\\runtime\\') {
+            Write-Error "выбран не exe приложения: $($exe.FullName)"
             exit 1
           }
           $productVersion = (Get-Item $exe.FullName).VersionInfo.ProductVersion
-          Write-Host "ProductVersion=$productVersion"
+          Write-Host "exe=$($exe.FullName) ProductVersion=$productVersion"
           if (-not $productVersion.StartsWith($env:VERSION)) {
             Write-Error "ProductVersion $productVersion не совпадает с $env:VERSION"
             exit 1
@@ -455,6 +693,7 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ needs.meta.outputs.version }}
+          TAG: ${{ needs.meta.outputs.tag }}
           REQUIRE_RELEASE_SIGNING: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
         run: |
           set -eu
@@ -473,10 +712,18 @@ jobs:
             echo "::error::Неверный package в APK"; exit 1; }
           echo "$badging" | grep -q "versionName='$VERSION'" || {
             echo "::error::versionName не совпадает с $VERSION"; exit 1; }
-          echo "$badging" | grep -q "versionCode='" || {
-            echo "::error::В APK нет versionCode"; exit 1; }
+          version_code="$(echo "$badging" | sed -n "s/.*versionCode='\([0-9][0-9]*\)'.*/\1/p" | head -n 1)"
+          if ! echo "$version_code" | grep -Eq '^[0-9]+$'; then
+            echo "::error::В APK нет versionCode"
+            exit 1
+          fi
+          abis="$(echo "$badging" | sed -n 's/^native-code: //p' | head -n 1)"
           echo "$badging" | grep -q "native-code:.*arm64-v8a" || {
             echo "::error::В APK нет ABI arm64-v8a"; exit 1; }
+          if [ -z "$abis" ]; then
+            echo "::error::В badging нет native-code"
+            exit 1
+          fi
           # Android не поддерживает итоги: ни runtime, ни весов модели в APK.
           unzip -l "$apk" > "$RUNNER_TEMP/apk-files.txt"
           if grep -E 'llama-server|libllama|libggml|\.gguf$|assets/runtime/' "$RUNNER_TEMP/apk-files.txt"; then
@@ -495,6 +742,74 @@ jobs:
             echo "::error::APK подписан debug-ключом, а для тега нужен release keystore"
             exit 1
           fi
+          signing="release"
+          if grep -q "CN=Android Debug" "$RUNNER_TEMP/apksigner.txt"; then
+            signing="debug"
+          fi
+          shell_sha="$(sha256sum "$apk" | awk '{print $1}')"
+          echo "Android APK: $apk, $(stat -c %s "$apk") bytes, versionCode=$version_code, abis=$abis, signing=$signing, sha256=$shell_sha"
+          # S-11: релизное evidence фиксирует фактический APK, а не число из
+          # отчёта: размер и SHA-256 зависят от toolchain/подписи.
+          APK_PATH="$apk" APK_SHA256="$shell_sha" APK_VERSION="$VERSION" \
+          APK_VERSION_CODE="$version_code" APK_ABIS="$abis" APK_SIGNING="$signing" \
+          TAG="$TAG" python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          def stop(message):
+              print(f"::error::{message}")
+              sys.exit(1)
+
+          path = Path(os.environ["APK_PATH"])
+          if not path.is_file():
+              stop(f"APK отсутствует: {path}")
+          size = path.stat().st_size
+          if size <= 0:
+              stop(f"APK пустой: {path}")
+          digest = hashlib.sha256(path.read_bytes()).hexdigest()
+          if digest != os.environ["APK_SHA256"]:
+              stop(f"SHA-256 APK {digest} != {os.environ['APK_SHA256']}")
+          version = os.environ["APK_VERSION"]
+          if not version:
+              stop("пустой versionName")
+          version_code = int(os.environ["APK_VERSION_CODE"])
+          if version_code <= 0:
+              stop(f"некорректный versionCode: {version_code}")
+          abis = [part.strip("'\" ") for part in os.environ["APK_ABIS"].split() if part.strip("'\" ")]
+          if "arm64-v8a" not in abis:
+              stop(f"в APK нет arm64-v8a: {abis}")
+          evidence = {
+              "spec": "S-11",
+              "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+              "tag": os.environ.get("TAG"),
+              "commit": os.environ.get("GITHUB_SHA"),
+              "apk": {
+                  "file": path.name,
+                  "path": str(path),
+                  "size_bytes": size,
+                  "sha256": digest,
+                  "package": "io.github.guest363.podtekst",
+                  "version_name": version,
+                  "version_code": version_code,
+                  "abis": abis,
+                  "build_type": "release",
+                  "signing": os.environ["APK_SIGNING"],
+              },
+          }
+          out = Path(os.environ.get("GITHUB_WORKSPACE", ".")) / "apk-evidence.json"
+          out.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          print(f"→ {out}: {size} bytes, sha256={digest}, versionCode={version_code}")
+          PY
+      - name: Upload APK evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: apk-evidence
+          if-no-files-found: error
+          path: apk-evidence.json
 
   # Сначала latest.json: иначе SHA256SUMS не покроет манифест.
   manifest:
@@ -534,7 +849,7 @@ jobs:
           path: dist/*
 
   publish:
-    needs: [meta, manifest, smoke-linux, smoke-macos, smoke-windows, smoke-android]
+    needs: [meta, manifest, real-summary, smoke-linux, smoke-macos, smoke-windows, smoke-android]
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     permissions:

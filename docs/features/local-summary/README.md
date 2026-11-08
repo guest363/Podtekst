@@ -6,7 +6,8 @@
 [`G1-REPORT.md`](G1-REPORT.md); runtime/HTTP/SSE: [`G2-G3-REPORT.md`](G2-G3-REPORT.md);
 E2E-фикс: [`E2E-QUALITY-FIX.md`](E2E-QUALITY-FIX.md); матрица промптов:
 [`PROMPT_MATRIX.md`](PROMPT_MATRIX.md); упаковка и CI:
-[`G6-REPORT.md`](G6-REPORT.md).
+[`G6-REPORT.md`](G6-REPORT.md); живой гейт и матрица:
+[`REAL-MATRIX.md`](REAL-MATRIX.md).
 
 ## Область v1
 
@@ -60,7 +61,8 @@ cargo tauri build --features tauri-ui --config tauri.summary.conf.json --bundles
 Каталог ресурсов: `src-tauri/binaries/runtime/<triple>/` (в git не попадает).
 Внутри — только `llama-server`, нужные `.so`/`.dylib`/`.dll` и тексты лицензий;
 символы версий разворачиваются в имена SONAME, чтобы упаковщик Tauri не копировал
-symlink-цели повторно. Бюджет — 60 МБ установленного runtime.
+symlink-цели повторно. Бюджет — 60 МБ установленного runtime; `smoke-linux`
+проверяет его и пишет `bundle-size.json` (полный AppImage — отдельная метрика).
 
 Пути поиска (`summary/runtime_locator.rs`): `PODTEKST_SUMMARY_RUNTIME` →
 рядом с исполняемым файлом `runtime/<triple>` → macOS `Contents/Resources` →
