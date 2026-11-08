@@ -45,6 +45,9 @@ packs/
 # Rust build artifacts
 src-tauri/target/
 
+# Pruned llama.cpp runtime ставится скриптом только для релизной сборки
+src-tauri/binaries/runtime/
+
 # OS files
 .DS_Store
 Thumbs.db

@@ -70,13 +70,16 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
-            args: "--features tauri-ui --bundles appimage"
+            target_key: linux-x86_64
+            args: "--features tauri-ui --bundles appimage --config tauri.summary.conf.json"
           - os: macos-26
             # pyke не поставляет x86_64 ONNX Runtime, поэтому macOS — arm64.
             # app нужен для updater-архива .app.tar.gz: с одним dmg его не создают.
-            args: "--features tauri-ui --target aarch64-apple-darwin --bundles app,dmg"
+            target_key: macos-arm64
+            args: "--features tauri-ui --target aarch64-apple-darwin --bundles app,dmg --config tauri.summary.conf.json"
           - os: windows-latest
-            args: "--features tauri-ui --bundles nsis"
+            target_key: windows-x86_64
+            args: "--features tauri-ui --bundles nsis --config tauri.summary.conf.json"
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -99,6 +102,9 @@ jobs:
         run: |
           corepack enable
           cd "$GITHUB_WORKSPACE/ui/web/frontend" && yarn install --immutable && yarn build
+      - name: Fetch and prune llama.cpp runtime
+        shell: bash
+        run: ../.github/scripts/fetch_summary_runtime.sh --target ${{ matrix.target_key }}
       - name: Rust unit tests (host)
         run: cargo test --workspace --locked
       # projectPath: нестандартная раскладка — tauri.conf.json лежит в
@@ -249,6 +255,33 @@ jobs:
         with:
           name: tauri-bundles-ubuntu-24.04
           path: pkg
+      - name: Check bundled runtime in AppImage
+        shell: bash
+        run: |
+          appimage="$(find pkg -name '*.AppImage' -print -quit)"
+          if [ -z "$appimage" ]; then
+            echo "::error::AppImage не найден"
+            exit 1
+          fi
+          chmod +x "$appimage"
+          appimage="$(realpath "$appimage")"
+          work="$RUNNER_TEMP/appimage-check"
+          mkdir -p "$work"
+          cd "$work"
+          "$appimage" --appimage-extract >/dev/null
+          runtime="squashfs-root/usr/lib/Podtekst/runtime/x86_64-unknown-linux-gnu"
+          test -x "$runtime/llama-server" || {
+            echo "::error::в AppImage нет runtime/$runtime"; exit 1; }
+          if [ -n "$(find squashfs-root -name '*.gguf' -print -quit)" ]; then
+            echo "::error::в AppImage попали веса модели"; exit 1
+          fi
+          LD_LIBRARY_PATH="$runtime" "$runtime/llama-server" --version
+          for file in "$runtime"/*.so "$runtime/llama-server"; do
+            case "$(ldd "$file" 2>&1)" in
+              *"not found"*) echo "::error::не найдены зависимости $file"; exit 1 ;;
+            esac
+          done
+          du -sb "$runtime"
       - name: Smoke AppImage over HTTP
         shell: bash
         env:
@@ -265,7 +298,8 @@ jobs:
             --expected-version "$VERSION" \
             --expected-os linux \
             --expected-arch x86_64 \
-            --static-dir ui/web/static
+            --static-dir ui/web/static \
+            --expect-summary-runtime bundled
 
   smoke-macos:
     needs: [meta, build-tauri]
@@ -305,12 +339,29 @@ jobs:
             echo "::error::нет исполняемого файла $exe"
             exit 1
           fi
+          runtime="$appdir/Podtekst.app/Contents/Resources/runtime/aarch64-apple-darwin"
+          test -x "$runtime/llama-server" || {
+            echo "::error::в .app нет runtime/llama-server"; exit 1; }
+          if [ -n "$(find "$appdir/Podtekst.app" -name '*.gguf' -print -quit)" ]; then
+            echo "::error::в .app попали веса модели"; exit 1
+          fi
+          DYLD_LIBRARY_PATH="$runtime" "$runtime/llama-server" --version
+          for file in "$runtime"/*.dylib "$runtime/llama-server"; do
+            case "$(otool -L "$file" 2>&1)" in
+              *"not found"*) echo "::error::otool не нашёл зависимости $file"; exit 1 ;;
+            esac
+          done
+          # Политика проекта — без Developer ID; фиксируем статус в логе.
+          codesign --verify --deep --strict "$appdir/Podtekst.app" \
+            && echo "codesign: valid" || echo "codesign: unsigned/ad-hoc"
+          du -sk "$runtime"
           python3 .github/scripts/smoke_http.py \
             --exe "$exe" \
             --expected-version "$VERSION" \
             --expected-os macos \
             --expected-arch arm64 \
-            --static-dir ui/web/static
+            --static-dir ui/web/static \
+            --expect-summary-runtime bundled
 
   smoke-windows:
     needs: [meta, build-tauri]
@@ -354,6 +405,26 @@ jobs:
             Write-Error "ProductVersion $productVersion не совпадает с $env:VERSION"
             exit 1
           }
+          $runtime = Join-Path $exe.Directory.FullName 'runtime\x86_64-pc-windows-msvc'
+          $server = Join-Path $runtime 'llama-server.exe'
+          if (-not (Test-Path $server)) {
+            Write-Error "В установленном приложении нет runtime: $server"
+            exit 1
+          }
+          $model = Get-ChildItem -Path $installDir -Filter '*.gguf' -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if ($model) {
+            Write-Error "В установленном приложении оказались веса модели: $($model.FullName)"
+            exit 1
+          }
+          $runtimeVersion = & $server --version 2>&1 | Out-String
+          Write-Host $runtimeVersion
+          if (($runtimeVersion -notmatch 'build 12182') -or ($runtimeVersion -notmatch 'commit fd27b2034')) {
+            Write-Error "llama-server.exe не подтвердил pin b12182/fd27b2034"
+            exit 1
+          }
+          $runtimeBytes = (Get-ChildItem -Path $runtime -File -Recurse | Measure-Object -Property Length -Sum).Sum
+          Write-Host "Bundled runtime: $runtimeBytes bytes"
           # Подписи Authenticode нет по политике проекта: фиксируем статус в логе.
           $signature = Get-AuthenticodeSignature $exe.FullName
           Write-Host "Authenticode: $($signature.Status) $($signature.StatusMessage)"
@@ -362,7 +433,8 @@ jobs:
             --expected-version $env:VERSION `
             --expected-os windows `
             --expected-arch x86_64 `
-            --static-dir ui/web/static
+            --static-dir ui/web/static `
+            --expect-summary-runtime bundled
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   smoke-android:
@@ -405,6 +477,12 @@ jobs:
             echo "::error::В APK нет versionCode"; exit 1; }
           echo "$badging" | grep -q "native-code:.*arm64-v8a" || {
             echo "::error::В APK нет ABI arm64-v8a"; exit 1; }
+          # Android не поддерживает итоги: ни runtime, ни весов модели в APK.
+          unzip -l "$apk" > "$RUNNER_TEMP/apk-files.txt"
+          if grep -E 'llama-server|libllama|libggml|\.gguf$|assets/runtime/' "$RUNNER_TEMP/apk-files.txt"; then
+            echo "::error::В APK попал runtime или модель итогов"; exit 1
+          fi
+          echo "Android APK: $(stat -c %s "$apk") bytes"
           # Rust вызывает эти методы MainActivity через JNI по имени. R8 в release
           # вырезает их без keep-правила, и запись падает с NoSuchMethodError.
           unzip -p "$apk" 'classes*.dex' | strings | grep -q 'startRecordingService' || {

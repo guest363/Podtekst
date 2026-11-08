@@ -3,10 +3,12 @@
   "version": "b12182",
   "build": "12182",
   "commit": "fd27b2034",
+  "nightly": true,
   "license": "MIT",
   "license_url": "https://github.com/ggml-org/llama.cpp/blob/master/LICENSE",
   "release_url": "https://github.com/ggml-org/llama.cpp/releases/tag/b12182",
   "layout": "resources_dir",
+  "launcher": "llama-server",
   "notes": "Не статический бинарник: каталог с .so/.dylib/.dll и LD_LIBRARY_PATH/DYLD_LIBRARY_PATH/DLL directory. Проверять AVX2 и baseline CPU.",
   "required_flags": [
     "--jinja",
@@ -23,12 +25,16 @@
   ],
   "targets": {
     "linux-x86_64": {
+      "triple": "x86_64-unknown-linux-gnu",
       "asset": "llama-b12182-bin-ubuntu-x64.tar.gz",
       "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12182/llama-b12182-bin-ubuntu-x64.tar.gz",
       "sha256": "c1dbfdb9cbef7ee50b6ab08142d6424184d68b242906837770439ed118c57d99",
-      "compressed_size": 23060000,
-      "installed_size_estimate": 43000000,
-      "minimal_files": [
+      "compressed_bytes": 23058802,
+      "installed_bytes": 44254356,
+      "license_files": [
+        "LICENSE"
+      ],
+      "prune": [
         "llama-server",
         "libllama-server-impl.so",
         "libllama-common.so*",
@@ -40,27 +46,35 @@
       ]
     },
     "macos-arm64": {
+      "triple": "aarch64-apple-darwin",
       "asset": "llama-b12182-bin-macos-arm64.tar.gz",
       "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12182/llama-b12182-bin-macos-arm64.tar.gz",
       "sha256": "71cfee075e0c54852e225dafdc8dc79c32b26e8d45f052369b7d4f78d2ccf1a6",
-      "compressed_size": 16700000,
-      "installed_size_estimate": 43000000,
-      "minimal_files": [
+      "compressed_bytes": 16698597,
+      "installed_bytes": 31249604,
+      "license_files": [
+        "LICENSE"
+      ],
+      "prune": [
         "llama-server",
         "libllama-server-impl.dylib",
         "libllama-common*.dylib",
         "libmtmd*.dylib",
-        "libllama*.dylib",
+        "libllama.0*.dylib",
         "libggml*.dylib"
       ]
     },
     "windows-x86_64": {
+      "triple": "x86_64-pc-windows-msvc",
       "asset": "llama-b12182-bin-win-cpu-x64.zip",
       "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12182/llama-b12182-bin-win-cpu-x64.zip",
       "sha256": "e068c483e2ea97bf09121ec0bbe085bd43470bb67d9062c7c66162164aea5834",
-      "compressed_size": 24700000,
-      "installed_size_estimate": 60000000,
-      "minimal_files": [
+      "compressed_bytes": 24749504,
+      "installed_bytes": 46889299,
+      "license_files": [
+        "LICENSE*"
+      ],
+      "prune": [
         "llama-server.exe",
         "llama-server-impl.dll",
         "llama-common.dll",
@@ -68,6 +82,7 @@
         "llama.dll",
         "ggml.dll",
         "ggml-base.dll",
+        "ggml-rpc.dll",
         "ggml-cpu-*.dll",
         "libomp.dll",
         "LICENSE*"

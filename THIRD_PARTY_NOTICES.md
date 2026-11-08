@@ -22,13 +22,16 @@
 Названия моделей и компаний принадлежат их правообладателям; проект не
 аффилирован с Sber, OpenAI, Alibaba, Silero Team и Qwen/Alibaba Cloud.
 
-## Runtime локальных итогов (скачивается отдельно, в репозиторий не входит)
+## Runtime локальных итогов (в git не входит)
 
 `llama.cpp llama-server` pin `b12182` (commit `fd27b2034`) распространяется по
 лицензии MIT: https://github.com/ggml-org/llama.cpp/blob/master/LICENSE ,
 сборка https://github.com/ggml-org/llama.cpp/releases/tag/b12182 . Каталог
 ресурсов (`.so`/`.dylib`/`.dll`) не входит в git; SHA архивов зафиксирован в
-`src-tauri/crates/mr-app/summary-runtime-manifest.json`.
+`src-tauri/crates/mr-app/summary-runtime-manifest.json`. Релизные сборки
+включают только pruned runtime и текст лицензии
+(`LICENSES/llama.cpp-LICENSE.txt`); веса модели остаются отдельной загрузкой.
+Android не содержит ни runtime, ни весов.
 
 ## Тестовые фикстуры
 

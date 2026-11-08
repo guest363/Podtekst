@@ -115,6 +115,15 @@ fn candidate_dirs() -> Vec<PathBuf> {
             out.push(parent.join("runtime"));
             // macOS .app: бинарник в Contents/MacOS, ресурсы — Contents/Resources.
             out.push(parent.join("../Resources/runtime").join(triple()));
+            // Linux bundle: Tauri кладёт ресурсы в usr/lib/<productName>
+            // (AppImage: внутри примонтированного AppDir, deb/rpm: /usr/lib).
+            #[cfg(target_os = "linux")]
+            {
+                out.push(parent.join("../lib/Podtekst/runtime").join(triple()));
+                out.push(parent.join("../lib/podtekst/runtime").join(triple()));
+                out.push(PathBuf::from("/usr/lib/Podtekst/runtime").join(triple()));
+                out.push(PathBuf::from("/usr/lib/podtekst/runtime").join(triple()));
+            }
         }
     }
     for key in ["PODTEKST_RESOURCE_DIR", "TAURI_RESOURCE_DIR"] {
@@ -268,6 +277,13 @@ mod tests {
         ));
         assert!(!exe_name().is_empty());
         assert!(!triple().is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_bundle_resources_are_candidates() {
+        let expected = format!("lib/Podtekst/runtime/{}", triple());
+        assert!(candidate_dirs().iter().any(|dir| dir.ends_with(&expected)));
     }
 
     #[test]
