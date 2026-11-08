@@ -213,6 +213,9 @@ fn has_any(text: &str, needles: &[&str]) -> bool {
 
 pub fn decision_cue(text: &str) -> bool {
     let normalized = normalize(text);
+    if decision_recap(text) {
+        return false;
+    }
     if has_any(
         &normalized,
         &[
@@ -226,6 +229,16 @@ pub fn decision_cue(text: &str) -> bool {
         return false;
     }
     has_any(&normalized, DECISION_CUES)
+}
+
+/// «Итоги: …» и «Тогда договорились. …» — пересказ, а не новое решение.
+pub fn decision_recap(text: &str) -> bool {
+    let lower = text.trim().to_lowercase();
+    if lower.starts_with("итоги:") || lower.contains("итоги:") {
+        return true;
+    }
+    lower.starts_with("тогда договорились")
+        && (lower.contains("итоги") || lower.contains(". ") || lower.contains(';'))
 }
 
 pub fn task_cue(text: &str) -> bool {
@@ -286,6 +299,19 @@ mod tests {
         ] {
             assert!(!decision_cue(text), "{text}");
         }
+    }
+
+    #[test]
+    fn recap_decisions_are_not_decisions() {
+        for text in [
+            "Итоги: запуск, подсказки, журнал.",
+            "Тогда договорились. Итоги: запуск и подсказки.",
+            "Тогда договорились; журнал и подсказки.",
+        ] {
+            assert!(!decision_cue(text), "{text}");
+            assert!(decision_recap(text));
+        }
+        assert!(decision_cue("Тогда договорились перенести запуск."));
     }
 
     #[test]

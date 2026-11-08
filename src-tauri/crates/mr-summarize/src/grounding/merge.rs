@@ -116,19 +116,60 @@ pub(super) fn cap(sections: &mut [Vec<Scored>], specs: &[ParsedSection], detail:
         sections[brief].truncate(4);
     }
     let mut selected: HashSet<(usize, usize)> = HashSet::new();
-    // Сначала по одному пункту из каждой непустой секции: иначе verbose brief
-    // или задачи могут полностью вытеснить вопросы/блокеры.
-    for (section_index, items) in sections.iter().enumerate() {
-        if !items.is_empty() && selected.len() < max {
-            selected.insert((section_index, 0));
+    let task_ids = &["tasks", "next_steps", "todo"][..];
+    // 1. Все задачи — до второго решения/доп. brief.
+    for (section_index, spec) in specs.iter().enumerate() {
+        if !task_ids.contains(&spec.id) {
+            continue;
+        }
+        for item_index in 0..sections[section_index].len() {
+            if selected.len() >= max {
+                break;
+            }
+            selected.insert((section_index, item_index));
+        }
+        if selected.len() >= max {
+            break;
         }
     }
+    // 2. Первое решение, первый вопрос, первый brief, первые пункты остальных
+    // секций — чтобы ни одна непустая секция не исчезла.
     for ids in [
-        &["tasks", "next_steps", "todo"][..],
         &["decisions"][..],
         &["questions"][..],
         &["brief"][..],
+        &[][..],
     ] {
+        let wildcard = ids.is_empty();
+        for (section_index, spec) in specs.iter().enumerate() {
+            if selected.len() >= max {
+                break;
+            }
+            let target = if wildcard {
+                !task_ids.contains(&spec.id)
+                    && !matches!(spec.id, "decisions" | "questions" | "brief")
+            } else {
+                ids.contains(&spec.id)
+            };
+            if target && !sections[section_index].is_empty() {
+                selected.insert((section_index, 0));
+            }
+        }
+    }
+    // 3. Второе и следующие решения.
+    for (section_index, spec) in specs.iter().enumerate() {
+        if spec.id != "decisions" {
+            continue;
+        }
+        for item_index in 1..sections[section_index].len() {
+            if selected.len() >= max {
+                break;
+            }
+            selected.insert((section_index, item_index));
+        }
+    }
+    // 4. Остальные вопросы и brief (brief уже <= 4).
+    for ids in [&["questions"][..], &["brief"][..]] {
         for (section_index, spec) in specs.iter().enumerate() {
             if !ids.contains(&spec.id) {
                 continue;
@@ -139,12 +180,6 @@ pub(super) fn cap(sections: &mut [Vec<Scored>], specs: &[ParsedSection], detail:
                 }
                 selected.insert((section_index, item_index));
             }
-            if selected.len() >= max {
-                break;
-            }
-        }
-        if selected.len() >= max {
-            break;
         }
     }
     if selected.len() < max {

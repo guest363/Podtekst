@@ -90,11 +90,12 @@ pub(crate) fn candidates(transcript: &Transcript, preset: &Preset) -> Vec<Candid
             if let Some(kind) = task_kind(source, &normalized, &known) {
                 let task = task_meta(source, &utterance.speaker, &reference, kind, &known);
                 let score = task_score(kind, &task);
+                let text = clean_task_text(source, task.deadline.as_deref());
                 task_items.push((
                     Candidate {
                         section_id: section,
                         item: SummaryItem {
-                            text: clean_task_text(source),
+                            text,
                             role: SectionRole::Task,
                             task: Some(task),
                             refs: vec![reference],

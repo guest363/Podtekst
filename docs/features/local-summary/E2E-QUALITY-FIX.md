@@ -14,18 +14,25 @@
   Assignee — только известный speaker name или явный `Кто:`; «Цель» и прочие
   заголовочные существительные не становятся исполнителями. Пересекающиеся
   задачи дедуплицируются по stem/noun overlap с приоритетом explicit
-  commitment + assignee + deadline (Anna phone > Vera need).
+  commitment + assignee + deadline (Anna phone > Vera need). Текст fallback
+  очищается: «Тогда/А я/Я/Это моя задача», «беру на себя» → инфинитив,
+  trailing «Сделаю вместе с публикацией», «Срок — …» при совпадении с task meta,
+  «Это задача без срока»; refs остаются исходными.
 - **Fallback merge:** пункты модели приоритетны, но при совпадении задачи
   fallback с assignee+deadline заменяет более слабый model item; warning
   `fallback_extracted`.
 - **Decision/question:** `decision_cue` отвергает `не решили/не согласовали/
-  не утвердили/пока не решили`; `question_line` видит `вопрос`, `нужен ли`,
-  `стоит ли`, `надо ли`, `?` в любом месте.
+  не утвердили/пока не решили`, а также recap/meta `Итоги: …` и
+  `Тогда договорились. …` (такие строки остаются только brief-кандидатом, если
+  модель их дала); `question_line` видит `вопрос`, `нужен ли`, `стоит ли`,
+  `надо ли`, `?` в любом месте.
 - **Prompt:** в `build`/`build_reduce` добавлены «Начни с `## <first>`, не
   пропускай заголовки», one-shot пример и «Кратко — 2–4 пункта, только главное».
   `build_repair` используется только на invalid output.
-- **Cap:** сначала по одному пункту из каждой непустой секции, затем
-  tasks/decisions extras, questions, brief (не более 4), остальное по evidence.
+- **Cap:** сначала все tasks/next_steps/todo (до detail max), затем первое
+  решение, первый вопрос, первый brief и первые пункты остальных секций; потом
+  второе+ решения, остальные вопросы, brief extras (brief <= 4) и evidence.
+  Journal task не вытесняется recap-решением или verbose brief.
 - **Pipeline policy:** плоский ответ с пунктами не вызывает repair — parser
   раскладывает его сам, fallback добирает задачи/решения/вопросы. Repair
   вызывается только при нуле пунктов/invalid output.
@@ -55,8 +62,10 @@
 - `cues::tests::negated_decisions_are_not_decisions`
 - `cues::tests::questions_without_trailing_mark_are_questions`
 - `cues::tests::requirement_and_risk_lines_are_rejected`
-- `extract::tests::fallback_task_text_strips_discourse_markers`
+- `cues::tests::recap_decisions_are_not_decisions`
 - `extract::tests::object_key_deduplicates_hints_tasks`
+- `extract::tests::fallback_task_text_strips_discourse_markers` (self-taking,
+  trailing deadline/publication)
 - `pipeline::tests::fake_flat_output_is_recovered_without_repair` (1 вызов, без repair)
 - `prompt::tests::prompt_starts_with_first_title_instruction`
 - `prompt::tests::repair_prompt_wraps_flat_output`
@@ -73,8 +82,8 @@
 | `cargo fmt --all -- --check` | pass |
 | `cargo clippy --workspace --all-targets --locked ... -D warnings` | pass |
 | `cargo clippy -p mr-app --features tauri-ui --all-targets --locked ... -D warnings` | pass |
-| `cargo test --workspace --locked ...` | pass: 352 passed, 2 ignored |
+| `cargo test --workspace --locked ...` | pass: 353 passed, 2 ignored |
 | Android `cargo check ... aarch64-linux-android --features tauri-ui --locked` | pass |
 | `git diff --check -- src-tauri` | pass |
 
-Коммит: `fix(summary): improve task precision and brief` (этот коммит).
+Коммит: `fix(summary): final task and brief polish` (этот коммит).

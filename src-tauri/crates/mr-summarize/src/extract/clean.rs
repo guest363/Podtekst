@@ -42,10 +42,12 @@ const TRAILING_DISCOURSE: &[&str] = &[
     "сделаем вместе с публикацией",
     "сделаю вместе",
     "сделаем вместе",
+    "это задача без срока",
+    "это задача без дедлайна",
 ];
 
 /// Убирает разговорные маркеры из fallback-задачи, не меняя факты.
-pub(crate) fn clean_task_text(source: &str) -> String {
+pub(crate) fn clean_task_text(source: &str, deadline: Option<&str>) -> String {
     let mut text = source.trim().to_owned();
     loop {
         let lower = text.to_lowercase();
@@ -61,19 +63,96 @@ pub(crate) fn clean_task_text(source: &str) -> String {
             break;
         }
     }
-    let lower = text.to_lowercase();
+    let sentence_end = text.trim_end().ends_with(['.', '!', '?', '…']);
+    text = strip_trailing_discourse(&text);
+    text = map_self_taking(&text);
+    if let Some(deadline) = deadline {
+        text = strip_trailing_deadline(&text, deadline);
+    }
+    let mut text = map_first_person(&text);
+    if sentence_end && !text.is_empty() && !text.ends_with(['.', '!', '?']) {
+        text.push('.');
+    }
+    text
+}
+
+fn strip_trailing_discourse(text: &str) -> String {
+    let trimmed =
+        text.trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '.' | '!' | '?' | '…'));
+    let lower = trimmed.to_lowercase();
     for suffix in TRAILING_DISCOURSE {
         if lower.ends_with(suffix) {
-            let cut = text.len() - suffix.len();
-            text = text[..cut]
+            let cut = trimmed.len() - suffix.len();
+            return trimmed[..cut]
                 .trim_end_matches(|c: char| {
                     c.is_whitespace() || matches!(c, ',' | ';' | ':' | '-' | '—')
                 })
                 .to_owned();
-            break;
         }
     }
-    map_first_person(&text)
+    text.to_owned()
+}
+
+fn map_self_taking(text: &str) -> String {
+    let lower = text.to_lowercase();
+    for (noun, verb) in [
+        ("проверку", "проверить"),
+        ("подготовку", "подготовить"),
+        ("отправку", "отправить"),
+    ] {
+        if !lower.starts_with(noun) {
+            continue;
+        }
+        let rest = text[noun.len()..].trim_start();
+        let rest_lower = rest.to_lowercase();
+        let Some(position) = rest_lower.find("беру на себя") else {
+            continue;
+        };
+        let before = rest[..position]
+            .trim_end_matches(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':'));
+        let after = rest[position + "беру на себя".len()..]
+            .trim_start_matches(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':'));
+        let mut out = capitalize(verb);
+        if !before.is_empty() {
+            out.push(' ');
+            out.push_str(before);
+        }
+        if !after.is_empty() {
+            out.push(' ');
+            out.push_str(after);
+        }
+        return out;
+    }
+    text.to_owned()
+}
+
+fn strip_trailing_deadline(text: &str, deadline: &str) -> String {
+    let Some(deadline_word) = deadline.split_whitespace().last() else {
+        return text.to_owned();
+    };
+    let deadline_key = text::stem_token(&text::normalize(deadline_word));
+    if deadline_key.is_empty() {
+        return text.to_owned();
+    }
+    let lower = text.to_lowercase();
+    let Some(position) = lower.rfind("срок") else {
+        return text.to_owned();
+    };
+    let tail = text[position + "срок".len()..]
+        .trim_matches(|c: char| c.is_whitespace() || matches!(c, '—' | '-' | ':' | '.'));
+    let Some(last) = text::normalize(tail)
+        .split_whitespace()
+        .last()
+        .map(str::to_owned)
+    else {
+        return text.to_owned();
+    };
+    if text::stem_token(&last) != deadline_key {
+        return text.to_owned();
+    }
+    text[..position]
+        .trim_end_matches(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '-' | '—'))
+        .to_owned()
 }
 
 fn strip_word_prefix(text: &str, lower: &str, marker: &str) -> Option<String> {
