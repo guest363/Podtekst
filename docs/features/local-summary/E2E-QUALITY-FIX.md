@@ -7,22 +7,28 @@
 
 - **Deterministic fallback (`extract.rs`):** скан всех реплик по централизованным
   cue-таблицам; решения/задачи/вопросы собираются как точные source-предложения
-  с ref, speaker/assignee, deadline из того же экстрактора. «Нужно» без
-  действия задачей не считается. Fallback добавляется в `ground()` только для
-  отсутствующих пунктов; модель имеет приоритет, дубли отсекаются по ref и
-  stem-overlap. Warning `fallback_extracted`; cap — `detail.max_items()`.
-- **Pipeline policy:** плоский ответ с пунктами больше не вызывает repair —
-  parser раскладывает его сам, fallback добирает задачи/решения/вопросы.
-  Repair вызывается только при нуле пунктов/invalid output. Это убирает
-  дополнительный вызов модели (60–140 с в E2E).
+  с ref, speaker/assignee, deadline. `task_line` требует реального
+  обязательства/потребности: explicit «я/имя + будущее», `нужно/надо/задача +
+  инфинитив`, `беру/отвечаю`; вступления/мнения/предложения (`коллеги`,
+  `начинаем`, `я считаю`, `можно`, `цель`, `предлагаю`, `обсудим`) отсекаются.
+  Assignee — только известный speaker name или явный `Кто:`; «Цель» и прочие
+  заголовочные существительные не становятся исполнителями. Пересекающиеся
+  задачи дедуплицируются по stem/noun overlap с приоритетом explicit
+  commitment + assignee + deadline (Anna phone > Vera need).
+- **Fallback merge:** пункты модели приоритетны, но при совпадении задачи
+  fallback с assignee+deadline заменяет более слабый model item; warning
+  `fallback_extracted`.
+- **Decision/question:** `decision_cue` отвергает `не решили/не согласовали/
+  не утвердили/пока не решили`; `question_line` видит `вопрос`, `нужен ли`,
+  `стоит ли`, `надо ли`, `?` в любом месте.
 - **Prompt:** в `build`/`build_reduce` добавлены «Начни с `## <first>`, не
-  пропускай заголовки», компактный one-shot пример структуры и ограничение
-  «Кратко — 2–4 пункта, только главное; не дублируй задачи/решения». Новый
-  `build_repair` переписывает плоский/пустой ответ в точный контракт секций
-  (те же system-инварианты, DATA в nonce) и используется только на invalid output.
-- **Cap:** приоритет `tasks/next_steps/todo` → `decisions` → `questions` →
-  `brief` → остальные по evidence; brief принудительно обрезается до 4 пунктов
-  до глобального cap, чтобы 13 brief-пунктов не вытесняли задачи.
+  пропускай заголовки», one-shot пример и «Кратко — 2–4 пункта, только главное».
+  `build_repair` используется только на invalid output.
+- **Cap:** сначала по одному пункту из каждой непустой секции, затем
+  tasks/decisions extras, questions, brief (не более 4), остальное по evidence.
+- **Pipeline policy:** плоский ответ с пунктами не вызывает repair — parser
+  раскладывает его сам, fallback добирает задачи/решения/вопросы. Repair
+  вызывается только при нуле пунктов/invalid output.
 - **Parser:** плоский список без заголовков раскладывается по cue —
   решения/задачи/вопросы/остальное → brief; `parser_recovered` фиксируется.
   Распознаются bare `Кратко:`, `Открытые вопросы:` и другие алиасы каталога.
@@ -30,8 +36,7 @@
   4 латинских символа), пороги `intersection>=2`, `ev>=0.25` сохранены.
   «обновить/обновлю», «доделать/доделаю» теперь поддерживаются.
 - **Tasks:** cue и дедлайн — по `refs[0]`; дедлайн не берётся из соседней
-  реплики (иначе `deadline_not_stated`). Расширены формы обязательств,
-  assignee — по speaker name/тексту/«Имя + глагол».
+  реплики. Assignee — только известный speaker name или явный `Кто:`.
 - **Brief:** при пустом brief деривация идёт из decisions/tasks, не questions.
 - Убран ложный ownership-drop: `доделает` больше не матчится как `делает`.
 
@@ -39,12 +44,16 @@
 
 - `parse::tests::flat_output_infers_decisions_tasks_questions`
 - `parse::tests::bare_colon_headings_are_sections`
-- `extract::tests::extracts_tasks_assignees_and_deadlines`
+- `extract::tests::synthetic_meeting_tightening`
 - `extract::tests::task_requires_action_verb_not_just_need`
 - `extract::tests::first_person_uses_speaker_unless_placeholder`
+- `grounding::tests::synthetic_meeting_fallback_has_no_false_tasks`
+- `grounding::tests::explicit_phone_commitment_replaces_need_task`
 - `grounding::tests::structured_fallback_fills_missing_tasks_without_duplicates`
 - `grounding::tests::tasks_and_decisions_survive_brief_flood_at_normal`
 - `grounding::tests::brief_is_truncated_to_four_without_warning`
+- `cues::tests::negated_decisions_are_not_decisions`
+- `cues::tests::questions_without_trailing_mark_are_questions`
 - `pipeline::tests::fake_flat_output_is_recovered_without_repair` (1 вызов, без repair)
 - `prompt::tests::prompt_starts_with_first_title_instruction`
 - `prompt::tests::repair_prompt_wraps_flat_output`
@@ -61,8 +70,8 @@
 | `cargo fmt --all -- --check` | pass |
 | `cargo clippy --workspace --all-targets --locked ... -D warnings` | pass |
 | `cargo clippy -p mr-app --features tauri-ui --all-targets --locked ... -D warnings` | pass |
-| `cargo test --workspace --locked ...` | pass: 344 passed, 2 ignored |
+| `cargo test --workspace --locked ...` | pass: 349 passed, 2 ignored |
 | Android `cargo check ... aarch64-linux-android --features tauri-ui --locked` | pass |
 | `git diff --check -- src-tauri` | pass |
 
-Коммит: `fix(summary): prioritize tasks and cap brief` (этот коммит).
+Коммит: `fix(summary): tighten structured fallback` (этот коммит).

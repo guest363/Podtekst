@@ -143,6 +143,9 @@ pub const ACTION_VERBS: &[&str] = &[
     "пришлет",
     "пришлю",
     "прислать",
+    "сверит",
+    "сверю",
+    "сверить",
     "update",
     "prepare",
     "check",
@@ -158,6 +161,22 @@ pub const ACTION_VERBS: &[&str] = &[
     "do",
 ];
 
+pub const TASK_REJECT: &[&str] = &[
+    "я считаю",
+    "можно",
+    "цель",
+    "коллеги",
+    "начинаем",
+    "давайте обсудим",
+    "обсудим",
+    "предлагаю",
+];
+
+pub fn task_rejected(text: &str) -> bool {
+    let normalized = normalize(text);
+    TASK_REJECT.iter().any(|marker| normalized.contains(marker))
+}
+
 const QUESTION_STARTS: &[&str] = &[
     "кто",
     "что",
@@ -170,8 +189,12 @@ const QUESTION_STARTS: &[&str] = &[
     "какая",
     "какие",
     "сколько",
+    "вопрос",
+    "нужен ли",
+    "стоит ли",
+    "надо ли",
     "можем ли",
-    "нужно ли",
+    "можно ли",
     "будет ли",
 ];
 
@@ -181,6 +204,18 @@ fn has_any(text: &str, needles: &[&str]) -> bool {
 
 pub fn decision_cue(text: &str) -> bool {
     let normalized = normalize(text);
+    if has_any(
+        &normalized,
+        &[
+            "не решили",
+            "не согласовали",
+            "не утвердили",
+            "не приняли",
+            "пока не решили",
+        ],
+    ) {
+        return false;
+    }
     has_any(&normalized, DECISION_CUES)
 }
 
@@ -196,10 +231,22 @@ pub fn action_verb(text: &str) -> bool {
 
 pub fn question_line(text: &str) -> bool {
     let trimmed = text.trim();
-    if trimmed.ends_with('?') {
+    if trimmed.contains('?') {
         return true;
     }
     let normalized = normalize(trimmed);
+    if normalized
+        .split_whitespace()
+        .any(|word| word == "вопрос" || word == "вопросы")
+    {
+        return true;
+    }
+    if has_any(
+        &normalized,
+        &["нужен ли", "стоит ли", "надо ли", "можно ли"],
+    ) {
+        return true;
+    }
     QUESTION_STARTS
         .iter()
         .any(|start| normalized == *start || normalized.starts_with(&format!("{start} ")))
@@ -218,5 +265,25 @@ mod tests {
         assert!(question_line("Когда запускаем?"));
         assert!(question_line("Какой срок?"));
         assert!(!question_line("Обсудили срок."));
+    }
+
+    #[test]
+    fn negated_decisions_are_not_decisions() {
+        for text in [
+            "Пока не решили, когда запуск.",
+            "Не согласовали бюджет.",
+            "Не утвердили план.",
+            "Не приняли финальную версию.",
+        ] {
+            assert!(!decision_cue(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn questions_without_trailing_mark_are_questions() {
+        assert!(question_line("Ещё вопрос: нужен ли новый сервер"));
+        assert!(question_line("Нужен ли отдельный стенд"));
+        assert!(question_line("Стоит ли переносить встречу"));
+        assert!(question_line("Вопрос по бюджету"));
     }
 }

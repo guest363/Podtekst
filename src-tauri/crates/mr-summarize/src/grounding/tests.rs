@@ -291,6 +291,96 @@ fn brief_is_truncated_to_four_without_warning() {
 }
 
 #[test]
+fn synthetic_meeting_fallback_has_no_false_tasks() {
+    let transcript = Transcript {
+        utterances: vec![
+            u(0.0, "Анна", "Коллеги, начинаем."),
+            u(1.0, "Борис", "Я считаю, что можно встроить отчёт в план."),
+            u(2.0, "Анна", "Цель встречи — согласовать запуск."),
+            u(3.0, "Анна", "Решили перенести запуск на следующую неделю."),
+            u(4.0, "Борис", "Борис доделает отчёт до среды."),
+            u(5.0, "Вера", "Вере нужно позвонить клиенту."),
+            u(6.0, "Анна", "Анна позвонит клиенту к пятнице."),
+            u(7.0, "Вера", "Вера сверит бюджет завтра."),
+            u(8.0, "Спикер 1", "Надо заполнить журнал."),
+            u(
+                9.0,
+                "Анна",
+                "Ещё вопрос: нужен ли новый сервер? Пока не решили.",
+            ),
+            u(10.0, "Анна", "Обсудили запуск и сроки."),
+        ],
+    };
+    let output = "## Кратко\n- Обсудили запуск и сроки.\n";
+    let preset = crate::preset::get("meeting").unwrap();
+    let parsed = parse::parse(output, preset).unwrap();
+    let summary = ground(&parsed, &transcript, preset, Detail::Normal);
+
+    let tasks = summary
+        .sections
+        .iter()
+        .find(|s| s.id == "tasks")
+        .expect("tasks");
+    assert_eq!(tasks.items.len(), 4, "{:?}", tasks.items);
+    let phone = tasks
+        .items
+        .iter()
+        .find(|i| i.text.contains("позвонит"))
+        .expect("phone task");
+    let phone_meta = phone.task.as_ref().unwrap();
+    assert_eq!(phone_meta.assignee.as_deref(), Some("Анна"));
+    assert_eq!(phone_meta.deadline.as_deref(), Some("к пятнице"));
+    for task in &tasks.items {
+        let text = task.text.to_lowercase();
+        assert!(!text.contains("коллеги"), "{text}");
+        assert!(!text.contains("я считаю"), "{text}");
+        assert!(!text.contains("цель"), "{text}");
+    }
+    let decisions = summary
+        .sections
+        .iter()
+        .find(|s| s.id == "decisions")
+        .expect("decisions");
+    assert_eq!(decisions.items.len(), 1);
+    assert!(!decisions.items[0].text.contains("вопрос"));
+    assert!(summary
+        .sections
+        .iter()
+        .any(|s| s.id == "questions" && !s.items.is_empty()));
+    assert!(summary
+        .sections
+        .iter()
+        .any(|s| s.id == "brief" && !s.items.is_empty()));
+    assert!(summary.warnings.contains(&Warning::FallbackExtracted));
+}
+
+#[test]
+fn explicit_phone_commitment_replaces_need_task() {
+    let transcript = Transcript {
+        utterances: vec![
+            u(0.0, "Анна", "Обсудили запуск и сроки."),
+            u(1.0, "Вера", "Вере нужно позвонить клиенту."),
+            u(2.0, "Анна", "Анна позвонит клиенту к пятнице."),
+        ],
+    };
+    let output =
+        "## Кратко\n- Обсудили запуск и сроки.\n## Задачи\n- Вере нужно позвонить клиенту.\n";
+    let preset = crate::preset::get("meeting").unwrap();
+    let parsed = parse::parse(output, preset).unwrap();
+    let summary = ground(&parsed, &transcript, preset, Detail::Normal);
+    let tasks = summary
+        .sections
+        .iter()
+        .find(|s| s.id == "tasks")
+        .expect("tasks");
+    assert_eq!(tasks.items.len(), 1, "{:?}", tasks.items);
+    assert_eq!(tasks.items[0].text, "Анна позвонит клиенту к пятнице.");
+    let task = tasks.items[0].task.as_ref().unwrap();
+    assert_eq!(task.assignee.as_deref(), Some("Анна"));
+    assert_eq!(task.deadline.as_deref(), Some("к пятнице"));
+}
+
+#[test]
 fn decision_cue_detection_uses_full_source() {
     let with_cue = Transcript {
         utterances: vec![u(0.0, "Анна", "Решили перенести запуск.")],
@@ -421,7 +511,7 @@ fn hard_fact_missing_from_source_drops_item() {
     let summary = run(
         "meeting",
         "## Кратко\n- Подготовить отчёт к 14.11.\n",
-        vec![u(0.0, "Анна", "Подготовить отчёт.")],
+        vec![u(0.0, "Анна", "Надо подготовить отчёт.")],
     );
     assert_eq!(summary.items_dropped, 1);
     assert!(summary.warnings.contains(&Warning::ItemsDroppedUnsupported));
@@ -430,7 +520,7 @@ fn hard_fact_missing_from_source_drops_item() {
         .iter()
         .find(|s| s.id == "tasks")
         .expect("fallback task из источника");
-    assert_eq!(tasks.items[0].text, "Подготовить отчёт.");
+    assert_eq!(tasks.items[0].text, "Надо подготовить отчёт.");
     assert!(!tasks.items[0].text.contains("14.11"));
 }
 

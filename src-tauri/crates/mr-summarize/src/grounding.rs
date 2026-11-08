@@ -40,6 +40,7 @@ pub fn ground(
     let mut soft = 0usize;
     let mut sections: Vec<Vec<Scored>> = parsed.sections.iter().map(|_| Vec::new()).collect();
     let brief_index = parsed.sections.iter().position(|s| s.id == "brief");
+    let known = crate::extract::speaker_names(&transcript.utterances);
 
     for (section_index, section) in parsed.sections.iter().enumerate() {
         for item in &section.items {
@@ -76,7 +77,8 @@ pub fn ground(
                 quote,
             };
             if section.role == SectionRole::Task {
-                let task = reconcile_task(&mut output, &transcript.utterances, &mut warnings);
+                let task =
+                    reconcile_task(&mut output, &transcript.utterances, &known, &mut warnings);
                 if !task {
                     soft += 1;
                     continue;
@@ -267,6 +269,7 @@ fn validated_quote(
 fn reconcile_task(
     output: &mut SummaryItem,
     utterances: &[Utterance],
+    known: &[String],
     warnings: &mut Vec<Warning>,
 ) -> bool {
     let primary = output
@@ -275,6 +278,9 @@ fn reconcile_task(
         .map(|r| adjacent(std::slice::from_ref(r), utterances.len()))
         .unwrap_or_default();
     let support = support_text(utterances, &primary);
+    if crate::cues::task_rejected(&output.text) || crate::cues::task_rejected(&support) {
+        return false;
+    }
     if !crate::cues::task_cue(&support) {
         return false;
     }
@@ -319,7 +325,8 @@ fn reconcile_task(
         let speaker_match = speaker
             .as_deref()
             .map(|s| text::normalize(s) == normalized)
-            .unwrap_or(false);
+            .unwrap_or(false)
+            || crate::extract::is_known_speaker(&assignee, known);
         if !normalized_support.contains(&normalized)
             && !normalized_text.contains(&normalized)
             && !speaker_match
@@ -329,8 +336,17 @@ fn reconcile_task(
         }
     }
     if task.assignee.is_none() {
-        task.assignee =
-            crate::extract::assignee_for(&output.text, Some(&support), speaker.as_deref());
+        let normalized = text::normalize(&output.text);
+        let kind = crate::extract::task_kind(&output.text, &normalized, known)
+            .or_else(|| crate::extract::task_kind(&support, &text::normalize(&support), known))
+            .unwrap_or(crate::extract::TaskKind::Explicit);
+        task.assignee = crate::extract::assignee_for(
+            &output.text,
+            Some(&support),
+            speaker.as_deref(),
+            known,
+            kind,
+        );
     }
     true
 }

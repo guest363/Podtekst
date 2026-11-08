@@ -17,10 +17,17 @@ pub(super) fn merge_fallback(
         let Some(index) = specs.iter().position(|s| s.id == candidate.section_id) else {
             continue;
         };
-        if sections[index]
+        if let Some(position) = sections[index]
             .iter()
-            .any(|existing| same_task_or_evidence(&existing.item, &candidate.item))
+            .position(|existing| same_task_or_evidence(&existing.item, &candidate.item))
         {
+            if metadata_score(&candidate.item) > metadata_score(&sections[index][position].item) {
+                sections[index][position] = Scored {
+                    item: candidate.item,
+                    ev: 1.0,
+                };
+                added += 1;
+            }
             continue;
         }
         sections[index].push(Scored {
@@ -50,7 +57,19 @@ fn same_task_or_evidence(model: &SummaryItem, fallback: &SummaryItem) -> bool {
     let union = a.union(&b).count();
     let jaccard = intersection as f64 / union.max(1) as f64;
     let containment = intersection as f64 / a.len().min(b.len()).max(1) as f64;
-    jaccard >= 0.6 || containment >= 0.8
+    let task_like = model.task.is_some() || fallback.task.is_some();
+    if task_like {
+        intersection >= 2 && (jaccard >= 0.3 || containment >= 0.5)
+    } else {
+        jaccard >= 0.6 || containment >= 0.8
+    }
+}
+
+fn metadata_score(item: &SummaryItem) -> u8 {
+    let Some(task) = item.task.as_ref() else {
+        return 0;
+    };
+    u8::from(task.assignee.is_some()) + u8::from(task.deadline.is_some())
 }
 
 pub(super) fn dedupe(items: &mut Vec<Scored>) {
@@ -90,6 +109,13 @@ pub(super) fn cap(sections: &mut [Vec<Scored>], specs: &[ParsedSection], detail:
         sections[brief].truncate(4);
     }
     let mut selected: HashSet<(usize, usize)> = HashSet::new();
+    // Сначала по одному пункту из каждой непустой секции: иначе verbose brief
+    // или задачи могут полностью вытеснить вопросы/блокеры.
+    for (section_index, items) in sections.iter().enumerate() {
+        if !items.is_empty() && selected.len() < max {
+            selected.insert((section_index, 0));
+        }
+    }
     for ids in [
         &["tasks", "next_steps", "todo"][..],
         &["decisions"][..],
@@ -100,7 +126,7 @@ pub(super) fn cap(sections: &mut [Vec<Scored>], specs: &[ParsedSection], detail:
             if !ids.contains(&spec.id) {
                 continue;
             }
-            for item_index in 0..sections[section_index].len() {
+            for item_index in 1..sections[section_index].len() {
                 if selected.len() >= max {
                     break;
                 }

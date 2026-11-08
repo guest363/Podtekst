@@ -1,22 +1,59 @@
+use std::collections::HashSet;
+
 use crate::artifact::{DeadlineSource, SummaryItem, SummaryRef, TaskMeta};
 use crate::cues;
 use crate::deadline;
 use crate::preset::{Preset, SectionRole};
-use crate::text::{self, Transcript};
+use crate::text::{self, Transcript, Utterance};
+
+mod assignee;
+pub(crate) use assignee::assignee_for;
 
 pub(crate) struct Candidate {
     pub section_id: &'static str,
     pub item: SummaryItem,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TaskKind {
+    Explicit,
+    Need,
+}
+
+const FIRST_PERSON: &[&str] = &[
+    "я сделаю",
+    "я подготовлю",
+    "я проверю",
+    "я обновлю",
+    "я доделаю",
+    "я позвоню",
+    "я напишу",
+    "я отправлю",
+    "я добавлю",
+    "я назначу",
+    "я выдам",
+    "я проведу",
+    "я заполню",
+    "я перенесу",
+    "я уточню",
+    "я соберу",
+    "я оформлю",
+    "я загружу",
+    "я настрою",
+    "я пришлю",
+    "я согласую",
+    "беру",
+    "отвечаю",
+];
+
 /// Детерминированный fallback: только явные source-реплики, без новых фактов.
-/// Секции выбираются по каталогу; порядок кандидатов — по приоритету секций.
 pub(crate) fn candidates(transcript: &Transcript, preset: &Preset) -> Vec<Candidate> {
     let decisions = section_id(preset, &["decisions"]);
     let tasks = section_id(preset, &["tasks", "next_steps", "todo"]);
     let questions = section_id(preset, &["questions"]);
+    let known = speaker_names(&transcript.utterances);
     let mut decision_items = Vec::new();
-    let mut task_items = Vec::new();
+    let mut task_items: Vec<(Candidate, u8)> = Vec::new();
     let mut question_items = Vec::new();
 
     for (index, utterance) in transcript.utterances.iter().enumerate() {
@@ -48,27 +85,58 @@ pub(crate) fn candidates(transcript: &Transcript, preset: &Preset) -> Vec<Candid
             }
         }
         if let Some(section) = tasks {
-            if task_line(&normalized) {
-                let task = task_meta(source, &utterance.speaker, &reference);
-                task_items.push(Candidate {
-                    section_id: section,
-                    item: SummaryItem {
-                        text: source.to_owned(),
-                        role: SectionRole::Task,
-                        task: Some(task),
-                        refs: vec![reference],
-                        quote: None,
+            if let Some(kind) = task_kind(source, &normalized, &known) {
+                let task = task_meta(source, &utterance.speaker, &reference, kind, &known);
+                let score = task_score(kind, &task);
+                task_items.push((
+                    Candidate {
+                        section_id: section,
+                        item: SummaryItem {
+                            text: source.to_owned(),
+                            role: SectionRole::Task,
+                            task: Some(task),
+                            refs: vec![reference],
+                            quote: None,
+                        },
                     },
-                });
+                    score,
+                ));
             }
         }
     }
 
+    let task_items = dedupe_tasks(task_items);
     decision_items
         .into_iter()
         .chain(task_items)
         .chain(question_items)
         .collect()
+}
+
+pub(crate) fn speaker_names(utterances: &[Utterance]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for utterance in utterances {
+        let name = utterance.speaker.trim();
+        if name.is_empty() || is_placeholder_name(name) {
+            continue;
+        }
+        let key = name_key(name);
+        if seen.insert(key) {
+            out.push(name.to_owned());
+        }
+    }
+    out
+}
+
+fn name_key(name: &str) -> String {
+    let normalized = text::normalize(name);
+    let take = if normalized.chars().count() <= 4 {
+        3
+    } else {
+        5
+    };
+    normalized.chars().take(take).collect()
 }
 
 fn section_id(preset: &Preset, ids: &[&str]) -> Option<&'static str> {
@@ -87,12 +155,82 @@ fn plain_item(source: &str, role: SectionRole, reference: SummaryRef) -> Summary
     }
 }
 
-/// Только действие/обязательство. «Нужно» без глагола задачей не считается.
-fn task_line(normalized: &str) -> bool {
-    cues::action_verb(normalized)
+/// Только реальное обязательство/потребность. Намеренно отсекает вступления,
+/// мнения, предложения и общие «цели» без действия.
+pub(crate) fn task_kind(source: &str, normalized: &str, known: &[String]) -> Option<TaskKind> {
+    if cues::task_rejected(source) {
+        return None;
+    }
+    if FIRST_PERSON
+        .iter()
+        .any(|marker| normalized.contains(marker))
+        || named_commitment(source, known)
+    {
+        return Some(TaskKind::Explicit);
+    }
+    let need = ["нужно", "надо", "задача", "требуется"]
+        .iter()
+        .any(|marker| normalized.contains(marker));
+    if need && has_infinitive(normalized) {
+        return Some(TaskKind::Need);
+    }
+    None
 }
 
-fn task_meta(source: &str, speaker: &str, reference: &SummaryRef) -> TaskMeta {
+fn has_infinitive(normalized: &str) -> bool {
+    normalized.split_whitespace().any(|word| {
+        (word.ends_with("ть") || word.ends_with("ться") || word.ends_with("ти"))
+            && cues::action_verb(word)
+    })
+}
+
+fn named_commitment(source: &str, known: &[String]) -> bool {
+    if known.is_empty() {
+        return false;
+    }
+    let words: Vec<&str> = source.split_whitespace().collect();
+    for (index, word) in words.iter().enumerate() {
+        let Some(name) = known_name(word, known) else {
+            continue;
+        };
+        let _ = name;
+        let next_verb = words
+            .iter()
+            .skip(index + 1)
+            .take(2)
+            .any(|w| cues::action_verb(w));
+        let prev_verb = index
+            .checked_sub(1)
+            .and_then(|i| words.get(i))
+            .map(|w| cues::action_verb(w))
+            .unwrap_or(false);
+        if next_verb || prev_verb {
+            return true;
+        }
+    }
+    false
+}
+
+fn known_name(token: &str, known: &[String]) -> Option<String> {
+    let clean = token.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
+    if clean.is_empty() {
+        return None;
+    }
+    let key = name_key(clean);
+    known.iter().find(|name| name_key(name) == key).cloned()
+}
+
+pub(crate) fn is_known_speaker(name: &str, known: &[String]) -> bool {
+    known_name(name, known).is_some()
+}
+
+fn task_meta(
+    source: &str,
+    speaker: &str,
+    reference: &SummaryRef,
+    kind: TaskKind,
+    known: &[String],
+) -> TaskMeta {
     let found = deadline::find_in_text(source, reference.utterance_index, reference.start);
     let (deadline, deadline_ref, source_kind) = match &found {
         Some(hit) => (
@@ -106,80 +244,58 @@ fn task_meta(source: &str, speaker: &str, reference: &SummaryRef) -> TaskMeta {
         None => (None, None, DeadlineSource::Model),
     };
     TaskMeta {
-        assignee: assignee_for(source, Some(source), Some(speaker)),
+        assignee: assignee_for(source, Some(source), Some(speaker), known, kind),
         deadline,
         deadline_ref,
         deadline_source: source_kind,
     }
 }
 
-pub(crate) fn assignee_for(
-    task_text: &str,
-    support: Option<&str>,
-    speaker: Option<&str>,
-) -> Option<String> {
-    let support = support.map(text::normalize).unwrap_or_default();
-    let normalized_task = text::normalize(task_text);
-    let first_person = support.starts_with("я ")
-        || normalized_task.starts_with("я ")
-        || [
-            "я сделаю",
-            "я подготовлю",
-            "я проверю",
-            "я обновлю",
-            "я доделаю",
-        ]
-        .iter()
-        .any(|needle| support.contains(needle))
-        || support.contains("беру")
-        || support.contains("отвечаю");
-    let speaker = speaker.map(str::trim).filter(|s| !s.is_empty());
-    if first_person {
-        if let Some(speaker) = speaker.filter(|s| !is_placeholder_name(s)) {
-            return Some(speaker.to_owned());
-        }
+fn task_score(kind: TaskKind, task: &TaskMeta) -> u8 {
+    let mut score = if kind == TaskKind::Explicit { 10 } else { 0 };
+    if task.assignee.is_some() {
+        score += 1;
     }
-    if let Some(speaker) = speaker {
-        let normalized = text::normalize(speaker);
-        if !is_placeholder_name(speaker)
-            && (support.contains(&normalized) || normalized_task.contains(&normalized))
-        {
-            return Some(speaker.to_owned());
-        }
+    if task.deadline.is_some() {
+        score += 1;
     }
-    extract_assignee_name(task_text)
+    score
 }
 
-pub(crate) fn extract_assignee_name(text: &str) -> Option<String> {
-    let words: Vec<&str> = text.split_whitespace().collect();
-    for (index, word) in words.iter().enumerate() {
-        let clean = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
-        let mut chars = clean.chars();
-        let Some(first) = chars.next() else {
-            continue;
-        };
-        if !first.is_uppercase() || !chars.any(char::is_lowercase) {
-            continue;
-        }
-        let normalized = text::normalize(clean);
-        if is_not_name(&normalized) {
-            continue;
-        }
-        let prev_verb = index
-            .checked_sub(1)
-            .and_then(|i| words.get(i))
-            .map(|w| cues::action_verb(w))
-            .unwrap_or(false);
-        let next_verb = words
+fn dedupe_tasks(items: Vec<(Candidate, u8)>) -> Vec<Candidate> {
+    let mut deduped: Vec<(Candidate, u8)> = Vec::new();
+    for (candidate, score) in items {
+        if let Some(position) = deduped
             .iter()
-            .skip(index + 1)
-            .take(2)
-            .any(|w| cues::action_verb(w));
-        if prev_verb || next_verb {
-            return Some(clean.to_owned());
+            .position(|(existing, _)| task_overlap(&existing.item, &candidate.item))
+        {
+            if score > deduped[position].1 {
+                deduped[position] = (candidate, score);
+            }
+        } else {
+            deduped.push((candidate, score));
         }
     }
-    None
+    deduped
+        .into_iter()
+        .map(|(candidate, _)| candidate)
+        .collect()
+}
+
+fn task_overlap(a: &SummaryItem, b: &SummaryItem) -> bool {
+    let a = text::stem_set(&a.text);
+    let b = text::stem_set(&b.text);
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    let intersection = a.intersection(&b).count();
+    if intersection < 2 {
+        return false;
+    }
+    let union = a.union(&b).count();
+    let jaccard = intersection as f64 / union.max(1) as f64;
+    let containment = intersection as f64 / a.len().min(b.len()).max(1) as f64;
+    jaccard >= 0.3 || containment >= 0.5
 }
 
 fn is_placeholder_name(name: &str) -> bool {
@@ -190,131 +306,5 @@ fn is_placeholder_name(name: &str) -> bool {
         || normalized == "участник"
 }
 
-fn is_not_name(normalized: &str) -> bool {
-    matches!(
-        normalized,
-        "срок"
-            | "кто"
-            | "что"
-            | "задача"
-            | "решение"
-            | "отчет"
-            | "встреча"
-            | "план"
-            | "документ"
-            | "документация"
-            | "проект"
-            | "бюджет"
-            | "вопрос"
-            | "итог"
-            | "текст"
-            | "письмо"
-            | "звонок"
-            | "тест"
-            | "релиз"
-            | "презентация"
-            | "макет"
-            | "баг"
-            | "тикет"
-            | "сегодня"
-            | "завтра"
-            | "послезавтра"
-            | "понедельник"
-            | "вторник"
-            | "среда"
-            | "четверг"
-            | "пятница"
-            | "суббота"
-            | "воскресенье"
-    ) || normalized.starts_with("январ")
-        || normalized.starts_with("феврал")
-        || normalized.starts_with("март")
-        || normalized.starts_with("апрел")
-        || normalized.starts_with("май")
-        || normalized.starts_with("июн")
-        || normalized.starts_with("июл")
-        || normalized.starts_with("август")
-        || normalized.starts_with("сентябр")
-        || normalized.starts_with("октябр")
-        || normalized.starts_with("ноябр")
-        || normalized.starts_with("декабр")
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{preset, text::Utterance};
-
-    fn transcript(texts: &[(&str, &str)]) -> Transcript {
-        Transcript {
-            utterances: texts
-                .iter()
-                .enumerate()
-                .map(|(i, (speaker, text))| Utterance {
-                    start: i as f64,
-                    end: i as f64 + 1.0,
-                    speaker: speaker.to_string(),
-                    text: text.to_string(),
-                })
-                .collect(),
-        }
-    }
-
-    #[test]
-    fn extracts_tasks_assignees_and_deadlines() {
-        let t = transcript(&[
-            ("Анна", "Решили перенести запуск на следующую неделю."),
-            ("Борис", "Борис доделает отчёт до среды."),
-            ("Вера", "Вера проверит журнал завтра."),
-            ("Анна", "Анна обновит документацию к пятнице."),
-            ("Борис", "Я подготовлю план."),
-            ("Анна", "Что осталось по бюджету?"),
-        ]);
-        let found = candidates(&t, preset::get("meeting").unwrap());
-        let tasks: Vec<_> = found
-            .iter()
-            .filter(|c| c.section_id == "tasks")
-            .map(|c| (c.item.text.as_str(), c.item.task.as_ref().unwrap()))
-            .collect();
-        assert_eq!(tasks.len(), 4);
-        assert_eq!(tasks[0].1.assignee.as_deref(), Some("Борис"));
-        assert_eq!(tasks[0].1.deadline.as_deref(), Some("до среды"));
-        assert_eq!(tasks[1].1.assignee.as_deref(), Some("Вера"));
-        assert_eq!(tasks[1].1.deadline.as_deref(), Some("завтра"));
-        assert_eq!(tasks[2].1.assignee.as_deref(), Some("Анна"));
-        assert_eq!(tasks[2].1.deadline.as_deref(), Some("к пятнице"));
-        assert_eq!(tasks[3].1.assignee.as_deref(), Some("Борис"));
-        assert!(tasks[3].1.deadline.is_none());
-        assert!(found.iter().any(|c| c.section_id == "decisions"));
-        assert!(found.iter().any(|c| c.section_id == "questions"));
-    }
-
-    #[test]
-    fn task_requires_action_verb_not_just_need() {
-        let t = transcript(&[
-            ("Анна", "Нужно больше времени на обсуждение."),
-            ("Борис", "Надо подготовить отчёт."),
-            ("Вера", "Обсудили задачи на неделю."),
-        ]);
-        let found = candidates(&t, preset::get("meeting").unwrap());
-        let tasks: Vec<_> = found.iter().filter(|c| c.section_id == "tasks").collect();
-        assert_eq!(tasks.len(), 1);
-        assert!(tasks[0].item.text.contains("подготовить"));
-    }
-
-    #[test]
-    fn first_person_uses_speaker_unless_placeholder() {
-        let t = transcript(&[
-            ("Борис", "Я подготовлю план."),
-            ("Спикер 1", "Я проверю отчёт."),
-        ]);
-        let found = candidates(&t, preset::get("meeting").unwrap());
-        let tasks: Vec<_> = found.iter().filter(|c| c.section_id == "tasks").collect();
-        assert_eq!(tasks.len(), 2);
-        assert_eq!(
-            tasks[0].item.task.as_ref().unwrap().assignee.as_deref(),
-            Some("Борис")
-        );
-        assert!(tasks[1].item.task.as_ref().unwrap().assignee.is_none());
-    }
-}
+mod tests;
