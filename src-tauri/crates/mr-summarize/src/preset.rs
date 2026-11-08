@@ -386,7 +386,7 @@ impl Detail {
     pub fn max_items(self) -> usize {
         match self {
             Self::Short => 5,
-            Self::Normal => 8,
+            Self::Normal => 10,
             Self::Long => 12,
         }
     }

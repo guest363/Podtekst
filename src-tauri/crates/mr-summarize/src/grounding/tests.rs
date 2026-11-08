@@ -167,7 +167,10 @@ fn structured_fallback_fills_missing_tasks_without_duplicates() {
         .iter()
         .any(|s| s.id == "questions" && s.items[0].text == transcript.utterances[5].text));
     assert!(summary.warnings.contains(&Warning::FallbackExtracted));
-    assert!(summary.warnings.contains(&Warning::BriefDerived));
+    assert!(
+        summary.sections.iter().all(|s| s.id != "brief"),
+        "fallback-задачи выданы за «Кратко»"
+    );
 }
 
 #[test]
@@ -254,7 +257,7 @@ fn tasks_and_decisions_survive_brief_flood_at_normal() {
             .iter()
             .map(|s| s.items.len())
             .sum::<usize>(),
-        8
+        10
     );
 }
 
@@ -417,9 +420,9 @@ fn synthetic_meeting_fallback_has_no_false_tasks() {
         .iter()
         .find(|s| s.id == "brief")
         .expect("brief");
-    assert_eq!(brief.items.len(), 2, "{:?}", brief.items);
+    assert_eq!(brief.items.len(), 1, "{:?}", brief.items);
     assert!(summary.warnings.contains(&Warning::FallbackExtracted));
-    assert!(summary.warnings.contains(&Warning::BriefDerived));
+    assert!(!summary.warnings.contains(&Warning::BriefDerived));
 }
 
 #[test]
@@ -590,6 +593,59 @@ fn hard_fact_missing_from_source_drops_item() {
         .expect("fallback task из источника");
     assert_eq!(tasks.items[0].text, "Надо подготовить отчёт.");
     assert!(!tasks.items[0].text.contains("14.11"));
+    assert!(
+        summary.sections.iter().all(|s| s.id != "brief"),
+        "fallback-задача выдана за «Кратко»"
+    );
+}
+
+#[test]
+fn wrong_year_is_not_supported_by_prefix() {
+    let summary = run(
+        "meeting",
+        "## Кратко\n- Подготовить отчёт к 2025.\n",
+        vec![u(0.0, "Анна", "Надо подготовить отчёт в 2024 году.")],
+    );
+    assert_eq!(summary.items_dropped, 1, "{summary:?}");
+}
+
+#[test]
+fn speaker_name_supports_hard_fact() {
+    let summary = run(
+        "meeting",
+        "## Кратко\n- Анна подготовит отчёт.\n",
+        vec![u(0.0, "Анна", "Подготовит отчёт.")],
+    );
+    assert_eq!(summary.items_dropped, 0, "{summary:?}");
+    assert!(summary
+        .sections
+        .iter()
+        .any(|s| s.id == "brief" && !s.items.is_empty()));
+}
+
+#[test]
+fn inflected_name_matches_speaker() {
+    let summary = run(
+        "meeting",
+        "## Задачи\n- Подготовить отчёт для Олега.\n",
+        vec![u(0.0, "Олег", "Подготовить отчёт.")],
+    );
+    assert_eq!(summary.items_dropped, 0, "{summary:?}");
+    assert!(summary.sections.iter().any(|s| s.id == "tasks"));
+}
+
+#[test]
+fn sentence_start_infinitive_is_not_a_hard_fact() {
+    let summary = run(
+        "meeting",
+        "## Кратко\n- Пройти проверку документов.\n",
+        vec![u(0.0, "Анна", "Проверю документы.")],
+    );
+    assert_eq!(summary.items_dropped, 0, "{summary:?}");
+    assert!(summary
+        .sections
+        .iter()
+        .any(|s| s.id == "brief" && !s.items.is_empty()));
 }
 
 #[test]

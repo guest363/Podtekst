@@ -46,6 +46,12 @@
     }
   })
 
+  $effect(() => {
+    if (!summaryState.expanded) {
+      summaryState.expanded = true
+    }
+  })
+
   const visible = $derived(
     !isAndroid &&
       settings.summaryFeature === true &&
@@ -289,6 +295,33 @@
     display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;
     background: #fff; border: 1px solid var(--border-card);
     border-radius: var(--radius-inner); padding: 10px 12px; min-width: 0;
+  }
+  :global(.transcript-summary-wrap) .summary-title,
+  :global(.transcript-summary-wrap) .summary-toggle {
+    display: none;
+  }
+  :global(.transcript-summary-wrap) .summary-block {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    box-shadow: none;
+    height: 100%;
+    flex: 1;
+    overflow-y: auto;
+  }
+  :global(.transcript-summary-wrap) .summary-block.is-suggest {
+    background: transparent;
+    border: none;
+    padding: 0;
+    box-shadow: none;
+  }
+  :global(.transcript-summary-wrap) .summary-block.is-suggest::after {
+    display: none;
+  }
+  :global(.transcript-summary-wrap) .summary-body {
+    max-height: none;
+    flex: 1;
   }
   .summary-block.is-suggest {
     position: relative;

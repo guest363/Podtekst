@@ -243,20 +243,18 @@
     display: inline-flex;
     align-items: stretch;
     max-width: 100%;
-    min-height: 38px;
-    border: 1px solid #0f172a;
-    border-radius: var(--radius-pill);
-    background: linear-gradient(180deg, #1b2a44 0%, #0f1e33 100%);
-    box-shadow:
-      0 8px 20px -12px rgba(15, 30, 51, 0.55),
-      inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    min-height: 34px;
+    border: 1px solid var(--accent-blue);
+    border-radius: var(--radius-inner);
+    background: var(--accent-blue);
+    box-shadow: 0 1px 2px rgba(15, 30, 51, 0.08);
     overflow: hidden;
   }
   .summary-cta-main {
     display: inline-flex;
     align-items: center;
     min-width: 0;
-    padding: 6px 15px;
+    padding: 6px 12px;
     border: 0;
     background: transparent;
     color: #fff;
@@ -266,26 +264,26 @@
     line-height: 1.35;
     text-align: left;
     cursor: pointer;
-    transition: background 200ms var(--ease-spring), opacity 200ms var(--ease-spring);
+    transition: background 160ms var(--ease-spring), opacity 160ms var(--ease-spring);
   }
-  .summary-cta-main:hover:not(:disabled) { background: rgba(255, 255, 255, 0.07); }
-  .summary-cta-main:active:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+  .summary-cta-main:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+  .summary-cta-main:active:not(:disabled) { background: rgba(255, 255, 255, 0.2); }
   .summary-cta-main:disabled { opacity: 0.5; cursor: wait; }
   .summary-cta-caret {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 38px;
+    width: 32px;
     flex-shrink: 0;
     border: 0;
-    border-left: 1px solid rgba(255, 255, 255, 0.16);
+    border-left: 1px solid rgba(255, 255, 255, 0.25);
     background: transparent;
     color: #fff;
     cursor: pointer;
-    transition: background 200ms var(--ease-spring);
+    transition: background 160ms var(--ease-spring);
   }
-  .summary-cta-caret:hover { background: rgba(255, 255, 255, 0.08); }
-  .summary-cta-caret:active { background: rgba(255, 255, 255, 0.14); }
+  .summary-cta-caret:hover { background: rgba(255, 255, 255, 0.12); }
+  .summary-cta-caret:active { background: rgba(255, 255, 255, 0.2); }
 
   .summary-ghost {
     display: inline-flex;

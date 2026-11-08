@@ -93,6 +93,11 @@ pub(crate) fn candidates(transcript: &Transcript, preset: &Preset) -> Vec<Candid
         }
         if let Some(section) = tasks {
             if let Some(kind) = task_kind(source, &normalized, &known) {
+                // «Возьму, я думаю, сегодня сделаю» — обязательство без объекта:
+                // в источниках такие обрывки не становятся задачей.
+                if task_object_key(source).is_none() {
+                    continue;
+                }
                 let task = task_meta(source, &utterance.speaker, &reference, kind, &known);
                 let score = task_score(kind, &task);
                 let text = clean_task_text(source, task.deadline.as_deref());
@@ -241,7 +246,18 @@ fn known_name(token: &str, known: &[String]) -> Option<String> {
 pub(crate) fn explicit_action(text: &str) -> bool {
     text::normalize(text)
         .split_whitespace()
-        .any(|word| cues::ACTION_VERBS.contains(&word))
+        .any(|word| cues::ACTION_VERBS.contains(&word) || infinitive(word))
+}
+
+/// Инфинитив в пункте задачи — действие, даже если глагола нет в списке
+/// ACTION_VERBS («пройти», «развернуть», «принять»).
+fn infinitive(word: &str) -> bool {
+    let word = word.trim_matches(|c: char| !c.is_alphanumeric());
+    if matches!(word, "путь" | "мать" | "дочь" | "ночь" | "речь") || word.ends_with("сть")
+    {
+        return false;
+    }
+    word.ends_with("ть") || word.ends_with("ться") || word.ends_with("ти") || word.ends_with("чь")
 }
 
 fn task_meta(

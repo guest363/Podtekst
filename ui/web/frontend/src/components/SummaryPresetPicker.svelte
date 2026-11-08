@@ -24,8 +24,8 @@
       pos = { top: 72, left: Math.max(8, window.innerWidth - 368) }
       return
     }
-    const width = 360
-    const height = 420
+    const width = 320
+    const height = 380
     const left = Math.min(Math.max(8, a.left), Math.max(8, window.innerWidth - width - 8))
     let top = a.bottom + 8
     if (top + height > window.innerHeight - 8) {
@@ -127,7 +127,7 @@
   .summary-picker {
     position: fixed;
     z-index: 70;
-    width: 360px;
+    width: clamp(280px, 90vw, 320px);
     max-height: min(420px, calc(100dvh - 16px));
     display: flex;
     flex-direction: column;

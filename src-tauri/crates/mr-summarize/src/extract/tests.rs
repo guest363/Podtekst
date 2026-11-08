@@ -299,6 +299,22 @@ fn task_kind_rejects_discussion_and_negations() {
 }
 
 #[test]
+fn objectless_commitment_is_not_a_task() {
+    assert_eq!(
+        task_object_key("Возьму, я думаю, сегодня сделаю."),
+        None,
+        "«думаю» не должно считаться объектом задачи"
+    );
+    let t = transcript(&[("Анна", "Возьму, я думаю, сегодня сделаю.")]);
+    let found = candidates(&t, preset::get("meeting").unwrap());
+    assert!(
+        found.iter().all(|c| c.section_id != "tasks"),
+        "{:?}",
+        found.iter().map(|c| &c.item.text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn english_first_person_and_need_are_tasks() {
     let t = transcript(&[
         ("Bob", "I will update the report by Friday."),

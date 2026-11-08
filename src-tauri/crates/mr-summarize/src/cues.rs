@@ -80,6 +80,9 @@ pub const ACTION_VERBS: &[&str] = &[
     "сделает",
     "сделаю",
     "сделать",
+    "возьму",
+    "возьмет",
+    "взять",
     "подготовит",
     "подготовлю",
     "подготовить",
@@ -265,10 +268,7 @@ pub fn question_line(text: &str) -> bool {
         return true;
     }
     let normalized = normalize(trimmed);
-    if normalized
-        .split_whitespace()
-        .any(|word| word == "вопрос" || word == "вопросы")
-    {
+    if normalized.starts_with("вопрос:") || normalized.starts_with("вопросы:") {
         return true;
     }
     if has_any(
@@ -295,6 +295,7 @@ mod tests {
         assert!(question_line("Когда запускаем?"));
         assert!(question_line("Какой срок?"));
         assert!(!question_line("Обсудили срок."));
+        assert!(!question_line("Если у меня будут вопросы, я их задам."));
     }
 
     #[test]

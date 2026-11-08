@@ -49,7 +49,7 @@ pub fn ground(
                 dropped += 1;
                 continue;
             };
-            if !hard_facts_supported(&item.text, &transcript.utterances, &refs) {
+            if !hard_facts_supported(&item.text, &transcript.utterances) {
                 dropped += 1;
                 continue;
             }
@@ -107,11 +107,6 @@ pub fn ground(
         merge::dedupe(group);
     }
 
-    let fallback_added = merge::merge_fallback(&mut sections, &parsed.sections, transcript, preset);
-    if fallback_added > 0 {
-        push_once(&mut warnings, Warning::FallbackExtracted);
-    }
-
     if let Some(brief) = brief_index {
         let needed = 2usize.saturating_sub(sections[brief].len());
         if needed > 0 {
@@ -153,6 +148,12 @@ pub fn ground(
                 push_once(&mut warnings, Warning::BriefDerived);
             }
         }
+    }
+
+    // Fallback — последний резерв: его дословные реплики не выдаём за «Кратко».
+    let fallback_added = merge::merge_fallback(&mut sections, &parsed.sections, transcript, preset);
+    if fallback_added > 0 {
+        push_once(&mut warnings, Warning::FallbackExtracted);
     }
 
     merge::cap(&mut sections, &parsed.sections, detail);
@@ -323,6 +324,7 @@ fn reconcile_task(
         .map(|index| support_text(utterances, &[index]))
         .unwrap_or_default();
     let normalized_best = text::normalize(&best_support);
+    let refs_support = support_text(utterances, &support_indices_refs(&output.refs));
     let support = support_text(utterances, &primary);
     let normalized_support = text::normalize(&support);
     let normalized_text = text::normalize(&output.text);
@@ -333,7 +335,8 @@ fn reconcile_task(
         .or_else(|| crate::extract::task_kind(&best_support, &normalized_best, known));
     let explicit = kind.is_some()
         || (crate::extract::explicit_action(&output.text)
-            && crate::extract::explicit_action(&best_support));
+            && (crate::extract::explicit_action(&best_support)
+                || crate::extract::explicit_action(&refs_support)));
     if !explicit {
         return false;
     }

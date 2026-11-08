@@ -220,7 +220,11 @@ fn capitalize(text: &str) -> String {
 pub(crate) fn task_object_key(text: &str) -> Option<String> {
     let mut best: Option<String> = None;
     for token in text::tokens(text) {
-        if cues::action_verb(&token) || token.chars().count() < 4 || is_time_token(&token) {
+        if cues::action_verb(&token)
+            || token.chars().count() < 4
+            || is_time_token(&token)
+            || is_discourse_verb(&token)
+        {
             continue;
         }
         let better = best
@@ -232,6 +236,25 @@ pub(crate) fn task_object_key(text: &str) -> Option<String> {
         }
     }
     best.map(|token| text::stem_token(&token))
+}
+
+/// «Возьму, я думаю, сегодня сделаю»: без этой отсечки «думаю» считалось
+/// объектом задачи.
+fn is_discourse_verb(token: &str) -> bool {
+    matches!(
+        token,
+        "думаю"
+            | "думал"
+            | "кажется"
+            | "наверное"
+            | "вроде"
+            | "помню"
+            | "знаю"
+            | "вижу"
+            | "слышу"
+            | "понимаю"
+            | "говорю"
+    )
 }
 
 fn is_time_token(token: &str) -> bool {
