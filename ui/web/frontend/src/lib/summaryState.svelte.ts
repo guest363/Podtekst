@@ -20,6 +20,7 @@ export const summaryState = $state({
   classification: null as SummaryClassification | null,
   chosenPresetId: '',
   pendingPresetId: '',
+  pendingDowngrade: false,
   manualChoice: false,
   record: null as SummaryRecord | null,
   sourceRev: '',

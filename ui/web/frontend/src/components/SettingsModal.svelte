@@ -17,7 +17,7 @@
     statusBadge,
     togglePack,
   } from '../lib/settings.svelte.ts'
-  import { isMobile, remainingMb } from '../lib/api'
+  import { isAndroid, isMobile, remainingMb } from '../lib/api'
   import type { ModelInfo } from '../lib/api'
   import { checkUpdate, update } from '../lib/update.svelte.ts'
   import { peopleState } from '../lib/people.svelte.ts'
@@ -81,8 +81,11 @@
       selectTab('dict')
       return
     }
-    if (value === 'record' || value === 'voices' || value === 'models' || value === 'summary' || value === 'system') {
+    if (value === 'record' || value === 'voices' || value === 'models' || value === 'system') {
       tab = value
+    }
+    if (value === 'summary' && settings.summaryFeature === true && !isAndroid) {
+      tab = 'summary'
     }
     ui.settingsOpen = true
   })
@@ -144,7 +147,7 @@
     >
       Модели ИИ
     </button>
-    {#if !isMobile}
+    {#if settings.summaryFeature === true && !isAndroid}
       <button
         class="settings-tab {tab === 'summary' ? 'active' : ''}"
         role="tab"
@@ -424,7 +427,7 @@
               {/each}
             {/if}
           </div>
-          {#if summaryModels.length > 0}
+          {#if summaryModels.length > 0 && settings.summaryFeature === true && !isAndroid}
             <div class="help-text">
               Модель итогов — в разделе
               <button class="link-btn" onclick={() => (tab = 'summary')}>«Итоги»</button>.
@@ -439,7 +442,7 @@
             {/if}
           </div>
         </div>
-      {:else if tab === 'summary'}
+      {:else if tab === 'summary' && settings.summaryFeature === true && !isAndroid}
         <SummarySettingsTab />
       {:else if tab === 'system'}
         <SystemSettingsTab />

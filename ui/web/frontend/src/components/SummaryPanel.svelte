@@ -1,7 +1,8 @@
 <script lang="ts">
   import { tick } from 'svelte'
-  import { isMobile } from '../lib/api'
+  import { isAndroid } from '../lib/api'
   import { engine, transcript } from '../lib/transcript.svelte.ts'
+  import { settings } from '../lib/settings.svelte.ts'
   import {
     cancelSensitive,
     copySummary,
@@ -39,14 +40,15 @@
   let wasGenerating = false
 
   $effect(() => {
-    if (file && file !== loadedFor) {
+    if (file && file !== loadedFor && settings.summaryFeature === true) {
       loadedFor = file
       void loadSummary(file)
     }
   })
 
   const visible = $derived(
-    !isMobile &&
+    !isAndroid &&
+      settings.summaryFeature === true &&
       transcript.hasText &&
       summaryState.capabilities?.summary_supported !== false &&
       summaryState.blockReason !== 'no_text' &&

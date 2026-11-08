@@ -6,6 +6,7 @@
     summaryModelPct,
     summaryState,
   } from '../lib/summary.svelte.ts'
+  import { transcript } from '../lib/transcript.svelte.ts'
   import {
     summaryConfidenceText,
     summaryPreset,
@@ -43,10 +44,25 @@
   const defaultLabel = $derived(
     summaryPreset(summaryState.settings?.default_preset || '', summaryState.presets)?.label || '',
   )
+  const sourceChars = $derived(
+    transcript.utterances.reduce((n, u) => n + (u.text?.trim().length || 0), 0) ||
+      transcript.markdown.trim().length,
+  )
+  const shortSource = $derived(
+    Boolean(
+      summaryState.limits &&
+        sourceChars > 0 &&
+        sourceChars < summaryState.limits.warn_chars,
+    ),
+  )
 </script>
 
 {#if blockingText}
   <div class="summary-blocked">{blockingText}</div>
+{/if}
+
+{#if shortSource}
+  <div class="summary-blocked">В записи мало текста. Итоги могут быть неточными.</div>
 {/if}
 
 {#if manualOnly}

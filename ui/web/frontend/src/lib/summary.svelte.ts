@@ -13,6 +13,7 @@ export {
   generateSummary,
   cancelSummary,
   retrySummary,
+  rebuildInOldFormat,
   updateStaleSummary,
   showPreviousResult,
   toggleSummary,

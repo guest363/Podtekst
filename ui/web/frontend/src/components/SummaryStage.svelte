@@ -5,6 +5,7 @@
     cancelSensitive,
     cancelSummary,
     confirmSensitive,
+    rebuildInOldFormat,
     retryLoad,
     retrySummary,
     saveSummarySettings,
@@ -17,6 +18,11 @@
   let confirmHead = $state<HTMLElement | null>(null)
 
   const runtimeMissing = $derived(summaryState.blockReason === 'runtime_missing')
+  const unsupportedArtifact = $derived(
+    summaryState.phase === 'error'
+      ? summaryState.error?.code === 'schema_unsupported'
+      : summaryState.stateName === 'unsupported',
+  )
   const hardBlock = $derived(
     summaryState.blockReason === 'too_short' ||
       summaryState.blockReason === 'unsupported' ||
@@ -32,7 +38,7 @@
       case 'too_short':
         return 'В записи мало текста для итогов.'
       case 'unsupported':
-        return 'Итоги на этом устройстве не поддерживаются.'
+        return 'Итоги сохранены в более новом формате. Обновите приложение или соберите заново в старом формате.'
       default:
         return ''
     }
@@ -128,7 +134,11 @@
   <div class="summary-error" role="alert">
     <div class="summary-error-text">{summaryState.error.message}</div>
     <div class="summary-actions">
-      {#if summaryState.error.scope === 'load'}
+      {#if unsupportedArtifact}
+        <button class="btn-primary btn-sm" onclick={() => void rebuildInOldFormat()}>
+          Собрать в старом формате
+        </button>
+      {:else if summaryState.error.scope === 'load'}
         <button class="btn-secondary btn-sm" onclick={retryLoad}>Повторить</button>
       {:else}
         <button class="btn-secondary btn-sm" onclick={retrySummary}>Повторить</button>
@@ -150,7 +160,11 @@
   <div class="summary-blocked">
     <div>{blockingText}</div>
     <div class="summary-actions">
-      {#if runtimeMissing || summaryState.blockReason === 'low_memory'}
+      {#if unsupportedArtifact}
+        <button class="btn-primary btn-sm" onclick={() => void rebuildInOldFormat()}>
+          Собрать в старом формате
+        </button>
+      {:else if runtimeMissing || summaryState.blockReason === 'low_memory'}
         <button class="btn-secondary btn-sm" onclick={openSettings}>Настроить</button>
         <button class="btn-secondary btn-sm" onclick={retryLoad}>Повторить</button>
       {:else if summaryState.blockReason === 'too_short'}

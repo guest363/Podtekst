@@ -28,7 +28,13 @@ export const engine = $state({
   downloading: {} as Record<string, number>,
 })
 
+let openSeq = 0
+let openAbort: AbortController | null = null
+
 export async function openTranscriptFile(rawPath: string): Promise<void> {
+  const seq = ++openSeq
+  openAbort?.abort()
+  openAbort = new AbortController()
   transcript.speakers = []
   transcript.utterances = []
   transcript.markdown = ''
@@ -39,13 +45,18 @@ export async function openTranscriptFile(rawPath: string): Promise<void> {
 
   let d: TranscriptData
   try {
-    const r = await fetch(`/api/transcript?file=${encPath(rawPath)}`)
+    const r = await fetch(`/api/transcript?file=${encPath(rawPath)}`, {
+      signal: openAbort.signal,
+    })
+    if (seq !== openSeq) return
     d = (await readJsonSafe(r)) as TranscriptData
   } catch (e) {
+    if (seq !== openSeq || (e as Error)?.name === 'AbortError') return
     transcript.hasText = false
     transcript.loadError = 'Не удалось загрузить расшифровку: ' + (e as Error).message
     return
   }
+  if (seq !== openSeq) return
 
   transcript.utterances = d.utterances || []
   transcript.speakers = d.speakers_info || []
@@ -122,6 +133,9 @@ export function ensureStream(): void {
   }
 }
 
+// Итог model-done по id: без него исчезновение прогресса неотличимо от успеха.
+const downloadOutcome: Record<string, boolean> = {}
+
 function handleEngineEvent(e: MessageEvent): void {
   let evt: any
   try {
@@ -163,9 +177,11 @@ function handleEngineEvent(e: MessageEvent): void {
   } else if (evt.type === 'done') {
     finishEngine(String(evt.file || engine.file))
   } else if (evt.type === 'model-done') {
-    delete engine.downloading[evt.model_id]
+    const modelId = String(evt.model_id || '')
+    downloadOutcome[modelId] = evt.ok === true
+    delete engine.downloading[modelId]
     emit('models-changed')
-    const title = settings.models.find((m) => m.id === evt.model_id)?.title || evt.model_id
+    const title = settings.models.find((m) => m.id === modelId)?.title || modelId
     if (evt.ok) toast(`Модель «${title}» готова`)
     else toast('Ошибка модели: ' + (evt.error || ''), 'error')
     closeStreamIfIdle()
@@ -272,6 +288,7 @@ export const downloadingCore = $state({
 })
 
 export async function downloadModel(m: ModelInfo): Promise<boolean> {
+  delete downloadOutcome[m.id]
   engine.downloading[m.id] = 0
   ensureStream()
   try {
@@ -295,7 +312,9 @@ export async function downloadModel(m: ModelInfo): Promise<boolean> {
     const timer = setInterval(async () => {
       if (lastPct() === -1) {
         clearInterval(timer)
-        resolve(true)
+        const ok = downloadOutcome[m.id] === true
+        delete downloadOutcome[m.id]
+        resolve(ok)
         return
       }
       if (lastPct() !== prevPct) {
@@ -304,6 +323,7 @@ export async function downloadModel(m: ModelInfo): Promise<boolean> {
       } else if (++stall > 30) {
         clearInterval(timer)
         delete engine.downloading[m.id]
+        delete downloadOutcome[m.id]
         emit('models-changed')
         resolve(false)
         return
@@ -314,6 +334,7 @@ export async function downloadModel(m: ModelInfo): Promise<boolean> {
         if (cur && cur.is_installed && !cur.has_update) {
           clearInterval(timer)
           delete engine.downloading[m.id]
+          delete downloadOutcome[m.id]
           emit('models-changed')
           resolve(true)
         }

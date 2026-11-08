@@ -13,6 +13,7 @@
     loadAutoTranscribe,
     loadModels,
     loadRecordMode,
+    loadSummaryFeature,
     loadVoicePacks,
     settings,
     statusBadge,
@@ -172,6 +173,7 @@
       loadModels(),
       loadRecordMode(),
       loadAutoTranscribe(),
+      loadSummaryFeature(),
       loadSupportInfo(),
       checkUpdate(),
     ])

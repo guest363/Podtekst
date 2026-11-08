@@ -145,6 +145,84 @@ export interface SummaryRecord {
   schema_minor: number
 }
 
+export interface SummaryArtifact {
+  schema: string
+  schema_minor: number
+  id: string
+  generated_at: string
+  source: {
+    schema: number
+    rev: string
+    utterances: number
+    chars: number
+    language: Lang
+    duration_sec: number
+  }
+  classification: {
+    preset_id: string | null
+    confidence: Confidence | null
+    alternatives: string[]
+    signals: string[]
+    ambiguous: boolean
+    style: 'monologue' | 'dialogue' | 'multi-party'
+    language: Lang
+    classified_at: string
+    heuristic_version: number
+    spec_version: string
+    user_override: boolean
+  }
+  preset: {
+    id: string
+    version: number
+    label: string
+    confirmed_sensitive: boolean
+  }
+  detail: SummaryDetail
+  output_language: OutLang
+  generator: {
+    runtime: string
+    runtime_commit: string
+    backend: string
+    model_id: string
+    model_title: string
+    model_sha256: string
+    quant: string
+    context: number
+    threads: number
+    temperature: number
+    top_p: number
+    repeat_penalty: number
+    max_tokens: number
+    seed: number
+    prompt_version: string
+    duration_ms: number
+    timings_ms: {
+      load: number
+      prepare: number
+      generate: number
+      verify: number
+      total: number
+    }
+  }
+  summary: {
+    sections: SummarySection[]
+    warnings: string[]
+    truncated: boolean
+    coverage: number
+    items_total: number
+  }
+  provenance: {
+    mode: string
+    chunks: number
+    reduce_levels: number
+    items_dropped: number
+    soft_claims_dropped: number
+    parser_retries: number
+    parser_recovered: number
+    retry_reason: string | null
+  }
+}
+
 export interface SummarySettings {
   auto_suggest: boolean
   default_preset: string | null
@@ -503,6 +581,11 @@ declare const __IS_MOBILE_BUILD__: boolean
 export const isMobile: boolean =
   (typeof __IS_MOBILE_BUILD__ !== 'undefined' && __IS_MOBILE_BUILD__) ||
   (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent))
+
+// Итоги скрываем только там, где их нет в ядре (Android); iOS-браузер
+// должен видеть мобильный flow, а не пустой экран.
+export const isAndroid: boolean =
+  typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
 
 export function pluralSpeakers(n: number): string {
   const mod10 = n % 10

@@ -47,6 +47,7 @@ function presetFor(id: string): SummaryPreset | null {
 }
 
 export async function pickPreset(id: string): Promise<void> {
+  summaryState.pendingDowngrade = false
   summaryState.manualChoice = true
   summaryState.chosenPresetId = id
   summaryState.error = null
@@ -78,9 +79,12 @@ export async function pickPreset(id: string): Promise<void> {
 export function confirmSensitive(): void {
   const id = summaryState.pendingPresetId
   if (!id) return
+  const allowDowngrade = summaryState.pendingDowngrade
   summaryState.pendingPresetId = ''
+  summaryState.pendingDowngrade = false
   void generateSummary(id, {
     confirmSensitive: true,
+    allowDowngrade,
     replace: Boolean(summaryState.record),
     force: summaryState.stale,
   })
@@ -88,20 +92,30 @@ export function confirmSensitive(): void {
 
 export function cancelSensitive(): void {
   summaryState.pendingPresetId = ''
+  summaryState.pendingDowngrade = false
   summaryState.phase = summaryState.record ? 'result' : 'suggest'
   summaryState.expanded = true
 }
 
 export async function generateSummary(
   presetId: string,
-  opts: { force?: boolean; confirmSensitive?: boolean; replace?: boolean } = {},
+  opts: {
+    force?: boolean
+    confirmSensitive?: boolean
+    replace?: boolean
+    allowDowngrade?: boolean
+  } = {},
 ): Promise<void> {
   const file = summaryState.file
   if (!file || summaryState.phase === 'generating') return
   const hardBlock = summaryState.blockReason
+  const allowUnsupported = opts.allowDowngrade === true && hardBlock === 'unsupported'
   if (
     engine.running ||
-    (hardBlock && hardBlock !== 'model_missing' && hardBlock !== 'model_download')
+    (hardBlock &&
+      hardBlock !== 'model_missing' &&
+      hardBlock !== 'model_download' &&
+      !allowUnsupported)
   ) {
     summaryState.phase = summaryState.record ? 'result' : 'suggest'
     summaryState.expanded = true
@@ -143,6 +157,7 @@ export async function generateSummary(
   }
 
   summaryState.chosenPresetId = presetId
+  summaryState.pendingDowngrade = false
   summaryState.error = null
   summaryState.notice = ''
   summaryState.phase = 'generating'
@@ -167,6 +182,7 @@ export async function generateSummary(
         detail: detail(),
         source_rev: summaryState.sourceRev,
         force: opts.force === true,
+        allow_downgrade: opts.allowDowngrade === true,
         ...(preset.sensitive ? { confirm_sensitive: true } : {}),
       }),
     })
@@ -207,6 +223,10 @@ export async function cancelSummary(): Promise<void> {
 }
 
 export async function retrySummary(): Promise<void> {
+  if (summaryState.error?.code === 'schema_unsupported') {
+    await rebuildInOldFormat()
+    return
+  }
   if (
     summaryState.file &&
     (summaryState.error?.code === 'stale_source' ||
@@ -231,6 +251,31 @@ export async function retrySummary(): Promise<void> {
     force: true,
     replace: true,
     confirmSensitive: preset?.sensitive === true,
+  })
+}
+
+/** Новее мажор артефакта: единственный путь замены — явные force + allow_downgrade. */
+export async function rebuildInOldFormat(): Promise<void> {
+  if (!summaryState.presets.length) await loadSummaryPresets()
+  const id =
+    summaryState.chosenPresetId ||
+    summaryState.classification?.preset_id ||
+    summaryState.settings?.default_preset ||
+    summaryState.record?.preset_id ||
+    ''
+  if (!id) {
+    summaryState.phase = 'suggest'
+    summaryState.error = null
+    summaryState.expanded = true
+    return
+  }
+  summaryState.chosenPresetId = id
+  summaryState.pendingDowngrade = true
+  summaryState.error = null
+  await generateSummary(id, {
+    force: true,
+    allowDowngrade: true,
+    replace: true,
   })
 }
 

@@ -10,6 +10,7 @@ import {
 } from './summaryUi.ts'
 import { apiJson, isMockMode, SummaryApiError } from './summaryApi.ts'
 import { summaryState } from './summaryState.svelte.ts'
+import { settings } from './settings.svelte.ts'
 
 let loadSeq = 0
 let abort: AbortController | null = null
@@ -48,6 +49,7 @@ function resetForFile(): void {
   summaryState.classification = null
   summaryState.chosenPresetId = ''
   summaryState.pendingPresetId = ''
+  summaryState.pendingDowngrade = false
   summaryState.manualChoice = false
   summaryState.stale = false
   summaryState.generating = false
@@ -72,14 +74,19 @@ function applyResponse(d: SummaryResponse, opts: { openResult?: boolean }): void
   summaryState.capabilities = d.capabilities
   summaryState.limits = d.limits
   summaryState.busy = d.busy
-  summaryState.blockReason = d.block_reason
+  summaryState.blockReason = d.state === 'unsupported' ? 'unsupported' : d.block_reason
   summaryState.stateName = d.state
   summaryState.sourceRev = transcript.rev || d.source_rev || summaryState.sourceRev
   summaryState.record = d.summary
   summaryState.classification = d.classification
   summaryState.note = ''
 
-  if (d.active && (!d.active.file || d.active.file === summaryState.file)) {
+  if (
+    d.active &&
+    (d.active.job_id === summaryState.jobId ||
+      !d.active.file ||
+      sameRecording(d.active.file, summaryState.file))
+  ) {
     summaryState.phase = 'generating'
     summaryState.expanded = true
     summaryState.generating = true
@@ -155,14 +162,20 @@ export async function loadSummary(
     applyResponse(d, opts)
   } catch (e) {
     if (id !== loadSeq || (e as Error)?.name === 'AbortError') return
+    const code = (e as SummaryApiError).code || 'internal'
+    if (code === 'summary_disabled' || code === 'summary_unsupported') {
+      settings.summaryFeature = false
+      summaryState.phase = 'idle'
+      return
+    }
     if (summaryState.generating) {
       summaryState.note = 'Не удалось обновить состояние сборки. Повторяю…'
       return
     }
     summaryState.phase = 'error'
     summaryState.error = {
-      code: (e as SummaryApiError).code || 'internal',
-      message: summaryExpectedError((e as SummaryApiError).code || 'internal'),
+      code,
+      message: summaryExpectedError(code),
       scope: 'load',
     }
   }
@@ -186,9 +199,23 @@ export async function loadSummarySettings(): Promise<void> {
   summaryState.capabilities = d.capabilities
 }
 
+function pathKey(file: string): string {
+  return file.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+}
+
+// Бэкенд отдаёт путь относительно save_dir, а UI открывает запись абсолютным
+// путём из /api/recordings. Сравниваем хвост пути, пока job_id ещё неизвестен.
+function sameRecording(a?: string | null, b?: string | null): boolean {
+  if (!a || !b) return false
+  if (a === b) return true
+  const x = pathKey(a)
+  const y = pathKey(b)
+  return x === y || x.endsWith('/' + y) || y.endsWith('/' + x)
+}
+
 function jobMatches(evt: { job_id?: string; file?: string }): boolean {
-  if (!evt.file || evt.file !== summaryState.file) return false
-  return !summaryState.jobId || evt.job_id === summaryState.jobId
+  if (evt.job_id && summaryState.jobId) return evt.job_id === summaryState.jobId
+  return sameRecording(evt.file, summaryState.file)
 }
 
 function handleSummaryEvent(evt: unknown): void {
@@ -216,27 +243,27 @@ function handleSummaryEvent(evt: unknown): void {
     summaryState.pct = Math.max(summaryState.pct, Math.min(100, Number(e.pct) || 0))
     return
   }
-  const sameFile = e.file === summaryState.file
+  const mine = jobMatches(e)
   if (e.type === 'summary-done') {
-    finishGenerating()
-    if (sameFile) {
-      const wasOpen = summaryState.expanded
-      summaryState.jobId = ''
-      void loadSummary(summaryState.file, { openResult: true }).then(() => {
-        if (!wasOpen) toast('Итоги готовы')
-      })
-    } else {
+    if (!mine) {
       toast('Итоги готовы')
+      return
     }
+    const wasOpen = summaryState.expanded
+    finishGenerating()
+    summaryState.jobId = ''
+    void loadSummary(summaryState.file, { openResult: true }).then(() => {
+      if (!wasOpen) toast('Итоги готовы')
+    })
     return
   }
   if (e.type === 'summary-error') {
-    finishGenerating()
-    summaryState.jobId = ''
-    if (!sameFile) {
+    if (!mine) {
       toast(summaryErrorText(e.code || 'internal'), 'error')
       return
     }
+    finishGenerating()
+    summaryState.jobId = ''
     if (e.code === 'cancelled') {
       summaryState.phase = summaryState.record ? 'result' : 'suggest'
       summaryState.expanded = true

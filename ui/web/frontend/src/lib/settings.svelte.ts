@@ -15,7 +15,32 @@ export const settings = $state({
   hotwords: [] as string[],
   ctcEnabled: true,
   hotwordsLoaded: false,
+  summaryFeature: null as boolean | null,
 })
+
+export async function loadSummaryFeature(): Promise<void> {
+  if (settings.summaryFeature !== null) return
+  try {
+    const st = await readJsonSafe(await fetch('/api/status'))
+    if (st?.features && typeof st.features.summary === 'boolean' && !st.features.summary) {
+      settings.summaryFeature = false
+      return
+    }
+  } catch {
+    /* статус недоступен — проверим сам маршрут итогов */
+  }
+  try {
+    const d = await readJsonSafe(await fetch('/api/summary/settings'))
+    if (d?.ok === false) {
+      settings.summaryFeature = !(d.code === 'summary_disabled' || d.code === 'summary_unsupported')
+      return
+    }
+    settings.summaryFeature = d?.capabilities?.summary_supported !== false
+  } catch {
+    // Старый/недоступный бэкенд: не прячем итоги из-за сбоя проверки.
+    settings.summaryFeature = true
+  }
+}
 
 export async function loadAutoTranscribe(): Promise<void> {
   try {

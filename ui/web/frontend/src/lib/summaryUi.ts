@@ -121,6 +121,7 @@ const WARNING_TEXT: Record<string, string> = {
   md_write_failed: 'Файл .md не записан, но итоги доступны.',
   injection_suspected: 'Текст, похожий на инструкцию, не попал в итоги.',
   detail_long_short_source: 'Для короткой записи выбрана подробность «Подробно».',
+  fallback_extracted: 'Часть задач восстановлена из реплик.',
 }
 
 export function summaryWarnings(record: SummaryRecord): string[] {
