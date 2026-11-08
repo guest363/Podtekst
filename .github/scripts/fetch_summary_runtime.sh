@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Скачивает pinned llama.cpp, проверяет SHA-256, оставляет только нужные
-# файлы и раскладывает каталог в ресурсы Tauri. В git ничего не попадает.
+# Runtime не коммитится: pinned SHA-256, в ресурсы Tauri кладутся только
+# нужные файлы.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"

@@ -1,4 +1,3 @@
-/// UUIDv4 для `id` артефакта и `job_id` (§10, L06).
 pub fn new_job_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }

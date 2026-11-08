@@ -4,7 +4,7 @@ use super::backend::{
     BackendError, BackendEvent, BackendInfo, CancelToken, GenerateRequest, Phase, SummaryBackend,
 };
 
-/// Детерминированный backend для контрактных тестов: без модели, runtime и сети.
+/// Контрактным тестам не нужны модель, runtime и сеть.
 pub struct FakeBackend {
     mode: &'static str,
     calls: AtomicUsize,

@@ -159,7 +159,8 @@ def prepare_data(base: Path, fake: bool) -> tuple[Path, Path | None]:
         )
         (recordings / f"{stem}.summary.md").write_text("# Будущий формат\n", encoding="utf-8")
 
-    # Готовый английский артефакт: проверяем task-фолбэки и метаданные из API.
+    # Английский артефакт: task-фолбэки и метаданные должны приходить из API,
+    # а не собираться в UI.
     golden = json.loads(
         (ROOT / "ui/web/frontend/src/lib/fixtures/summary-artifact.golden.json").read_text(
             encoding="utf-8"

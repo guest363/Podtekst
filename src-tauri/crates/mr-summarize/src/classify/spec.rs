@@ -15,7 +15,7 @@ pub(super) struct Spec {
     pub(super) tie_break: Vec<String>,
     pub(super) universal_preset: String,
     pub(super) lexical_window: Window,
-    #[allow(dead_code)] // metadata only; сверка SHA и количества — в тесте
+    #[allow(dead_code)] // только метаданные; сверка SHA и количества — в тесте
     pub(super) token: TokenCfg,
     pub(super) keyword_groups: BTreeMap<String, Vec<(String, u32)>>,
     pub(super) structure: BTreeMap<String, Vec<Rule>>,
@@ -34,7 +34,7 @@ pub(super) struct Window {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // metadata only; сверка SHA и количества — в тесте
+#[allow(dead_code)] // только метаданные; сверка SHA и количества — в тесте
 pub(super) struct TokenCfg {
     pub(super) stopwords_sha256: String,
     pub(super) stopwords_total: usize,

@@ -1,5 +1,5 @@
-// Dev-only стенд для UI, пока backend-маршруты /api/summary* ещё не подняты.
-// Включается только `?summary_mock=1` в dev-сборке; production его не импортирует.
+// Production не импортирует: стенд включается только `?summary_mock=1`
+// в dev-сборке, пока backend-маршруты /api/summary* ещё не подняты.
 import type {
   SummaryClassification,
   SummaryModelInfo,

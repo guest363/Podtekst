@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Скачивает pinned Qwen3-4B GGUF, проверяет SHA-256 и размер.
-# В CI пишет путь в GITHUB_ENV как MR_SUMMARY_MODEL. В git ничего не попадает.
+# Веса не коммитятся: pinned SHA-256, путь отдаётся через GITHUB_ENV.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"

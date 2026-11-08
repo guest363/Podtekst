@@ -46,7 +46,8 @@ const TRAILING_DISCOURSE: &[&str] = &[
     "это задача без дедлайна",
 ];
 
-/// Убирает разговорные маркеры из fallback-задачи, не меняя факты.
+/// Fallback-пункт должен остаться заземлённым: разговорные маркеры убираем,
+/// факты не меняем.
 pub(crate) fn clean_task_text(source: &str, deadline: Option<&str>) -> String {
     let mut text = source.trim().to_owned();
     loop {
@@ -215,8 +216,7 @@ fn capitalize(text: &str) -> String {
     out
 }
 
-/// Главный объект задачи: самый длинный не-глагольный токен. Нужен для
-/// дедупликации «доработать подсказки» / «обновить подсказки».
+/// Нужен для дедупликации «доработать подсказки» / «обновить подсказки».
 pub(crate) fn task_object_key(text: &str) -> Option<String> {
     let mut best: Option<String> = None;
     for token in text::tokens(text) {

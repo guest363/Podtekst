@@ -1,7 +1,3 @@
-//! Локальные итоги: G2 runtime/guard + G3 job/HTTP-сервис.
-//!
-//! Один job, отмена, SSE-события без текста. Домен — `mr-summarize`;
-//! файловый ввод-вывод и sidecar живут только здесь (P3).
 #![cfg_attr(target_os = "android", allow(dead_code))]
 
 mod backend;

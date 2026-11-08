@@ -1,13 +1,3 @@
-//! Живой smoke на настоящей модели. Без env тест печатает причину и проходит;
-//! `SUMMARY_REQUIRE_REAL=1` делает пропуск ошибкой (H14).
-//!
-//! ```bash
-//! MR_SUMMARY_RUNTIME=/tmp/.../llama-b12182 \
-//! MR_SUMMARY_MODEL=/tmp/.../Qwen3-4B-Instruct-2507-Q4_K_M.gguf \
-//! MR_TEST_TRANSCRIPT=/tmp/.../sample.transcript.json \
-//! SUMMARY_REQUIRE_REAL=1 cargo test -p mr-app --test summary_real -- --nocapture
-//! ```
-
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
@@ -108,6 +98,8 @@ impl Drop for Cleanup {
     }
 }
 
+// Без env тест печатает причину и проходит; SUMMARY_REQUIRE_REAL=1
+// делает пропуск ошибкой (H14).
 #[test]
 fn summary_real_smoke() {
     let runtime = std::env::var("MR_SUMMARY_RUNTIME").ok();

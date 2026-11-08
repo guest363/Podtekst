@@ -1,8 +1,3 @@
-//! Контрактные тесты summary HTTP/SSE на fake-backend (без модели и runtime).
-//!
-//! Один последовательный сценарий: env-переменные и общий сервер нельзя
-//! безопасно делить между параллельными тестами одного бинарника.
-
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
@@ -136,6 +131,8 @@ fn wait_state(port: u16, file: &str, expected: &str, timeout: std::time::Duratio
     }
 }
 
+// Один последовательный сценарий: env-переменные и общий сервер нельзя
+// безопасно делить между параллельными тестами одного бинарника.
 #[test]
 fn summary_contract_suite() {
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -196,14 +193,12 @@ fn summary_contract_suite() {
     );
     assert_eq!(st, 200, "upload: {raw:?}");
 
-    // 1. Каталог: 7 шаблонов, universal последний.
     let (st, v) = json_call(port, "GET", "/api/summary/presets", json!({}));
     assert_eq!(st, 200);
     let presets = v["presets"].as_array().unwrap();
     assert_eq!(presets.len(), 7);
     assert_eq!(presets[6]["id"], "universal");
 
-    // 2. GET: missing + recommendation, без модели/runtime (fake).
     let (st, v) = json_call(port, "GET", &format!("/api/summary?file={file}"), json!({}));
     assert_eq!(st, 200, "GET summary: {v}");
     assert_eq!(v["state"], "missing");
@@ -214,7 +209,6 @@ fn summary_contract_suite() {
     assert_eq!(v["capabilities"]["classifier"], "heuristic");
     assert_eq!(v["limits"]["min_free_ram_mb"], 6656);
 
-    // 3. classify: sync 200 + force пересчитывает.
     let (st, v) = json_call(
         port,
         "POST",
@@ -226,7 +220,6 @@ fn summary_contract_suite() {
     assert!(v["classification"]["spec_version"].is_string());
     assert_eq!(v["cache_hit"], false);
 
-    // 4. stale_source preflight.
     let (st, v) = json_call(
         port,
         "POST",
@@ -258,7 +251,6 @@ fn summary_contract_suite() {
     );
     assert_eq!((st, v["code"].as_str()), (400, Some("invalid_detail")));
 
-    // 5. Успешная генерация + артефакты.
     let (st, v) = json_call(
         port,
         "POST",
@@ -267,8 +259,8 @@ fn summary_contract_suite() {
     );
     assert_eq!(st, 202, "generate: {v}");
     let first_job = v["job_id"].as_str().unwrap().to_string();
-    // 6. Второй job при активном -> 409 summary_busy. Fake быстрый, поэтому
-    // проверяем в slow-режиме ниже; здесь только форма ответа.
+    // Fake быстрый: summary_busy проверяется в slow-режиме ниже, здесь только
+    // форма ответа.
     assert!(wait_idle(port, std::time::Duration::from_secs(20)));
     let v = wait_state(port, file, "fresh", std::time::Duration::from_secs(10));
     let summary_id = v["summary"]["id"].as_str().unwrap().to_string();
@@ -296,7 +288,6 @@ fn summary_contract_suite() {
         "transcript .md изменён"
     );
 
-    // 7. Cached vs force.
     let (st, v) = json_call(
         port,
         "POST",
@@ -321,7 +312,7 @@ fn summary_contract_suite() {
     let v = wait_state(port, file, "fresh", std::time::Duration::from_secs(10));
     assert_ne!(v["summary"]["id"].as_str(), Some(summary_id.as_str()));
 
-    // 8. has_summary additive, has_transcript прежний.
+    // has_summary additive: старый has_transcript не меняется (P09).
     let (_, v) = json_call(port, "GET", "/api/recordings", json!({}));
     let item = v["recordings"]
         .as_array()
@@ -332,7 +323,6 @@ fn summary_contract_suite() {
     assert_eq!(item["has_summary"], true);
     assert_eq!(item["has_transcript"], true);
 
-    // 9. Rename двигает оба summary; speaker edit делает stale.
     let (st, v) = json_call(
         port,
         "POST",
@@ -355,7 +345,7 @@ fn summary_contract_suite() {
         (200, Some("fresh")),
         "rename→fresh"
     );
-    // 9b. Абсолютный путь: тот же резолвер и тот же относительный ключ.
+    // Абсолютный путь идёт через тот же резолвер: относительный ключ не меняется.
     let absolute = rec.join(renamed).to_string_lossy().to_string();
     let (st, v) = json_call(
         port,
@@ -405,7 +395,6 @@ fn summary_contract_suite() {
     );
     assert_eq!(v["state"], "stale", "speaker rename не пометил stale");
 
-    // 10. Body limit 64 KiB.
     let big = vec![b'{'; 70 * 1024];
     let (st, _, raw) = http(
         port,
@@ -418,7 +407,7 @@ fn summary_contract_suite() {
     let v: Value = serde_json::from_slice(&raw).unwrap();
     assert_eq!(v["code"], "body_too_large");
 
-    // 11. Удалённые маршруты -> 404, не новые эндпоинты.
+    // Удалённые маршруты — 404, а не новые эндпоинты (P09).
     for (method, path) in [
         ("GET", "/api/summary/status"),
         ("GET", "/api/summary_stream"),
@@ -428,7 +417,7 @@ fn summary_contract_suite() {
         assert_eq!(st, 404, "{method} {path} должен быть 404");
     }
 
-    // 12. manual_only (D15 fallback): рекомендации нет, settings/classify 409.
+    // manual_only — операторский откат (D15): рекомендации нет.
     std::env::set_var("SUMMARY_CLASSIFIER_MODE", "manual_only");
     let (_, v) = json_call(
         port,
@@ -462,7 +451,6 @@ fn summary_contract_suite() {
     );
     std::env::remove_var("SUMMARY_CLASSIFIER_MODE");
 
-    // 12b. auto_suggest=false: классификация не вычисляется и не отдаётся.
     let (st, v) = json_call(
         port,
         "POST",
@@ -492,7 +480,7 @@ fn summary_contract_suite() {
     );
     assert_eq!(st, 200);
 
-    // 13. stream-before-POST: этап и терминал на одной SSE-шине, без текста.
+    // H10: stream-before-POST — этап и терминал на одной SSE-шине, без текста.
     let (mut sse, total_before) = open_sse(port);
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "slow");
     let (st, v) = json_call(
@@ -559,7 +547,7 @@ fn summary_contract_suite() {
     );
     assert!(wait_idle(port, std::time::Duration::from_secs(5)));
 
-    // 13d. Две одновременные заявки: ровно один 202 и один 409 (H02).
+    // H02: две одновременные заявки — ровно один 202 и один 409.
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
     let rev_concurrent = v_rev(port, renamed);
     let file_concurrent = renamed.to_string();
@@ -590,7 +578,6 @@ fn summary_contract_suite() {
     assert!(wait_idle(port, std::time::Duration::from_secs(20)));
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "1");
 
-    // 13e. Расшифровка идёт -> 409 transcription_running.
     mr_app_lib::set_transcribing_for_test(true);
     let (st, v) = json_call(
         port,
@@ -606,7 +593,6 @@ fn summary_contract_suite() {
     );
     mr_app_lib::set_transcribing_for_test(false);
 
-    // 13b. Неизвестный job_id -> 404 unknown_job.
     let (st, v) = json_call(
         port,
         "POST",
@@ -615,7 +601,6 @@ fn summary_contract_suite() {
     );
     assert_eq!((st, v["code"].as_str()), (404, Some("unknown_job")));
 
-    // 13c. Терминальный stale_source: правка во время job, предыдущий цел.
     let (_, before) = json_call(
         port,
         "GET",
@@ -669,9 +654,8 @@ fn summary_contract_suite() {
     std::env::remove_var("MR_SUMMARY_FAKE_GATE");
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "1");
 
-    // 14. Компонент отсутствует и fake выключен -> 503. На headless runtime
-    // проверяется раньше модели (M17), поэтому допустимы оба кода; оба
-    // означают отсутствующий обязательный компонент, а не ошибку запроса.
+    // Headless проверяет runtime раньше модели (M17): оба кода означают
+    // отсутствующий обязательный компонент, а не ошибку запроса.
     std::env::remove_var("MR_SUMMARY_FAKE_BACKEND");
     let (st, v) = json_call(
         port,
@@ -690,7 +674,6 @@ fn summary_contract_suite() {
     );
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "1");
 
-    // 15. newer-major: default refusal; allow_downgrade делает backup.
     let json_path = rec.join("contract-renamed.summary.json");
     let v2 = std::fs::read_to_string(&json_path)
         .unwrap()
@@ -747,8 +730,8 @@ fn summary_contract_suite() {
         .collect();
     assert_eq!(backups.len(), 1, "нет backup newer: {backups:?}");
 
-    // 15b. v2 появляется между preflight и commit: без force+allow commit
-    // отказывает и не трогает файл (M03).
+    // M03: v2 между preflight и commit — без force+allow commit отказывает
+    // и не трогает файл.
     let race_gate = base.join("gate-race");
     let _ = std::fs::remove_file(&race_gate);
     std::env::set_var("MR_SUMMARY_FAKE_GATE", &race_gate);
@@ -791,7 +774,7 @@ fn summary_contract_suite() {
     assert!(wait_idle(port, std::time::Duration::from_secs(20)));
     wait_state(port, renamed, "fresh", std::time::Duration::from_secs(10));
 
-    // 16. System: summary не core, отдельный блок.
+    // Summary не входит в core: отдельный блок system.
     let (_, v) = json_call(port, "GET", "/api/system", json!({}));
     let models = &v["system"]["models"];
     let items = models["items"].as_array().unwrap();
@@ -813,7 +796,6 @@ fn summary_contract_suite() {
     assert_eq!(v["summary_classifier"], "heuristic");
     assert_eq!(v["summarizing"], false);
 
-    // 17. Удаление удаляет оба summary (owned-файл из fake-записи).
     std::env::set_var("MR_FAKE_CAPTURE", "1");
     let (st, v) = json_call(port, "POST", "/api/record/start", json!({"mode": "mix"}));
     assert_eq!(
@@ -893,7 +875,6 @@ fn summary_contract_suite() {
     );
     assert!(!recorded_path.exists());
 
-    // 18. Corrupt при regenerate -> бэкап, новый артефакт.
     let json_path = rec.join("contract-renamed.summary.json");
     std::fs::write(&json_path, "{broken").unwrap();
     let (_, v) = json_call(
@@ -925,7 +906,6 @@ fn summary_contract_suite() {
         .count();
     assert_eq!(corrupt, 1, "нет corrupt-бэкапа");
 
-    // 19. too_short/no_text.
     std::fs::write(
         rec.join("short.transcript.json"),
         serde_json::to_vec(&json!({"utterances": []})).unwrap(),
@@ -951,7 +931,6 @@ fn summary_contract_suite() {
     );
     assert_eq!((st, v["code"].as_str()), (422, Some("too_short")));
 
-    // 20. Sensitive: server-enforced confirmation, флаг в артефакте.
     std::fs::write(
         rec.join("legal.transcript.json"),
         serde_json::to_vec(&transcript_json(&refs)).unwrap(),
@@ -990,7 +969,6 @@ fn summary_contract_suite() {
     assert_eq!(artifact["preset"]["confirmed_sensitive"], true);
     assert_eq!(artifact["preset"]["id"], "legal");
 
-    // 21. Map-reduce: реальный reduce-проход, а не merge.
     let long: Vec<String> = (0..200)
         .map(|i| format!("Обсудили пункт {i}: решили подготовить отчёт и проверить срок до среды."))
         .collect();
@@ -1031,7 +1009,8 @@ fn summary_contract_suite() {
         .unwrap()
         .is_empty());
 
-    // 22. Невалидный reduce -> заземлённый merge, job не теряется.
+    // §9: невалидный reduce не теряет job — отдаём заземлённый merge
+    // частичных ответов.
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "reduce_invalid");
     let (st, v) = json_call(
         port,
@@ -1062,7 +1041,6 @@ fn summary_contract_suite() {
         .is_empty());
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "1");
 
-    // 23. output_thin: первый ответ пустой, repair-повтор даёт пункты.
     let thin_texts: Vec<String> = (0..20)
         .map(|i| format!("Обсудили пункт номер {i} и проверили отчёт по запуску проекта."))
         .collect();
@@ -1098,7 +1076,6 @@ fn summary_contract_suite() {
     assert!(artifact["summary"]["items_total"].as_u64().unwrap() >= 2);
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "1");
 
-    // 24. decision_missed: fallback extraction возвращает решение из источника.
     let decision_texts = [
         "Решили перенести запуск на следующую неделю.",
         "Подготовить отчёт поручили коллегам.",

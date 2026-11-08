@@ -52,7 +52,8 @@ const FIRST_PERSON: &[&str] = &[
     "i m going to",
 ];
 
-/// Детерминированный fallback: только явные source-реплики, без новых фактов.
+/// Fallback обязан остаться заземлённым: только явные source-реплики,
+/// без новых фактов.
 pub(crate) fn candidates(transcript: &Transcript, preset: &Preset) -> Vec<Candidate> {
     let decisions = section_id(preset, &["decisions"]);
     let tasks = section_id(preset, &["tasks", "next_steps", "todo"]);
@@ -162,8 +163,8 @@ fn plain_item(source: &str, role: SectionRole, reference: SummaryRef) -> Summary
     }
 }
 
-/// Только реальное обязательство/потребность. Намеренно отсекает вступления,
-/// мнения, предложения и общие «цели» без действия.
+/// Иначе вступления, мнения, предложения и общие «цели» без действия
+/// попадают в задачи.
 pub(crate) fn task_kind(source: &str, normalized: &str, known: &[String]) -> Option<TaskKind> {
     if cues::task_rejected(source) {
         return None;
@@ -235,7 +236,6 @@ fn known_name(token: &str, known: &[String]) -> Option<String> {
     known.iter().find(|name| name_key(name) == key).cloned()
 }
 
-/// Явное действие в тексте: инфинитив или личная форма из ACTION_VERBS.
 /// Нужен как второй вход в ворота задачи, когда обязательство не выражено
 /// («Обновить документацию» при источнике «Обновлю документацию»).
 pub(crate) fn explicit_action(text: &str) -> bool {

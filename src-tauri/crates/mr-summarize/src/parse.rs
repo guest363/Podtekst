@@ -34,7 +34,8 @@ pub struct ParsedSummary {
     pub injection_flagged: usize,
 }
 
-/// Пустой каркас всех секций шаблона: база для merge частичных map-ответов.
+/// Нужен как база merge: частичные map-ответы складываются в пустые секции
+/// шаблона.
 pub fn empty(preset: &Preset) -> ParsedSummary {
     ParsedSummary {
         sections: preset

@@ -117,7 +117,7 @@ pub(super) fn cap(sections: &mut [Vec<Scored>], specs: &[ParsedSection], detail:
     }
     let mut selected: HashSet<(usize, usize)> = HashSet::new();
     let task_ids = &["tasks", "next_steps", "todo"][..];
-    // 1. Все задачи — до второго решения/доп. brief.
+    // Сначала задачи: при усечении они важнее решений.
     for (section_index, spec) in specs.iter().enumerate() {
         if !task_ids.contains(&spec.id) {
             continue;
@@ -132,7 +132,7 @@ pub(super) fn cap(sections: &mut [Vec<Scored>], specs: &[ParsedSection], detail:
             break;
         }
     }
-    // 2. Первое решение, первый вопрос, первый brief, первые пункты остальных
+    // Первое решение, первый вопрос, первый brief и первые пункты остальных
     // секций — чтобы ни одна непустая секция не исчезла.
     for ids in [
         &["decisions"][..],
@@ -156,7 +156,7 @@ pub(super) fn cap(sections: &mut [Vec<Scored>], specs: &[ParsedSection], detail:
             }
         }
     }
-    // 3. Второе и следующие решения.
+    // Затем остальные решения: первое уже попало выше.
     for (section_index, spec) in specs.iter().enumerate() {
         if spec.id != "decisions" {
             continue;
@@ -168,7 +168,7 @@ pub(super) fn cap(sections: &mut [Vec<Scored>], specs: &[ParsedSection], detail:
             selected.insert((section_index, item_index));
         }
     }
-    // 4. Остальные вопросы и brief (brief уже <= 4).
+    // Вопросы и brief — в последнюю очередь: место может кончиться.
     for ids in [&["questions"][..], &["brief"][..]] {
         for (section_index, spec) in specs.iter().enumerate() {
             if !ids.contains(&spec.id) {

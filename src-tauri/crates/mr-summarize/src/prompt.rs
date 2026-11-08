@@ -105,8 +105,8 @@ pub fn build_with_nonce(
     }
 }
 
-/// Reduce-проход для map-reduce: сводит частичные ответы моделью, не
-/// добавляя фактов. Частичные ответы — такие же недоверенные DATA.
+/// Частичные ответы — такие же недоверенные DATA, как источник: reduce
+/// не должен добавлять факты.
 pub fn build_reduce(preset: &Preset, language: Language, partials: &[String]) -> Prompt {
     let nonce = new_nonce(&[]);
     build_reduce_with_nonce(preset, language, partials, &nonce)
@@ -168,7 +168,6 @@ pub fn build_reduce_with_nonce(
     }
 }
 
-/// Переписать плоский ответ без заголовков в точный контракт секций.
 pub fn build_repair(preset: &Preset, language: Language, flat_output: &str) -> Prompt {
     let nonce = new_nonce(&[]);
     build_repair_with_nonce(preset, language, flat_output, &nonce)
