@@ -59,6 +59,13 @@ fn same_task_or_evidence(model: &SummaryItem, fallback: &SummaryItem) -> bool {
     let containment = intersection as f64 / a.len().min(b.len()).max(1) as f64;
     let task_like = model.task.is_some() || fallback.task.is_some();
     if task_like {
+        let model_key = crate::extract::task_object_key(&model.text);
+        let fallback_key = crate::extract::task_object_key(&fallback.text);
+        if model_key.is_some() && model_key == fallback_key {
+            return true;
+        }
+    }
+    if task_like {
         intersection >= 2 && (jaccard >= 0.3 || containment >= 0.5)
     } else {
         jaccard >= 0.6 || containment >= 0.8

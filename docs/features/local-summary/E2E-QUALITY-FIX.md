@@ -54,6 +54,9 @@
 - `grounding::tests::brief_is_truncated_to_four_without_warning`
 - `cues::tests::negated_decisions_are_not_decisions`
 - `cues::tests::questions_without_trailing_mark_are_questions`
+- `cues::tests::requirement_and_risk_lines_are_rejected`
+- `extract::tests::fallback_task_text_strips_discourse_markers`
+- `extract::tests::object_key_deduplicates_hints_tasks`
 - `pipeline::tests::fake_flat_output_is_recovered_without_repair` (1 вызов, без repair)
 - `prompt::tests::prompt_starts_with_first_title_instruction`
 - `prompt::tests::repair_prompt_wraps_flat_output`
@@ -70,8 +73,8 @@
 | `cargo fmt --all -- --check` | pass |
 | `cargo clippy --workspace --all-targets --locked ... -D warnings` | pass |
 | `cargo clippy -p mr-app --features tauri-ui --all-targets --locked ... -D warnings` | pass |
-| `cargo test --workspace --locked ...` | pass: 349 passed, 2 ignored |
+| `cargo test --workspace --locked ...` | pass: 352 passed, 2 ignored |
 | Android `cargo check ... aarch64-linux-android --features tauri-ui --locked` | pass |
 | `git diff --check -- src-tauri` | pass |
 
-Коммит: `fix(summary): tighten structured fallback` (этот коммит).
+Коммит: `fix(summary): improve task precision and brief` (этот коммит).

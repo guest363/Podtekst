@@ -298,17 +298,22 @@ fn synthetic_meeting_fallback_has_no_false_tasks() {
             u(1.0, "Борис", "Я считаю, что можно встроить отчёт в план."),
             u(2.0, "Анна", "Цель встречи — согласовать запуск."),
             u(3.0, "Анна", "Решили перенести запуск на следующую неделю."),
-            u(4.0, "Борис", "Борис доделает отчёт до среды."),
-            u(5.0, "Вера", "Вере нужно позвонить клиенту."),
-            u(6.0, "Анна", "Анна позвонит клиенту к пятнице."),
-            u(7.0, "Вера", "Вера сверит бюджет завтра."),
+            u(4.0, "Борис", "Борис обновит экран до вторника."),
+            u(5.0, "Вера", "Нужно доработать три подсказки."),
+            u(6.0, "Вера", "А я обновлю подсказки до четверга."),
+            u(7.0, "Анна", "Анна позвонит клиенту к пятнице."),
             u(8.0, "Спикер 1", "Надо заполнить журнал."),
             u(
                 9.0,
+                "Борис",
+                "Убедиться, что если модель не скачана, пользователь видит кнопку — Кто: Борис",
+            ),
+            u(
+                10.0,
                 "Анна",
                 "Ещё вопрос: нужен ли новый сервер? Пока не решили.",
             ),
-            u(10.0, "Анна", "Обсудили запуск и сроки."),
+            u(11.0, "Анна", "Обсудили запуск и сроки."),
         ],
     };
     let output = "## Кратко\n- Обсудили запуск и сроки.\n";
@@ -322,19 +327,56 @@ fn synthetic_meeting_fallback_has_no_false_tasks() {
         .find(|s| s.id == "tasks")
         .expect("tasks");
     assert_eq!(tasks.items.len(), 4, "{:?}", tasks.items);
-    let phone = tasks
+    let meta: Vec<_> = tasks
         .items
         .iter()
-        .find(|i| i.text.contains("позвонит"))
-        .expect("phone task");
-    let phone_meta = phone.task.as_ref().unwrap();
-    assert_eq!(phone_meta.assignee.as_deref(), Some("Анна"));
-    assert_eq!(phone_meta.deadline.as_deref(), Some("к пятнице"));
+        .map(|i| {
+            let task = i.task.as_ref().unwrap();
+            (
+                i.text.as_str(),
+                task.assignee.as_deref(),
+                task.deadline.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        meta,
+        vec![
+            (
+                "Борис обновит экран до вторника.",
+                Some("Борис"),
+                Some("до вторника")
+            ),
+            (
+                "Обновить подсказки до четверга.",
+                Some("Вера"),
+                Some("до четверга")
+            ),
+            (
+                "Анна позвонит клиенту к пятнице.",
+                Some("Анна"),
+                Some("к пятнице")
+            ),
+            ("Надо заполнить журнал.", None, None),
+        ]
+    );
+    assert_eq!(
+        tasks
+            .items
+            .iter()
+            .filter(|i| i.text.to_lowercase().contains("подсказ"))
+            .count(),
+        1,
+        "дубли подсказок: {:?}",
+        tasks.items.iter().map(|i| &i.text).collect::<Vec<_>>()
+    );
     for task in &tasks.items {
         let text = task.text.to_lowercase();
         assert!(!text.contains("коллеги"), "{text}");
         assert!(!text.contains("я считаю"), "{text}");
         assert!(!text.contains("цель"), "{text}");
+        assert!(!text.contains("убедиться"), "{text}");
+        assert!(!text.contains("пользователь"), "{text}");
     }
     let decisions = summary
         .sections
@@ -347,11 +389,14 @@ fn synthetic_meeting_fallback_has_no_false_tasks() {
         .sections
         .iter()
         .any(|s| s.id == "questions" && !s.items.is_empty()));
-    assert!(summary
+    let brief = summary
         .sections
         .iter()
-        .any(|s| s.id == "brief" && !s.items.is_empty()));
+        .find(|s| s.id == "brief")
+        .expect("brief");
+    assert!(brief.items.len() >= 2, "{:?}", brief.items);
     assert!(summary.warnings.contains(&Warning::FallbackExtracted));
+    assert!(summary.warnings.contains(&Warning::BriefDerived));
 }
 
 #[test]

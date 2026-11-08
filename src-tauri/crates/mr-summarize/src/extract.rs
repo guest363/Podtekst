@@ -7,7 +7,9 @@ use crate::preset::{Preset, SectionRole};
 use crate::text::{self, Transcript, Utterance};
 
 mod assignee;
+mod clean;
 pub(crate) use assignee::assignee_for;
+pub(crate) use clean::{clean_task_text, task_object_key};
 
 pub(crate) struct Candidate {
     pub section_id: &'static str,
@@ -92,7 +94,7 @@ pub(crate) fn candidates(transcript: &Transcript, preset: &Preset) -> Vec<Candid
                     Candidate {
                         section_id: section,
                         item: SummaryItem {
-                            text: source.to_owned(),
+                            text: clean_task_text(source),
                             role: SectionRole::Task,
                             task: Some(task),
                             refs: vec![reference],
@@ -265,10 +267,10 @@ fn task_score(kind: TaskKind, task: &TaskMeta) -> u8 {
 fn dedupe_tasks(items: Vec<(Candidate, u8)>) -> Vec<Candidate> {
     let mut deduped: Vec<(Candidate, u8)> = Vec::new();
     for (candidate, score) in items {
-        if let Some(position) = deduped
-            .iter()
-            .position(|(existing, _)| task_overlap(&existing.item, &candidate.item))
-        {
+        if let Some(position) = deduped.iter().position(|(existing, _)| {
+            task_overlap(&existing.item, &candidate.item)
+                || same_object_key(&existing.item, &candidate.item)
+        }) {
             if score > deduped[position].1 {
                 deduped[position] = (candidate, score);
             }
@@ -280,6 +282,12 @@ fn dedupe_tasks(items: Vec<(Candidate, u8)>) -> Vec<Candidate> {
         .into_iter()
         .map(|(candidate, _)| candidate)
         .collect()
+}
+
+fn same_object_key(a: &SummaryItem, b: &SummaryItem) -> bool {
+    let a = task_object_key(&a.text);
+    let b = task_object_key(&b.text);
+    a.is_some() && a == b
 }
 
 fn task_overlap(a: &SummaryItem, b: &SummaryItem) -> bool {

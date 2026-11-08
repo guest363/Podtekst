@@ -112,7 +112,8 @@ pub fn ground(
     }
 
     if let Some(brief) = brief_index {
-        if sections[brief].is_empty() {
+        let needed = 2usize.saturating_sub(sections[brief].len());
+        if needed > 0 {
             let mut candidates: Vec<(usize, usize, f64)> = sections
                 .iter()
                 .enumerate()
@@ -131,14 +132,23 @@ pub fn ground(
                 })
                 .collect();
             candidates.sort_by(|a, b| b.2.total_cmp(&a.2));
-            for (i, j, _) in candidates.into_iter().take(3) {
-                let mut item = sections[i][j].item.clone();
+            let mut added = 0usize;
+            for (i, j, _) in candidates {
+                if added >= needed {
+                    break;
+                }
+                let candidate = &sections[i][j];
+                if brief_duplicate(&sections[brief], &candidate.item) {
+                    continue;
+                }
+                let mut item = candidate.item.clone();
                 item.role = SectionRole::Plain;
                 item.task = None;
-                let ev = sections[i][j].ev;
+                let ev = candidate.ev;
                 sections[brief].push(Scored { item, ev });
+                added += 1;
             }
-            if !sections[brief].is_empty() {
+            if added > 0 {
                 push_once(&mut warnings, Warning::BriefDerived);
             }
         }
@@ -181,6 +191,27 @@ pub fn ground(
         soft_claims_dropped: soft,
         parser_recovered: parsed.parser_recovered,
     }
+}
+
+fn brief_duplicate(existing: &[Scored], candidate: &SummaryItem) -> bool {
+    existing.iter().any(|scored| {
+        let item = &scored.item;
+        if item.refs.iter().any(|a| {
+            candidate
+                .refs
+                .iter()
+                .any(|b| a.utterance_index == b.utterance_index)
+        }) {
+            return true;
+        }
+        let a = text::stem_set(&item.text);
+        let b = text::stem_set(&candidate.text);
+        if a.is_empty() || b.is_empty() {
+            return false;
+        }
+        let intersection = a.intersection(&b).count();
+        intersection as f64 / a.len().min(b.len()).max(1) as f64 >= 0.8
+    })
 }
 
 fn support(item: &ParsedItem, utterances: &[Utterance]) -> Option<(Vec<SummaryRef>, f64)> {
