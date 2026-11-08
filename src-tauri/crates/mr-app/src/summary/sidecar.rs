@@ -18,7 +18,9 @@ use helpers::{
 mod helpers;
 
 const IDLE_KILL: Duration = Duration::from_secs(120);
-const HEALTH_WAIT: Duration = Duration::from_secs(10);
+/// Холодная загрузка 2.4 ГБ на занятой машине не укладывается в 10 с;
+/// 30 с — запас, после которого сломанный runtime уже не ждём.
+const HEALTH_WAIT: Duration = Duration::from_secs(30);
 /// Жёсткий потолок SSE: даже бесконечный поток не съест память (M05).
 const STREAM_CEILING: usize = 4 * 1024 * 1024;
 /// Байт SSE на один токен с запасом на UTF-8 и служебный JSON.

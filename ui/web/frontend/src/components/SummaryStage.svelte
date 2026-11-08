@@ -32,9 +32,9 @@
   const blockingText = $derived.by(() => {
     switch (summaryState.blockReason) {
       case 'low_memory':
-        return 'Не хватает памяти. Нужно не меньше 12 ГБ ОЗУ и 6,5 ГБ свободно; рекомендуется 16 ГБ.'
+        return 'Для модели нужно не меньше 12 ГБ ОЗУ и около 6,5 ГБ свободно. Закройте приложения и повторите.'
       case 'runtime_missing':
-        return 'Итоги недоступны: локальный движок не найден. Установите компонент или запустите нативное приложение.'
+        return 'Локальный движок итогов не установлен. Переустановите приложение из релизной сборки.'
       case 'too_short':
         return 'В записи мало текста для итогов.'
       case 'unsupported':
@@ -45,9 +45,7 @@
   })
   const errorCode = $derived(summaryState.error?.code || '')
   const shortRetry = $derived(
-    errorCode === 'low_memory' ||
-      errorCode === 'oom' ||
-      errorCode === 'timeout' ||
+    errorCode === 'timeout' ||
       errorCode === 'output_thin' ||
       errorCode === 'output_capped',
   )
@@ -139,9 +137,9 @@
           Собрать в старом формате
         </button>
       {:else if summaryState.error.scope === 'load'}
-        <button class="btn-secondary btn-sm" onclick={retryLoad}>Повторить</button>
+        <button class="btn-primary btn-sm" onclick={retryLoad}>Повторить</button>
       {:else}
-        <button class="btn-secondary btn-sm" onclick={retrySummary}>Повторить</button>
+        <button class="btn-primary btn-sm" onclick={retrySummary}>Повторить</button>
       {/if}
       {#if shortRetry}
         <button class="btn-secondary btn-sm" onclick={() => void retryShort()}>
@@ -165,8 +163,8 @@
           Собрать в старом формате
         </button>
       {:else if runtimeMissing || summaryState.blockReason === 'low_memory'}
+        <button class="btn-primary btn-sm" onclick={retryLoad}>Повторить</button>
         <button class="btn-secondary btn-sm" onclick={openSettings}>Настроить</button>
-        <button class="btn-secondary btn-sm" onclick={retryLoad}>Повторить</button>
       {:else if summaryState.blockReason === 'too_short'}
         <button class="btn-secondary btn-sm" onclick={closeTranscript}>Другая запись</button>
       {/if}
@@ -182,10 +180,12 @@
 {/if}
 
 <style>
-  .summary-progress, .summary-confirm, .summary-error, .summary-blocked, .summary-loading {
+  .summary-progress, .summary-confirm {
     display: flex; flex-direction: column; gap: 8px;
-    background: var(--bg-inset); border: 1px solid var(--border-soft);
-    border-radius: var(--radius-inner); padding: 10px 12px;
+    background: linear-gradient(180deg, #fbfcfe 0%, #f8fafc 100%);
+    border: 1px solid rgba(15, 30, 51, 0.07);
+    border-radius: 14px; padding: 14px 16px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
     font-size: 12.5px; line-height: 1.5; color: var(--text-primary);
   }
   .summary-progress-head, .summary-progress-foot {
@@ -195,12 +195,50 @@
   .summary-pct { font-variant-numeric: tabular-nums; font-weight: 700; }
   .summary-confirm-title { font-size: 13px; font-weight: 700; }
   .summary-confirm-title:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
-  .summary-blocked {
-    background: var(--accent-amber-bg); border-color: #e8d6a8;
+  .summary-error, .summary-blocked {
+    display: flex; flex-direction: column; gap: 10px;
+    position: relative; padding: 14px 16px;
+    border-radius: 14px;
+    font-size: 13px; line-height: 1.55;
+    box-shadow: 0 1px 2px rgba(15, 30, 51, 0.04);
   }
-  .summary-error { background: #fdf2f2; border-color: #f0caca; }
-  .summary-error-text { color: var(--accent-rec); }
-  .summary-loading { background: transparent; border: none; padding: 4px 0; }
+  .summary-error {
+    background: linear-gradient(180deg, #fffafa 0%, #ffffff 70%);
+    border: 1px solid rgba(212, 43, 43, 0.16);
+  }
+  .summary-error::before {
+    content: ""; position: absolute; left: 0; top: 14px; bottom: 14px;
+    width: 3px; border-radius: 999px; background: var(--accent-rec); opacity: 0.65;
+  }
+  .summary-error-text {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding-left: 10px; color: #7f1d1d;
+  }
+  .summary-error-text::before {
+    content: "!"; flex: 0 0 22px; width: 22px; height: 22px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%; background: #fde8e8; color: #b42323;
+    font-size: 12px; font-weight: 800; line-height: 1;
+  }
+  .summary-blocked {
+    background: linear-gradient(180deg, #fffdf7 0%, #ffffff 70%);
+    border: 1px solid rgba(138, 90, 0, 0.16);
+    color: #6b4a00;
+  }
+  .summary-blocked::before {
+    content: ""; position: absolute; left: 0; top: 14px; bottom: 14px;
+    width: 3px; border-radius: 999px; background: #d9a441; opacity: 0.75;
+  }
+  .summary-blocked > div:first-child {
+    display: flex; align-items: flex-start; gap: 10px; padding-left: 10px;
+  }
+  .summary-blocked > div:first-child::before {
+    content: "i"; flex: 0 0 22px; width: 22px; height: 22px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%; background: #f6e6c4; color: #8a5a00;
+    font-size: 12px; font-weight: 800; line-height: 1;
+  }
+  .summary-loading { display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
   .summary-indeterminate .vu-bar {
     width: 40%; animation: summary-slide 1.2s var(--ease-spring) infinite alternate;
   }

@@ -200,8 +200,8 @@
       <div class="summary-head">
         <h2 class="summary-title" id="summary-title">Итоги встречи</h2>
         <div class="summary-badges">
-          {#if currentPreset && (summaryState.record || summaryState.chosenPresetId)}
-            <span class="summary-badge">{currentPreset.label}</span>
+          {#if currentPreset && summaryState.record}
+            <span class="summary-badge preset">{currentPreset.label}</span>
           {/if}
           {#if summaryState.phase === 'result' && summaryState.record}
             <span class="summary-badge ok">Сгенерировано</span>
@@ -224,7 +224,10 @@
           bind:this={toggleBtn}
           onclick={toggleSummary}
         >
-          {summaryState.expanded ? 'Свернуть' : 'Открыть'}
+          <span>{summaryState.expanded ? 'Свернуть' : 'Открыть'}</span>
+          <svg class="summary-toggle-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m6 9 6 6 6-6"></path>
+          </svg>
         </button>
       </div>
       {#if barStatus}
@@ -287,13 +290,34 @@
     background: #fff; border: 1px solid var(--border-card);
     border-radius: var(--radius-inner); padding: 10px 12px; min-width: 0;
   }
-  .summary-block.is-suggest { min-height: 72px; }
+  .summary-block.is-suggest {
+    position: relative;
+    overflow: hidden;
+    padding: 14px 16px 16px;
+    border-color: rgba(15, 30, 51, 0.08);
+    border-radius: var(--radius-card);
+    background:
+      radial-gradient(120% 150% at 0% 0%, rgba(36, 86, 198, 0.055), transparent 46%),
+      linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
+    box-shadow:
+      0 1px 2px rgba(15, 30, 51, 0.04),
+      0 24px 60px -48px rgba(15, 30, 51, 0.35);
+  }
+  .summary-block.is-suggest::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    pointer-events: none;
+  }
+  .summary-block.is-suggest > * { position: relative; z-index: 1; }
   .summary-bar { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
   .summary-head {
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0;
   }
   .summary-title {
-    font-size: 15px; font-weight: 800; letter-spacing: -0.01em;
+    font-size: 16px; font-weight: 800; letter-spacing: -0.02em;
     color: var(--text-primary); margin: 0;
   }
   .summary-badges {
@@ -304,15 +328,30 @@
     border-radius: var(--radius-pill); padding: 1px 7px; color: var(--text-muted);
     background: #fff; white-space: nowrap;
   }
+  .summary-badge.preset {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 2px 8px; background: #f8fafc;
+    border-color: rgba(15, 30, 51, 0.08); color: #475569;
+  }
+  .summary-badge.preset::before {
+    content: ""; width: 5px; height: 5px; border-radius: 50%;
+    background: currentColor; opacity: 0.55; flex-shrink: 0;
+  }
   .summary-badge.ok { color: var(--accent-ok); border-color: var(--accent-ok); }
   .summary-badge.warn, .summary-badge.draft {
     color: var(--accent-amber); border-color: #d9b45c;
   }
   .summary-toggle {
-    margin-left: auto; border: none; background: none; color: var(--accent-blue);
-    font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; padding: 6px 2px;
-    text-decoration: underline; text-underline-offset: 2px;
+    display: inline-flex; align-items: center; gap: 4px;
+    margin-left: auto; border: 1px solid transparent; border-radius: var(--radius-pill);
+    background: transparent; color: var(--text-muted);
+    font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+    padding: 5px 8px; text-decoration: none;
+    transition: color 200ms var(--ease-spring), background 200ms var(--ease-spring);
   }
+  .summary-toggle:hover { color: var(--accent-blue); background: #f1f5f9; }
+  .summary-toggle-icon { transition: transform 200ms var(--ease-spring); }
+  .summary-toggle[aria-expanded="true"] .summary-toggle-icon { transform: rotate(180deg); }
   .summary-toggle:focus-visible {
     outline: 2px solid var(--accent-blue); outline-offset: 2px;
   }
@@ -320,7 +359,7 @@
     font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums;
   }
   .summary-body {
-    display: flex; flex-direction: column; gap: 10px;
+    display: flex; flex-direction: column; gap: 12px;
     max-height: min(38vh, 420px); overflow-y: auto; padding-right: 2px; min-height: 0;
   }
   .summary-body > :global(.summary-result) { max-width: 78ch; }
@@ -338,6 +377,7 @@
   }
   @media (max-width: 720px) {
     .summary-block { min-height: 104px; padding: 10px; }
+    .summary-block.is-suggest { padding: 12px; }
     .summary-body { max-height: none; overflow: visible; padding-right: 0; }
     .summary-head { align-items: flex-start; }
     .summary-toggle { min-height: 40px; padding: 8px 2px; }
