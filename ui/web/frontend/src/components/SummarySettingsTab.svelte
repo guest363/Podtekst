@@ -46,6 +46,37 @@
     return available ? `${available} ОЗУ доступно` : '—'
   })
 
+  const detailBadge = $derived.by(() => {
+    switch (detail) {
+      case 'short':
+        return 'Быстрый срез'
+      case 'long':
+        return 'Максимум деталей'
+      default:
+        return 'Сбалансировано'
+    }
+  })
+
+  const detailInfo = $derived.by(() => {
+    switch (detail) {
+      case 'short':
+        return {
+          title: 'Кратко:',
+          desc: 'только суть — 2–3 главных решения и ключевые задачи без второстепенного контекста (~1 мин чтения).',
+        }
+      case 'long':
+        return {
+          title: 'Полный протокол:',
+          desc: 'подробный контекст каждого вопроса, позиции участников, все задачи, открытые вопросы и цитаты (~5–7 мин чтения).',
+        }
+      default:
+        return {
+          title: 'Сбалансированный вариант:',
+          desc: 'краткий ход встречи, задачи с ответственными и сроками, принятые решения (~2–3 мин чтения).',
+        }
+    }
+  })
+
   async function reload(): Promise<void> {
     loading = true
     error = ''
@@ -135,8 +166,6 @@
 </script>
 
 <div class="settings-pane summary-settings" role="tabpanel" tabindex="0" aria-label="Итоги">
-  <div class="card-title">Итоги встречи</div>
-
   {#if loading && !settings}
     <div class="help-text">Загружаю настройки итогов…</div>
   {:else if error && !settings}
@@ -145,86 +174,101 @@
       <button class="btn-secondary btn-sm" onclick={() => void reload()}>Повторить</button>
     </div>
   {:else}
-    <label class="setting-check">
-      <input
-        type="checkbox"
-        checked={autoSuggest}
-        disabled={manualOnly || saving}
-        onchange={(e) => void save({ auto_suggest: e.currentTarget.checked })}
-      />
-      <span class="setting-switch" aria-hidden="true"></span>
-      <span>Предлагать шаблон после расшифровки</span>
-    </label>
-    <div class="help-text">
-      Определять тип разговора и показывать рекомендацию. Итоги не собираются без нажатия.
-    </div>
-    {#if manualOnly}
-      <div class="help-text summary-settings-warn">
-        Рекомендация отключена: недостаточно проверенных данных.
-      </div>
-    {/if}
+    <!-- Секция 1: Автоматизация и шаблоны -->
+    <div class="summary-section">
+      <div class="card-title">Итоги встречи</div>
 
-    <div class="summary-setting-row">
-      <span id="summary-default-preset-label">Шаблон по умолчанию</span>
-      <div class="summary-preset-select" onfocusout={onPresetFocusOut}>
-        <button
-          bind:this={presetTrigger}
-          type="button"
-          class="summary-select"
-          aria-haspopup="listbox"
-          aria-expanded={presetOpen}
-          aria-labelledby="summary-default-preset-label"
-          disabled={saving}
-          onclick={() => (presetOpen ? closePreset() : openPresetList())}
-          onkeydown={onPresetKeydown}
-        >
-          <span class="summary-preset-value">{selectedPresetLabel}</span>
-          <span class="summary-preset-chevron {presetOpen ? 'open' : ''}" aria-hidden="true">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
-          </span>
-        </button>
-        {#if presetOpen}
+      <label class="setting-check">
+        <input
+          type="checkbox"
+          checked={autoSuggest}
+          disabled={manualOnly || saving}
+          onchange={(e) => void save({ auto_suggest: e.currentTarget.checked })}
+        />
+        <span class="setting-switch" aria-hidden="true"></span>
+        <span>Предлагать шаблон после расшифровки</span>
+      </label>
+      <div class="help-text">
+        Определять тип разговора и показывать рекомендацию. Итоги формируются только по явной кнопке.
+      </div>
+      {#if manualOnly}
+        <div class="help-text summary-settings-warn">
+          Рекомендация отключена: недостаточно проверенных данных.
+        </div>
+      {/if}
+
+      <div class="summary-setting-row">
+        <span id="summary-default-preset-label">Шаблон по умолчанию</span>
+        <div class="summary-preset-select" onfocusout={onPresetFocusOut}>
           <button
+            bind:this={presetTrigger}
             type="button"
-            class="speaker-popover-backdrop"
-            aria-label="Закрыть список шаблонов"
-            onclick={() => closePreset(true)}
-          ></button>
-          <div
-            bind:this={presetList}
-            class="speaker-select-popover summary-preset-popover"
-            role="listbox"
-            tabindex="-1"
+            class="summary-select"
+            aria-haspopup="listbox"
+            aria-expanded={presetOpen}
             aria-labelledby="summary-default-preset-label"
+            disabled={saving}
+            onclick={() => (presetOpen ? closePreset() : openPresetList())}
             onkeydown={onPresetKeydown}
           >
-            {#each presetOptions as p (p.id)}
-              <button
-                type="button"
-                class="speaker-select-item"
-                role="option"
-                aria-selected={p.id === defaultPreset}
-                onclick={() => choosePreset(p.id)}
-              >
-                <span class="speaker-select-item-left">
-                  <span
-                    class="speaker-select-item-dot"
-                    style={`background: ${p.id === defaultPreset ? 'var(--accent-blue)' : '#94a3b8'}`}
-                  ></span>
-                  <span class="speaker-select-item-name">{p.label}</span>
-                </span>
-              </button>
-            {/each}
-          </div>
-        {/if}
+            <span class="summary-preset-value">{selectedPresetLabel}</span>
+            <span class="summary-preset-chevron {presetOpen ? 'open' : ''}" aria-hidden="true">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </span>
+          </button>
+          {#if presetOpen}
+            <button
+              type="button"
+              class="speaker-popover-backdrop"
+              aria-label="Закрыть список шаблонов"
+              onclick={() => closePreset(true)}
+            ></button>
+            <div
+              bind:this={presetList}
+              class="speaker-select-popover summary-preset-popover"
+              role="listbox"
+              tabindex="-1"
+              aria-labelledby="summary-default-preset-label"
+              onkeydown={onPresetKeydown}
+            >
+              {#each presetOptions as p (p.id)}
+                <button
+                  type="button"
+                  class="speaker-select-item"
+                  role="option"
+                  aria-selected={p.id === defaultPreset}
+                  onclick={() => choosePreset(p.id)}
+                >
+                  <span class="speaker-select-item-left">
+                    <span
+                      class="speaker-select-item-dot"
+                      style={`background: ${p.id === defaultPreset ? 'var(--accent-blue)' : '#94a3b8'}`}
+                    ></span>
+                    <span class="speaker-select-item-name">{p.label}</span>
+                  </span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <div class="summary-setting-row">
+        <span>Язык итогов</span>
+        <span class="summary-row-note">как в расшифровке</span>
       </div>
     </div>
 
-    <div class="summary-setting-block">
-      <div class="summary-setting-label">Подробность</div>
-      <div class="seg-bar" role="group" aria-label="Подробность итогов">
+    <!-- Секция 2: Объём выжимки с живым пояснением -->
+    <div class="summary-section summary-section-divider">
+      <div class="summary-section-head">
+        <div class="card-title">Объём выжимки</div>
+        <span class="detail-badge">{detailBadge}</span>
+      </div>
+
+      <div class="seg-bar" role="group" aria-label="Объём выжимки">
         <button
           class="seg-item {detail === 'short' ? 'active' : ''}"
           disabled={saving}
@@ -247,74 +291,85 @@
           Подробно
         </button>
       </div>
+
+      <div class="detail-hint">
+        <strong>{detailInfo.title}</strong> {detailInfo.desc}
+      </div>
     </div>
 
-    <div class="summary-setting-row">
-      <span>Язык итогов</span>
-      <span class="help-text">как в расшифровке</span>
-    </div>
+    <!-- Секция 3: Модель и ресурсы -->
+    <div class="summary-section summary-section-divider">
+      <div class="card-title">Модель и ресурсы</div>
 
-    <div class="summary-setting-block">
-      <div class="summary-setting-label">Модель итогов</div>
       <div class="summary-model-card">
-      <div class="summary-model-head">
-        <span class="summary-model-title">{model?.title || 'Qwen3-4B Instruct 2507 (итоги, Q4_K_M)'}</span>
+        <div class="summary-model-head">
+          <div class="summary-model-meta-col">
+            <span class="summary-model-title">{model?.title || 'Qwen3-4B Instruct 2507 (Q4_K_M)'}</span>
+            <span class="summary-model-sub">{modelSizeGb} ГБ · локальный инференс без сети</span>
+          </div>
+          {#if modelPct !== null}
+            <span class="summary-state info">Скачивание {modelPct}%</span>
+          {:else if model?.is_installed}
+            <span class="summary-state ok">Скачана</span>
+          {:else}
+            <span class="summary-state warn">Не скачана</span>
+          {/if}
+        </div>
+
         {#if modelPct !== null}
-          <span class="summary-state info">Скачивание {modelPct}%</span>
-        {:else if model?.is_installed}
-          <span class="summary-state ok">Скачана</span>
-        {:else}
-          <span class="summary-state warn">Не скачана</span>
+          <div
+            class="vu-track progress-track"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={modelPct}
+            aria-label="Скачивание модели итогов"
+          >
+            <div class="vu-bar" style={`width: ${modelPct}%`}></div>
+          </div>
+        {/if}
+
+        <div class="system-facts">
+          <span class="system-key">Требуется ОЗУ</span>
+          <span class="system-val">≈{ramGib} ГиБ (нужно ≥{requiredFreeGib} ГиБ свободно)</span>
+          <span class="system-key">Доступно в системе</span>
+          <span class="system-val">{ramText}</span>
+          <span class="system-key">Свободно на диске</span>
+          <span class="system-val">{diskFree}</span>
+        </div>
+
+        {#if modelPct === null}
+          <div class="summary-model-foot">
+            {#if !model?.is_installed}
+              <button class="btn-primary btn-sm" disabled={!model} onclick={() => void download()}>
+                Скачать
+              </button>
+            {/if}
+            {#if model?.license_url}
+              <a class="summary-link" href={model.license_url} target="_blank" rel="noreferrer">
+                {model.license || 'Лицензия'}
+              </a>
+            {/if}
+            {#if model?.source_url}
+              <a class="summary-link" href={model.source_url} target="_blank" rel="noreferrer">
+                Источник весов
+              </a>
+            {/if}
+          </div>
         {/if}
       </div>
-      <div class="help-text">
-        {modelSizeGb} ГБ · ≈{ramGib} ГиБ памяти · нужно не меньше {requiredFreeGib} ГиБ свободно ·
-        рекомендуется 16 ГиБ ОЗУ
-      </div>
-      {#if modelPct !== null}
-        <div
-          class="vu-track progress-track"
-          role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={modelPct}
-          aria-label="Скачивание модели итогов"
-        >
-          <div class="vu-bar" style={`width: ${modelPct}%`}></div>
-        </div>
-      {:else if !model?.is_installed}
-        <div class="row-start">
-          <button class="btn-primary btn-sm" disabled={!model} onclick={() => void download()}>Скачать</button>
-          {#if model?.license_url}
-            <a class="summary-link" href={model.license_url} target="_blank" rel="noreferrer">
-              {model.license || 'Лицензия'}
-            </a>
-          {/if}
-          {#if model?.source_url}
-            <a class="summary-link" href={model.source_url} target="_blank" rel="noreferrer">
-              Источник весов
-            </a>
-          {/if}
-        </div>
-      {:else}
-        <div class="summary-model-links">
-          {#if model?.license_url}
-            <a class="summary-link" href={model.license_url} target="_blank" rel="noreferrer">
-              {model.license || 'Лицензия'}
-            </a>
-          {/if}
-          {#if model?.source_url}
-            <a class="summary-link" href={model.source_url} target="_blank" rel="noreferrer">
-              Источник весов
-            </a>
-          {/if}
+
+      {#if !isMobile}
+        <div class="row-start pt-1">
+          <button class="btn-secondary btn-sm" onclick={() => void openTarget('models')}>
+            Открыть папку моделей
+          </button>
         </div>
       {/if}
-      </div>
-    </div>
 
-    <div class="help-text">
-      Свободно: {diskFree} на диске · {ramText}. Работает без сети.
+      <div class="help-text">
+        Анализ выполняется полностью на этом компьютере без передачи данных в сеть.
+      </div>
     </div>
 
     {#if error}
@@ -323,20 +378,51 @@
         <button class="btn-secondary btn-sm" onclick={() => void reload()}>Повторить</button>
       </div>
     {/if}
-
-    {#if !isMobile}
-      <div class="row-start">
-        <button class="btn-secondary btn-sm" onclick={() => void openTarget('models')}>
-          Открыть папку моделей
-        </button>
-      </div>
-    {/if}
   {/if}
 </div>
 
 <style>
   .summary-settings {
+    gap: 16px;
+  }
+  .summary-section {
+    display: flex;
+    flex-direction: column;
     gap: 10px;
+  }
+  .summary-section-divider {
+    border-top: 1px solid var(--border-soft);
+    padding-top: 14px;
+  }
+  .summary-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .detail-badge {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent-blue);
+    background: rgba(37, 99, 235, 0.08);
+    border: 1px solid rgba(37, 99, 235, 0.2);
+    border-radius: var(--radius-sm);
+    padding: 2px 7px;
+    white-space: nowrap;
+  }
+  .detail-hint {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-muted);
+    background: var(--bg-inset);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-inner);
+    padding: 9px 12px;
+  }
+  .detail-hint strong {
+    color: var(--text-primary);
+    font-weight: 600;
   }
   .summary-setting-row {
     display: flex;
@@ -348,15 +434,10 @@
     font-weight: 600;
     color: var(--text-primary);
   }
-  .summary-setting-block {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .summary-setting-label {
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--text-primary);
+  .summary-row-note {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-faint);
   }
   .summary-preset-select {
     position: relative;
@@ -418,23 +499,33 @@
   .summary-model-card {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    border: 1px solid var(--border-soft);
+    gap: 10px;
+    border: 1px solid var(--border-card);
     border-radius: var(--radius-inner);
     background: var(--bg-inset);
-    padding: 12px;
+    padding: 12px 14px;
   }
   .summary-model-head {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
-    gap: 8px;
+    gap: 10px;
     flex-wrap: wrap;
+  }
+  .summary-model-meta-col {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
   }
   .summary-model-title {
     font-size: 13px;
     font-weight: 700;
     color: var(--text-primary);
+  }
+  .summary-model-sub {
+    font-size: 11.5px;
+    color: var(--text-faint);
   }
   .summary-state {
     font-size: 11.5px;
@@ -453,10 +544,28 @@
   .summary-state.info {
     color: var(--accent-blue);
   }
-  .summary-model-links {
+  .summary-model-card .system-facts {
+    display: grid;
+    grid-template-columns: minmax(130px, max-content) minmax(0, 1fr);
+    gap: 4px 12px;
+    font-size: 12px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-soft);
+  }
+  .system-key {
+    color: var(--text-faint);
+  }
+  .system-val {
+    color: var(--text-primary);
+    font-weight: 500;
+    word-break: break-word;
+  }
+  .summary-model-foot {
     display: flex;
-    gap: 10px;
+    align-items: center;
+    gap: 12px;
     flex-wrap: wrap;
+    padding-top: 2px;
   }
   .summary-link {
     color: var(--accent-blue);
@@ -478,10 +587,14 @@
   .summary-settings-warn {
     color: var(--accent-amber);
   }
+  .pt-1 {
+    padding-top: 4px;
+  }
   @media (max-width: 720px) {
     .summary-setting-row {
       flex-direction: column;
       align-items: stretch;
+      gap: 6px;
     }
     .summary-preset-select {
       width: 100%;
@@ -491,6 +604,10 @@
       min-width: 0;
       width: 100%;
       min-height: 40px;
+    }
+    .summary-model-card .system-facts {
+      grid-template-columns: 1fr;
+      gap: 2px;
     }
     .summary-model-card .btn-primary {
       width: 100%;

@@ -65,8 +65,9 @@ pub(super) fn reserve_port() -> Result<PortReservation, BackendError> {
     Ok(PortReservation { listener, port })
 }
 
-/// Без GPU/mlock/-march; `--parallel 1` обязателен против дефолтных четырёх
-/// слотов, раздувающих KV и RSS.
+/// Без GPU/mlock/-march. Один слот: параллельные запросы раздувают KV и RSS,
+/// а суммаризация и так последовательная. Sampling задаётся в теле запроса,
+/// а не флагами сервера.
 pub(super) fn build_args(
     model_path: &Path,
     port: u16,
@@ -85,22 +86,14 @@ pub(super) fn build_args(
         "1".to_string(),
         "--ctx-size".to_string(),
         n_ctx.to_string(),
+        // Замер на 4B Q4/8 потоках: pp4096 54.6 против 50.1 t/s при 512/128,
+        // RSS +63 МБ.
         "-b".to_string(),
-        "512".to_string(),
+        "2048".to_string(),
         "-ub".to_string(),
-        "128".to_string(),
+        "512".to_string(),
         "--threads".to_string(),
         threads.to_string(),
-        "--temp".to_string(),
-        "0".to_string(),
-        "--top-k".to_string(),
-        "1".to_string(),
-        "--top-p".to_string(),
-        "0.9".to_string(),
-        "--repeat-penalty".to_string(),
-        "1.1".to_string(),
-        "--seed".to_string(),
-        "42".to_string(),
         "--jinja".to_string(),
         "--no-webui".to_string(),
         "--reasoning".to_string(),
@@ -217,15 +210,21 @@ mod tests {
             "--ctx-size",
             "8192",
             "-b",
-            "512",
+            "2048",
             "-ub",
-            "128",
+            "512",
             "--threads",
             "6",
         ] {
             assert!(args.iter().any(|a| a == flag), "нет {flag}");
         }
         assert!(!args.iter().any(|a| a == "--mlock"));
+        for flag in ["--temp", "--top-k", "--top-p", "--repeat-penalty", "--seed"] {
+            assert!(
+                !args.iter().any(|a| a == flag),
+                "sampling задаётся в запросе, а не флагами: {flag}"
+            );
+        }
         let ngl = args
             .iter()
             .position(|a| a == "--n-gpu-layers")
