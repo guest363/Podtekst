@@ -665,7 +665,9 @@ fn summary_contract_suite() {
     );
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "1");
 
-    // 14. Модель отсутствует и fake выключен -> 503 model_missing.
+    // 14. Компонент отсутствует и fake выключен -> 503. На headless runtime
+    // проверяется раньше модели (M17), поэтому допустимы оба кода; оба
+    // означают отсутствующий обязательный компонент, а не ошибку запроса.
     std::env::remove_var("MR_SUMMARY_FAKE_BACKEND");
     let (st, v) = json_call(
         port,
@@ -674,10 +676,13 @@ fn summary_contract_suite() {
         json!({"file": renamed, "preset_id": "meeting", "detail": "normal",
                "source_rev": v_rev(port, renamed), "force": true}),
     );
-    assert_eq!(
-        (st, v["code"].as_str()),
-        (503, Some("model_missing")),
-        "model_missing: {v}"
+    assert_eq!(st, 503, "missing component: {v}");
+    assert!(
+        matches!(
+            v["code"].as_str(),
+            Some("model_missing") | Some("runtime_missing")
+        ),
+        "missing component: {v}"
     );
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "1");
 

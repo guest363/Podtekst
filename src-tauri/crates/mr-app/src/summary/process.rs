@@ -63,30 +63,27 @@ fn start_time_impl(pid: u32) -> Option<String> {
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 fn start_time_impl(pid: u32) -> Option<String> {
-    let mut mib = [
-        libc::CTL_KERN,
-        libc::KERN_PROC,
-        libc::KERN_PROC_PID,
-        pid as libc::c_int,
-    ];
-    let mut info: libc::kinfo_proc = unsafe { std::mem::zeroed() };
-    let mut size = std::mem::size_of::<libc::kinfo_proc>();
-    // SAFETY: sysctl заполняет структуру известного размера.
-    let ok = unsafe {
-        libc::sysctl(
-            mib.as_mut_ptr(),
-            mib.len() as libc::c_uint,
-            &mut info as *mut _ as *mut libc::c_void,
-            &mut size,
-            std::ptr::null_mut(),
+    // libc на Apple не экспортирует kinfo_proc; proc_pidinfo даёт
+    // pbi_start_tvsec/usec без парсинга sysctl.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: proc_pidinfo заполняет структуру известного размера.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
             0,
+            &mut info as *mut _ as *mut libc::c_void,
+            size,
         )
     };
-    if ok != 0 || size == 0 {
+    if written <= 0 {
         return None;
     }
-    let tv = info.kp_proc.p_starttime;
-    Some(format!("{}.{:06}", tv.tv_sec, tv.tv_usec))
+    Some(format!(
+        "{}.{:06}",
+        info.pbi_start_tvsec, info.pbi_start_tvusec
+    ))
 }
 
 #[cfg(windows)]
