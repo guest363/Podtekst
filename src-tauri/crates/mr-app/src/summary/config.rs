@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::SummaryJobError;
 use crate::config::app_data_dir;
 
-/// Измеренный пик 8k (VmHWM 5.424 ГиБ) + запас ~1.1 ГиБ (§6).
+/// Измеренный пик на 8k контекста (VmHWM 5.424 ГиБ) плюс запас ~1.1 ГиБ.
 pub const ESTIMATE_PEAK_MB: u64 = 5530;
 pub const REQUIRED_FREE_MB: u64 = 6656;
 pub const MIN_SYSTEM_RAM_MB: u64 = 12288;
@@ -47,8 +47,8 @@ impl ClassifierMode {
     }
 }
 
-/// D15: по умолчанию — эвристика-предположение; `manual_only` остаётся
-/// операторским откатом после провалившегося held-out, а не дефолтом.
+/// По умолчанию — эвристика; `manual_only` остаётся операторским откатом
+/// после провала на отложенной выборке, а не дефолтом.
 fn default_classifier() -> ClassifierMode {
     ClassifierMode::Heuristic
 }
@@ -117,8 +117,8 @@ fn set_test_config_path(path: Option<PathBuf>) {
     *TEST_CONFIG_PATH.lock().unwrap_or_else(|e| e.into_inner()) = path;
 }
 
-/// Сохранённые настройки без env-оверрайдов: их и только их пишем в файл
-/// (M02), иначе временный `PODTEKST_SUMMARY_ENABLED=0` закрепляется навсегда.
+/// Сохранённые настройки без env-оверрайдов: их и только их пишем в файл, иначе
+/// временный `PODTEKST_SUMMARY_ENABLED=0` закрепляется навсегда.
 pub(crate) fn stored() -> Settings {
     std::fs::read_to_string(config_path())
         .ok()

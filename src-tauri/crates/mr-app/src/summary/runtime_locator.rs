@@ -161,7 +161,7 @@ fn discover() -> Result<RuntimeInfo, RuntimeError> {
     discover_from(candidate_dirs())
 }
 
-/// Один битый кандидат не должен скрывать рабочий runtime за ним (M01):
+/// Один битый кандидат не должен скрывать рабочий runtime за ним:
 /// идём по всем каталогам и возвращаем последнюю содержательную ошибку.
 fn discover_from(dirs: Vec<PathBuf>) -> Result<RuntimeInfo, RuntimeError> {
     let manifest = manifest();
@@ -228,7 +228,7 @@ fn run_output(cmd: &mut Command, timeout: Duration) -> Result<String, RuntimeErr
         .map_err(|e| RuntimeError::Probe(e.to_string()))?;
     // Дренаж обоих pipe обязан идти одновременно с ожиданием: `--help`
     // llama-server больше 64 КиБ, и заполненный pipe иначе блокирует child
-    // до timeout (N-H01).
+    // до timeout.
     let stdout = child
         .stdout
         .take()

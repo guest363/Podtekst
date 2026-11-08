@@ -40,12 +40,6 @@ pub const NEVER_DROP: &[&str] = &[
     "in_progress",
 ];
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SummaryRef {
-    pub utterance_index: usize,
-    pub start: f64,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DeadlineSource {
@@ -57,7 +51,6 @@ pub enum DeadlineSource {
 pub struct TaskMeta {
     pub assignee: Option<String>,
     pub deadline: Option<String>,
-    pub deadline_ref: Option<SummaryRef>,
     pub deadline_source: DeadlineSource,
 }
 
@@ -67,10 +60,6 @@ pub struct SummaryItem {
     pub role: SectionRole,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task: Option<TaskMeta>,
-    #[serde(default)]
-    pub refs: Vec<SummaryRef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub quote: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

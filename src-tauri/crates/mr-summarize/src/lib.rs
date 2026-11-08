@@ -13,8 +13,8 @@ pub mod text;
 
 pub use artifact::{
     ArtifactClassification, DeadlineSource, Generator, PresetInfo, Provenance, SourceInfo,
-    SummaryArtifact, SummaryBody, SummaryItem, SummaryRecord, SummaryRef, SummarySection, TaskMeta,
-    Timings, Warning,
+    SummaryArtifact, SummaryBody, SummaryItem, SummaryRecord, SummarySection, TaskMeta, Timings,
+    Warning,
 };
 pub use classify::{classify, validate_source, Classification, Confidence, Metrics, Signal};
 pub use error::{Result, SummaryError};

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::app_data_dir;
 
 /// PID-файл sidecar: без него SIGKILL родителя оставил бы сироту с моделью
-/// в 5.4 ГиБ до перезагрузки (M17).
+/// в 5.4 ГиБ до перезагрузки.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PidRecord {
     pub pid: u32,

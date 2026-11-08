@@ -238,8 +238,7 @@ pub(crate) fn task_object_key(text: &str) -> Option<String> {
     best.map(|token| text::stem_token(&token))
 }
 
-/// «Возьму, я думаю, сегодня сделаю»: без этой отсечки «думаю» считалось
-/// объектом задачи.
+// Без отсечки «думаю» попадало в объект задачи.
 fn is_discourse_verb(token: &str) -> bool {
     matches!(
         token,

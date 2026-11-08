@@ -15,7 +15,10 @@
     "preset_id": "meeting",
     "confidence": "high",
     "alternatives": [],
-    "signals": ["tasks", "deadlines"],
+    "signals": [
+      "tasks",
+      "deadlines"
+    ],
     "ambiguous": false,
     "style": "multi-party",
     "language": "ru",
@@ -66,8 +69,7 @@
         "items": [
           {
             "text": "Обсудили срок запуска.",
-            "role": "plain",
-            "refs": [{"utterance_index": 0, "start": 0.0}]
+            "role": "plain"
           }
         ]
       },
@@ -78,8 +80,7 @@
         "items": [
           {
             "text": "Запуск переносится на следующую неделю.",
-            "role": "decision",
-            "refs": [{"utterance_index": 1, "start": 12.0}]
+            "role": "decision"
           }
         ]
       },
@@ -94,10 +95,8 @@
             "task": {
               "assignee": null,
               "deadline": "до среды",
-              "deadline_ref": {"utterance_index": 2, "start": 30.0},
               "deadline_source": "extracted"
-            },
-            "refs": [{"utterance_index": 2, "start": 30.0}]
+            }
           }
         ]
       }

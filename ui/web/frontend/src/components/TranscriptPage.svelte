@@ -28,11 +28,10 @@
 
   let summaryAvailable = $derived(
     !isAndroid &&
-      settings.summaryFeature === true &&
+      settings.summaryFeature !== false &&
       transcript.hasText &&
       summaryState.capabilities?.summary_supported !== false &&
-      summaryState.blockReason !== 'no_text' &&
-      summaryState.phase !== 'idle',
+      summaryState.blockReason !== 'no_text',
   )
 
   function toggleSpeakers(): void {
@@ -513,7 +512,6 @@
           </div>
           <SummaryPanel
             file={ui.currentTranscriptPath}
-            onseek={seekTo}
             transcriptMarkdown={buildFullTranscriptMarkdown}
           />
         </div>

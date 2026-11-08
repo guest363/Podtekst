@@ -67,15 +67,9 @@ export type OutLang = 'ru' | 'en'
 export type SummaryRole = 'plain' | 'decision' | 'task' | 'status'
 export type InlineSegment = { kind: 'text' | 'bold' | 'code'; value: string }
 
-export interface SummaryRef {
-  utterance_index: number
-  start: number
-}
-
 export interface TaskMeta {
   assignee: string | null
   deadline: string | null
-  deadline_ref: SummaryRef | null
   deadline_source: 'model' | 'extracted'
 }
 
@@ -83,8 +77,6 @@ export interface SummaryItem {
   text: string
   role: SummaryRole
   task?: TaskMeta
-  refs?: SummaryRef[]
-  quote?: string
 }
 
 export interface SummarySection {

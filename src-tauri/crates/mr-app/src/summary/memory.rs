@@ -32,7 +32,6 @@ impl MemoryError {
     }
 }
 
-/// `min(8, max(2, logical))` (§6, D11): 4-ядерный tier получает 4 потока.
 pub fn threads(logical: usize) -> u32 {
     logical.clamp(2, 8) as u32
 }
@@ -45,7 +44,7 @@ pub fn logical_cores() -> usize {
 
 /// Предзапуск: жёсткий total и свободная память. Если тот же sidecar уже
 /// загружен, свободную память не проверяем — иначе второй job на 16 ГиБ
-/// получал бы low_memory при живых 5.4 ГиБ в RSS (H09).
+/// получал бы low_memory при живых 5.4 ГиБ в RSS.
 pub fn precheck(sidecar_loaded: bool) -> Result<GuardInfo, MemoryError> {
     let cores = logical_cores();
     let total_mb = crate::sysmem::total_bytes().map(|b| b / (1024 * 1024));
@@ -63,7 +62,7 @@ pub fn precheck(sidecar_loaded: bool) -> Result<GuardInfo, MemoryError> {
                 });
             }
         }
-        // Неизвестная память — warning, не отказ (§6).
+        // Память неизвестна — отказывать не за что, поэтому только warning.
     }
     Ok(GuardInfo {
         threads: threads(cores),

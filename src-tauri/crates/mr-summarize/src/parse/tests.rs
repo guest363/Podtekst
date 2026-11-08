@@ -85,14 +85,10 @@ fn injection_item_is_dropped() {
 }
 
 #[test]
-fn quote_is_extracted() {
+fn quote_markers_are_stripped() {
     let output = "## Кратко\n- «Точная цитата»\n";
     let parsed = parse(output, p("meeting")).unwrap();
     assert_eq!(parsed.sections[0].items[0].text, "Точная цитата");
-    assert_eq!(
-        parsed.sections[0].items[0].quote.as_deref(),
-        Some("Точная цитата")
-    );
 }
 
 #[test]

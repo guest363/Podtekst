@@ -167,10 +167,6 @@ fn structured_fallback_fills_missing_tasks_without_duplicates() {
         .iter()
         .any(|s| s.id == "questions" && s.items[0].text == transcript.utterances[5].text));
     assert!(summary.warnings.contains(&Warning::FallbackExtracted));
-    assert!(
-        summary.sections.iter().all(|s| s.id != "brief"),
-        "fallback-задачи выданы за «Кратко»"
-    );
 }
 
 #[test]
@@ -527,19 +523,32 @@ fn unsupported_decision_moves_to_brief() {
 }
 
 #[test]
-fn quote_must_be_exact() {
+fn quote_markers_are_stripped_without_refs() {
     let summary = run(
         "meeting",
         "## Кратко\n- «Точная цитата»\n",
         vec![u(0.0, "Анна", "Точная цитата.")],
     );
-    assert!(summary.sections[0].items[0].quote.is_some());
-    let bad = run(
+    assert_eq!(summary.sections[0].items[0].text, "Точная цитата");
+}
+
+#[test]
+fn closing_small_talk_task_is_dropped() {
+    let summary = run(
         "meeting",
-        "## Кратко\n- «Точная цитата»\n",
-        vec![u(0.0, "Анна", "Другие слова.")],
+        "## Задачи\n- Всё тогда, всем хорошего дня! Да. Да. Борис, давай я тебе наберу.\n",
+        vec![u(
+            0.0,
+            "Анна",
+            "Всё тогда, всем хорошего дня! Да. Да. Борис, давай я тебе наберу.",
+        )],
     );
-    assert!(bad.sections.is_empty());
+    assert!(
+        summary.sections.iter().all(|s| s.id != "tasks"),
+        "{:?}",
+        summary.sections
+    );
+    assert!(summary.items_dropped > 0);
 }
 
 #[test]
@@ -556,25 +565,25 @@ fn legal_conclusion_requires_exact_source() {
 }
 
 #[test]
-fn psychology_judgement_is_dropped() {
+fn psychology_judgement_is_kept_without_soft_claim_filter() {
     let summary = run(
         "psychology",
         "## Темы сессии\n- У клиента диагноз депрессия.\n",
         vec![u(0.0, "Клиент", "Мне тяжело, я плохо сплю.")],
     );
-    assert!(summary.items_dropped + summary.soft_claims_dropped > 0);
+    assert_eq!(summary.soft_claims_dropped, 0);
+    assert!(summary.sections.iter().any(|s| !s.items.is_empty()));
 }
 
 #[test]
-fn agreement_without_cue_is_dropped_as_soft_claim() {
+fn agreement_is_kept_without_soft_claim_filter() {
     let summary = run(
         "scrum",
         "## Сделано\n- Команда согласны с планом запуска.\n",
         vec![u(0.0, "Анна", "Команда обсудила план запуска.")],
     );
-    assert!(summary.soft_claims_dropped >= 1);
-    assert!(summary.warnings.contains(&Warning::SoftClaimDropped));
-    assert!(summary.sections.is_empty());
+    assert_eq!(summary.soft_claims_dropped, 0);
+    assert!(summary.sections.iter().any(|s| !s.items.is_empty()));
 }
 
 #[test]
@@ -731,19 +740,19 @@ fn negated_need_is_not_a_task() {
 }
 
 #[test]
-fn negated_status_and_agreement_do_not_support_soft_claims() {
+fn negated_status_and_agreement_are_kept_without_soft_claim_filter() {
     let status = run(
         "scrum",
         "## В работе\n- Запуск в работе.\n",
         vec![u(0.0, "Анна", "Запуск не в работе.")],
     );
-    assert!(status.soft_claims_dropped >= 1, "{status:?}");
+    assert_eq!(status.soft_claims_dropped, 0);
     let agreement = run(
         "scrum",
         "## Сделано\n- Команда согласны с планом.\n",
         vec![u(0.0, "Анна", "Команда не согласны с планом.")],
     );
-    assert!(agreement.soft_claims_dropped >= 1, "{agreement:?}");
+    assert_eq!(agreement.soft_claims_dropped, 0);
 }
 
 #[test]

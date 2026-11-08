@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::artifact::{DeadlineSource, SummaryItem, SummaryRef, TaskMeta};
+use crate::artifact::{DeadlineSource, SummaryItem, TaskMeta};
 use crate::cues;
 use crate::deadline;
 use crate::preset::{Preset, SectionRole};
@@ -63,21 +63,17 @@ pub(crate) fn candidates(transcript: &Transcript, preset: &Preset) -> Vec<Candid
     let mut task_items: Vec<(Candidate, u8)> = Vec::new();
     let mut question_items = Vec::new();
 
-    for (index, utterance) in transcript.utterances.iter().enumerate() {
+    for utterance in transcript.utterances.iter() {
         let source = utterance.text.trim();
         if source.is_empty() || crate::parse::contains_injection(source) {
             continue;
         }
         let normalized = text::normalize(source);
-        let reference = SummaryRef {
-            utterance_index: index,
-            start: utterance.start,
-        };
         if let Some(section) = questions {
             if cues::question_line(&normalized) {
                 question_items.push(Candidate {
                     section_id: section,
-                    item: plain_item(source, SectionRole::Plain, reference.clone()),
+                    item: plain_item(source, SectionRole::Plain),
                 });
                 continue;
             }
@@ -86,19 +82,18 @@ pub(crate) fn candidates(transcript: &Transcript, preset: &Preset) -> Vec<Candid
             if cues::decision_cue(&normalized) {
                 decision_items.push(Candidate {
                     section_id: section,
-                    item: plain_item(source, SectionRole::Decision, reference),
+                    item: plain_item(source, SectionRole::Decision),
                 });
                 continue;
             }
         }
         if let Some(section) = tasks {
             if let Some(kind) = task_kind(source, &normalized, &known) {
-                // «Возьму, я думаю, сегодня сделаю» — обязательство без объекта:
-                // в источниках такие обрывки не становятся задачей.
+                // Обязательство без объекта («Возьму... сделаю») — шум, не задача.
                 if task_object_key(source).is_none() {
                     continue;
                 }
-                let task = task_meta(source, &utterance.speaker, &reference, kind, &known);
+                let task = task_meta(source, &utterance.speaker, kind, &known);
                 let score = task_score(kind, &task);
                 let text = clean_task_text(source, task.deadline.as_deref());
                 task_items.push((
@@ -108,8 +103,6 @@ pub(crate) fn candidates(transcript: &Transcript, preset: &Preset) -> Vec<Candid
                             text,
                             role: SectionRole::Task,
                             task: Some(task),
-                            refs: vec![reference],
-                            quote: None,
                         },
                     },
                     score,
@@ -158,13 +151,11 @@ fn section_id(preset: &Preset, ids: &[&str]) -> Option<&'static str> {
         .map(|s| s.id)
 }
 
-fn plain_item(source: &str, role: SectionRole, reference: SummaryRef) -> SummaryItem {
+fn plain_item(source: &str, role: SectionRole) -> SummaryItem {
     SummaryItem {
         text: source.to_owned(),
         role,
         task: None,
-        refs: vec![reference],
-        quote: None,
     }
 }
 
@@ -176,7 +167,7 @@ pub(crate) fn task_kind(source: &str, normalized: &str, known: &[String]) -> Opt
     }
     if FIRST_PERSON
         .iter()
-        .any(|marker| normalized.contains(marker))
+        .any(|marker| text::contains_phrase_normalized(normalized, marker))
         || named_commitment(source, known)
     {
         return Some(TaskKind::Explicit);
@@ -190,7 +181,7 @@ pub(crate) fn task_kind(source: &str, normalized: &str, known: &[String]) -> Opt
         "needs to",
     ]
     .iter()
-    .any(|marker| normalized.contains(marker));
+    .any(|marker| text::contains_phrase_normalized(normalized, marker));
     if need && has_infinitive(normalized) {
         return Some(TaskKind::Need);
     }
@@ -249,10 +240,9 @@ pub(crate) fn explicit_action(text: &str) -> bool {
         .any(|word| cues::ACTION_VERBS.contains(&word) || infinitive(word))
 }
 
-/// Инфинитив в пункте задачи — действие, даже если глагола нет в списке
-/// ACTION_VERBS («пройти», «развернуть», «принять»).
 fn infinitive(word: &str) -> bool {
     let word = word.trim_matches(|c: char| !c.is_alphanumeric());
+    // Существительные на -сть/-чь иначе выглядят как действие.
     if matches!(word, "путь" | "мать" | "дочь" | "ночь" | "речь") || word.ends_with("сть")
     {
         return false;
@@ -260,29 +250,16 @@ fn infinitive(word: &str) -> bool {
     word.ends_with("ть") || word.ends_with("ться") || word.ends_with("ти") || word.ends_with("чь")
 }
 
-fn task_meta(
-    source: &str,
-    speaker: &str,
-    reference: &SummaryRef,
-    kind: TaskKind,
-    known: &[String],
-) -> TaskMeta {
-    let found = deadline::find_in_text(source, reference.utterance_index, reference.start);
-    let (deadline, deadline_ref, source_kind) = match &found {
-        Some(hit) => (
-            Some(hit.phrase.clone()),
-            Some(SummaryRef {
-                utterance_index: hit.utterance_index,
-                start: hit.start,
-            }),
-            DeadlineSource::Extracted,
-        ),
-        None => (None, None, DeadlineSource::Model),
+fn task_meta(source: &str, speaker: &str, kind: TaskKind, known: &[String]) -> TaskMeta {
+    let deadline = deadline::find_in_text(source).map(|hit| hit.phrase);
+    let source_kind = if deadline.is_some() {
+        DeadlineSource::Extracted
+    } else {
+        DeadlineSource::Model
     };
     TaskMeta {
         assignee: assignee_for(source, Some(source), Some(speaker), known, kind),
         deadline,
-        deadline_ref,
         deadline_source: source_kind,
     }
 }

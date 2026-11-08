@@ -864,7 +864,7 @@
     .delete-box {
         max-width: 440px;
     }
-    /* Деструктивное подтверждение: красный — только здесь, запись его не занимает смысл */
+    /* Красный зарезервирован за деструктивным подтверждением */
     .btn-danger {
         background: var(--accent-rec);
         border: 1px solid var(--accent-rec-hover);

@@ -15,7 +15,6 @@ pub struct ParsedItem {
     pub text: String,
     pub role: SectionRole,
     pub task: Option<TaskMeta>,
-    pub quote: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -129,14 +128,14 @@ pub fn parse(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErro
                 "задача" | "что" | "task" | "what" => {
                     if role == SectionRole::Task {
                         let (text, task) = parse_task(&value);
-                        push_item(&mut sections[current], text, role, task, None);
+                        push_item(&mut sections[current], text, role, task);
                     } else {
-                        push_item(&mut sections[current], value, role, None, None);
+                        push_item(&mut sections[current], value, role, None);
                     }
                     last = Some((current, sections[current].items.len() - 1));
                 }
                 "решение" | "decision" => {
-                    push_item(&mut sections[current], value, role, None, None);
+                    push_item(&mut sections[current], value, role, None);
                     last = Some((current, sections[current].items.len() - 1));
                 }
                 "срок"
@@ -167,13 +166,13 @@ pub fn parse(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErro
                 last_raw = trimmed.to_owned();
                 continue;
             }
-            let (text, quote) = split_quote(&cleaned);
+            let text = unquote(&cleaned);
             let (text, task) = if role == SectionRole::Task {
                 parse_task(&text)
             } else {
                 (text, None)
             };
-            push_item(&mut sections[current], text, role, task, quote);
+            push_item(&mut sections[current], text, role, task);
             last = Some((current, sections[current].items.len() - 1));
             last_raw = trimmed.to_owned();
             continue;
@@ -213,13 +212,13 @@ pub fn parse(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErro
             if contains_injection(trimmed) {
                 injection += 1;
             } else {
-                let (text, quote) = split_quote(&clean_text(trimmed));
+                let text = unquote(&clean_text(trimmed));
                 let (text, task) = if role == SectionRole::Task {
                     parse_task(&text)
                 } else {
                     (text, None)
                 };
-                push_item(&mut sections[current], text, role, task, quote);
+                push_item(&mut sections[current], text, role, task);
                 last = Some((current, sections[current].items.len() - 1));
                 recovered += 1;
             }
@@ -284,7 +283,7 @@ fn parse_flat(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErr
             injection += 1;
             continue;
         }
-        let (text, quote) = split_quote(&text);
+        let text = unquote(&text);
         let normalized = crate::text::normalize(&text);
         let decision_label = matches!(label.as_deref(), Some("решение") | Some("decision"));
         let task_label = matches!(
@@ -313,7 +312,7 @@ fn parse_flat(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErr
         } else {
             (text, None)
         };
-        push_item(&mut doc.sections[target], text, role, task_meta, quote);
+        push_item(&mut doc.sections[target], text, role, task_meta);
         recovered += 1;
     }
     let items: usize = doc.sections.iter().map(|s| s.items.len()).sum();
@@ -342,27 +341,15 @@ fn empty_task() -> TaskMeta {
     TaskMeta {
         assignee: None,
         deadline: None,
-        deadline_ref: None,
         deadline_source: DeadlineSource::Model,
     }
 }
 
-fn push_item(
-    section: &mut ParsedSection,
-    text: String,
-    role: SectionRole,
-    task: Option<TaskMeta>,
-    quote: Option<String>,
-) {
+fn push_item(section: &mut ParsedSection, text: String, role: SectionRole, task: Option<TaskMeta>) {
     if text.is_empty() {
         return;
     }
-    section.items.push(ParsedItem {
-        text,
-        role,
-        task,
-        quote,
-    });
+    section.items.push(ParsedItem { text, role, task });
 }
 
 fn apply_task_field(item: &mut ParsedItem, label: &str, value: &str) {
@@ -413,14 +400,12 @@ fn parse_task(text: &str) -> (String, Option<TaskMeta>) {
         Some(TaskMeta {
             assignee,
             deadline,
-            deadline_ref: None,
             deadline_source: source,
         })
     } else {
         Some(TaskMeta {
             assignee: None,
             deadline: None,
-            deadline_ref: None,
             deadline_source: source,
         })
     };
@@ -466,16 +451,15 @@ fn normalize_placeholder(value: &str) -> String {
         .join(" ")
 }
 
-fn split_quote(text: &str) -> (String, Option<String>) {
+fn unquote(text: &str) -> String {
     if text.starts_with('«') && text.ends_with('»') && text.chars().count() >= 3 {
-        let inner: String = text
+        return text
             .chars()
             .skip(1)
             .take(text.chars().count() - 2)
             .collect();
-        return (inner.clone(), Some(inner));
     }
-    (text.to_owned(), None)
+    text.to_owned()
 }
 
 pub(crate) fn contains_injection(text: &str) -> bool {

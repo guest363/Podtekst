@@ -2,7 +2,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use crate::artifact::{DeadlineSource, SummaryRef, Warning};
+use crate::artifact::{DeadlineSource, Warning};
 use crate::text::{normalize, Utterance};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -15,7 +15,6 @@ pub struct DeadlineMatch {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeadlineOutcome {
     pub deadline: Option<String>,
-    pub reference: Option<SummaryRef>,
     pub source: DeadlineSource,
     pub warning: Option<Warning>,
 }
@@ -51,14 +50,14 @@ pub fn find(utterances: &[Utterance], indices: &[usize]) -> Option<DeadlineMatch
     best.map(|(_, _, _, m)| m)
 }
 
-pub fn find_in_text(text: &str, utterance_index: usize, start: f64) -> Option<DeadlineMatch> {
+pub fn find_in_text(text: &str) -> Option<DeadlineMatch> {
     matches_in(text)
         .into_iter()
         .next()
         .map(|(s, _, e)| DeadlineMatch {
             phrase: text[s..e].to_owned(),
-            utterance_index,
-            start,
+            utterance_index: 0,
+            start: 0.0,
         })
 }
 
@@ -105,14 +104,12 @@ pub fn reconcile(model: Option<&str>, extracted: Option<&DeadlineMatch>) -> Dead
             if normalize(model) == normalize(&found.phrase) {
                 DeadlineOutcome {
                     deadline: Some(model.to_owned()),
-                    reference: Some(reference(found)),
                     source: DeadlineSource::Extracted,
                     warning: None,
                 }
             } else {
                 DeadlineOutcome {
                     deadline: Some(found.phrase.clone()),
-                    reference: Some(reference(found)),
                     source: DeadlineSource::Extracted,
                     warning: Some(Warning::DeadlineRecovered),
                 }
@@ -120,7 +117,6 @@ pub fn reconcile(model: Option<&str>, extracted: Option<&DeadlineMatch>) -> Dead
         }
         (None, Some(found)) => DeadlineOutcome {
             deadline: Some(found.phrase.clone()),
-            reference: Some(reference(found)),
             source: DeadlineSource::Extracted,
             warning: Some(Warning::DeadlineRecovered),
         },
@@ -132,24 +128,15 @@ pub fn reconcile(model: Option<&str>, extracted: Option<&DeadlineMatch>) -> Dead
                 );
             DeadlineOutcome {
                 deadline: None,
-                reference: None,
                 source: DeadlineSource::Model,
                 warning: (!placeholder).then_some(Warning::DeadlineNotStated),
             }
         }
         (None, None) => DeadlineOutcome {
             deadline: None,
-            reference: None,
             source: DeadlineSource::Model,
             warning: None,
         },
-    }
-}
-
-fn reference(found: &DeadlineMatch) -> SummaryRef {
-    SummaryRef {
-        utterance_index: found.utterance_index,
-        start: found.start,
     }
 }
 

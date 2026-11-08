@@ -16,14 +16,15 @@ pub(crate) fn assignee_for(
 
     if kind == TaskKind::Need {
         // «Надо/нужно» само исполнителя не назначает: только явная метка
-        // «Кто:» или имя рядом с действием в тексте задачи (H03).
+        // «Кто:» или имя рядом с действием в тексте задачи.
         return label_assignee(task_text, known)
             .or_else(|| extract_assignee_name(task_text, known));
     }
 
-    let first_person = FIRST_PERSON
-        .iter()
-        .any(|marker| support_norm.contains(marker) || task_norm.contains(marker));
+    let first_person = FIRST_PERSON.iter().any(|marker| {
+        text::contains_phrase_normalized(&support_norm, marker)
+            || text::contains_phrase_normalized(&task_norm, marker)
+    });
     if first_person {
         if let Some(speaker) = speaker.filter(|s| !is_placeholder_name(s)) {
             return Some(speaker.to_owned());

@@ -1,13 +1,12 @@
-use crate::artifact::{SummaryItem, SummaryRef, SummarySection, TaskMeta, Warning};
+use crate::artifact::{SummaryItem, SummarySection, TaskMeta, Warning};
 use crate::deadline;
-use crate::parse::{ParsedItem, ParsedSummary};
+use crate::parse::ParsedSummary;
 use crate::preset::{self, Detail, Preset, SectionRole};
 use crate::text::{self, Language, Transcript, Utterance};
-use std::collections::HashSet;
 
 mod merge;
 mod rules;
-use rules::{decision_cue, hard_facts_supported, soft_claim_unsupported};
+use rules::{decision_cue, hard_facts_supported};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GroundedSummary {
@@ -38,67 +37,44 @@ pub fn ground(
 ) -> GroundedSummary {
     let mut warnings = parsed.warnings.clone();
     let mut dropped = 0usize;
-    let mut soft = 0usize;
     let mut sections: Vec<Vec<Scored>> = parsed.sections.iter().map(|_| Vec::new()).collect();
     let brief_index = parsed.sections.iter().position(|s| s.id == "brief");
     let known = crate::extract::speaker_names(&transcript.utterances);
+    let decision_cue = has_decision_cue(transcript);
 
     for (section_index, section) in parsed.sections.iter().enumerate() {
         for item in &section.items {
-            let Some((refs, evidence)) = support(item, &transcript.utterances) else {
-                dropped += 1;
-                continue;
-            };
             if !hard_facts_supported(&item.text, &transcript.utterances) {
                 dropped += 1;
                 continue;
             }
-            let support_indices = adjacent(&refs, transcript.utterances.len());
-            let support_text = support_text(&transcript.utterances, &support_indices);
-            if soft_claim_unsupported(
-                item,
-                &support_text,
-                preset,
-                &transcript.utterances,
-                &support_indices,
-            ) {
-                soft += 1;
-                continue;
-            }
-            let quote = validated_quote(
-                item.quote.as_deref(),
-                &transcript.utterances,
-                &support_indices_refs(&refs),
-            );
             let mut output = SummaryItem {
                 text: item.text.clone(),
                 role: section.role,
                 task: item.task.clone(),
-                refs,
-                quote,
             };
             if section.role == SectionRole::Task {
                 let task =
                     reconcile_task(&mut output, &transcript.utterances, &known, &mut warnings);
                 if !task {
-                    soft += 1;
+                    dropped += 1;
                     continue;
                 }
             }
-            if section.role == SectionRole::Decision && !decision_cue(&support_text) {
+            if section.role == SectionRole::Decision && !decision_cue {
                 push_once(&mut warnings, Warning::DecisionWithoutCue);
                 if let Some(brief) = brief_index {
                     output.role = SectionRole::Plain;
                     sections[brief].push(Scored {
                         item: output,
-                        ev: evidence,
+                        ev: 1.0,
                     });
                 }
                 continue;
             }
             sections[section_index].push(Scored {
                 item: output,
-                ev: evidence,
+                ev: 1.0,
             });
         }
     }
@@ -160,9 +136,6 @@ pub fn ground(
     if dropped > 0 {
         push_once(&mut warnings, Warning::ItemsDroppedUnsupported);
     }
-    if soft > 0 {
-        push_once(&mut warnings, Warning::SoftClaimDropped);
-    }
     if parsed.parser_recovered > 0 {
         push_once(&mut warnings, Warning::ParserRecovered);
     }
@@ -197,7 +170,7 @@ pub fn ground(
         sections: ordered,
         warnings,
         items_dropped: dropped,
-        soft_claims_dropped: soft,
+        soft_claims_dropped: 0,
         parser_recovered: parsed.parser_recovered,
     }
 }
@@ -205,14 +178,6 @@ pub fn ground(
 fn brief_duplicate(existing: &[Scored], candidate: &SummaryItem) -> bool {
     existing.iter().any(|scored| {
         let item = &scored.item;
-        if item.refs.iter().any(|a| {
-            candidate
-                .refs
-                .iter()
-                .any(|b| a.utterance_index == b.utterance_index)
-        }) {
-            return true;
-        }
         let a = text::stem_set(&item.text);
         let b = text::stem_set(&candidate.text);
         if a.is_empty() || b.is_empty() {
@@ -223,50 +188,12 @@ fn brief_duplicate(existing: &[Scored], candidate: &SummaryItem) -> bool {
     })
 }
 
-fn support(item: &ParsedItem, utterances: &[Utterance]) -> Option<(Vec<SummaryRef>, f64)> {
-    let item_tokens: HashSet<String> = text::stem_set(&item.text);
-    if item_tokens.is_empty() {
-        return None;
-    }
-    let mut matches: Vec<(usize, usize, f64)> = Vec::new();
-    for (index, utterance) in utterances.iter().enumerate() {
-        let utterance_tokens = text::stem_set(&utterance.text);
-        let intersection = item_tokens.intersection(&utterance_tokens).count();
-        if intersection < 2 {
-            continue;
-        }
-        let ev = intersection as f64 / item_tokens.len().max(1) as f64;
-        if ev >= 0.25 {
-            matches.push((index, intersection, ev));
-        }
-    }
-    matches.sort_by(|a, b| {
-        b.2.total_cmp(&a.2)
-            .then_with(|| b.1.cmp(&a.1))
-            .then_with(|| a.0.cmp(&b.0))
-    });
-    let best = matches.first()?.2;
-    let refs = matches
-        .into_iter()
-        .take(3)
-        .map(|(index, _, _)| SummaryRef {
-            utterance_index: index,
-            start: utterances[index].start,
-        })
-        .collect();
-    Some((refs, best))
-}
-
-fn adjacent(refs: &[SummaryRef], len: usize) -> Vec<usize> {
+fn adjacent(indices: &[usize], len: usize) -> Vec<usize> {
     let mut out = Vec::new();
-    for r in refs {
-        for index in [
-            r.utterance_index.saturating_sub(1),
-            r.utterance_index,
-            r.utterance_index + 1,
-        ] {
-            if index < len && !out.contains(&index) {
-                out.push(index);
+    for index in indices {
+        for candidate in [index.saturating_sub(1), *index, *index + 1] {
+            if candidate < len && !out.contains(&candidate) {
+                out.push(candidate);
             }
         }
     }
@@ -282,28 +209,25 @@ fn support_text(utterances: &[Utterance], indices: &[usize]) -> String {
         .join(" ")
 }
 
-fn support_indices_refs(refs: &[SummaryRef]) -> Vec<usize> {
-    refs.iter().map(|r| r.utterance_index).collect()
-}
-
-fn validated_quote(
-    quote: Option<&str>,
-    utterances: &[Utterance],
-    indices: &[usize],
-) -> Option<String> {
-    let quote = quote?;
-    let normalized = text::normalize(quote);
-    if normalized.is_empty() {
+fn best_utterance_index(item: &str, utterances: &[Utterance]) -> Option<usize> {
+    let item_tokens = text::stem_set(item);
+    if item_tokens.is_empty() {
         return None;
     }
-    indices
+    utterances
         .iter()
-        .filter_map(|i| utterances.get(*i))
-        .any(|u| {
-            let utterance = text::normalize(&u.text);
-            format!(" {utterance} ").contains(&format!(" {normalized} "))
+        .enumerate()
+        .map(|(index, utterance)| {
+            (
+                index,
+                item_tokens
+                    .intersection(&text::stem_set(&utterance.text))
+                    .count(),
+            )
         })
-        .then(|| quote.to_owned())
+        .filter(|(_, overlap)| *overlap > 0)
+        .max_by(|(a_index, a), (b_index, b)| a.cmp(b).then_with(|| b_index.cmp(a_index)))
+        .map(|(index, _)| index)
 }
 
 fn reconcile_task(
@@ -312,19 +236,16 @@ fn reconcile_task(
     known: &[String],
     warnings: &mut Vec<Warning>,
 ) -> bool {
-    let primary = output
-        .refs
-        .first()
-        .map(|r| adjacent(std::slice::from_ref(r), utterances.len()))
-        .unwrap_or_default();
-    let best_index = output.refs.first().map(|r| r.utterance_index);
+    let best_index = best_utterance_index(&output.text, utterances);
     // Ворота задачи смотрят только реплику-источник, без соседей: иначе
-    // соседняя задача делает задачей соседнее решение (H05/S-08).
+    // соседняя задача делает задачей соседнее решение.
     let best_support = best_index
         .map(|index| support_text(utterances, &[index]))
         .unwrap_or_default();
     let normalized_best = text::normalize(&best_support);
-    let refs_support = support_text(utterances, &support_indices_refs(&output.refs));
+    let primary = best_index
+        .map(|index| adjacent(&[index], utterances.len()))
+        .unwrap_or_default();
     let support = support_text(utterances, &primary);
     let normalized_support = text::normalize(&support);
     let normalized_text = text::normalize(&output.text);
@@ -336,7 +257,7 @@ fn reconcile_task(
     let explicit = kind.is_some()
         || (crate::extract::explicit_action(&output.text)
             && (crate::extract::explicit_action(&best_support)
-                || crate::extract::explicit_action(&refs_support)));
+                || crate::extract::explicit_action(&support)));
     if !explicit {
         return false;
     }
@@ -344,7 +265,6 @@ fn reconcile_task(
         output.task = Some(TaskMeta {
             assignee: None,
             deadline: None,
-            deadline_ref: None,
             deadline_source: crate::artifact::DeadlineSource::Model,
         });
     }
@@ -354,7 +274,6 @@ fn reconcile_task(
     let found = best_index.and_then(|index| deadline::find(utterances, &[index]));
     let outcome = deadline::reconcile(task.deadline.as_deref(), found.as_ref());
     task.deadline = outcome.deadline;
-    task.deadline_ref = outcome.reference;
     task.deadline_source = outcome.source;
     if let Some(warning) = outcome.warning {
         push_once(warnings, warning);

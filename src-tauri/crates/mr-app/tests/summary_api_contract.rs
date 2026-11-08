@@ -312,7 +312,7 @@ fn summary_contract_suite() {
     let v = wait_state(port, file, "fresh", std::time::Duration::from_secs(10));
     assert_ne!(v["summary"]["id"].as_str(), Some(summary_id.as_str()));
 
-    // has_summary additive: старый has_transcript не меняется (P09).
+    // has_summary additive: старый has_transcript не меняется.
     let (_, v) = json_call(port, "GET", "/api/recordings", json!({}));
     let item = v["recordings"]
         .as_array()
@@ -407,7 +407,7 @@ fn summary_contract_suite() {
     let v: Value = serde_json::from_slice(&raw).unwrap();
     assert_eq!(v["code"], "body_too_large");
 
-    // Удалённые маршруты — 404, а не новые эндпоинты (P09).
+    // Удалённые маршруты — 404, а не новые эндпоинты под старыми именами.
     for (method, path) in [
         ("GET", "/api/summary/status"),
         ("GET", "/api/summary_stream"),
@@ -417,7 +417,7 @@ fn summary_contract_suite() {
         assert_eq!(st, 404, "{method} {path} должен быть 404");
     }
 
-    // manual_only — операторский откат (D15): рекомендации нет.
+    // manual_only — операторский откат: рекомендации нет.
     std::env::set_var("SUMMARY_CLASSIFIER_MODE", "manual_only");
     let (_, v) = json_call(
         port,
@@ -480,7 +480,7 @@ fn summary_contract_suite() {
     );
     assert_eq!(st, 200);
 
-    // H10: stream-before-POST — этап и терминал на одной SSE-шине, без текста.
+    // Этап и терминал идут одной SSE-шиной, без текста в ответе POST.
     let (mut sse, total_before) = open_sse(port);
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "slow");
     let (st, v) = json_call(
@@ -547,7 +547,7 @@ fn summary_contract_suite() {
     );
     assert!(wait_idle(port, std::time::Duration::from_secs(5)));
 
-    // H02: две одновременные заявки — ровно один 202 и один 409.
+    // Две одновременные заявки — ровно один 202 и один 409.
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
     let rev_concurrent = v_rev(port, renamed);
     let file_concurrent = renamed.to_string();
@@ -654,7 +654,7 @@ fn summary_contract_suite() {
     std::env::remove_var("MR_SUMMARY_FAKE_GATE");
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "1");
 
-    // Headless проверяет runtime раньше модели (M17): оба кода означают
+    // Headless проверяет runtime раньше модели: оба кода означают
     // отсутствующий обязательный компонент, а не ошибку запроса.
     std::env::remove_var("MR_SUMMARY_FAKE_BACKEND");
     let (st, v) = json_call(
@@ -730,8 +730,8 @@ fn summary_contract_suite() {
         .collect();
     assert_eq!(backups.len(), 1, "нет backup newer: {backups:?}");
 
-    // M03: v2 между preflight и commit — без force+allow commit отказывает
-    // и не трогает файл.
+    // v2 появился между preflight и commit — без force+allow_downgrade
+    // запрос отказывает и не трогает файл.
     let race_gate = base.join("gate-race");
     let _ = std::fs::remove_file(&race_gate);
     std::env::set_var("MR_SUMMARY_FAKE_GATE", &race_gate);
@@ -1009,7 +1009,7 @@ fn summary_contract_suite() {
         .unwrap()
         .is_empty());
 
-    // §9: невалидный reduce не теряет job — отдаём заземлённый merge
+    // Невалидный reduce не теряет job — отдаём заземлённый merge
     // частичных ответов.
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "reduce_invalid");
     let (st, v) = json_call(

@@ -43,7 +43,7 @@ fn running_flag() -> Arc<Mutex<bool>> {
 
 /// Счётчик активных скачиваний моделей: SSE-стрим живёт, пока хотя бы одна модель качается.
 static MODEL_ACTIVE: AtomicUsize = AtomicUsize::new(0);
-/// Активный summary job (H10): выставляется синхронно до ответа `202`,
+/// Активный summary job: выставляется синхронно до ответа `202`,
 /// снимается после терминального события, чтобы SSE не закрылся между ними.
 static SUMMARY_ACTIVE: AtomicUsize = AtomicUsize::new(0);
 

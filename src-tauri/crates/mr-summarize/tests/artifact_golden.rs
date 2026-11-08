@@ -34,6 +34,16 @@ fn artifact_roundtrip_and_additive_fields_are_ignored() {
 }
 
 #[test]
+fn refs_and_quotes_are_not_serialized() {
+    let artifact = artifact();
+    let json = artifact.to_json().unwrap();
+    assert!(!json.contains("\"refs\""));
+    assert!(!json.contains("\"quote\""));
+    assert!(!json.contains("\"deadline_ref\""));
+    assert!(!artifact.to_markdown().contains("[00:"));
+}
+
+#[test]
 fn optional_sections_drop_before_required() {
     let mut artifact = artifact();
     artifact
@@ -47,8 +57,6 @@ fn optional_sections_drop_before_required() {
                 text: "я".repeat(MAX_JSON_BYTES + 1024),
                 role: mr_summarize::SectionRole::Plain,
                 task: None,
-                refs: vec![],
-                quote: None,
             }],
         });
     artifact.summary.items_total = 4;

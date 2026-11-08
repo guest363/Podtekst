@@ -250,8 +250,8 @@ jobs:
           if-no-files-found: error
           path: bundle-pkg/*
 
-  # H06/M18: живой прогон pinned runtime + Qwen3-4B на релизном теге.
-  # Этот workflow запускается только тегом или workflow_dispatch; на PR
+  # Живой прогон на релизном теге: pinned runtime и Qwen3-4B должны отработать
+  # вместе. Этот workflow запускается только тегом или workflow_dispatch; на PR
   # тяжёлая модель не скачивается. Без манифеста и живой генерации релиз
   # не публикуется.
   real-summary:
@@ -445,7 +445,7 @@ jobs:
             verification/summary-real-matrix.json
             verification/summary-real.log
 
-  # M18: полная матрица — только по явному workflow_dispatch, не на каждом
+  # Полная матрица — только по явному workflow_dispatch, не на каждом
   # релизе. Tier 8 требует >=8 logical cores; иначе он честно попадает в
   # not_run отчёта. 30/60/120 в профиле ci-loaded бюджета не имеют:
   # измеряются и записываются, но не гейтятся.
@@ -539,7 +539,7 @@ jobs:
             esac
           done
           du -sb "$runtime"
-          # L09: бюджет 60 МБ относится к установленному pruned-runtime.
+          # Бюджет 60 МБ относится к установленному pruned-runtime.
           # Полный AppImage фиксируем как метрику, а не как бюджет.
           runtime_bytes=$(find "$runtime" -type f -printf '%s\n' | awk '{s+=$1} END {print s+0}')
           appimage_bytes=$(stat -c %s "$appimage")
@@ -802,7 +802,7 @@ jobs:
           fi
           shell_sha="$(sha256sum "$apk" | awk '{print $1}')"
           echo "Android APK: $apk, $(stat -c %s "$apk") bytes, versionCode=$version_code, abis=$abis, signing=$signing, sha256=$shell_sha"
-          # S-11: релизное evidence фиксирует фактический APK, а не число из
+          # Релизное evidence фиксирует фактический APK, а не число из
           # отчёта: размер и SHA-256 зависят от toolchain/подписи.
           APK_PATH="$apk" APK_SHA256="$shell_sha" APK_VERSION="$VERSION" \
           APK_VERSION_CODE="$version_code" APK_ABIS="$abis" APK_SIGNING="$signing" \

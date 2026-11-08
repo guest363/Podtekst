@@ -40,14 +40,6 @@ pub(super) fn merge_fallback(
 }
 
 fn same_task_or_evidence(model: &SummaryItem, fallback: &SummaryItem) -> bool {
-    if model.refs.iter().any(|a| {
-        fallback
-            .refs
-            .iter()
-            .any(|b| a.utterance_index == b.utterance_index)
-    }) {
-        return true;
-    }
     let a = text::stem_set(&model.text);
     let b = text::stem_set(&fallback.text);
     if a.is_empty() || b.is_empty() {

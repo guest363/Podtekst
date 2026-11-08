@@ -18,7 +18,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 /// 256 бит из двух UUIDv4 (по 122 бита OS RNG) через SHA-256: токен не
-/// попадает в argv, только в файл 0600 (M18).
+/// попадает в argv, только в файл 0600.
 pub(super) fn new_token() -> String {
     let seed = format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
     sha256_hex(seed.as_bytes())
@@ -65,8 +65,8 @@ pub(super) fn reserve_port() -> Result<PortReservation, BackendError> {
     Ok(PortReservation { listener, port })
 }
 
-/// Пины §6: без GPU/mlock/-march; `--parallel 1` обязателен против дефолтных
-/// четырёх слотов, раздувающих KV и RSS.
+/// Без GPU/mlock/-march; `--parallel 1` обязателен против дефолтных четырёх
+/// слотов, раздувающих KV и RSS.
 pub(super) fn build_args(
     model_path: &Path,
     port: u16,
@@ -141,8 +141,8 @@ pub(super) fn hide_window(cmd: &mut Command) {
 pub(super) fn hide_window(_cmd: &mut Command) {}
 
 pub(super) fn spawn_stderr(mut child: Child) -> (Child, std::thread::JoinHandle<(u64, String)>) {
-    // stderr не логируется и не пишется на диск (H15): поток дочитывает его,
-    // считает длину и SHA-256, а текст выбрасывает.
+    // stderr не логируется и не пишется на диск: поток дочитывается, длина и
+    // SHA-256 считаются, текст выбрасывается.
     let mut stderr = child.stderr.take();
     let handle = std::thread::spawn(move || {
         let mut hasher = Sha256::new();
@@ -177,7 +177,7 @@ pub(super) fn map_ureq(error: ureq::Error) -> BackendError {
     }
 }
 
-/// Убирает thinking и служебные токены chat-template (§6): JSON/GBNF не
+/// Убирает thinking и служебные токены chat-template: JSON/GBNF не
 /// используется, схема проверяется постфактум.
 pub(super) fn sanitize_output(text: &str) -> String {
     let text = text

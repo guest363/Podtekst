@@ -429,7 +429,7 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 let _ = request.respond(tiny_http::Response::empty(204));
                 return;
             }
-            // Android: любой /api/summary* — 501, не 404 (P09).
+            // Android: 501, а не 404 — клиент отличает неподдерживаемую функцию от битого URL.
             #[cfg(target_os = "android")]
             if path.starts_with("/api/summary") {
                 summary_api::unsupported(request);

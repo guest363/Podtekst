@@ -180,6 +180,16 @@ fn phrase_in(haystack: &str, needle: &str) -> bool {
     false
 }
 
+/// Вхождение маркера по границам слов: «беру» не срабатывает на «наберу».
+pub fn contains_phrase(text: &str, phrase: &str) -> bool {
+    contains_phrase_normalized(&normalize(text), phrase)
+}
+
+pub fn contains_phrase_normalized(normalized: &str, phrase: &str) -> bool {
+    let phrase = normalize(phrase);
+    !phrase.is_empty() && phrase_in(normalized, &phrase)
+}
+
 pub fn language_of(text: &str) -> Language {
     language_with(text, 0.60, 0.80, 0.10)
 }

@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { fmtClockShort } from '../lib/api'
-  import type { SummaryRecord, SummaryRef } from '../lib/api'
+  import type { SummaryRecord } from '../lib/api'
   import { renderInline } from '../lib/markdown'
   import {
     summaryDate,
@@ -14,7 +13,6 @@
     sensitive?: boolean
     caution?: string
     regenerateDisabled?: boolean
-    onseek: (sec: number) => void
     onregenerate: () => void
     onupdate: () => void
     onchange: () => void
@@ -27,7 +25,6 @@
     sensitive = false,
     caution = '',
     regenerateDisabled = false,
-    onseek,
     onregenerate,
     onupdate,
     onchange,
@@ -41,16 +38,6 @@
   )
   const noAssignee = $derived(english ? 'unassigned' : 'не назначен')
   const noDeadline = $derived(english ? 'deadline not stated' : 'срок не назван')
-
-  function openRef(ref: SummaryRef): void {
-    onseek(ref.start)
-    const index = Number(ref.utterance_index)
-    if (!Number.isFinite(index) || index < 0) return
-    document.querySelector(`[data-utt="${index}"]`)?.scrollIntoView({
-      block: 'center',
-      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
-    })
-  }
 </script>
 
 <div class="summary-result" data-summary-result>
@@ -94,25 +81,7 @@
                     — {item.task?.assignee || noAssignee}, {item.task?.deadline || noDeadline}
                   </span>
                 {/if}
-                {#if item.quote && item.quote !== item.text}
-                  <span class="summary-quote">«{item.quote}»</span>
-                {/if}
               </span>
-              {#if item.refs?.length}
-                <span class="summary-refs">
-                  {#each item.refs.slice(0, 3) as ref}
-                    <button
-                      type="button"
-                      class="summary-ref"
-                      aria-label={`Перейти к реплике ${fmtClockShort(ref.start)}`}
-                      title="Перейти к реплике"
-                      onclick={() => openRef(ref)}
-                    >
-                      {fmtClockShort(ref.start)}
-                    </button>
-                  {/each}
-                </span>
-              {/if}
             </li>
           {/each}
         </ul>
@@ -128,10 +97,10 @@
     <button class="btn-secondary btn-sm" onclick={onexport}>Скачать .md</button>
   </div>
   <p class="summary-disclaimer">
-    Итоги собраны локальной моделью. {caution || 'Проверьте имена, сроки и решения по ссылкам на реплики.'}
+    Итоги собраны локальной моделью. {caution || 'Проверьте имена, сроки и решения.'}
   </p>
   {#if sensitive}
-    <span class="summary-sensitive-note">Черновик: проверьте формулировки по исходным репликам.</span>
+    <span class="summary-sensitive-note">Черновик: проверьте формулировки.</span>
   {/if}
 </div>
 
@@ -214,39 +183,6 @@
   .summary-task {
     color: var(--text-muted);
   }
-  .summary-quote {
-    display: block;
-    color: var(--text-muted);
-    font-style: italic;
-  }
-  .summary-refs {
-    display: inline-flex;
-    gap: 3px;
-    flex-shrink: 0;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-  .summary-ref {
-    border: 1px solid var(--border-card);
-    background: #fff;
-    color: var(--accent-blue);
-    border-radius: var(--radius-pill);
-    padding: 4px 7px;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    line-height: 1;
-    cursor: pointer;
-    min-width: 40px;
-    min-height: 28px;
-    position: relative;
-  }
-  .summary-ref:hover {
-    background: var(--bg-inset);
-  }
-  .summary-ref:focus-visible {
-    outline: 2px solid var(--accent-blue);
-    outline-offset: 2px;
-  }
   .summary-meta {
     border-top: 1px solid var(--border-soft);
     padding-top: 8px;
@@ -275,21 +211,6 @@
     }
     .summary-item {
       flex-wrap: wrap;
-    }
-    .summary-refs {
-      flex-basis: 100%;
-      justify-content: flex-start;
-      padding-left: 14px;
-    }
-    .summary-ref::after {
-      content: '';
-      position: absolute;
-      inset: -6px -4px;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .summary-ref {
-      transition: none;
     }
   }
 </style>

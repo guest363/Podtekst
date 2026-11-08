@@ -24,8 +24,8 @@
       pos = { top: 72, left: Math.max(8, window.innerWidth - 368) }
       return
     }
-    const width = 320
-    const height = 380
+    const width = 360
+    const height = 440
     const left = Math.min(Math.max(8, a.left), Math.max(8, window.innerWidth - width - 8))
     let top = a.bottom + 8
     if (top + height > window.innerHeight - 8) {
@@ -95,19 +95,23 @@
           aria-current={currentId === p.id ? 'true' : undefined}
           onclick={() => onpick(p.id)}
         >
-          <span class="summary-picker-name">{p.label}</span>
-          <span class="summary-picker-badges">
-            {#if recommendedId === p.id}
-              <span class="summary-picker-badge rec">Рекомендуем</span>
-            {/if}
-            {#if currentId === p.id}
-              <span class="summary-picker-badge current">Текущий шаблон</span>
-            {/if}
-            {#if p.sensitive}
-              <span class="summary-picker-badge draft">Черновик</span>
-            {/if}
-          </span>
-          <span class="summary-picker-short">{p.short}</span>
+          <div class="summary-picker-top">
+            <span class="summary-picker-name">{p.label}</span>
+            <span class="summary-picker-badges">
+              {#if recommendedId === p.id}
+                <span class="summary-picker-badge rec">Рекомендуем</span>
+              {/if}
+              {#if currentId === p.id}
+                <span class="summary-picker-badge current">Текущий</span>
+              {/if}
+              {#if p.sensitive}
+                <span class="summary-picker-badge draft">Черновик</span>
+              {/if}
+            </span>
+          </div>
+          {#if p.short}
+            <span class="summary-picker-short">{p.short}</span>
+          {/if}
         </button>
       {/each}
       {#if presets.length === 0}
@@ -127,8 +131,9 @@
   .summary-picker {
     position: fixed;
     z-index: 70;
-    width: clamp(280px, 90vw, 320px);
-    max-height: min(420px, calc(100dvh - 16px));
+    width: 360px;
+    max-width: calc(100vw - 16px);
+    max-height: min(480px, calc(100dvh - 24px));
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -136,7 +141,7 @@
     border: 1px solid var(--border-card);
     border-radius: var(--radius-card);
     box-shadow: 0 12px 36px rgba(15, 30, 51, 0.18);
-    padding: 12px;
+    padding: 14px;
     overflow: hidden;
   }
   .summary-picker:focus-visible {
@@ -150,23 +155,23 @@
     gap: 8px;
   }
   .summary-picker-title {
-    font-size: 13.5px;
+    font-size: 14px;
     font-weight: 800;
     color: var(--text-primary);
   }
   .summary-picker-list {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 5px;
     overflow-y: auto;
     min-height: 0;
-    padding-right: 2px;
+    padding-right: 4px;
+    scrollbar-width: thin;
   }
   .summary-picker-item {
     display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 4px 8px;
+    flex-direction: column;
+    gap: 3px;
     width: 100%;
     text-align: left;
     border: 1px solid transparent;
@@ -176,7 +181,8 @@
     font: inherit;
     cursor: pointer;
     color: var(--text-primary);
-    min-height: 44px;
+    box-sizing: border-box;
+    transition: background 120ms ease, border-color 120ms ease;
   }
   .summary-picker-item:hover,
   .summary-picker-item[data-picker-current='true'] {
@@ -187,34 +193,54 @@
     outline: 2px solid var(--accent-blue);
     outline-offset: 2px;
   }
+  .summary-picker-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+  }
   .summary-picker-name {
-    font-size: 13px;
+    font-size: 13.5px;
     font-weight: 700;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .summary-picker-badges {
     display: inline-flex;
-    flex-wrap: wrap;
+    align-items: center;
     gap: 4px;
+    flex-shrink: 0;
   }
   .summary-picker-badge {
-    font-size: 11.5px;
+    font-size: 11px;
     font-weight: 700;
     border-radius: var(--radius-pill);
-    padding: 1px 7px;
+    padding: 1px 6px;
     border: 1px solid currentColor;
+    white-space: nowrap;
+    line-height: 1.3;
   }
   .summary-picker-badge.rec {
     color: var(--accent-ok);
+    background: rgba(14, 122, 85, 0.08);
+    border-color: rgba(14, 122, 85, 0.25);
   }
   .summary-picker-badge.current {
     color: var(--accent-blue);
+    background: rgba(36, 86, 198, 0.08);
+    border-color: rgba(36, 86, 198, 0.25);
   }
   .summary-picker-badge.draft {
     color: var(--accent-amber);
+    background: rgba(138, 90, 0, 0.08);
+    border-color: rgba(138, 90, 0, 0.25);
   }
   .summary-picker-short {
-    flex-basis: 100%;
-    font-size: 11.5px;
+    font-size: 12px;
     line-height: 1.4;
     color: var(--text-muted);
   }

@@ -200,7 +200,8 @@ for pattern in "${PRUNE[@]}" "${LICENSE_FILES[@]}"; do
             esac
             cp -f "$real" "$DEST/$name"
         else
-            # Кросс-осмотр: без проверки загрузчиком, для отчёта о размере.
+            # Кросс-сборка: readelf/otool для чужой платформы недоступны,
+            # копируем как есть — отчёт покажет размер.
             cp -a "$file" "$DEST/$name"
         fi
     done

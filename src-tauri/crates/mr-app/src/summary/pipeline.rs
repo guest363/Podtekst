@@ -196,7 +196,7 @@ pub fn run(
             None => {
                 if partials.len() >= 2 {
                     // Reduce не дал валидных секций: не теряем job, отдаём
-                    // заземлённый merge частичных ответов (§9).
+                    // заземлённый merge частичных ответов.
                     merged.parser_recovered += 1;
                     warnings.push(Warning::ParserRecovered);
                     ctx.retry.reason = Some("reduce_invalid".to_string());
@@ -382,7 +382,8 @@ pub fn run(
     artifact
         .enforce_caps()
         .map_err(|_| super::SummaryJobError::OutputCapped)?;
-    // Commit point: после этой проверки cancel игнорируется до terminal.
+    // Точка невозврата: после этой проверки отмена игнорируется до терминального
+    // события.
     cancel.check().map_err(map_backend)?;
     // Расшифровка могла измениться, пока модель работала.
     let current = std::fs::read_to_string(&spec.paths.transcript)

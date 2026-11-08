@@ -165,7 +165,7 @@ pub fn block_reason(recording: bool) -> Option<&'static str> {
 }
 
 /// Headless (`--web`) сначала требует runtime: без него скачивание модели
-/// не приближает генерацию (M17). Desktop сохраняет прежний порядок.
+/// не приближает генерацию. Desktop сохраняет прежний порядок.
 fn readiness_reason(headless: bool, runtime: bool, model: bool) -> Option<&'static str> {
     if headless && !runtime {
         return Some("runtime_missing");

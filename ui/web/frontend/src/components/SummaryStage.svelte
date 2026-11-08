@@ -121,7 +121,7 @@
     </div>
     <div class="help-text">
       {summaryState.presets.find((p) => p.id === summaryState.pendingPresetId)?.caution ||
-        'Проверьте формулировки по исходным репликам.'}
+        'Проверьте формулировки.'}
     </div>
     <div class="summary-actions">
       <button class="btn-primary" onclick={confirmSensitive}>Собрать итоги</button>

@@ -289,7 +289,7 @@ pub(crate) fn start_recording_inner(
         crate::journal::error(None, "start", "already_recording", "Запись уже идёт");
         return json!({"ok": false, "error": "Запись уже идёт"});
     }
-    // Запись выигрывает у итогов: отмена до создания сессии записи (H11).
+    // Запись выигрывает у итогов: отмена до создания сессии записи.
     crate::summary::cancel_for_recording();
     let session_id = new_session_id();
     let catalog = mr_audio::capture::devices();

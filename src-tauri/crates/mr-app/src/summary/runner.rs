@@ -91,9 +91,8 @@ pub(super) fn run_pipeline(
 }
 
 /// Отмена обязана погасить именно generation-child, а не ждать idle-таймер:
-/// иначе llama-server продолжает считать токены после ухода job (S-05).
-/// Kill идёт до `JobFinish::drop`, поэтому слот и счётчик освобождаются после
-/// join ребёнка.
+/// иначе llama-server продолжает считать токены после ухода job. Kill идёт до
+/// `JobFinish::drop`, поэтому слот и счётчик освобождаются после join ребёнка.
 pub(super) fn cancel_sidecar(job: &Arc<Job>) {
     #[cfg(not(target_os = "android"))]
     if job.cancel.is_cancelled() {

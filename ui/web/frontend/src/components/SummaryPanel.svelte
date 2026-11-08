@@ -27,10 +27,9 @@
 
   interface Props {
     file: string
-    onseek: (sec: number) => void
     transcriptMarkdown: () => string
   }
-  let { file, onseek, transcriptMarkdown }: Props = $props()
+  let { file, transcriptMarkdown }: Props = $props()
 
   let panelEl = $state<HTMLElement | null>(null)
   let toggleBtn = $state<HTMLButtonElement | null>(null)
@@ -40,7 +39,7 @@
   let wasGenerating = false
 
   $effect(() => {
-    if (file && file !== loadedFor && settings.summaryFeature === true) {
+    if (file && file !== loadedFor && settings.summaryFeature !== false) {
       loadedFor = file
       void loadSummary(file)
     }
@@ -54,11 +53,10 @@
 
   const visible = $derived(
     !isAndroid &&
-      settings.summaryFeature === true &&
+      settings.summaryFeature !== false &&
       transcript.hasText &&
       summaryState.capabilities?.summary_supported !== false &&
-      summaryState.blockReason !== 'no_text' &&
-      summaryState.phase !== 'idle',
+      summaryState.blockReason !== 'no_text',
   )
   const classification = $derived(
     summaryState.phase === 'suggest' && !summaryState.record && summaryState.classification?.preset_id
@@ -256,7 +254,6 @@
             sensitive={currentPreset?.sensitive ?? false}
             caution={currentPreset?.caution ?? ''}
             regenerateDisabled={!canRegenerate}
-            {onseek}
             onregenerate={regenerate}
             onupdate={updateStaleSummary}
             onchange={openPicker}

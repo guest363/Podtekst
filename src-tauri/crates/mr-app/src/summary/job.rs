@@ -43,7 +43,7 @@ pub(super) fn job_cell() -> std::sync::MutexGuard<'static, Option<Arc<Job>>> {
 }
 
 /// Слот резервируется под тем же мьютексом, что и публикуется job: две
-/// одновременные заявки не могут обе пройти preflight (H02). Ошибка на любом
+/// одновременные заявки не могут обе пройти preflight. Ошибка на любом
 /// пути освобождает слот и счётчик активности через Drop.
 struct Reservation {
     job: Arc<Job>,
@@ -224,8 +224,8 @@ pub fn generate(input: &GenerateInput, recording: bool) -> Result<StartOutcome, 
         ));
     }
     let loaded = store::load(&paths, &source.rev);
-    // Новее-major артефакт заменяется только при явных force и
-    // allow_downgrade (M03); одного allow_downgrade недостаточно.
+    // Новее-major артефакт заменяется только при явных force и allow_downgrade:
+    // одного allow_downgrade недостаточно.
     if loaded.state == store::State::Unsupported && !(input.allow_downgrade && input.force) {
         return Err(ApiError::new(
             422,
@@ -412,7 +412,7 @@ pub fn cancel(job_id: &str) -> bool {
             let id = job.id.clone();
             std::thread::spawn(move || {
                 // Prefill может не отдавать токены: отмена обязана уложиться
-                // в 2 с, поэтому через 1 с добиваем sidecar (G2).
+                // в 2 с, поэтому через 1 с добиваем sidecar.
                 std::thread::sleep(Duration::from_secs(1));
                 if is_current(&id) {
                     #[cfg(not(target_os = "android"))]

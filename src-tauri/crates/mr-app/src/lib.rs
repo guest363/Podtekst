@@ -683,8 +683,8 @@ mod live_api_tests {
             js.contains("transcript-grid"),
             "нет двухколоночной расшифровки"
         );
-        // Frontend-маркеры итогов (3434072): picker рендерится классом
-        // `summary-picker`; отдельного `summary-preset-picker` в бандле нет.
+        // Ищем классы, которые реально попадают в собранный бандл: у picker это
+        // `summary-picker`, а не имя компонента.
         for marker in ["summary-block", "summary-picker", "summary-result"] {
             assert!(js.contains(marker), "нет summary-маркера {marker}");
         }
@@ -897,8 +897,8 @@ mod live_api_tests {
             .is_some());
         assert_eq!(v["summarizing"].as_bool(), Some(false));
 
-        // Summary: каталог и настройки живы без модели/runtime; отсутствующие
-        // маршруты не resurrect-ятся как «новые» эндпоинты.
+        // Summary: каталог и настройки живут без модели и runtime, а удалённые
+        // маршруты не должны вернуться под новыми именами.
         let (st, v) = json(http(port, "GET", "/api/summary/presets", &[], &[]));
         assert_eq!(st, 200, "summary presets: {v}");
         assert_eq!(v["presets"].as_array().map(Vec::len), Some(7));

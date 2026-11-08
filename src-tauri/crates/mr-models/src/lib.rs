@@ -54,7 +54,7 @@ pub struct ModelEntry {
     #[serde(default)]
     pub description: String,
     /// `asr` для речевых моделей, `summary` для локальных итогов. Старый
-    /// манифест без поля читается как `asr` (P9).
+    /// манифест без поля читается как `asr`.
     #[serde(default = "default_kind")]
     pub kind: String,
     #[serde(default)]

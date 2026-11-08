@@ -108,8 +108,8 @@ pub(super) fn serve_transcribe_stream(request: tiny_http::Request) {
         {
             return;
         }
-        // H10: stream-before-POST. Без грейса первый же опрос «не running»
-        // закрывал поток до того, как summary успевал выставить SUMMARY_ACTIVE.
+        // Без паузы первый же опрос «не running» закрывал поток раньше, чем
+        // summary успевал выставить SUMMARY_ACTIVE.
         let mut idle_ticks = 0u8;
         loop {
             let (fresh, total, running) = crate::transcribe::take_new_events(since);
@@ -392,7 +392,8 @@ pub(super) fn handle_models_update(request: tiny_http::Request, body: serde_json
             }));
         });
         if res.is_ok() {
-            // ASR-кэш не должен выбрасываться из-за модели итогов (P17).
+            // Модель итогов не должна вытеснять кэш ASR: иначе каждая расшифровка
+            // после сводки считается заново.
             if kind == "summary" {
                 crate::summary::invalidate_model_cache();
             } else {

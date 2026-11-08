@@ -16,7 +16,8 @@ fn error_response(request: tiny_http::Request, error: ApiError) {
 }
 
 fn read_json(request: &mut tiny_http::Request) -> Result<Value, ApiError> {
-    // L08: лимит именно summary-роутов; общий 16 МиБ не меняем.
+    // У итогов тело — только текст расшифровки, 64 КиБ хватает; общий лимит
+    // 16 МиБ ради них не поднимаем.
     if let Some(length) = media::header_value(request, "Content-Length") {
         if length
             .trim()
@@ -50,7 +51,7 @@ fn read_json(request: &mut tiny_http::Request) -> Result<Value, ApiError> {
         .map_err(|_| ApiError::new(400, "invalid_request", "Некорректный запрос итогов."))
 }
 
-/// Android: все `/api/summary*` — 501, никогда 404 (P09).
+/// Android: 501, никогда 404 — клиент отличает неподдерживаемую функцию от битого URL.
 pub(super) fn unsupported(request: tiny_http::Request) {
     json_response(
         request,

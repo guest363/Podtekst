@@ -181,7 +181,7 @@ export async function generateSummary(
         preset_id: presetId,
         detail: detail(),
         source_rev: summaryState.sourceRev,
-        // Downgrade заменяет новее-мажор только вместе с force (N-M01).
+        // Новее-мажор заменяется только вместе с force.
         force: opts.force === true || opts.allowDowngrade === true,
         allow_downgrade: opts.allowDowngrade === true,
         ...(preset.sensitive ? { confirm_sensitive: true } : {}),

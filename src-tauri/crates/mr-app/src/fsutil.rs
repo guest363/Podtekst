@@ -28,8 +28,8 @@ fn private_options() -> std::fs::OpenOptions {
     use std::os::unix::fs::OpenOptionsExt;
     let mut o = std::fs::OpenOptions::new();
     o.write(true).create_new(true);
-    // Права выставляются при создании: окно «файл уже виден, но ещё 0644»
-    // иначе существует на shared-машинах.
+    // Права задаются до появления файла: иначе на общей машине он успевает
+    // побыть доступным для чтения.
     o.mode(0o600);
     o
 }
@@ -43,8 +43,8 @@ fn private_options() -> std::fs::OpenOptions {
 
 #[cfg(windows)]
 fn apply_private_acl(path: &Path) -> bool {
-    // Фолбэк из §16: полный SetNamedSecurityInfoW не оправдан для двух файлов,
-    // но DACL применяется до записи и проверяется (M08).
+    // icacls дешевле полного SetNamedSecurityInfoW ради двух файлов; DACL
+    // ставится до записи, чтобы файл не открылся другим пользователям даже на миг.
     let user = std::env::var("USERNAME").unwrap_or_default();
     if user.is_empty() {
         return false;

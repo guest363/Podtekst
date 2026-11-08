@@ -226,6 +226,29 @@ fn fallback_task_text_strips_discourse_markers() {
 }
 
 #[test]
+fn naberu_is_not_a_commitment() {
+    let normalized = text::normalize("Я тебе наберу.");
+    assert_eq!(task_kind("Я тебе наберу.", &normalized, &[]), None);
+}
+
+#[test]
+fn closing_small_talk_is_not_a_task() {
+    let t = transcript(&[
+        (
+            "Анна",
+            "Всё тогда, всем хорошего дня! Да. Да. Борис, давай я тебе наберу.",
+        ),
+        ("Анна", "Борис, давай я тебе наберу."),
+    ]);
+    let found = candidates(&t, preset::get("meeting").unwrap());
+    assert!(
+        found.iter().all(|c| c.section_id != "tasks"),
+        "{:?}",
+        found.iter().map(|c| &c.item.text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn object_key_deduplicates_hints_tasks() {
     assert_eq!(
         task_object_key("Нужно доработать три подсказки."),

@@ -1,4 +1,4 @@
-use crate::text::normalize;
+use crate::text::{self, normalize};
 
 pub const DECISION_CUES: &[&str] = &[
     "решили",
@@ -254,12 +254,16 @@ pub fn decision_recap(text: &str) -> bool {
 
 pub fn task_cue(text: &str) -> bool {
     let normalized = normalize(text);
-    has_any(&normalized, TASK_CUES)
+    TASK_CUES
+        .iter()
+        .any(|marker| text::contains_phrase_normalized(&normalized, marker))
 }
 
 pub fn action_verb(text: &str) -> bool {
     let normalized = normalize(text);
-    has_any(&normalized, ACTION_VERBS)
+    normalized
+        .split_whitespace()
+        .any(|token| ACTION_VERBS.contains(&token))
 }
 
 pub fn question_line(text: &str) -> bool {
@@ -329,6 +333,15 @@ mod tests {
         assert!(question_line("Нужен ли отдельный стенд"));
         assert!(question_line("Стоит ли переносить встречу"));
         assert!(question_line("Вопрос по бюджету"));
+    }
+
+    #[test]
+    fn beru_does_not_match_naberu() {
+        assert!(!task_cue("Я тебе наберу."));
+        assert!(!task_cue("Я тебя наберу."));
+        assert!(task_cue("Беру на себя проверку."));
+        assert!(!action_verb("наберу"));
+        assert!(action_verb("позвонить"));
     }
 
     #[test]

@@ -99,7 +99,7 @@ impl Drop for Cleanup {
 }
 
 // Без env тест печатает причину и проходит; SUMMARY_REQUIRE_REAL=1
-// делает пропуск ошибкой (H14).
+// делает пропуск ошибкой.
 #[test]
 fn summary_real_smoke() {
     let runtime = std::env::var("MR_SUMMARY_RUNTIME").ok();

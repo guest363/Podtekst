@@ -217,6 +217,6 @@ export function summaryStageText(
     return 'Собираю фрагменты…'
   }
   if (phase === 'reduce') return 'Свожу итоги…'
-  if (phase === 'verify') return 'Проверяю ссылки…'
+  if (phase === 'verify') return 'Проверяю факты…'
   return 'Собираю итоги…'
 }
