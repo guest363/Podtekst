@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import type { SummaryDetail } from '../lib/api'
   import { isMobile } from '../lib/api'
   import { downloadModel } from '../lib/transcript.svelte.ts'
@@ -15,6 +15,9 @@
   let loading = $state(false)
   let saving = $state(false)
   let error = $state('')
+  let presetOpen = $state(false)
+  let presetTrigger = $state<HTMLButtonElement | null>(null)
+  let presetList = $state<HTMLDivElement | null>(null)
 
   const settings = $derived(summaryState.settings)
   const manualOnly = $derived(summaryState.capabilities?.classifier === 'manual_only')
@@ -22,6 +25,13 @@
   const modelPct = $derived(summaryModelPct())
   const autoSuggest = $derived(settings?.auto_suggest ?? true)
   const defaultPreset = $derived(settings?.default_preset ?? '')
+  const presetOptions = $derived([
+    { id: '', label: 'Авто — по типу разговора' },
+    ...summaryState.presets.map((p) => ({ id: p.id, label: p.label })),
+  ])
+  const selectedPresetLabel = $derived(
+    presetOptions.find((p) => p.id === defaultPreset)?.label ?? presetOptions[0].label,
+  )
   const detail = $derived(settings?.detail ?? 'normal')
   const modelSizeGb = $derived(
     ((model?.total_size_bytes || 2497281120) / 1073741824).toFixed(1).replace('.', ','),
@@ -73,6 +83,55 @@
     const ok = await downloadModel(model)
     if (ok) await reload()
   }
+
+  function openPresetList(): void {
+    if (saving) return
+    presetOpen = true
+    void tick().then(() => {
+      const current = presetList?.querySelector<HTMLElement>('[aria-selected="true"]')
+      const first = presetList?.querySelector<HTMLElement>('.speaker-select-item')
+      ;(current ?? first)?.focus()
+    })
+  }
+
+  function closePreset(returnFocus = false): void {
+    presetOpen = false
+    if (returnFocus) presetTrigger?.focus()
+  }
+
+  function choosePreset(id: string): void {
+    closePreset(true)
+    if (id === defaultPreset) return
+    void save({ default_preset: id || null })
+  }
+
+  function onPresetKeydown(e: KeyboardEvent): void {
+    if (e.key === 'Escape' && presetOpen) {
+      e.stopPropagation()
+      closePreset(true)
+      return
+    }
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    e.preventDefault()
+    if (!presetOpen) {
+      openPresetList()
+      return
+    }
+    const items = [...(presetList?.querySelectorAll<HTMLElement>('.speaker-select-item') ?? [])]
+    if (!items.length) return
+    const index = items.indexOf(document.activeElement as HTMLElement)
+    const next = e.key === 'ArrowDown'
+      ? items[(index + 1) % items.length]
+      : items[(index - 1 + items.length) % items.length]
+    next?.focus()
+  }
+
+  function onPresetFocusOut(e: FocusEvent): void {
+    const next = e.relatedTarget as Node | null
+    if (presetOpen && (!next || !(e.currentTarget as HTMLElement).contains(next))) {
+      presetOpen = false
+    }
+  }
 </script>
 
 <div class="settings-pane summary-settings" role="tabpanel" tabindex="0" aria-label="Итоги">
@@ -106,19 +165,61 @@
     {/if}
 
     <div class="summary-setting-row">
-      <label for="summary-default-preset">Шаблон по умолчанию</label>
-      <select
-        id="summary-default-preset"
-        class="summary-select"
-        value={defaultPreset}
-        disabled={saving}
-        onchange={(e) => void save({ default_preset: e.currentTarget.value || null })}
-      >
-        <option value="">Авто — по типу разговора</option>
-        {#each summaryState.presets as p (p.id)}
-          <option value={p.id}>{p.label}</option>
-        {/each}
-      </select>
+      <span id="summary-default-preset-label">Шаблон по умолчанию</span>
+      <div class="summary-preset-select" onfocusout={onPresetFocusOut}>
+        <button
+          bind:this={presetTrigger}
+          type="button"
+          class="summary-select"
+          aria-haspopup="listbox"
+          aria-expanded={presetOpen}
+          aria-labelledby="summary-default-preset-label"
+          disabled={saving}
+          onclick={() => (presetOpen ? closePreset() : openPresetList())}
+          onkeydown={onPresetKeydown}
+        >
+          <span class="summary-preset-value">{selectedPresetLabel}</span>
+          <span class="summary-preset-chevron {presetOpen ? 'open' : ''}" aria-hidden="true">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </span>
+        </button>
+        {#if presetOpen}
+          <button
+            type="button"
+            class="speaker-popover-backdrop"
+            aria-label="Закрыть список шаблонов"
+            onclick={() => closePreset(true)}
+          ></button>
+          <div
+            bind:this={presetList}
+            class="speaker-select-popover summary-preset-popover"
+            role="listbox"
+            tabindex="-1"
+            aria-labelledby="summary-default-preset-label"
+            onkeydown={onPresetKeydown}
+          >
+            {#each presetOptions as p (p.id)}
+              <button
+                type="button"
+                class="speaker-select-item"
+                role="option"
+                aria-selected={p.id === defaultPreset}
+                onclick={() => choosePreset(p.id)}
+              >
+                <span class="speaker-select-item-left">
+                  <span
+                    class="speaker-select-item-dot"
+                    style={`background: ${p.id === defaultPreset ? 'var(--accent-blue)' : '#94a3b8'}`}
+                  ></span>
+                  <span class="speaker-select-item-name">{p.label}</span>
+                </span>
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
     </div>
 
     <div class="summary-setting-block">
@@ -257,9 +358,18 @@
     font-weight: 600;
     color: var(--text-primary);
   }
-  .summary-select {
+  .summary-preset-select {
+    position: relative;
     min-width: 240px;
     max-width: 100%;
+  }
+  .summary-select {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
     border: 1px solid var(--border-card);
     border-radius: var(--radius-inner);
     background: #fff;
@@ -267,10 +377,43 @@
     padding: 7px 9px;
     font: inherit;
     font-size: 12.5px;
+    text-align: left;
+    cursor: pointer;
   }
   .summary-select:focus-visible {
     outline: 2px solid var(--accent-blue);
     outline-offset: 2px;
+  }
+  .summary-select:disabled {
+    cursor: default;
+    opacity: 0.65;
+  }
+  .summary-preset-value {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .summary-preset-chevron {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    color: var(--text-faint);
+    transition: transform 160ms var(--ease-spring);
+  }
+  .summary-preset-chevron.open {
+    transform: rotate(180deg);
+  }
+  .summary-preset-popover {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    max-height: 260px;
+    z-index: 70;
+    box-sizing: border-box;
   }
   .summary-model-card {
     display: flex;
@@ -339,6 +482,10 @@
     .summary-setting-row {
       flex-direction: column;
       align-items: stretch;
+    }
+    .summary-preset-select {
+      width: 100%;
+      min-width: 0;
     }
     .summary-select {
       min-width: 0;
