@@ -160,6 +160,16 @@ def prepare_data(base: Path, fake: bool) -> tuple[Path, Path | None]:
             ),
             encoding="utf-8",
         )
+    else:
+        # Реальному режиму нужна установленная модель: --real + MR_SUMMARY_MODEL.
+        source = os.environ.get("MR_SUMMARY_MODEL") or os.environ.get("PODTEKST_SUMMARY_MODEL")
+        if source and Path(source).is_file():
+            manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+            model = next(item for item in manifest["models"] if item.get("kind") == "summary")
+            file_info = model["files"][0]
+            target = data / "models" / model["id"] / file_info["filename"]
+            target.parent.mkdir(parents=True)
+            target.symlink_to(Path(source))
     return data, model_path
 
 
