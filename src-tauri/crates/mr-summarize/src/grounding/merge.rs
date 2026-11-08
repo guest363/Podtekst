@@ -82,35 +82,57 @@ fn jaccard(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
     }
 }
 
-pub(super) fn cap(sections: &mut [Vec<Scored>], detail: Detail) {
+pub(super) fn cap(sections: &mut [Vec<Scored>], specs: &[ParsedSection], detail: Detail) {
     let max = detail.max_items();
-    let total: usize = sections.iter().map(Vec::len).sum();
-    if total <= max {
-        return;
+    if let Some(brief) = specs.iter().position(|s| s.id == "brief") {
+        // Модель любит 10+ пунктов «Кратко»; оставляем только главное,
+        // чтобы шум не вытеснял задачи/решения.
+        sections[brief].truncate(4);
     }
     let mut selected: HashSet<(usize, usize)> = HashSet::new();
-    for (i, items) in sections.iter().enumerate() {
-        if !items.is_empty() && selected.len() < max {
-            selected.insert((i, 0));
+    for ids in [
+        &["tasks", "next_steps", "todo"][..],
+        &["decisions"][..],
+        &["questions"][..],
+        &["brief"][..],
+    ] {
+        for (section_index, spec) in specs.iter().enumerate() {
+            if !ids.contains(&spec.id) {
+                continue;
+            }
+            for item_index in 0..sections[section_index].len() {
+                if selected.len() >= max {
+                    break;
+                }
+                selected.insert((section_index, item_index));
+            }
+            if selected.len() >= max {
+                break;
+            }
         }
-    }
-    let mut rest: Vec<(usize, usize, f64)> = sections
-        .iter()
-        .enumerate()
-        .flat_map(|(i, items)| {
-            items
-                .iter()
-                .enumerate()
-                .filter(|(j, _)| *j > 0)
-                .map(move |(j, scored)| (i, j, scored.ev))
-        })
-        .collect();
-    rest.sort_by(|a, b| b.2.total_cmp(&a.2));
-    for (i, j, _) in rest {
         if selected.len() >= max {
             break;
         }
-        selected.insert((i, j));
+    }
+    if selected.len() < max {
+        let mut rest: Vec<(usize, usize, f64)> = sections
+            .iter()
+            .enumerate()
+            .flat_map(|(i, items)| {
+                items
+                    .iter()
+                    .enumerate()
+                    .map(move |(j, scored)| (i, j, scored.ev))
+            })
+            .filter(|(i, j, _)| !selected.contains(&(*i, *j)))
+            .collect();
+        rest.sort_by(|a, b| b.2.total_cmp(&a.2));
+        for (i, j, _) in rest {
+            if selected.len() >= max {
+                break;
+            }
+            selected.insert((i, j));
+        }
     }
     for (i, items) in sections.iter_mut().enumerate() {
         let mut index = 0;

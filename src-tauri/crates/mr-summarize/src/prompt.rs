@@ -74,6 +74,7 @@ pub fn build_with_nonce(
             user.push_str(&format!("## {second}\n- <пункт>\n"));
         }
     }
+    user.push_str("\nВ секции Кратко — 2–4 пункта, только главное; не пересказывай все реплики и не дублируй задачи/решения.\n");
     user.push_str("\nПиши только пункты «- <text>», без вложенных списков.\n");
     if preset.sections.iter().any(|s| s.role.is_task()) {
         user.push_str("В секциях задач: «- <что>; Кто: <...>; Срок: <...>».\n");
@@ -137,6 +138,7 @@ pub fn build_reduce_with_nonce(
         user.push('\n');
     }
     user.push_str("\nСведи пункты из фрагментов в один протокол. Не добавляй новые факты, имена, сроки, решения и задачи. Удали повторы. Верни только разделы шаблона и пункты «- <text>».\n");
+    user.push_str("В секции Кратко — 2–4 пункта, только главное; не пересказывай все реплики и не дублируй задачи/решения.\n");
     if preset.sections.iter().any(|s| s.role.is_task()) {
         user.push_str("В секциях задач: «- <что>; Кто: <...>; Срок: <...>».\n");
     }
@@ -360,6 +362,7 @@ mod tests {
         assert!(prompt.user.contains("Начни ответ с «## Кратко»"));
         assert!(prompt.user.contains("Не пропускай заголовки"));
         assert!(prompt.user.contains("Пример структуры"));
+        assert!(prompt.user.contains("В секции Кратко — 2–4 пункта"));
     }
 
     #[test]
@@ -392,6 +395,7 @@ mod tests {
         );
         assert!(prompt.user.contains("## Кратко"));
         assert!(prompt.user.contains("Сведи пункты"));
+        assert!(prompt.user.contains("В секции Кратко — 2–4 пункта"));
         assert!(prompt.system.contains("Не добавляй факты"));
         assert!(prompt
             .user

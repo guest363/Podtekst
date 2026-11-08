@@ -15,10 +15,14 @@
   parser раскладывает его сам, fallback добирает задачи/решения/вопросы.
   Repair вызывается только при нуле пунктов/invalid output. Это убирает
   дополнительный вызов модели (60–140 с в E2E).
-- **Prompt:** в `build` добавлены «Начни с `## <first>`, не пропускай заголовки»
-  и компактный one-shot пример структуры. Новый `build_repair` переписывает
-  плоский/пустой ответ в точный контракт секций (те же system-инварианты, DATA
-  в nonce) и используется только на invalid output.
+- **Prompt:** в `build`/`build_reduce` добавлены «Начни с `## <first>`, не
+  пропускай заголовки», компактный one-shot пример структуры и ограничение
+  «Кратко — 2–4 пункта, только главное; не дублируй задачи/решения». Новый
+  `build_repair` переписывает плоский/пустой ответ в точный контракт секций
+  (те же system-инварианты, DATA в nonce) и используется только на invalid output.
+- **Cap:** приоритет `tasks/next_steps/todo` → `decisions` → `questions` →
+  `brief` → остальные по evidence; brief принудительно обрезается до 4 пунктов
+  до глобального cap, чтобы 13 brief-пунктов не вытесняли задачи.
 - **Parser:** плоский список без заголовков раскладывается по cue —
   решения/задачи/вопросы/остальное → brief; `parser_recovered` фиксируется.
   Распознаются bare `Кратко:`, `Открытые вопросы:` и другие алиасы каталога.
@@ -39,6 +43,8 @@
 - `extract::tests::task_requires_action_verb_not_just_need`
 - `extract::tests::first_person_uses_speaker_unless_placeholder`
 - `grounding::tests::structured_fallback_fills_missing_tasks_without_duplicates`
+- `grounding::tests::tasks_and_decisions_survive_brief_flood_at_normal`
+- `grounding::tests::brief_is_truncated_to_four_without_warning`
 - `pipeline::tests::fake_flat_output_is_recovered_without_repair` (1 вызов, без repair)
 - `prompt::tests::prompt_starts_with_first_title_instruction`
 - `prompt::tests::repair_prompt_wraps_flat_output`
@@ -55,8 +61,8 @@
 | `cargo fmt --all -- --check` | pass |
 | `cargo clippy --workspace --all-targets --locked ... -D warnings` | pass |
 | `cargo clippy -p mr-app --features tauri-ui --all-targets --locked ... -D warnings` | pass |
-| `cargo test --workspace --locked ...` | pass: 342 passed, 2 ignored |
+| `cargo test --workspace --locked ...` | pass: 344 passed, 2 ignored |
 | Android `cargo check ... aarch64-linux-android --features tauri-ui --locked` | pass |
 | `git diff --check -- src-tauri` | pass |
 
-Коммит: `fix(summary): deterministic structured fallback` (этот коммит).
+Коммит: `fix(summary): prioritize tasks and cap brief` (этот коммит).

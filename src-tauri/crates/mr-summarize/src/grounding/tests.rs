@@ -170,6 +170,127 @@ fn structured_fallback_fills_missing_tasks_without_duplicates() {
 }
 
 #[test]
+fn tasks_and_decisions_survive_brief_flood_at_normal() {
+    let mut utterances = Vec::new();
+    let mut brief_lines = String::from("## Кратко\n");
+    let brief_words = [
+        "запуска",
+        "бюджета",
+        "отчета",
+        "документа",
+        "журнала",
+        "плана",
+        "срока",
+        "риска",
+        "команды",
+        "клиента",
+        "сервера",
+        "макета",
+        "релиза",
+    ];
+    for (i, word) in brief_words.iter().enumerate() {
+        let text = format!("Обсудили тему {word} и детали.");
+        brief_lines.push_str(&format!("- {text}\n"));
+        utterances.push(u(i as f64, "Секретарь", &text));
+    }
+    let decision = "Решили перенести запуск на следующую неделю.";
+    let tasks = [
+        "Борис доделает отчёт до среды.",
+        "Вера проверит журнал завтра.",
+        "Анна обновит документацию к пятнице.",
+        "Я подготовлю план.",
+    ];
+    let question = "Что осталось по бюджету?";
+    let mut output = brief_lines;
+    output.push_str("## Решения\n");
+    output.push_str(&format!("- {decision}\n"));
+    output.push_str("## Задачи\n");
+    for task in tasks {
+        output.push_str(&format!("- {task}\n"));
+    }
+    output.push_str("## Открытые вопросы\n");
+    output.push_str(&format!("- {question}\n"));
+    let mut index = 20.0;
+    for (speaker, text) in [
+        ("Анна", decision),
+        ("Борис", tasks[0]),
+        ("Вера", tasks[1]),
+        ("Анна", tasks[2]),
+        ("Борис", tasks[3]),
+        ("Анна", question),
+    ] {
+        utterances.push(u(index, speaker, text));
+        index += 1.0;
+    }
+    let transcript = Transcript { utterances };
+    let preset = crate::preset::get("meeting").unwrap();
+    let parsed = parse::parse(&output, preset).unwrap();
+    let summary = ground(&parsed, &transcript, preset, Detail::Normal);
+
+    let tasks_section = summary
+        .sections
+        .iter()
+        .find(|s| s.id == "tasks")
+        .expect("tasks");
+    assert_eq!(tasks_section.items.len(), 4, "{:?}", tasks_section.items);
+    let decisions = summary
+        .sections
+        .iter()
+        .find(|s| s.id == "decisions")
+        .expect("decisions");
+    assert_eq!(decisions.items.len(), 1);
+    let questions = summary
+        .sections
+        .iter()
+        .find(|s| s.id == "questions")
+        .expect("questions");
+    assert_eq!(questions.items.len(), 1);
+    let brief = summary.sections.iter().find(|s| s.id == "brief").unwrap();
+    assert!(brief.items.len() <= 4);
+    assert_eq!(
+        summary
+            .sections
+            .iter()
+            .map(|s| s.items.len())
+            .sum::<usize>(),
+        8
+    );
+}
+
+#[test]
+fn brief_is_truncated_to_four_without_warning() {
+    let mut output = String::from("## Кратко\n");
+    let mut utterances = Vec::new();
+    let brief_words = [
+        "запуска",
+        "бюджета",
+        "отчета",
+        "документа",
+        "журнала",
+        "плана",
+        "срока",
+        "риска",
+        "команды",
+        "клиента",
+        "сервера",
+        "макета",
+        "релиза",
+    ];
+    for (i, word) in brief_words.iter().enumerate() {
+        let text = format!("Обсудили тему {word} и детали.");
+        output.push_str(&format!("- {text}\n"));
+        utterances.push(u(i as f64, "Секретарь", &text));
+    }
+    let transcript = Transcript { utterances };
+    let preset = crate::preset::get("meeting").unwrap();
+    let parsed = parse::parse(&output, preset).unwrap();
+    let summary = ground(&parsed, &transcript, preset, Detail::Normal);
+    let brief = summary.sections.iter().find(|s| s.id == "brief").unwrap();
+    assert_eq!(brief.items.len(), 4);
+    assert!(!summary.warnings.contains(&Warning::OutputCapped));
+}
+
+#[test]
 fn decision_cue_detection_uses_full_source() {
     let with_cue = Transcript {
         utterances: vec![u(0.0, "Анна", "Решили перенести запуск.")],

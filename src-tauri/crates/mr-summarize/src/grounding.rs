@@ -142,7 +142,7 @@ pub fn ground(
         }
     }
 
-    merge::cap(&mut sections, detail);
+    merge::cap(&mut sections, &parsed.sections, detail);
     if dropped > 0 {
         push_once(&mut warnings, Warning::ItemsDroppedUnsupported);
     }
