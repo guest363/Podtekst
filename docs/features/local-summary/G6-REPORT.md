@@ -91,4 +91,5 @@ SHA-256 архивов (перепроверены локально):
 
 ## Коммиты
 
-- G6: `feat(summary): package llama.cpp runtime and smoke release bundles`.
+- G6: `e61e291` — `feat(summary): package llama.cpp runtime and smoke release bundles`.
+- Отчёт: этот файл.
