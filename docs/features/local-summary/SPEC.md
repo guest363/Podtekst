@@ -1,4 +1,10 @@
 # Podtekst: локальные итоги встреч — финальная спецификация v2
+
+> **Implementation note (v1):** фактические замеры и скорректированные релизные лимиты
+> описаны в `IMPLEMENTATION-NOTES.md`. Числа `120 с`/`4-core` в этой спецификации —
+> reference-цели, а не заявление о достигнутом бюджете: на загруженном хосте 10-мин
+> кейс занял ~596 с, релизный `ci-loaded` профиль разрешает до 600 с; полный
+> 10/30/60/120-мин матрикс остаётся ручным gate (`REAL-MATRIX.md`).
 ## 0. Document control
 - Версия `2.0`, дата `2026-11-07`, статус `final for implementation`. Владелец: product/architecture.
   Область: desktop v1 (Linux x86_64, macOS arm64, Windows x86_64); Android и headless `--web` — явная деградация. Источники: `research/*.md`, `verification/quality-rubric.md`, `verification/main-agent-spec-review.md`, `spec/critic-review.md`, synthetic fixtures. Репозиторий `/home/moiseevov/Code/audio-record` — read-only reference.
