@@ -1,7 +1,7 @@
 # Independent verification — Podtekst local summary v1 (final, fixed HEAD)
 
 - Date: 2026-11-08 (Europe/Moscow)
-- Worktree: `/home/moiseevov/.local/share/opencode/worktree/d473c4/local-summary`
+- Worktree: `<worktree>`
 - Code commit verified: **`21184b0`** (`fix(ci): enforce realistic real-model budgets`), which includes `c5e47f4`, `4f546cd`, `21184b0`.
 - Repository HEAD at the end of the pass: **`79554bf`**. The delta `21184b0..79554bf` is docs-only (`git diff --stat`: `IMPLEMENTATION-NOTES.md`, `SPEC.md`; no code/test/build files). Code state is therefore identical to `21184b0`.
 - Constraint: **no product code was modified** by this pass. `git status --porcelain` is clean. All data below is synthetic (fake names, no real recordings/topics). `.mr-stamp` was restored after `yarn build` exactly as CI does.
@@ -28,10 +28,10 @@
 | CPU / RAM | 20 logical cores, 31 GiB RAM, no GPU |
 | Load during real runs | load average **14–27** (peaked at 26.9; another agent ran a second `llama-server` concurrently) |
 | OS | Linux x86_64 |
-| Runtime | llama.cpp `b12182`, `0.9.0-dev`, commit `fd27b2034`, `/tmp/opencode/podtekst-summary/runtime/linux-min/` |
+| Runtime | llama.cpp `b12182`, `0.9.0-dev`, commit `fd27b2034`, `<tmp>/runtime/linux-min/` |
 | Model | `Qwen3-4B-Instruct-2507-Q4_K_M.gguf`, **2,497,281,120 B**, SHA-256 `3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597` (verified) |
 | App binary | `src-tauri/target/release/podtekst`, built at `21184b0`, 36,726,600 B, 08:17 |
-| Synthetic data | temp E2E dirs under `/tmp/opencode/podtekst-summary-e2e-*`; no real data |
+| Synthetic data | temp E2E dirs under `<tmp>-e2e-*`; no real data |
 
 ## Static / unit / build gates
 
@@ -70,8 +70,8 @@ Used a copy of `scripts/summary_absolute_path_e2e.py` with the result timeout ra
 Command:
 
 ```bash
-PODTEKST_SUMMARY_RUNTIME=/tmp/opencode/podtekst-summary/runtime/linux-min \
-MR_SUMMARY_MODEL=/tmp/opencode/podtekst-summary/models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf \
+PODTEKST_SUMMARY_RUNTIME=<tmp>/runtime/linux-min \
+MR_SUMMARY_MODEL=<tmp>/models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf \
 python3 …/summary_absolute_path_e2e_300.py --real --binary src-tauri/target/release/podtekst --keep
 ```
 
@@ -228,7 +228,7 @@ If the project's rule is “no Medium may remain unverified”, the sensitive-do
 - `verification/head-21184b0/f-yarn-check.log`, `f-yarn-build.log` — frontend.
 - `verification/head-21184b0/f-e2e-real.log`, `f-e2e-real.exit` — real absolute-path/UI run (meeting passed; legal timeout).
 - `verification/head-21184b0/f-e2e-fake.log` — fake UI run (first four flows passed; sensitive panel timeout).
-- `/tmp/opencode/podtekst-summary-e2e-s0xuat_z/data/recordings/meeting.summary.json` — real artifact/timings (kept temp dir).
-- `/tmp/opencode/podtekst-summary-e2e-s0xuat_z/data/recordings/newer.summary.json` + `.newer.*` backup — real downgrade.
-- G6: `docs/features/local-summary/G6-REPORT.md`; local `src-tauri/target/release/bundle/appimage/`; `/tmp/opencode/podtekst-summary/g6/`.
-- Prior pass: `/tmp/opencode/podtekst-summary/verification/test-report.md`; OCR re-review: `ocr-review-final.md`.
+- `<tmp>-e2e-s0xuat_z/data/recordings/meeting.summary.json` — real artifact/timings (kept temp dir).
+- `<tmp>-e2e-s0xuat_z/data/recordings/newer.summary.json` + `.newer.*` backup — real downgrade.
+- G6: `docs/features/local-summary/G6-REPORT.md`; local `src-tauri/target/release/bundle/appimage/`; `<tmp>/g6/`.
+- Prior pass: `<tmp>/verification/test-report.md`; OCR re-review: `ocr-review-final.md`.

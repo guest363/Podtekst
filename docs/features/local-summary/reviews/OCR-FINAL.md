@@ -1,9 +1,9 @@
 # OCR review — final verification 2 (`feat/local-summary`)
 
-- Workspace: `/home/moiseevov/.local/share/opencode/worktree/d473c4/local-summary`
+- Workspace: `<worktree>`
 - Branch: `feat/local-summary`, HEAD `21184b0`
 - Fix commits: `4f546cd`, `c5e47f4`, `21184b0` (previous fixes below `2279400`)
-- Previous review: `/tmp/opencode/podtekst-summary/verification/ocr-review-final.md`
+- Previous review: `<tmp>/verification/ocr-review-final.md`
 - Review date: 2026-11-08
 - Tool: `open-code-review v1.13.6`, delegate preview (`--from 2279400 --to feat/local-summary`, JSON) plus full diff/file inspection and targeted execution.
 - Constraint: no repository files were modified. `yarn build` briefly removed the generated `.mr-stamp`; it was restored with `git checkout -- ui/web/static/.mr-stamp` and the tree is clean.
