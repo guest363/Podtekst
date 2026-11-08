@@ -39,8 +39,8 @@ fn map_backend(error: BackendError) -> super::SummaryJobError {
 
 fn estimate_single_pass(chars: usize, max_tokens: u32) -> bool {
     let prompt_tokens = chars as f64 / 2.5 + 600.0;
-    chars <= 12_000
-        && prompt_tokens <= 6_000.0
+    chars <= 30_000
+        && prompt_tokens <= 13_000.0
         && prompt_tokens as u32 + max_tokens + 256 <= CONTEXT_TOKENS
 }
 
@@ -346,9 +346,9 @@ pub fn run(
             quant: "Q4_K_M".to_string(),
             context: CONTEXT_TOKENS,
             threads: info.threads,
-            temperature: 0.0,
+            temperature: 0.2,
             top_p: 0.9,
-            repeat_penalty: 1.1,
+            repeat_penalty: 1.05,
             max_tokens,
             seed: 42,
             prompt_version: preset.prompt_version.to_string(),
@@ -608,9 +608,9 @@ fn request(
         system: prompt.system.clone(),
         prompt: prompt.user.clone(),
         max_tokens,
-        temperature: 0.0,
+        temperature: 0.2,
         top_p: 0.9,
-        repeat_penalty: 1.1,
+        repeat_penalty: 1.05,
         seed: 42,
         n_ctx: CONTEXT_TOKENS,
         threads: info.threads,
@@ -644,6 +644,11 @@ mod tests {
     #[test]
     fn ten_minute_source_stays_single_pass() {
         assert!(estimate_single_pass(9_500, 768));
+    }
+
+    #[test]
+    fn thirty_minute_source_stays_single_pass() {
+        assert!(estimate_single_pass(25_000, 768));
     }
 
     #[test]
@@ -715,7 +720,7 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        let utterances: Vec<serde_json::Value> = (0..200)
+        let utterances: Vec<serde_json::Value> = (0..700)
             .map(|i| {
                 serde_json::json!({
                     "start": i as f64,
@@ -890,7 +895,7 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        let utterances: Vec<serde_json::Value> = (0..200)
+        let utterances: Vec<serde_json::Value> = (0..700)
             .map(|i| {
                 serde_json::json!({
                     "start": i as f64,

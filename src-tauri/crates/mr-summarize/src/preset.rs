@@ -61,6 +61,7 @@ pub struct Preset {
     pub caution_ru: &'static str,
     pub caution_en: &'static str,
     pub role: &'static str,
+    pub domain: &'static str,
     pub sensitive: bool,
     pub sections: &'static [SectionSpec],
     pub speaker_primary: &'static [&'static str],
@@ -241,11 +242,12 @@ pub static PRESETS: [Preset; 7] = [
         caution_ru: "Проверьте имена, сроки и формулировки задач.",
         caution_en: "Check names, deadlines, and task wording against the linked utterances.",
         role: "Ты — составитель протокола встречи.",
+        domain: "Сгруппируй обсуждение по темам, выдели решения, задачи и открытые вопросы; не пересказывай реплики подряд.",
         sensitive: false,
         sections: MEETING_SECTIONS,
         speaker_primary: &[],
         speaker_secondary: &[],
-        prompt_version: "meeting-v2",
+        prompt_version: "meeting-v4",
     },
     Preset {
         id: "scrum",
@@ -256,11 +258,12 @@ pub static PRESETS: [Preset; 7] = [
         caution_ru: "Сверьте статусы и блокеры.",
         caution_en: "Verify statuses and blockers against the source utterances.",
         role: "Ты — составитель протокола стендапа.",
+        domain: "Сгруппируй прогресс по участникам и задачам, отдели закрытые задачи от текущих, особое внимание удели блокерам и зависимостям.",
         sensitive: false,
         sections: SCRUM_SECTIONS,
         speaker_primary: &[],
         speaker_secondary: &[],
-        prompt_version: "scrum-v3",
+        prompt_version: "scrum-v4",
     },
     Preset {
         id: "legal",
@@ -271,11 +274,12 @@ pub static PRESETS: [Preset; 7] = [
         caution_ru: "Это черновик, не юридическая консультация. Проверьте нормы, номера и формулировки.",
         caution_en: "This is a draft, not legal advice. Verify norms, numbers, and wording against the source utterances.",
         role: "Ты — составитель протокола юридического заседания или консультации.",
+        domain: "Фиксируй процессуальные позиции сторон, ходатайства, ссылки на статьи и акты, точные формулировки решений; слова судьи и юриста приоритетнее.",
         sensitive: true,
         sections: LEGAL_SECTIONS,
         speaker_primary: &["судья", "юрист", "judge", "lawyer"],
         speaker_secondary: &[],
-        prompt_version: "legal-v3",
+        prompt_version: "legal-v4",
     },
     Preset {
         id: "lecture",
@@ -286,11 +290,12 @@ pub static PRESETS: [Preset; 7] = [
         caution_ru: "Определения и примеры приведены по словам лектора.",
         caution_en: "Definitions and examples follow the lecturer's words.",
         role: "Ты — составитель конспекта лекции.",
+        domain: "Основной источник — лектор. Выдели главную тему, определения терминов и структуру материала; собери учебный конспект.",
         sensitive: false,
         sections: LECTURE_SECTIONS,
         speaker_primary: &["лектор", "преподаватель", "lecturer", "teacher"],
         speaker_secondary: &["студент", "student"],
-        prompt_version: "lecture-v3",
+        prompt_version: "lecture-v4",
     },
     Preset {
         id: "psychology",
@@ -301,11 +306,12 @@ pub static PRESETS: [Preset; 7] = [
         caution_ru: "Это заметки о разговоре, не медицинская консультация и не диагноз. Проверьте формулировки.",
         caution_en: "These are conversation notes, not medical advice or a diagnosis. Check the wording.",
         role: "Ты — составитель заметок о психологической сессии.",
+        domain: "Фокус на состоянии, запросах и ключевых словах клиента, а также интервенциях и домашних заданиях терапевта.",
         sensitive: true,
         sections: PSYCHOLOGY_SECTIONS,
         speaker_primary: &["клиент", "client"],
         speaker_secondary: &["терапевт", "психолог", "therapist", "psychologist"],
-        prompt_version: "psychology-v3",
+        prompt_version: "psychology-v4",
     },
     Preset {
         id: "personal",
@@ -316,11 +322,12 @@ pub static PRESETS: [Preset; 7] = [
         caution_ru: "Личные заметки. Проверьте, что смысл не искажён.",
         caution_en: "Personal notes. Check that the meaning is not distorted.",
         role: "Ты — составитель личных заметок.",
+        domain: "Сохрани ход мысли и личные выводы; это заметка, а не протокол встречи.",
         sensitive: false,
         sections: PERSONAL_SECTIONS,
         speaker_primary: &[],
         speaker_secondary: &[],
-        prompt_version: "personal-v3",
+        prompt_version: "personal-v4",
     },
     Preset {
         id: "universal",
@@ -331,11 +338,12 @@ pub static PRESETS: [Preset; 7] = [
         caution_ru: "Проверьте итоги.",
         caution_en: "Check the summary against the linked utterances.",
         role: "Ты — составитель протокола встречи.",
+        domain: "Сгруппируй материал по смыслу, выдели главное, решения и задачи.",
         sensitive: false,
         sections: UNIVERSAL_SECTIONS,
         speaker_primary: &[],
         speaker_secondary: &[],
-        prompt_version: "universal-v2",
+        prompt_version: "universal-v4",
     },
 ];
 
@@ -458,9 +466,9 @@ mod tests {
             assert!(p.prompt_version.starts_with(&format!("{}-v", p.id)));
             assert!(get(p.id).is_some());
         }
-        assert_eq!(get("meeting").unwrap().prompt_version, "meeting-v2");
-        assert_eq!(get("universal").unwrap().prompt_version, "universal-v2");
-        assert_eq!(get("legal").unwrap().prompt_version, "legal-v3");
+        assert_eq!(get("meeting").unwrap().prompt_version, "meeting-v4");
+        assert_eq!(get("universal").unwrap().prompt_version, "universal-v4");
+        assert_eq!(get("legal").unwrap().prompt_version, "legal-v4");
         assert!(require("other").is_err());
     }
 

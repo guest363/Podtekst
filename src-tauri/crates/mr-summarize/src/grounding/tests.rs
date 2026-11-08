@@ -114,7 +114,7 @@ fn adjacent_unrelated_deadline_is_not_attached() {
 }
 
 #[test]
-fn structured_fallback_fills_missing_tasks_without_duplicates() {
+fn model_output_is_not_diluted_with_fallback() {
     let transcript = Transcript {
         utterances: vec![
             u(0.0, "Анна", "Решили перенести запуск на следующую неделю."),
@@ -135,38 +135,48 @@ fn structured_fallback_fills_missing_tasks_without_duplicates() {
         .iter()
         .find(|s| s.id == "tasks")
         .expect("tasks потеряны");
-    assert_eq!(tasks.items.len(), 4, "{:?}", tasks.items);
-    let assignees: Vec<_> = tasks
-        .items
-        .iter()
-        .map(|i| i.task.as_ref().unwrap().assignee.as_deref())
-        .collect();
-    assert_eq!(
-        assignees,
-        vec![Some("Борис"), Some("Вера"), Some("Анна"), Some("Борис")]
+    assert_eq!(tasks.items.len(), 1, "{:?}", tasks.items);
+    let task = tasks.items[0].task.as_ref().unwrap();
+    assert_eq!(task.assignee.as_deref(), Some("Борис"));
+    assert_eq!(task.deadline.as_deref(), Some("до среды"));
+    assert!(
+        summary.sections.iter().all(|s| s.id != "decisions"),
+        "fallback подмешал решение: {:?}",
+        summary.sections
     );
-    let deadlines: Vec<_> = tasks
-        .items
-        .iter()
-        .map(|i| i.task.as_ref().unwrap().deadline.as_deref())
-        .collect();
-    assert_eq!(
-        deadlines,
-        vec![Some("до среды"), Some("завтра"), Some("к пятнице"), None]
+    assert!(
+        summary.sections.iter().all(|s| s.id != "questions"),
+        "fallback подмешал вопрос: {:?}",
+        summary.sections
     );
-    let mut texts: Vec<&str> = tasks.items.iter().map(|i| i.text.as_str()).collect();
-    texts.sort_unstable();
-    texts.dedup();
-    assert_eq!(texts.len(), tasks.items.len(), "дубли задач: {texts:?}");
-    assert!(summary
-        .sections
-        .iter()
-        .any(|s| s.id == "decisions" && s.items[0].text == transcript.utterances[0].text));
-    assert!(summary
-        .sections
-        .iter()
-        .any(|s| s.id == "questions" && s.items[0].text == transcript.utterances[5].text));
+    assert!(!summary.warnings.contains(&Warning::FallbackExtracted));
+}
+
+#[test]
+fn fallback_runs_only_when_model_output_is_empty() {
+    let transcript = Transcript {
+        utterances: vec![
+            u(0.0, "Анна", "Решили перенести запуск на следующую неделю."),
+            u(1.0, "Борис", "Борис доделает отчёт до среды."),
+            u(2.0, "Анна", "Что осталось по бюджету?"),
+        ],
+    };
+    let preset = crate::preset::get("meeting").unwrap();
+    let parsed = parse::empty(preset);
+    let summary = ground(&parsed, &transcript, preset, Detail::Long, Language::Ru);
     assert!(summary.warnings.contains(&Warning::FallbackExtracted));
+    assert!(summary
+        .sections
+        .iter()
+        .any(|s| s.id == "decisions" && !s.items.is_empty()));
+    assert!(summary
+        .sections
+        .iter()
+        .any(|s| s.id == "tasks" && !s.items.is_empty()));
+    assert!(summary
+        .sections
+        .iter()
+        .any(|s| s.id == "questions" && !s.items.is_empty()));
 }
 
 #[test]
@@ -291,138 +301,34 @@ fn brief_is_truncated_to_four_without_warning() {
 }
 
 #[test]
-fn synthetic_meeting_fallback_has_no_false_tasks() {
+fn model_text_is_not_replaced_by_fallback() {
     let transcript = Transcript {
         utterances: vec![
             u(0.0, "Анна", "Коллеги, начинаем."),
             u(1.0, "Борис", "Я считаю, что можно встроить отчёт в план."),
-            u(2.0, "Анна", "Цель встречи — согласовать запуск."),
-            u(3.0, "Анна", "Решили перенести запуск на следующую неделю."),
-            u(
-                4.0,
-                "Анна",
-                "Тогда договорились. Итоги: запуск, подсказки, журнал.",
-            ),
-            u(5.0, "Борис", "Борис обновит экран до вторника."),
-            u(6.0, "Вера", "Нужно доработать три подсказки."),
-            u(
-                7.0,
-                "Вера",
-                "А я обновлю подсказки до четверга. Срок — четверг…",
-            ),
-            u(
-                8.0,
-                "Анна",
-                "Проверку на телефоне беру на себя до пятницы. Сделаю вместе с публикацией.",
-            ),
-            u(
-                9.0,
-                "Спикер 1",
-                "После публикации нужно проверить журнал ошибок. Это задача без срока",
-            ),
-            u(
-                10.0,
-                "Борис",
-                "Убедиться, что если модель не скачана, пользователь видит кнопку — Кто: Борис",
-            ),
-            u(
-                11.0,
-                "Анна",
-                "Ещё вопрос: нужен ли новый сервер? Пока не решили.",
-            ),
-            u(12.0, "Анна", "Обсудили запуск и сроки."),
+            u(2.0, "Анна", "Решили перенести запуск на следующую неделю."),
+            u(3.0, "Борис", "Борис обновит экран до вторника."),
+            u(4.0, "Анна", "Что осталось по бюджету?"),
         ],
     };
     let output = "## Кратко\n- Обсудили запуск и сроки.\n";
     let preset = crate::preset::get("meeting").unwrap();
     let parsed = parse::parse(output, preset).unwrap();
     let summary = ground(&parsed, &transcript, preset, Detail::Normal, Language::Ru);
-
-    let tasks = summary
-        .sections
-        .iter()
-        .find(|s| s.id == "tasks")
-        .expect("tasks");
-    assert_eq!(tasks.items.len(), 4, "{:?}", tasks.items);
-    let meta: Vec<_> = tasks
-        .items
-        .iter()
-        .map(|i| {
-            let task = i.task.as_ref().unwrap();
-            (
-                i.text.as_str(),
-                task.assignee.as_deref(),
-                task.deadline.as_deref(),
-            )
-        })
-        .collect();
-    assert_eq!(
-        meta,
-        vec![
-            (
-                "Борис обновит экран до вторника.",
-                Some("Борис"),
-                Some("до вторника")
-            ),
-            (
-                "Обновить подсказки до четверга.",
-                Some("Вера"),
-                Some("до четверга")
-            ),
-            (
-                "Проверить на телефоне до пятницы.",
-                Some("Анна"),
-                Some("до пятницы")
-            ),
-            (
-                "После публикации нужно проверить журнал ошибок.",
-                None,
-                None
-            ),
-        ]
-    );
-    assert_eq!(
-        tasks
-            .items
-            .iter()
-            .filter(|i| i.text.to_lowercase().contains("подсказ"))
-            .count(),
-        1,
-        "дубли подсказок: {:?}",
-        tasks.items.iter().map(|i| &i.text).collect::<Vec<_>>()
-    );
-    for task in &tasks.items {
-        let text = task.text.to_lowercase();
-        assert!(!text.contains("коллеги"), "{text}");
-        assert!(!text.contains("я считаю"), "{text}");
-        assert!(!text.contains("цель"), "{text}");
-        assert!(!text.contains("убедиться"), "{text}");
-        assert!(!text.contains("пользователь"), "{text}");
-    }
-    let decisions = summary
-        .sections
-        .iter()
-        .find(|s| s.id == "decisions")
-        .expect("decisions");
-    assert_eq!(decisions.items.len(), 1);
-    assert!(!decisions.items[0].text.contains("вопрос"));
-    assert!(!decisions.items[0].text.to_lowercase().contains("итоги"));
-    assert!(summary
-        .sections
-        .iter()
-        .any(|s| s.id == "questions" && !s.items.is_empty()));
+    assert!(summary.sections.iter().all(|s| s.id != "tasks"));
+    assert!(summary.sections.iter().all(|s| s.id != "decisions"));
+    assert!(summary.sections.iter().all(|s| s.id != "questions"));
     let brief = summary
         .sections
         .iter()
         .find(|s| s.id == "brief")
         .expect("brief");
     assert_eq!(brief.items.len(), 1, "{:?}", brief.items);
-    assert!(summary.warnings.contains(&Warning::FallbackExtracted));
-    assert!(!summary.warnings.contains(&Warning::BriefDerived));
+    assert!(!summary.warnings.contains(&Warning::FallbackExtracted));
 }
 
 #[test]
-fn explicit_phone_commitment_replaces_need_task() {
+fn model_task_is_kept_without_fallback_replacement() {
     let transcript = Transcript {
         utterances: vec![
             u(0.0, "Анна", "Обсудили запуск и сроки."),
@@ -441,10 +347,8 @@ fn explicit_phone_commitment_replaces_need_task() {
         .find(|s| s.id == "tasks")
         .expect("tasks");
     assert_eq!(tasks.items.len(), 1, "{:?}", tasks.items);
-    assert_eq!(tasks.items[0].text, "Анна позвонит клиенту к пятнице.");
-    let task = tasks.items[0].task.as_ref().unwrap();
-    assert_eq!(task.assignee.as_deref(), Some("Анна"));
-    assert_eq!(task.deadline.as_deref(), Some("к пятнице"));
+    assert_eq!(tasks.items[0].text, "Вере нужно позвонить клиенту.");
+    assert!(!summary.warnings.contains(&Warning::FallbackExtracted));
 }
 
 #[test]
@@ -460,16 +364,16 @@ fn decision_cue_detection_uses_full_source() {
 }
 
 #[test]
-fn unsupported_items_are_dropped() {
+fn unsupported_items_are_kept_with_warning() {
     let summary = run(
         "meeting",
         "## Кратко\n- Подготовить отчёт к пятнице.\n- Обсудили запуск.\n",
         vec![u(0.0, "Анна", "Обсудили запуск.")],
     );
-    assert_eq!(summary.items_dropped, 1);
-    assert!(summary.warnings.contains(&Warning::ItemsDroppedUnsupported));
+    assert_eq!(summary.items_dropped, 0);
+    assert!(summary.warnings.contains(&Warning::FactUnverified));
     let items: Vec<_> = summary.sections.iter().flat_map(|s| &s.items).collect();
-    assert_eq!(items.len(), 1);
+    assert_eq!(items.len(), 2);
 }
 
 #[test]
@@ -533,7 +437,7 @@ fn quote_markers_are_stripped_without_refs() {
 }
 
 #[test]
-fn closing_small_talk_task_is_dropped() {
+fn closing_small_talk_moves_to_brief() {
     let summary = run(
         "meeting",
         "## Задачи\n- Всё тогда, всем хорошего дня! Да. Да. Борис, давай я тебе наберу.\n",
@@ -548,7 +452,13 @@ fn closing_small_talk_task_is_dropped() {
         "{:?}",
         summary.sections
     );
-    assert!(summary.items_dropped > 0);
+    assert_eq!(summary.items_dropped, 0);
+    let brief = summary
+        .sections
+        .iter()
+        .find(|s| s.id == "brief")
+        .expect("текст не должен потеряться");
+    assert!(brief.items[0].text.contains("хорошего дня"));
 }
 
 #[test]
@@ -587,35 +497,36 @@ fn agreement_is_kept_without_soft_claim_filter() {
 }
 
 #[test]
-fn hard_fact_missing_from_source_drops_item() {
+fn unsupported_number_is_kept_with_warning() {
     let summary = run(
         "meeting",
         "## Кратко\n- Подготовить отчёт к 14.11.\n",
         vec![u(0.0, "Анна", "Надо подготовить отчёт.")],
     );
-    assert_eq!(summary.items_dropped, 1);
-    assert!(summary.warnings.contains(&Warning::ItemsDroppedUnsupported));
-    let tasks = summary
+    assert_eq!(summary.items_dropped, 0);
+    assert!(summary.warnings.contains(&Warning::FactUnverified));
+    let brief = summary
         .sections
         .iter()
-        .find(|s| s.id == "tasks")
-        .expect("fallback task из источника");
-    assert_eq!(tasks.items[0].text, "Надо подготовить отчёт.");
-    assert!(!tasks.items[0].text.contains("14.11"));
+        .find(|s| s.id == "brief")
+        .expect("brief");
+    assert_eq!(brief.items[0].text, "Подготовить отчёт к 14.11.");
     assert!(
-        summary.sections.iter().all(|s| s.id != "brief"),
-        "fallback-задача выдана за «Кратко»"
+        summary.sections.iter().all(|s| s.id != "tasks"),
+        "fallback не должен подмешивать задачу: {:?}",
+        summary.sections
     );
 }
 
 #[test]
-fn wrong_year_is_not_supported_by_prefix() {
+fn wrong_year_is_kept_with_warning() {
     let summary = run(
         "meeting",
         "## Кратко\n- Подготовить отчёт к 2025.\n",
         vec![u(0.0, "Анна", "Надо подготовить отчёт в 2024 году.")],
     );
-    assert_eq!(summary.items_dropped, 1, "{summary:?}");
+    assert_eq!(summary.items_dropped, 0, "{summary:?}");
+    assert!(summary.warnings.contains(&Warning::FactUnverified));
 }
 
 #[test]
@@ -658,16 +569,15 @@ fn sentence_start_infinitive_is_not_a_hard_fact() {
 }
 
 #[test]
-fn brief_is_derived_when_empty() {
+fn brief_is_not_derived_from_tasks() {
     let summary = run(
         "meeting",
         "## Задачи\n- Подготовить отчёт; Кто: Анна; Срок: срок не назван\n",
         vec![u(0.0, "Анна", "Надо подготовить отчёт.")],
     );
-    let brief = summary.sections.iter().find(|s| s.id == "brief").unwrap();
-    assert!(!brief.items.is_empty());
-    assert!(brief.items.iter().all(|i| i.task.is_none()));
-    assert!(summary.warnings.contains(&Warning::BriefDerived));
+    assert!(summary.sections.iter().all(|s| s.id != "brief"));
+    assert!(summary.sections.iter().any(|s| s.id == "tasks"));
+    assert!(!summary.warnings.contains(&Warning::BriefDerived));
 }
 
 #[test]
@@ -697,15 +607,15 @@ fn assignee_from_another_utterance_is_dropped() {
 }
 
 #[test]
-fn invented_mid_sentence_name_is_dropped() {
+fn invented_mid_sentence_name_is_flagged() {
     let summary = run(
         "meeting",
         "## Кратко\n- Подготовит отчёт Анна.\n",
         vec![u(0.0, "Борис", "Подготовит отчёт.")],
     );
-    assert_eq!(summary.items_dropped, 1, "{summary:?}");
-    assert!(summary.warnings.contains(&Warning::ItemsDroppedUnsupported));
-    assert!(summary.sections.is_empty());
+    assert_eq!(summary.items_dropped, 0, "{summary:?}");
+    assert!(summary.warnings.contains(&Warning::FactUnverified));
+    assert!(!summary.sections.is_empty());
 }
 
 #[test]

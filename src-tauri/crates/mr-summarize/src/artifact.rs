@@ -78,6 +78,7 @@ pub enum Warning {
     Truncated,
     CoverageLow,
     ItemsDroppedUnsupported,
+    FactUnverified,
     SoftClaimDropped,
     DeadlineNotStated,
     DeadlineRecovered,

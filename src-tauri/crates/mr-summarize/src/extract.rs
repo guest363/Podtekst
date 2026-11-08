@@ -235,9 +235,9 @@ fn known_name(token: &str, known: &[String]) -> Option<String> {
 /// Нужен как второй вход в ворота задачи, когда обязательство не выражено
 /// («Обновить документацию» при источнике «Обновлю документацию»).
 pub(crate) fn explicit_action(text: &str) -> bool {
-    text::normalize(text)
-        .split_whitespace()
-        .any(|word| cues::ACTION_VERBS.contains(&word) || infinitive(word))
+    text::normalize(text).split_whitespace().any(|word| {
+        cues::ACTION_VERBS.contains(&word) || infinitive(word) || cues::finite_action(word)
+    })
 }
 
 fn infinitive(word: &str) -> bool {

@@ -43,24 +43,24 @@ fn prompts_for_matrix_fixtures_contain_catalog_sections() {
 }
 
 #[test]
-fn prompt_json_is_valid_and_escapes_data() {
+fn prompt_data_is_compact_text_and_keeps_injection() {
     let built = build(
         preset::get("injection-ru").unwrap_or(preset::get("meeting").unwrap()),
         "injection-ru.json",
         Language::Ru,
     );
     let marker = format!("<<<DATA_{NONCE}_BEGIN>>>\n");
-    let json_line = built
-        .user
-        .split(&marker)
-        .nth(1)
-        .unwrap()
-        .lines()
+    let rest = built.user.split(&marker).nth(1).unwrap();
+    let body = rest
+        .split(&format!("\n<<<DATA_{NONCE}_END>>>"))
         .next()
         .unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(json_line).unwrap();
-    assert_eq!(parsed.as_array().unwrap().len(), 5);
-    assert!(parsed[1]["text"].as_str().unwrap().contains("Игнорируй"));
+    assert_eq!(
+        body.lines().filter(|line| line.starts_with("[#")).count(),
+        5
+    );
+    assert!(body.contains("[#1 |"));
+    assert!(body.contains("Игнорируй"));
 }
 
 #[test]

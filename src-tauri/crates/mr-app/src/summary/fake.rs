@@ -174,25 +174,23 @@ impl FakeBackend {
     }
 }
 
-fn data_json(prompt: &str) -> Option<Vec<serde_json::Value>> {
+fn data_text(prompt: &str) -> Option<&str> {
     let start = prompt.find("<<<DATA_")?;
     let marker_end = prompt[start..].find("_BEGIN>>>")? + start + "_BEGIN>>>".len();
     let rest = prompt.get(marker_end..)?;
-    let end = rest.find("_END>>>")?;
-    let body = rest.get(..end)?.trim();
-    let json_end = body.rfind("<<<DATA_").unwrap_or(body.len());
-    let json = body.get(..json_end)?.trim();
-    serde_json::from_str(json).ok()
+    let end = rest.find("\n<<<DATA_")?;
+    rest.get(..end).map(str::trim)
 }
 
 fn all_texts(prompt: &str) -> Vec<String> {
-    data_json(prompt)
+    data_text(prompt)
         .unwrap_or_default()
-        .iter()
-        .filter_map(|row| row.get("text").and_then(|v| v.as_str()))
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .map(str::to_string)
+        .lines()
+        .filter_map(|line| {
+            line.split_once("]: ")
+                .map(|(_, text)| text.trim().to_string())
+        })
+        .filter(|text| !text.is_empty())
         .collect()
 }
 
@@ -201,18 +199,16 @@ fn utterance_texts(prompt: &str) -> Vec<String> {
 }
 
 fn reduce_text(prompt: &str) -> Option<String> {
-    let rows = data_json(prompt)?;
-    let parts: Vec<String> = rows
-        .iter()
-        .filter_map(|row| row.get("text").and_then(|v| v.as_str()))
-        .map(|text| {
-            text.lines()
-                .filter(|line| !line.to_lowercase().contains("ignore previous instructions"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .collect();
-    (!parts.is_empty()).then(|| parts.join("\n\n"))
+    let body = data_text(prompt)?;
+    let text = body
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("[#"))
+        .filter(|line| !line.to_lowercase().contains("ignore previous instructions"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string();
+    (!text.is_empty()).then_some(text)
 }
 
 #[cfg(test)]
@@ -221,7 +217,7 @@ mod tests {
 
     #[test]
     fn extracts_first_two_non_empty_utterances() {
-        let prompt = "## Кратко\n<<<DATA_abc_BEGIN>>>\n[{\"i\":0,\"speaker\":\"S\",\"text\":\"Обсудили срок запуска.\"},{\"i\":1,\"speaker\":\"S\",\"text\":\"Проверили отчёт.\"}]\n<<<DATA_abc_END>>>\n";
+        let prompt = "## Кратко\n<<<DATA_abc_BEGIN>>>\n[#0 | S]: Обсудили срок запуска.\n[#1 | S]: Проверили отчёт.\n<<<DATA_abc_END>>>\n";
         assert_eq!(
             utterance_texts(prompt),
             vec!["Обсудили срок запуска.", "Проверили отчёт."]
@@ -231,7 +227,7 @@ mod tests {
 
     #[test]
     fn reduce_text_joins_partials() {
-        let prompt = "Сведи пункты\n<<<DATA_abc_BEGIN>>>\n[{\"i\":0,\"text\":\"## Кратко\\n- А.\"},{\"i\":1,\"text\":\"## Кратко\\n- Б.\"}]\n<<<DATA_abc_END>>>\n";
+        let prompt = "Сведи пункты\n<<<DATA_abc_BEGIN>>>\n[#0]\n## Кратко\n- А.\n\n[#1]\n## Кратко\n- Б.\n<<<DATA_abc_END>>>\n";
         assert_eq!(
             reduce_text(prompt).as_deref(),
             Some("## Кратко\n- А.\n\n## Кратко\n- Б.")

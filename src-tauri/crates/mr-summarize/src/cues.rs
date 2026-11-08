@@ -282,6 +282,39 @@ pub fn action_verb(text: &str) -> bool {
         .any(|token| ACTION_VERBS.contains(&token))
 }
 
+/// Finite-форма глагола без словаря: нужна, чтобы не терять живые задачи
+/// («Борис сверстает макет»), которых нет в `ACTION_VERBS`.
+pub fn finite_action(word: &str) -> bool {
+    let word = normalize(word);
+    let word = word.trim();
+    if word.chars().count() < 3 {
+        return false;
+    }
+    if word.is_ascii() {
+        return english_finite(word);
+    }
+    [
+        "ет", "ит", "ют", "ут", "ат", "ят", "ла", "ли", "л", "ло", "ся", "сь", "ю",
+    ]
+    .iter()
+    .any(|ending| word.ends_with(ending))
+}
+
+fn english_finite(word: &str) -> bool {
+    if ACTION_VERBS.contains(&word) {
+        return true;
+    }
+    let Some(stem) = word
+        .strip_suffix("ed")
+        .or_else(|| word.strip_suffix("es"))
+        .or_else(|| word.strip_suffix('s'))
+    else {
+        return false;
+    };
+    let with_e = format!("{stem}e");
+    ACTION_VERBS.contains(&stem) || ACTION_VERBS.contains(&with_e.as_str())
+}
+
 pub fn question_line(text: &str) -> bool {
     let trimmed = text.trim();
     if trimmed.contains('?') {

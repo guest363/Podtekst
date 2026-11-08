@@ -86,6 +86,7 @@ fn warnings_serialize_to_contract_names() {
         (Warning::DeadlineRecovered, "deadline_recovered"),
         (Warning::ParserRecovered, "parser_recovered"),
         (Warning::InjectionSuspected, "injection_suspected"),
+        (Warning::FactUnverified, "fact_unverified"),
         (Warning::DetailLongShortSource, "detail_long_short_source"),
     ];
     for (warning, expected) in names {

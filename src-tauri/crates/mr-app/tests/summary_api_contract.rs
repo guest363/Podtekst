@@ -969,7 +969,7 @@ fn summary_contract_suite() {
     assert_eq!(artifact["preset"]["confirmed_sensitive"], true);
     assert_eq!(artifact["preset"]["id"], "legal");
 
-    let long: Vec<String> = (0..200)
+    let long: Vec<String> = (0..700)
         .map(|i| format!("Обсудили пункт {i}: решили подготовить отчёт и проверить срок до среды."))
         .collect();
     let long_refs: Vec<&str> = long.iter().map(String::as_str).collect();
@@ -1108,7 +1108,7 @@ fn summary_contract_suite() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|w| w == "fallback_extracted"));
+        .all(|w| w != "fallback_extracted"));
     assert!(artifact["summary"]["sections"]
         .as_array()
         .unwrap()

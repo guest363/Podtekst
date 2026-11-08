@@ -94,6 +94,13 @@ pub(super) fn build_args(
         "512".to_string(),
         "--threads".to_string(),
         threads.to_string(),
+        // 16k контекста с q8 KV: память как у 8k f16, prefill заметно короче.
+        "--flash-attn".to_string(),
+        "on".to_string(),
+        "--cache-type-k".to_string(),
+        "q8_0".to_string(),
+        "--cache-type-v".to_string(),
+        "q8_0".to_string(),
         "--jinja".to_string(),
         "--no-webui".to_string(),
         "--reasoning".to_string(),
@@ -215,6 +222,12 @@ mod tests {
             "512",
             "--threads",
             "6",
+            "--flash-attn",
+            "on",
+            "--cache-type-k",
+            "q8_0",
+            "--cache-type-v",
+            "q8_0",
         ] {
             assert!(args.iter().any(|a| a == flag), "нет {flag}");
         }
