@@ -92,7 +92,7 @@ impl CancelToken {
     }
 }
 
-/// `MR_SUMMARY_FAKE_BACKEND=1|model_load|invalid|thin|slow` — только debug:
+/// `MR_SUMMARY_FAKE_BACKEND=1|model_load|invalid|thin|slow|gate` — только debug:
 /// контрактные тесты не тянут 2.4 ГБ модель и настоящий runtime.
 #[cfg(debug_assertions)]
 pub fn fake_mode() -> Option<&'static str> {
@@ -110,6 +110,7 @@ pub fn fake_mode() -> Option<&'static str> {
         "nonce_echo" => Some("nonce_echo"),
         "map_injection" => Some("map_injection"),
         "slow" => Some("slow"),
+        "gate" => Some("gate"),
         _ => None,
     }
 }

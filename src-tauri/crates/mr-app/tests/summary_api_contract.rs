@@ -624,7 +624,10 @@ fn summary_contract_suite() {
     );
     let before_id = before["summary"]["id"].as_str().unwrap().to_string();
     let (mut sse, cursor) = open_sse(port);
-    std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "slow");
+    let stale_gate = base.join("gate-stale");
+    let _ = std::fs::remove_file(&stale_gate);
+    std::env::set_var("MR_SUMMARY_FAKE_GATE", &stale_gate);
+    std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "gate");
     let (st, v) = json_call(
         port,
         "POST",
@@ -633,7 +636,6 @@ fn summary_contract_suite() {
                "source_rev": v_rev(port, renamed), "force": true}),
     );
     assert_eq!(st, 202, "stale job: {v}");
-    std::thread::sleep(std::time::Duration::from_millis(150));
     let (st, v) = json_call(
         port,
         "POST",
@@ -645,6 +647,7 @@ fn summary_contract_suite() {
         (200, Some(true)),
         "edit during job: {v}"
     );
+    std::fs::write(&stale_gate, b"1").unwrap();
     let capture = read_sse_until_terminal(&mut sse, cursor, std::time::Duration::from_secs(8));
     assert!(
         capture.contains("stale_source"),
@@ -663,6 +666,7 @@ fn summary_contract_suite() {
         Some(before_id.as_str()),
         "stale job заменил предыдущий артефакт"
     );
+    std::env::remove_var("MR_SUMMARY_FAKE_GATE");
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "1");
 
     // 14. Компонент отсутствует и fake выключен -> 503. На headless runtime
@@ -745,7 +749,10 @@ fn summary_contract_suite() {
 
     // 15b. v2 появляется между preflight и commit: без force+allow commit
     // отказывает и не трогает файл (M03).
-    std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "slow");
+    let race_gate = base.join("gate-race");
+    let _ = std::fs::remove_file(&race_gate);
+    std::env::set_var("MR_SUMMARY_FAKE_GATE", &race_gate);
+    std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "gate");
     let (mut sse, cursor) = open_sse(port);
     let (st, v) = json_call(
         port,
@@ -759,6 +766,7 @@ fn summary_contract_suite() {
         .unwrap()
         .replace("podtekst.summary/v1", "podtekst.summary/v2");
     std::fs::write(&json_path, &v2_during).unwrap();
+    std::fs::write(&race_gate, b"1").unwrap();
     let capture = read_sse_until_terminal(&mut sse, cursor, std::time::Duration::from_secs(20));
     assert!(
         capture.contains("schema_unsupported"),
@@ -769,6 +777,7 @@ fn summary_contract_suite() {
         v2_during,
         "v2 перезаписан при commit"
     );
+    std::env::remove_var("MR_SUMMARY_FAKE_GATE");
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "1");
     assert!(wait_idle(port, std::time::Duration::from_secs(5)));
     let (st, v) = json_call(

@@ -71,6 +71,9 @@ impl SummaryBackend for FakeBackend {
         if self.mode == "reduce_invalid" && (reduce || repair) {
             return self.finish(cancel, on_event, String::new());
         }
+        if self.mode == "gate" {
+            self.wait_gate(cancel, on_event)?;
+        }
         if reduce {
             let joined = reduce_text(&req.prompt).unwrap_or_default();
             return self.finish(cancel, on_event, joined);
@@ -124,6 +127,30 @@ impl SummaryBackend for FakeBackend {
 }
 
 impl FakeBackend {
+    /// Держит job живым, пока тест не создаст файл `MR_SUMMARY_FAKE_GATE`:
+    /// stale/race-сценарии не зависят от скорости раннера и длительности
+    /// `slow`-сна.
+    fn wait_gate(
+        &self,
+        cancel: &CancelToken,
+        on_event: &mut dyn FnMut(BackendEvent),
+    ) -> Result<(), BackendError> {
+        on_event(BackendEvent {
+            phase: Phase::Generate,
+            tokens_done: 1,
+            tokens_total: 2,
+        });
+        let Some(path) = std::env::var_os("MR_SUMMARY_FAKE_GATE") else {
+            return Ok(());
+        };
+        let path = std::path::Path::new(&path);
+        while !path.exists() {
+            cancel.check()?;
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        Ok(())
+    }
+
     fn finish(
         &self,
         cancel: &CancelToken,
