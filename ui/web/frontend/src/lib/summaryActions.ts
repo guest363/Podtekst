@@ -86,7 +86,7 @@ export function confirmSensitive(): void {
     confirmSensitive: true,
     allowDowngrade,
     replace: Boolean(summaryState.record),
-    force: summaryState.stale,
+    force: summaryState.stale || allowDowngrade,
   })
 }
 
@@ -181,7 +181,8 @@ export async function generateSummary(
         preset_id: presetId,
         detail: detail(),
         source_rev: summaryState.sourceRev,
-        force: opts.force === true,
+        // Downgrade заменяет новее-мажор только вместе с force (N-M01).
+        force: opts.force === true || opts.allowDowngrade === true,
         allow_downgrade: opts.allowDowngrade === true,
         ...(preset.sensitive ? { confirm_sensitive: true } : {}),
       }),

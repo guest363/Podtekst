@@ -36,6 +36,11 @@
   }: Props = $props()
 
   let warnings = $derived(summaryWarnings(record))
+  const english = $derived(
+    record.output_language ? record.output_language === 'en' : record.language === 'en',
+  )
+  const noAssignee = $derived(english ? 'unassigned' : 'не назначен')
+  const noDeadline = $derived(english ? 'deadline not stated' : 'срок не назван')
 
   function openRef(ref: SummaryRef): void {
     onseek(ref.start)
@@ -86,7 +91,7 @@
                 {/each}
                 {#if item.role === 'task'}
                   <span class="summary-task">
-                    — {item.task?.assignee || 'не назначен'}, {item.task?.deadline || 'срок не назван'}
+                    — {item.task?.assignee || noAssignee}, {item.task?.deadline || noDeadline}
                   </span>
                 {/if}
                 {#if item.quote && item.quote !== item.text}

@@ -124,20 +124,79 @@ def prepare_data(base: Path, fake: bool) -> tuple[Path, Path | None]:
             "Текста мало, но его достаточно для сборки итогов.",
         ],
     )
+    make_wav(recordings / "legal.wav")
+    make_transcript(
+        recordings,
+        "legal",
+        [
+            "Разбираем проект договора и проверяем сроки исполнения обязательств.",
+            "Нужно уточнить подсудность и подготовить письменные возражения.",
+            "Стороны согласовали порядок обмена документами по электронной почте.",
+        ],
+    )
+    make_wav(recordings / "english.wav")
+    make_transcript(
+        recordings,
+        "english",
+        [
+            "We review the quarterly plan and the remaining work.",
+            "The report must be prepared before the next meeting.",
+        ],
+    )
 
     # Новее мажор: UI обязан показать явную кнопку downgrade, не трогая файл.
-    (recordings / "newer.summary.json").write_text(
-        json.dumps(
-            {
-                "schema": "podtekst.summary/v2",
-                "schema_minor": 0,
-                "sections": [{"id": "future", "title": "Будущее", "items": []}],
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+    for stem in ("newer", "legal"):
+        (recordings / f"{stem}.summary.json").write_text(
+            json.dumps(
+                {
+                    "schema": "podtekst.summary/v2",
+                    "schema_minor": 0,
+                    "sections": [{"id": "future", "title": "Будущее", "items": []}],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        (recordings / f"{stem}.summary.md").write_text("# Будущий формат\n", encoding="utf-8")
+
+    # Готовый английский артефакт: проверяем task-фолбэки и метаданные из API.
+    golden = json.loads(
+        (ROOT / "ui/web/frontend/src/lib/fixtures/summary-artifact.golden.json").read_text(
+            encoding="utf-8"
+        )
     )
-    (recordings / "newer.summary.md").write_text("# Будущий формат\n", encoding="utf-8")
+    golden["id"] = "11111111-2222-4333-8444-555555555555"
+    golden["generated_at"] = "2026-11-08T10:00:00Z"
+    golden["source"]["rev"] = "stale-english-rev"
+    golden["source"]["language"] = "en"
+    golden["output_language"] = "en"
+    golden["preset"]["label"] = "Meeting"
+    golden["summary"]["sections"] = [
+        {
+            "id": "tasks",
+            "title": "Tasks",
+            "role": "task",
+            "items": [
+                {
+                    "text": "Prepare the report.",
+                    "role": "task",
+                    "task": {
+                        "assignee": None,
+                        "deadline": None,
+                        "deadline_ref": None,
+                        "deadline_source": "model",
+                    },
+                    "refs": [],
+                }
+            ],
+        }
+    ]
+    golden["summary"]["items_total"] = 1
+    golden["summary"]["warnings"] = []
+    (recordings / "english.summary.json").write_text(
+        json.dumps(golden, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (recordings / "english.summary.md").write_text("# Tasks\n\n- Prepare the report.\n", encoding="utf-8")
 
     model_path = None
     if fake:
@@ -171,6 +230,21 @@ def prepare_data(base: Path, fake: bool) -> tuple[Path, Path | None]:
             target.parent.mkdir(parents=True)
             target.symlink_to(Path(source))
     return data, model_path
+
+
+def set_summary_default(data: Path, preset: str, classifier: str) -> None:
+    path = data / "summary-config.json"
+    config = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    config.update(
+        {
+            "auto_suggest": True,
+            "default_preset": preset,
+            "detail": "normal",
+            "classifier": classifier,
+            "enabled": True,
+        }
+    )
+    path.write_text(json.dumps(config), encoding="utf-8")
 
 
 def start_app(binary: Path, data: Path, enabled: bool, fake: bool, model: Path | None):
@@ -300,6 +374,55 @@ def test_newer_major(browser, base: str, port: int, recordings: Path) -> None:
     assert not errors, errors[:3]
 
 
+def test_english_task_fallback(browser, base: str, port: int) -> None:
+    absolute = recording_path(port, "english.wav")
+    context, page, errors = new_page(browser, base)
+    page.goto(f"{base}/#/transcript?path={quote(absolute)}&video=0")
+    page.wait_for_selector(".summary-block", timeout=20000)
+    page.get_by_role("button", name="Открыть").click()
+    page.wait_for_selector(".summary-result", timeout=10000)
+    task = page.locator(".summary-task").first.inner_text()
+    assert "unassigned" in task and "deadline not stated" in task, task
+    assert "не назначен" not in task and "срок не назван" not in task, task
+    assert page.locator(".summary-section h3").first.inner_text() == "Tasks"
+    assert "Meeting" in page.locator(".summary-meta").inner_text()
+    context.close()
+    assert not errors, errors[:3]
+
+
+def test_sensitive_downgrade(browser, base: str, port: int, recordings: Path) -> None:
+    absolute = recording_path(port, "legal.wav")
+    artifact = recordings / "legal.summary.json"
+    before = artifact.read_text(encoding="utf-8")
+    bodies = {}
+    context, page, errors = new_page(browser, base)
+    page.on(
+        "request",
+        lambda req: bodies.__setitem__("generate", json.loads(req.post_data or "{}"))
+        if "/api/summary/generate" in req.url
+        else None,
+    )
+    page.goto(f"{base}/#/transcript?path={quote(absolute)}&video=0")
+    page.wait_for_selector(".summary-block", timeout=20000)
+    assert "более новом формате" in page.locator(".summary-block").inner_text()
+    assert artifact.read_text(encoding="utf-8") == before, "artifact changed before downgrade"
+    page.get_by_role("button", name="Собрать в старом формате").click()
+    page.wait_for_selector(".summary-confirm", timeout=10000)
+    assert "чувствительным" in page.locator(".summary-confirm-title").inner_text()
+    assert bodies.get("generate") is None, "generate started before sensitive confirmation"
+    page.locator(".summary-confirm .btn-primary").click()
+    page.wait_for_selector(".summary-result", timeout=90000)
+    body = bodies.get("generate")
+    assert body and body.get("file") == absolute, body
+    assert body.get("preset_id") == "legal", body
+    assert body.get("confirm_sensitive") is True, body
+    assert body.get("force") is True and body.get("allow_downgrade") is True, body
+    assert json.loads(artifact.read_text(encoding="utf-8")).get("schema") == "podtekst.summary/v1"
+    assert list(recordings.glob("legal.summary.json.newer.*")), "no .newer backup"
+    context.close()
+    assert not errors, errors[:3]
+
+
 def test_disabled(browser, base: str, port: int) -> None:
     absolute = recording_path(port, "meeting.wav")
     summary_requests = []
@@ -358,6 +481,20 @@ def main() -> int:
                 test_absolute_path(browser, base, port, slow=fake)
                 test_short_source(browser, base, port)
                 test_newer_major(browser, base, port, recordings)
+                test_english_task_fallback(browser, base, port)
+            finally:
+                browser.close()
+        stop_app(process)
+        processes.remove(process)
+
+        set_summary_default(data, "legal", "manual_only")
+        process, port = start_app(binary, data, True, fake, model)
+        processes.append(process)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            base = f"http://127.0.0.1:{port}"
+            try:
+                test_sensitive_downgrade(browser, base, port, recordings)
             finally:
                 browser.close()
         stop_app(process)
