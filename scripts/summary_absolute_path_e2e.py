@@ -360,6 +360,7 @@ def test_newer_major(browser, base: str, port: int, recordings: Path) -> None:
     )
     page.goto(f"{base}/#/transcript?path={quote(absolute)}&video=0")
     page.wait_for_selector(".summary-block", timeout=20000)
+    page.wait_for_selector("text=более новом формате", timeout=10000)
     text = page.locator(".summary-block").inner_text()
     assert "более новом формате" in text
     assert artifact.read_text(encoding="utf-8") == before, "artifact changed before downgrade"
