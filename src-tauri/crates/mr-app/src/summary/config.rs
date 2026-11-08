@@ -19,6 +19,7 @@ pub const CONTEXT_TOKENS: u32 = 8192;
 pub const MODEL_ID: &str = "sum-qwen3-4b-instruct-2507-q4km";
 pub const MODEL_FILE: &str = "Qwen3-4B-Instruct-2507-Q4_K_M.gguf";
 pub const MODEL_TITLE: &str = "Qwen3-4B Instruct 2507 (итоги, Q4_K_M)";
+pub const MODEL_TITLE_EN: &str = "Qwen3-4B Instruct 2507 (summary, Q4_K_M)";
 pub const MODEL_SHA256: &str = "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597";
 pub const RUNTIME_COMMIT: &str = "fd27b2034";
 

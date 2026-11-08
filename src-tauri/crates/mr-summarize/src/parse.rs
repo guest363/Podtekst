@@ -118,6 +118,12 @@ pub fn parse(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErro
                 last_raw = trimmed.to_owned();
                 continue;
             }
+            if contains_injection(&value) {
+                injection += 1;
+                last = None;
+                last_raw = trimmed.to_owned();
+                continue;
+            }
             match label.as_str() {
                 "задача" | "что" | "task" | "what" => {
                     if role == SectionRole::Task {
@@ -153,18 +159,19 @@ pub fn parse(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErro
         }
 
         if let Some(item_text) = item_line(trimmed) {
-            let (text, quote) = split_quote(&clean_text(item_text));
-            let (text, task) = if role == SectionRole::Task {
-                parse_task(&text)
-            } else {
-                (text, None)
-            };
-            if contains_injection(&text) {
+            let cleaned = clean_text(item_text);
+            if contains_injection(&cleaned) {
                 injection += 1;
                 last = None;
                 last_raw = trimmed.to_owned();
                 continue;
             }
+            let (text, quote) = split_quote(&cleaned);
+            let (text, task) = if role == SectionRole::Task {
+                parse_task(&text)
+            } else {
+                (text, None)
+            };
             push_item(&mut sections[current], text, role, task, quote);
             last = Some((current, sections[current].items.len() - 1));
             last_raw = trimmed.to_owned();
@@ -488,6 +495,9 @@ pub(crate) fn contains_injection(text: &str) -> bool {
         "href=",
         "http://",
         "https://",
+        "<<<data_",
+        "_begin>>>",
+        "_end>>>",
     ];
     MARKERS.iter().any(|m| low.contains(m))
 }

@@ -172,11 +172,16 @@ pub struct PresetInfo {
 }
 
 impl PresetInfo {
-    pub fn from_preset(preset: &Preset, confirmed_sensitive: bool) -> Self {
+    pub fn from_preset(preset: &Preset, confirmed_sensitive: bool, language: Language) -> Self {
         Self {
             id: preset.id.to_owned(),
             version: crate::preset::PRESET_VERSION,
-            label: preset.label_ru.to_owned(),
+            label: if language == Language::En {
+                preset.label_en
+            } else {
+                preset.label_ru
+            }
+            .to_owned(),
             confirmed_sensitive,
         }
     }

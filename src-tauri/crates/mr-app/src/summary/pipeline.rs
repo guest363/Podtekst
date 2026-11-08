@@ -9,7 +9,7 @@ use mr_summarize::{classify, parse, preset, prompt, text, Detail, SummaryError, 
 use super::backend::{
     BackendError, BackendEvent, BackendInfo, CancelToken, GenerateRequest, Phase, SummaryBackend,
 };
-use super::config::{CONTEXT_TOKENS, MODEL_ID, MODEL_TITLE, RUNTIME_COMMIT};
+use super::config::{CONTEXT_TOKENS, MODEL_ID, MODEL_TITLE, MODEL_TITLE_EN, RUNTIME_COMMIT};
 use super::store::Paths;
 
 pub struct JobSpec {
@@ -325,7 +325,7 @@ pub fn run(
             now,
             classification.preset_id.as_deref() != Some(spec.preset_id.as_str()),
         ),
-        preset: PresetInfo::from_preset(preset, spec.confirmed_sensitive),
+        preset: PresetInfo::from_preset(preset, spec.confirmed_sensitive, output_language),
         detail: spec.detail,
         output_language,
         generator: Generator {
@@ -337,7 +337,11 @@ pub fn run(
             },
             backend: "sidecar".to_string(),
             model_id: MODEL_ID.to_string(),
-            model_title: MODEL_TITLE.to_string(),
+            model_title: if output_language == text::Language::En {
+                MODEL_TITLE_EN.to_string()
+            } else {
+                MODEL_TITLE.to_string()
+            },
             model_sha256: spec.model_sha.clone(),
             quant: "Q4_K_M".to_string(),
             context: CONTEXT_TOKENS,
@@ -790,13 +794,24 @@ mod tests {
             .expect("task без метаданных");
         assert_eq!(task.deadline.as_deref(), Some("by Friday"));
         assert_eq!(task.assignee.as_deref(), Some("Bob"));
+        assert_eq!(artifact.preset.label, "Meeting");
+        assert_eq!(
+            artifact.generator.model_title,
+            "Qwen3-4B Instruct 2507 (summary, Q4_K_M)"
+        );
         let markdown = artifact.to_markdown();
         assert!(markdown.contains("# Meeting summary"), "{markdown}");
         assert!(markdown.contains("## Tasks"), "{markdown}");
-        assert!(markdown.contains("Preset:"), "{markdown}");
+        assert!(markdown.contains("Preset: «Meeting»"), "{markdown}");
         assert!(markdown.contains("Who: Bob; Due: by Friday"), "{markdown}");
         assert!(!markdown.contains("## Кратко"), "{markdown}");
         assert!(!markdown.contains("Кто:"), "{markdown}");
+        assert!(
+            !markdown
+                .chars()
+                .any(|c| ('\u{0400}'..='\u{052F}').contains(&c)),
+            "русский текст в английском Markdown: {markdown}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

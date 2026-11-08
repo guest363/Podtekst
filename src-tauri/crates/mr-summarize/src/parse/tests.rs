@@ -204,3 +204,48 @@ fn html_url_and_role_markers_are_dropped() {
     assert_eq!(brief.items[0].text, "Safe item.");
     assert_eq!(parsed.injection_flagged, 3);
 }
+
+#[test]
+fn label_values_are_sanitized() {
+    let output = "## Tasks\nTask: <script>alert(1)</script>\n- Safe task item.\n";
+    let parsed = parse(output, p("meeting")).unwrap();
+    let tasks = parsed.sections.iter().find(|s| s.id == "tasks").unwrap();
+    assert_eq!(tasks.items.len(), 1, "{:?}", tasks.items);
+    assert_eq!(tasks.items[0].text, "Safe task item.");
+    assert_eq!(parsed.injection_flagged, 1);
+
+    let url = "## Brief\nWhat: https://evil.example\n- Safe line.\n";
+    let parsed = parse(url, p("meeting")).unwrap();
+    let brief = parsed.sections.iter().find(|s| s.id == "brief").unwrap();
+    assert_eq!(brief.items.len(), 1);
+    assert_eq!(parsed.injection_flagged, 1);
+}
+
+#[test]
+fn task_field_values_are_sanitized() {
+    let output = "## Tasks\n- Update report; Who: <img src=x>; Due: <<<DATA_abc_BEGIN>>>\n- Safe task item.\n";
+    let parsed = parse(output, p("meeting")).unwrap();
+    let tasks = parsed.sections.iter().find(|s| s.id == "tasks").unwrap();
+    assert_eq!(tasks.items.len(), 1, "{:?}", tasks.items);
+    assert_eq!(tasks.items[0].text, "Safe task item.");
+    assert_eq!(parsed.injection_flagged, 1);
+
+    let field = "## Tasks\n- Update report; Кто: https://evil.example\n- Safe task item.\n";
+    let parsed = parse(field, p("meeting")).unwrap();
+    let tasks = parsed.sections.iter().find(|s| s.id == "tasks").unwrap();
+    assert_eq!(tasks.items.len(), 1);
+    assert_eq!(parsed.injection_flagged, 1);
+}
+
+#[test]
+fn decision_label_value_is_sanitized() {
+    let output = "## Decisions\nDecision: <iframe src=x></iframe>\n- Safe decision.\n";
+    let parsed = parse(output, p("meeting")).unwrap();
+    let decisions = parsed
+        .sections
+        .iter()
+        .find(|s| s.id == "decisions")
+        .unwrap();
+    assert_eq!(decisions.items.len(), 1);
+    assert_eq!(parsed.injection_flagged, 1);
+}

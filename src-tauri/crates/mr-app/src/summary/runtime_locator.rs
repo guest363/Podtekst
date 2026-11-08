@@ -226,6 +226,17 @@ fn run_output(cmd: &mut Command, timeout: Duration) -> Result<String, RuntimeErr
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| RuntimeError::Probe(e.to_string()))?;
+    // Дренаж обоих pipe обязан идти одновременно с ожиданием: `--help`
+    // llama-server больше 64 КиБ, и заполненный pipe иначе блокирует child
+    // до timeout (N-H01).
+    let stdout = child
+        .stdout
+        .take()
+        .map(|pipe| std::thread::spawn(move || read_all(pipe)));
+    let stderr = child
+        .stderr
+        .take()
+        .map(|pipe| std::thread::spawn(move || read_all(pipe)));
     let started = Instant::now();
     loop {
         match child.try_wait() {
@@ -234,25 +245,66 @@ fn run_output(cmd: &mut Command, timeout: Duration) -> Result<String, RuntimeErr
                 if started.elapsed() >= timeout {
                     let _ = child.kill();
                     let _ = child.wait();
+                    let _ = join_reader(stdout, Duration::from_millis(100));
+                    let _ = join_reader(stderr, Duration::from_millis(100));
                     return Err(RuntimeError::Probe("probe timeout".to_string()));
                 }
                 std::thread::sleep(Duration::from_millis(20));
             }
-            Err(e) => return Err(RuntimeError::Probe(e.to_string())),
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = join_reader(stdout, Duration::from_millis(100));
+                let _ = join_reader(stderr, Duration::from_millis(100));
+                return Err(RuntimeError::Probe(e.to_string()));
+            }
         }
     }
     let mut text = String::new();
-    if let Some(mut stdout) = child.stdout.take() {
-        let mut buf = Vec::new();
-        let _ = stdout.read_to_end(&mut buf);
+    if let Some(buf) = join_reader(stdout, Duration::from_secs(1)) {
         text.push_str(&String::from_utf8_lossy(&buf));
     }
-    if let Some(mut stderr) = child.stderr.take() {
-        let mut buf = Vec::new();
-        let _ = stderr.read_to_end(&mut buf);
+    if let Some(buf) = join_reader(stderr, Duration::from_secs(1)) {
         text.push_str(&String::from_utf8_lossy(&buf));
     }
     Ok(text)
+}
+
+fn read_all(mut pipe: impl Read) -> Vec<u8> {
+    const CAP: usize = 4 * 1024 * 1024;
+    let mut out = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        match pipe.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                // Drain всегда, храним только первые 4 МиБ: runaway probe
+                // не должен съесть память, но и не должен заблокироваться.
+                if out.len() < CAP {
+                    let take = (CAP - out.len()).min(n);
+                    out.extend_from_slice(&chunk[..take]);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Join с ограничением: убитый probe может оставить grandchild, держащий
+/// pipe, и бесконечный join снова сделал бы timeout неограниченным.
+fn join_reader(
+    handle: Option<std::thread::JoinHandle<Vec<u8>>>,
+    wait: Duration,
+) -> Option<Vec<u8>> {
+    let handle = handle?;
+    let deadline = Instant::now() + wait;
+    while !handle.is_finished() {
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    handle.join().ok()
 }
 
 fn probe(exe: &Path, dir: &Path) -> Result<Probe, RuntimeError> {
@@ -337,6 +389,23 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn retry_text_busy<T>(
+        mut call: impl FnMut() -> Result<T, RuntimeError>,
+    ) -> Result<T, RuntimeError> {
+        // Параллельный тест может держать fd на свежем скрипте в момент
+        // fork/exec другого child: ETXTBSY исчезает после его exec.
+        for _ in 0..20 {
+            match call() {
+                Err(RuntimeError::Probe(ref error)) if error.contains("Text file busy") => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                result => return result,
+            }
+        }
+        call()
+    }
+
+    #[cfg(unix)]
     #[test]
     fn bad_candidate_does_not_hide_valid_runtime() {
         let base = temp_dir("candidates");
@@ -347,7 +416,8 @@ mod tests {
         );
         let good = base.join("good");
         matching_stub(&good);
-        let info = discover_from(vec![bad, good.clone()]).expect("второй runtime не найден");
+        let info = retry_text_busy(|| discover_from(vec![bad.clone(), good.clone()]))
+            .expect("второй runtime не найден");
         assert_eq!(info.dir, good);
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -358,10 +428,12 @@ mod tests {
         let base = temp_dir("hung");
         let exe = stub(&base.join("hung"), "#!/bin/sh\nsleep 60\n");
         let started = Instant::now();
-        let error = run_output(
-            Command::new(&exe).arg("--version"),
-            Duration::from_millis(150),
-        )
+        let error = retry_text_busy(|| {
+            run_output(
+                Command::new(&exe).arg("--version"),
+                Duration::from_millis(150),
+            )
+        })
         .unwrap_err();
         assert!(matches!(error, RuntimeError::Probe(_)));
         assert!(
@@ -409,5 +481,22 @@ mod tests {
         {
             let _ = locate();
         }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn large_help_output_is_drained_without_deadlock() {
+        let base = temp_dir("large-help");
+        let dir = base.join("large");
+        let flags = manifest().required_flags.join(" ");
+        stub(
+            &dir,
+            &format!(
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo 'version: b12182'\n  echo 'built with build 12182 commit {RUNTIME_COMMIT}'\nelse\n  head -c 131072 /dev/zero | tr '\\0' 'x'\n  echo ''\n  echo '{flags}'\nfi\n"
+            ),
+        );
+        let info = retry_text_busy(|| discover_from(vec![dir.clone()]))
+            .expect("большой --help заблокировал probe");
+        assert_eq!(info.dir, dir);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
