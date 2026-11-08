@@ -10,6 +10,14 @@ on:
         description: "Собрать и проверить без публикации"
         type: boolean
         default: true
+      full_matrix:
+        description: "Полная живая матрица (10/30/60/120, 4/8 cores, EN/injection/legal/psychology)"
+        type: boolean
+        default: false
+      matrix_runner:
+        description: "Linux x86_64 runner для full_matrix; для tier 8 нужно >=8 logical cores"
+        type: string
+        default: "ubuntu-24.04"
 
 permissions:
   contents: read
@@ -269,44 +277,8 @@ jobs:
           .github/scripts/fetch_summary_runtime.sh --target linux-x86_64
           test -x "$MC_RUNTIME/llama-server"
       - name: Fetch Qwen3-4B model (SHA-256 from manifest)
-        id: model
         shell: bash
-        run: |
-          set -euo pipefail
-          eval "$(python3 - <<'PY'
-          import json
-          import shlex
-
-          manifest = json.load(open("src-tauri/crates/mr-models/models-manifest.json", encoding="utf-8"))
-          entry = next(m for m in manifest["models"] if m["id"] == "sum-qwen3-4b-instruct-2507-q4km")
-          item = entry["files"][0]
-          print(f"MODEL_FILE={shlex.quote(item['filename'])}")
-          print(f"MODEL_URL={shlex.quote(item['url_hf'])}")
-          print(f"MODEL_SHA={shlex.quote(item['sha256'])}")
-          print(f"MODEL_BYTES={int(item['size_bytes'])}")
-          PY
-          )"
-          model_dir="$RUNNER_TEMP/summary-model"
-          mkdir -p "$model_dir"
-          model="$model_dir/$MODEL_FILE"
-          if [ ! -f "$model" ]; then
-            curl -fL --retry 3 --retry-delay 5 -o "$model.part" "$MODEL_URL"
-            mv "$model.part" "$model"
-          fi
-          actual="$(sha256sum "$model" | awk '{print $1}')"
-          if [ "$actual" != "$MODEL_SHA" ]; then
-            echo "::error::SHA-256 модели $actual != $MODEL_SHA"
-            exit 1
-          fi
-          size="$(stat -Lc %s "$model")"
-          if [ "$size" != "$MODEL_BYTES" ]; then
-            echo "::error::размер модели $size != $MODEL_BYTES"
-            exit 1
-          fi
-          echo "MR_SUMMARY_MODEL=$model" >> "$GITHUB_ENV"
-          echo "model=$model" >> "$GITHUB_OUTPUT"
-          echo "model_sha=$MODEL_SHA" >> "$GITHUB_OUTPUT"
-          echo "→ Модель: $model ($size байт, SHA-256 $MODEL_SHA)"
+        run: .github/scripts/fetch_summary_model.sh --dest "$RUNNER_TEMP/summary-model"
       - name: Real model smoke (SUMMARY_REQUIRE_REAL=1)
         shell: bash
         env:
@@ -334,7 +306,8 @@ jobs:
             --runtime "$MR_SUMMARY_RUNTIME" \
             --model "$MR_SUMMARY_MODEL" \
             --fixtures "$MR_TEST_FIXTURES" \
-            --out verification/summary-real-matrix.json
+            --out verification/summary-real-matrix.json \
+            --budget-profile ci-loaded --enforce-budget
       - name: Write real-model manifest
         shell: bash
         env:
@@ -374,6 +347,10 @@ jobs:
           ]
           if not ten:
               stop("в матрице нет пройденного 10-минутного кейса")
+          if not any(case.get("budget_met") is True for case in ten):
+              stop("10-минутный кейс не подтвердил бюджет")
+          if matrix.get("budget_enforced") is not True:
+              stop("матрица запущена без --enforce-budget")
 
           runtime = Path(os.environ["MR_SUMMARY_RUNTIME"])
           launcher = runtime / "llama-server"
@@ -427,8 +404,30 @@ jobs:
                   "status": "pass",
                   "log": "verification/summary-real.log",
               },
+              "budget": {
+                  "profile": matrix.get("budget_profile"),
+                  "profile_note": matrix.get("budget_profile_note"),
+                  "enforced": matrix.get("budget_enforced"),
+                  "measurements": [
+                      {
+                          "id": case.get("id"),
+                          "duration_min": case.get("duration_min"),
+                          "logical_cores": case.get("logical_cores"),
+                          "source_chars": case.get("source_chars"),
+                          "runs_per_case": case.get("runs_per_case"),
+                          "p50_sec": case.get("p50_sec"),
+                          "p95_sec": case.get("p95_sec"),
+                          "budget_sec": case.get("budget_sec"),
+                          "budget_met": case.get("budget_met"),
+                          "peak_rss_mb": case.get("peak_rss_mb"),
+                          "cancel_ms": case.get("cancel_ms"),
+                          "status": case.get("status"),
+                      }
+                      for case in matrix.get("cases", [])
+                  ],
+              },
+              "not_run": matrix.get("not_run", []),
               "matrix": matrix,
-              "unrun_cases": matrix.get("not_run", []),
           }
           Path("verification/summary-real-manifest.json").write_text(
               json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -436,14 +435,69 @@ jobs:
           print("→ verification/summary-real-manifest.json")
           PY
       - name: Upload real-model evidence
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: summary-real-evidence
-          if-no-files-found: error
+          if-no-files-found: warn
           path: |
             verification/summary-real-manifest.json
             verification/summary-real-matrix.json
             verification/summary-real.log
+
+  # M18: полная матрица — только по явному workflow_dispatch, не на каждом
+  # релизе. Tier 8 требует >=8 logical cores; иначе он честно попадает в
+  # not_run отчёта. 30/60/120 в профиле ci-loaded бюджета не имеют:
+  # измеряются и записываются, но не гейтятся.
+  full-matrix:
+    if: github.event_name == 'workflow_dispatch' && inputs.full_matrix
+    runs-on: ${{ inputs.matrix_runner || 'ubuntu-24.04' }}
+    timeout-minutes: 360
+    env:
+      MC_RUNTIME: ${{ github.workspace }}/src-tauri/binaries/runtime/x86_64-unknown-linux-gnu
+      MR_TEST_FIXTURES: ${{ github.workspace }}/src-tauri/crates/mr-summarize/tests/fixtures
+      SUMMARY_REQUIRE_REAL: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Fetch pinned llama.cpp runtime
+        shell: bash
+        run: |
+          .github/scripts/fetch_summary_runtime.sh --target linux-x86_64
+          test -x "$MC_RUNTIME/llama-server"
+      - name: Fetch Qwen3-4B model (SHA-256 from manifest)
+        shell: bash
+        run: .github/scripts/fetch_summary_model.sh --dest "$RUNNER_TEMP/summary-model"
+      - name: Build headless binary for the matrix
+        run: cargo build -p mr-app --locked --manifest-path src-tauri/Cargo.toml
+      - name: Full real matrix (10/30/60/120, 4/8 cores, EN/injection/legal/psychology)
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p verification
+          python3 .github/scripts/summary_real_matrix.py \
+            --exe src-tauri/target/debug/podtekst \
+            --runtime "$MC_RUNTIME" \
+            --model "$MR_SUMMARY_MODEL" \
+            --fixtures "$MR_TEST_FIXTURES" \
+            --out verification/summary-real-matrix-full.json \
+            --full --cores 4,8 --runs 1/3 \
+            --budget-profile ci-loaded --enforce-budget 2>&1 \
+            | tee verification/summary-real-matrix-full.log
+      - name: Upload full-matrix evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: summary-real-matrix-full
+          if-no-files-found: warn
+          path: |
+            verification/summary-real-matrix-full.json
+            verification/summary-real-matrix-full.log
 
   smoke-linux:
     needs: [meta, build-tauri]
