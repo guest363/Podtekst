@@ -179,35 +179,54 @@ pub(crate) fn split_utterance_by_word_speakers(
         return vec![utterance.clone()];
     }
     let word_count = words.len();
-    let weights: Vec<f64> = words
-        .iter()
-        .map(|word| word.chars().count() as f64 + 1.0)
+    let timed: Vec<Option<(f64, f64)>> = (0..word_count)
+        .map(|i| {
+            utterance
+                .words
+                .get(i)
+                .filter(|w| w.end_sec > w.start_sec)
+                .map(|w| (w.start_sec, w.end_sec))
+        })
         .collect();
-    let total: f64 = weights.iter().sum::<f64>().max(f64::EPSILON);
-    // shortcut: ASR не даёт word timestamps — вес по символам и привязка
-    // границ к паузам диаризации; заменить при появлении alignment.
-    // 20 мс — минимум, чтобы assign_dominant_speaker видел пересечение. Если
-    // на все слова меньше 20 мс, шаг уменьшается пропорционально: иначе
-    // кумулятивный пол даёт слова нулевой длины.
-    let step = ((utterance.end - utterance.start) / word_count as f64).min(0.02);
-    let mut bounds = Vec::with_capacity(word_count + 1);
-    bounds.push(utterance.start);
-    let mut passed = 0.0;
-    for (i, weight) in weights.iter().take(word_count - 1).enumerate() {
-        passed += weight;
-        let raw = utterance.start + (utterance.end - utterance.start) * passed / total;
-        let snapped = tree.snap_to_pause(raw, 0.15).unwrap_or(raw);
-        let previous = *bounds.last().unwrap_or(&utterance.start);
-        // Резерв на оставшиеся слова: ранняя граница не должна съесть их время.
-        let upper = (utterance.end - (word_count - 1 - i) as f64 * step).max(utterance.start);
-        let lower = (previous + step).min(upper);
-        let chosen = if snapped > lower { snapped } else { raw };
-        bounds.push(chosen.clamp(lower, upper));
-    }
-    bounds.push(utterance.end);
+    // Точные границы CTC лучше пропорции по символам; без них остаётся
+    // прежний fallback с привязкой к паузам диаризации.
+    let bounds: Vec<(f64, f64)> = if timed.iter().all(Option::is_some) {
+        timed
+            .into_iter()
+            .map(|span| {
+                let (start, end) = span.expect("проверено all");
+                let start = start.clamp(utterance.start, utterance.end);
+                let end = end.clamp(start, utterance.end);
+                (start, end)
+            })
+            .collect()
+    } else {
+        let weights: Vec<f64> = words
+            .iter()
+            .map(|word| word.chars().count() as f64 + 1.0)
+            .collect();
+        let total: f64 = weights.iter().sum::<f64>().max(f64::EPSILON);
+        let step = ((utterance.end - utterance.start) / word_count as f64).min(0.02);
+        let mut bounds = Vec::with_capacity(word_count + 1);
+        bounds.push(utterance.start);
+        let mut passed = 0.0;
+        for (i, weight) in weights.iter().take(word_count - 1).enumerate() {
+            passed += weight;
+            let raw = utterance.start + (utterance.end - utterance.start) * passed / total;
+            let snapped = tree.snap_to_pause(raw, 0.15).unwrap_or(raw);
+            let previous = *bounds.last().unwrap_or(&utterance.start);
+            // Резерв на оставшиеся слова: ранняя граница не должна съесть их время.
+            let upper = (utterance.end - (word_count - 1 - i) as f64 * step).max(utterance.start);
+            let lower = (previous + step).min(upper);
+            let chosen = if snapped > lower { snapped } else { raw };
+            bounds.push(chosen.clamp(lower, upper));
+        }
+        bounds.push(utterance.end);
+        bounds.windows(2).map(|w| (w[0], w[1])).collect()
+    };
     let mut assigned = Vec::with_capacity(word_count);
     for (i, word) in words.into_iter().enumerate() {
-        let (start, end) = (bounds[i], bounds[i + 1]);
+        let (start, end) = bounds[i];
         let (speaker, silhouette) = tree
             .assign_dominant_speaker(start, end)
             .unwrap_or_else(|| (utterance.speaker.clone(), utterance.silhouette));
@@ -221,6 +240,22 @@ pub(crate) fn split_utterance_by_word_speakers(
         ));
     }
 
+    // Одиночное слово от шумного кадра не должно создавать нового спикера.
+    let mut i = 0;
+    while i < assigned.len() {
+        let start = i;
+        let speaker = assigned[i].3.clone();
+        while i < assigned.len() && assigned[i].3 == speaker {
+            i += 1;
+        }
+        let duration = assigned[i - 1].2 - assigned[start].1;
+        if duration < 0.5 && start > 0 && assigned[start - 1].3 != speaker {
+            let previous = assigned[start - 1].3.clone();
+            for word in &mut assigned[start..i] {
+                word.3 = previous.clone();
+            }
+        }
+    }
     let mut out: Vec<Utterance> = Vec::new();
     for (word, start, end, speaker, silhouette, wc) in assigned {
         if let Some(last) = out.last_mut() {
@@ -256,6 +291,17 @@ pub(crate) fn split_utterance_by_word_speakers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transcribe::WordConf;
+
+    fn timed_word(text: &str, start: f64, end: f64) -> WordConf {
+        WordConf {
+            w: text.to_string(),
+            conf: 1.0,
+            needs_review: false,
+            start_sec: start,
+            end_sec: end,
+        }
+    }
 
     fn utt(start: f64, end: f64, speaker: &str, text: &str) -> Utterance {
         Utterance {
@@ -303,6 +349,25 @@ mod tests {
             source.text
         );
         assert_eq!(out[0].end, out[1].start);
+    }
+
+    #[test]
+    fn ctc_word_times_override_proportional_bounds() {
+        let tree = DiarIntervalTree::new(&[utt(0.0, 2.0, "A", "a"), utt(2.0, 4.0, "B", "b")]);
+        let mut source = utt(0.0, 4.0, "unknown", "раз два три");
+        source.words = vec![
+            timed_word("раз", 0.2, 1.8),
+            timed_word("два", 2.2, 2.8),
+            timed_word("три", 3.0, 3.5),
+        ];
+        let out = split_utterance_by_word_speakers(&source, &tree);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].text, "раз");
+        assert_eq!(out[0].speaker, "A");
+        assert_eq!(out[1].text, "два три");
+        assert_eq!(out[1].speaker, "B");
+        assert!((out[0].end - 1.8).abs() < 1e-6);
+        assert!((out[1].start - 2.2).abs() < 1e-6);
     }
 
     #[test]

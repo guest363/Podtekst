@@ -466,7 +466,7 @@ fn fill_labels_by_time(utterances: &[Utterance], label_of: &mut HashMap<usize, u
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn diarize_channel(
     samples: &[f32],
-    utterances: &mut [Utterance],
+    utterances: &mut Vec<Utterance>,
     channel_idx: Option<i32>,
     default_name: &str,
     prefix: &str,
@@ -628,8 +628,9 @@ pub(crate) fn diarize_channel(
     if channel_idx.is_none() && min_speakers == 0 {
         smooth_labels_mono(utterances, &embs, &durs, &quals, &mut label_of);
     }
+    let mut spans = Vec::new();
     if let Some(segmentation) = segmentation {
-        super::speaker_assignment::apply(
+        spans = super::speaker_assignment::apply(
             segmentation,
             utterances,
             &embs,
@@ -876,7 +877,99 @@ pub(crate) fn diarize_channel(
         u.diarized = true;
         u.silhouette = silhouettes[i];
     }
+    // Кадры PyAnnote уточняют только длинные монологи: на коротких
+    // репликах шум локальных меток рвёт текст чаще, чем помогает.
+    let matched_labels: HashSet<usize> = raw_clusters
+        .iter()
+        .enumerate()
+        .filter(|(k, _)| matches[*k].matched)
+        .map(|(_, &label)| label)
+        .collect();
+    let timeline: Vec<Utterance> = spans
+        .iter()
+        .filter(|span| matched_labels.contains(&span.label))
+        .filter_map(|span| {
+            cluster_name.get(&span.label).map(|name| Utterance {
+                start: span.start,
+                end: span.end,
+                speaker: name.clone(),
+                channel: channel_idx,
+                text: String::new(),
+                diarized: true,
+                silhouette: 0.0,
+                words: Vec::new(),
+                ctc_used: false,
+            })
+        })
+        .collect();
+    if !timeline.is_empty() {
+        let tree = super::word_speakers::DiarIntervalTree::new(&timeline);
+        let mut refined = Vec::with_capacity(utterances.len());
+        for utterance in utterances.iter() {
+            if utterance.end - utterance.start >= 20.0 {
+                refined.extend(super::word_speakers::split_utterance_by_word_speakers(
+                    utterance, &tree,
+                ));
+            } else {
+                refined.push(utterance.clone());
+            }
+        }
+        *utterances = refined;
+    }
     infos
+}
+
+/// ASR-сегмент с padding иногда дослышит начало следующей реплики: слова
+/// получают время уже за `end` этого сегмента. Переносим такой хвост в
+/// соседнюю реплику, иначе он наследует чужого спикера.
+pub(crate) fn move_boundary_words(utterances: &mut Vec<Utterance>) {
+    if utterances.len() < 2 {
+        return;
+    }
+    utterances.sort_by(|a, b| a.start.total_cmp(&b.start));
+    let mut i = 0;
+    while i + 1 < utterances.len() {
+        if utterances[i].channel != utterances[i + 1].channel
+            || utterances[i + 1].start - utterances[i].end > 0.5
+        {
+            i += 1;
+            continue;
+        }
+        let split = utterances[i]
+            .words
+            .iter()
+            .position(|w| w.start_sec >= utterances[i].end - 0.05)
+            .unwrap_or(utterances[i].words.len());
+        if split == utterances[i].words.len() || split == 0 {
+            i += 1;
+            continue;
+        }
+        let moved = utterances[i].words.split_off(split);
+        utterances[i].text = utterances[i]
+            .words
+            .iter()
+            .map(|w| w.w.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let moved_text = moved
+            .iter()
+            .map(|w| w.w.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let next = &mut utterances[i + 1];
+        next.end = next.end.max(moved.last().map_or(0.0, |w| w.end_sec));
+        next.words.splice(0..0, moved);
+        next.text = if next.text.is_empty() {
+            moved_text
+        } else {
+            format!("{moved_text} {}", next.text)
+        };
+        if utterances[i].text.is_empty() {
+            utterances.remove(i);
+        } else {
+            i += 1;
+        }
+    }
 }
 
 fn words_of(text: &str) -> HashSet<String> {
@@ -1647,10 +1740,11 @@ pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<Strin
 mod tests {
     use super::{
         dedupe_cross_channel, fill_labels_by_time, group_segments, merge_quiet_short,
-        merge_tiny_clusters, merge_utterances, profile_anchors, read_profiles_file,
-        reconcile_channels, refresh_speaker_stats, speaker_change_cuts, split_at_pauses,
-        split_words_by_bounds, SpeakerInfo, Utterance,
+        merge_tiny_clusters, merge_utterances, move_boundary_words, profile_anchors,
+        read_profiles_file, reconcile_channels, refresh_speaker_stats, speaker_change_cuts,
+        split_at_pauses, split_words_by_bounds, SpeakerInfo, Utterance,
     };
+    use crate::transcribe::WordConf;
 
     fn info(name: &str, ch: i32, emb: Vec<f64>, count: usize, sec: f64) -> SpeakerInfo {
         SpeakerInfo {
@@ -1683,6 +1777,34 @@ mod tests {
             words: Vec::new(),
             ctc_used: false,
         }
+    }
+
+    fn word(text: &str, start: f64, end: f64) -> WordConf {
+        WordConf {
+            w: text.to_string(),
+            conf: 1.0,
+            needs_review: false,
+            start_sec: start,
+            end_sec: end,
+        }
+    }
+
+    #[test]
+    fn boundary_words_move_to_next_utterance() {
+        let mut first = utt(0.0, 2.0, "A", 1, "один два три");
+        first.words = vec![
+            word("один", 0.1, 0.6),
+            word("два", 0.7, 1.2),
+            word("три", 2.1, 2.5),
+        ];
+        let mut second = utt(2.0, 4.0, "B", 1, "четыре");
+        second.words = vec![word("четыре", 2.6, 3.2)];
+        let mut utts = vec![first, second];
+        move_boundary_words(&mut utts);
+        assert_eq!(utts.len(), 2);
+        assert_eq!(utts[0].text, "один два");
+        assert_eq!(utts[1].text, "три четыре");
+        assert_eq!(utts[1].words.len(), 2);
     }
 
     #[test]
