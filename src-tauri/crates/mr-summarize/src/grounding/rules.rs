@@ -5,18 +5,18 @@ use regex::Regex;
 use crate::text::{self, Utterance};
 
 /// Факт из соседней реплики — не выдумка: сводка законно склеивает контекст.
-pub(super) fn hard_facts_supported(item: &str, utterances: &[Utterance]) -> bool {
+pub(super) fn hard_facts_supported(item: &str, utterances: &[Utterance], known: &[String]) -> bool {
     let support = utterances
         .iter()
         .map(|u| format!("{} {}", u.speaker, u.text))
         .collect::<Vec<_>>()
         .join(" ");
-    hard_facts(item)
+    hard_facts(item, known)
         .iter()
         .all(|fact| fact_supported(fact, &support))
 }
 
-fn hard_facts(text: &str) -> Vec<String> {
+fn hard_facts(text: &str, known: &[String]) -> Vec<String> {
     let mut facts = Vec::new();
     for pattern in fact_patterns() {
         for m in pattern.find_iter(text) {
@@ -33,13 +33,26 @@ fn hard_facts(text: &str) -> Vec<String> {
         if !first.is_uppercase() || !chars.any(|c| c.is_lowercase()) {
             continue;
         }
-        // Заглавная в начале пункта — начало строки, а не имя («Пройти»).
-        if sentence_start(&words, index) && infinitive(clean) {
+        // Заглавная в начале пункта — начало фразы («Обсудили», «Команда»),
+        // а не имя; имя в этой позиции подтверждает только список спикеров.
+        if sentence_start(&words, index) && !known_speaker(clean, known) {
             continue;
         }
         facts.push(clean.to_owned());
     }
     facts
+}
+
+fn known_speaker(word: &str, known: &[String]) -> bool {
+    let word = text::normalize(word);
+    known.iter().any(|name| {
+        let name = text::normalize(name);
+        word.chars()
+            .zip(name.chars())
+            .take_while(|(a, b)| a == b)
+            .count()
+            >= 3
+    })
 }
 
 fn sentence_start(words: &[&str], index: usize) -> bool {
@@ -48,11 +61,6 @@ fn sentence_start(words: &[&str], index: usize) -> bool {
             .chars()
             .last()
             .is_some_and(|c| matches!(c, '.' | '!' | '?' | ':' | ';' | '—'))
-}
-
-fn infinitive(word: &str) -> bool {
-    let word = word.to_lowercase();
-    word.ends_with("ть") || word.ends_with("ться") || word.ends_with("ти") || word.ends_with("чь")
 }
 
 fn fact_patterns() -> &'static [Regex] {

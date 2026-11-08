@@ -29,7 +29,7 @@ fn prompts_for_matrix_fixtures_contain_catalog_sections() {
     for (preset_id, file, language) in cases {
         let preset = preset::get(preset_id).unwrap();
         let built = build(preset, file, language);
-        assert_eq!(built.prompt_version, format!("{preset_id}-v2"));
+        assert_eq!(built.prompt_version, preset.prompt_version);
         for section in preset.sections {
             assert!(
                 built.user.contains(&format!("## {}", section.title_ru)),

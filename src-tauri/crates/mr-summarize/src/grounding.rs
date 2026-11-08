@@ -44,7 +44,7 @@ pub fn ground(
 
     for (section_index, section) in parsed.sections.iter().enumerate() {
         for item in &section.items {
-            if !hard_facts_supported(&item.text, &transcript.utterances) {
+            if !hard_facts_supported(&item.text, &transcript.utterances, &known) {
                 dropped += 1;
                 continue;
             }
@@ -249,7 +249,7 @@ fn reconcile_task(
     let support = support_text(utterances, &primary);
     let normalized_support = text::normalize(&support);
     let normalized_text = text::normalize(&output.text);
-    if crate::cues::task_rejected(&output.text) || crate::cues::task_rejected(&best_support) {
+    if crate::cues::task_rejected(&output.text) || crate::cues::task_negated(&best_support) {
         return false;
     }
     let kind = crate::extract::task_kind(&output.text, &normalized_text, known)

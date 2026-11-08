@@ -697,15 +697,62 @@ fn assignee_from_another_utterance_is_dropped() {
 }
 
 #[test]
-fn invented_first_word_name_is_dropped() {
+fn invented_mid_sentence_name_is_dropped() {
     let summary = run(
         "meeting",
-        "## Кратко\n- Анна подготовит отчёт.\n",
+        "## Кратко\n- Подготовит отчёт Анна.\n",
         vec![u(0.0, "Борис", "Подготовит отчёт.")],
     );
     assert_eq!(summary.items_dropped, 1, "{summary:?}");
     assert!(summary.warnings.contains(&Warning::ItemsDroppedUnsupported));
     assert!(summary.sections.is_empty());
+}
+
+#[test]
+fn sentence_start_verb_is_not_a_hard_fact() {
+    let summary = run(
+        "meeting",
+        "## Кратко\n- Решили перенести запуск.\n",
+        vec![u(0.0, "Анна", "Договорились перенести запуск.")],
+    );
+    assert_eq!(summary.items_dropped, 0, "{summary:?}");
+    assert!(summary
+        .sections
+        .iter()
+        .any(|s| s.id == "brief" && !s.items.is_empty()));
+}
+
+#[test]
+fn sentence_start_common_noun_is_not_a_hard_fact() {
+    let summary = run(
+        "meeting",
+        "## Кратко\n- Команда закрыла проект.\n",
+        vec![u(0.0, "Анна", "Мы закрыли проект.")],
+    );
+    assert_eq!(summary.items_dropped, 0, "{summary:?}");
+    assert!(summary
+        .sections
+        .iter()
+        .any(|s| s.id == "brief" && !s.items.is_empty()));
+}
+
+#[test]
+fn task_survives_reject_words_elsewhere_in_source_utterance() {
+    let summary = run(
+        "meeting",
+        "## Задачи\n- Проверить логи до среды.\n",
+        vec![u(
+            0.0,
+            "Анна",
+            "Коллеги, я считаю, что тут есть риск, поэтому я до среды проверю логи.",
+        )],
+    );
+    let tasks = summary
+        .sections
+        .iter()
+        .find(|s| s.id == "tasks")
+        .unwrap_or_else(|| panic!("{summary:?}"));
+    assert_eq!(tasks.items[0].text, "Проверить логи до среды.");
 }
 
 #[test]

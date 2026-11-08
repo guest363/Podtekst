@@ -240,7 +240,7 @@ pub fn run(
         }
         ctx.retry.retries += 1;
         ctx.retry.reason = Some(reasons.join(","));
-        let repair = repair_request(&last_req, thin, decision_missed);
+        let repair = repair_request(&last_req, thin, decision_missed, single);
         match backend.generate(&repair, ctx.cancel, &mut *ctx.on_event) {
             Ok(out) => {
                 let (out, injected) = screen_output(out, &last_nonce);
@@ -264,7 +264,7 @@ pub fn run(
                             if thin {
                                 return Err(super::SummaryJobError::OutputThin);
                             }
-                        } else {
+                        } else if thin || !decision_missed || !decisions_empty(&grounded2) {
                             grounded = grounded2;
                             items_total = items2;
                         }
@@ -572,7 +572,12 @@ fn reduce_all(
     }
 }
 
-fn repair_request(req: &GenerateRequest, thin: bool, decision_missed: bool) -> GenerateRequest {
+fn repair_request(
+    req: &GenerateRequest,
+    thin: bool,
+    decision_missed: bool,
+    single: bool,
+) -> GenerateRequest {
     let mut retry = request_seed(req, 43);
     if thin {
         retry.prompt.push_str(
@@ -580,9 +585,15 @@ fn repair_request(req: &GenerateRequest, thin: bool, decision_missed: bool) -> G
         );
     }
     if decision_missed {
-        retry.prompt.push_str(
-            "\n\nВ источнике есть явное решение. Обязательно заполни секцию решений дословным решением из источника или не выводи её, если cue нет.",
-        );
+        if single {
+            retry.prompt.push_str(
+                "\n\nВ источнике есть явное решение. Обязательно заполни секцию решений дословным решением из источника или не выводи её, если cue нет.",
+            );
+        } else {
+            retry.prompt.push_str(
+                "\n\nВ исходной встрече было явное решение. Если оно есть в частичных протоколах, обязательно заполни секцию решений дословным решением из них или не выводи её.",
+            );
+        }
     }
     retry
 }

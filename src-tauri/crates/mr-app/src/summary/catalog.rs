@@ -46,6 +46,7 @@ struct Verified {
     path: std::path::PathBuf,
     len: u64,
     mtime: std::time::SystemTime,
+    generation: u64,
     sha: String,
 }
 
@@ -66,10 +67,15 @@ pub fn verified_model_sha(path: &std::path::Path) -> Option<String> {
     let metadata = std::fs::metadata(path).ok()?;
     let len = metadata.len();
     let mtime = metadata.modified().ok()?;
+    let generation = super::model_generation();
     {
         let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(item) = guard.as_ref() {
-            if item.path == path && item.len == len && item.mtime == mtime {
+            if item.path == path
+                && item.len == len
+                && item.mtime == mtime
+                && item.generation == generation
+            {
                 return Some(item.sha.clone());
             }
         }
@@ -90,6 +96,7 @@ pub fn verified_model_sha(path: &std::path::Path) -> Option<String> {
         path: path.to_path_buf(),
         len,
         mtime,
+        generation,
         sha: sha.clone(),
     });
     Some(sha)

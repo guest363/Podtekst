@@ -470,7 +470,6 @@ pub(crate) fn contains_injection(text: &str) -> bool {
         "</think>",
         "### instruction",
         "ignore previous",
-        "instructions",
         "system:",
         "assistant:",
         "<script",

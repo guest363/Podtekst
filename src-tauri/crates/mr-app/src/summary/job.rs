@@ -431,10 +431,13 @@ fn cancel_active() {
     };
     job.cancel.cancel();
     for _ in 0..20 {
-        if !is_active() {
+        if !is_current(&job.id) {
             return;
         }
         std::thread::sleep(Duration::from_millis(100));
+    }
+    if !is_current(&job.id) {
+        return;
     }
     #[cfg(not(target_os = "android"))]
     sidecar::kill_current();

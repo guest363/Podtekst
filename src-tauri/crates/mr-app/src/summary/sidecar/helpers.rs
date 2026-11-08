@@ -180,15 +180,14 @@ pub(super) fn map_ureq(error: ureq::Error) -> BackendError {
 /// Убирает thinking и служебные токены chat-template: JSON/GBNF не
 /// используется, схема проверяется постфактум.
 pub(super) fn sanitize_output(text: &str) -> String {
-    let text = text
-        .rsplit("</think>")
-        .next()
-        .unwrap_or(text)
-        .replace("<|im_start|>", "")
+    let text = match text.rsplit_once("</think>") {
+        Some((_, body)) => body,
+        None => text.trim_start().strip_prefix(" thinking").unwrap_or(text),
+    };
+    text.replace("<|im_start|>", "")
         .replace("<|im_end|>", "")
-        .replace(" thinking", "")
-        .replace("</think>", "");
-    text.trim().to_string()
+        .trim()
+        .to_string()
 }
 
 #[cfg(test)]
@@ -254,5 +253,11 @@ mod tests {
         assert!(!clean.contains("thinking"));
         assert!(!clean.contains("<|im_end|>"));
         assert!(clean.starts_with("## Кратко"));
+    }
+
+    #[test]
+    fn sanitize_keeps_english_word_thinking_in_body() {
+        let text = "## Brief\n- We are thinking about the launch.\n";
+        assert_eq!(sanitize_output(text), text.trim());
     }
 }

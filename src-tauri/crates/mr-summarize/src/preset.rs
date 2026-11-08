@@ -60,6 +60,7 @@ pub struct Preset {
     pub short_en: &'static str,
     pub caution_ru: &'static str,
     pub caution_en: &'static str,
+    pub role: &'static str,
     pub sensitive: bool,
     pub sections: &'static [SectionSpec],
     pub speaker_primary: &'static [&'static str],
@@ -239,6 +240,7 @@ pub static PRESETS: [Preset; 7] = [
         short_en: "Work meeting",
         caution_ru: "Проверьте имена, сроки и формулировки задач.",
         caution_en: "Check names, deadlines, and task wording against the linked utterances.",
+        role: "Ты — составитель протокола встречи.",
         sensitive: false,
         sections: MEETING_SECTIONS,
         speaker_primary: &[],
@@ -253,11 +255,12 @@ pub static PRESETS: [Preset; 7] = [
         short_en: "Standup and sprint",
         caution_ru: "Сверьте статусы и блокеры.",
         caution_en: "Verify statuses and blockers against the source utterances.",
+        role: "Ты — составитель протокола стендапа.",
         sensitive: false,
         sections: SCRUM_SECTIONS,
         speaker_primary: &[],
         speaker_secondary: &[],
-        prompt_version: "scrum-v2",
+        prompt_version: "scrum-v3",
     },
     Preset {
         id: "legal",
@@ -267,11 +270,12 @@ pub static PRESETS: [Preset; 7] = [
         short_en: "Hearing or consultation",
         caution_ru: "Это черновик, не юридическая консультация. Проверьте нормы, номера и формулировки.",
         caution_en: "This is a draft, not legal advice. Verify norms, numbers, and wording against the source utterances.",
+        role: "Ты — составитель протокола юридического заседания или консультации.",
         sensitive: true,
         sections: LEGAL_SECTIONS,
         speaker_primary: &["судья", "юрист", "judge", "lawyer"],
         speaker_secondary: &[],
-        prompt_version: "legal-v2",
+        prompt_version: "legal-v3",
     },
     Preset {
         id: "lecture",
@@ -281,11 +285,12 @@ pub static PRESETS: [Preset; 7] = [
         short_en: "Lecture or webinar",
         caution_ru: "Определения и примеры приведены по словам лектора.",
         caution_en: "Definitions and examples follow the lecturer's words.",
+        role: "Ты — составитель конспекта лекции.",
         sensitive: false,
         sections: LECTURE_SECTIONS,
         speaker_primary: &["лектор", "преподаватель", "lecturer", "teacher"],
         speaker_secondary: &["студент", "student"],
-        prompt_version: "lecture-v2",
+        prompt_version: "lecture-v3",
     },
     Preset {
         id: "psychology",
@@ -295,11 +300,12 @@ pub static PRESETS: [Preset; 7] = [
         short_en: "Conversation notes",
         caution_ru: "Это заметки о разговоре, не медицинская консультация и не диагноз. Проверьте формулировки.",
         caution_en: "These are conversation notes, not medical advice or a diagnosis. Check the wording.",
+        role: "Ты — составитель заметок о психологической сессии.",
         sensitive: true,
         sections: PSYCHOLOGY_SECTIONS,
         speaker_primary: &["клиент", "client"],
         speaker_secondary: &["терапевт", "психолог", "therapist", "psychologist"],
-        prompt_version: "psychology-v2",
+        prompt_version: "psychology-v3",
     },
     Preset {
         id: "personal",
@@ -309,11 +315,12 @@ pub static PRESETS: [Preset; 7] = [
         short_en: "Monologue or note",
         caution_ru: "Личные заметки. Проверьте, что смысл не искажён.",
         caution_en: "Personal notes. Check that the meaning is not distorted.",
+        role: "Ты — составитель личных заметок.",
         sensitive: false,
         sections: PERSONAL_SECTIONS,
         speaker_primary: &[],
         speaker_secondary: &[],
-        prompt_version: "personal-v2",
+        prompt_version: "personal-v3",
     },
     Preset {
         id: "universal",
@@ -323,6 +330,7 @@ pub static PRESETS: [Preset; 7] = [
         short_en: "Mixed format",
         caution_ru: "Проверьте итоги.",
         caution_en: "Check the summary against the linked utterances.",
+        role: "Ты — составитель протокола встречи.",
         sensitive: false,
         sections: UNIVERSAL_SECTIONS,
         speaker_primary: &[],
@@ -447,9 +455,12 @@ mod tests {
     #[test]
     fn prompt_versions_are_pinned() {
         for p in all() {
-            assert_eq!(p.prompt_version, format!("{}-v2", p.id));
+            assert!(p.prompt_version.starts_with(&format!("{}-v", p.id)));
             assert!(get(p.id).is_some());
         }
+        assert_eq!(get("meeting").unwrap().prompt_version, "meeting-v2");
+        assert_eq!(get("universal").unwrap().prompt_version, "universal-v2");
+        assert_eq!(get("legal").unwrap().prompt_version, "legal-v3");
         assert!(require("other").is_err());
     }
 

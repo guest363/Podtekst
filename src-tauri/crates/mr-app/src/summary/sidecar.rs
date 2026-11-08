@@ -298,9 +298,10 @@ fn read_stream<R: BufRead>(
     let mut text = String::new();
     let mut bytes = 0usize;
     let mut done = 0u32;
+    let mut finished = false;
     for line in reader.lines() {
         cancel.check()?;
-        let Ok(line) = line else { break };
+        let line = line.map_err(|_| BackendError::Crashed)?;
         bytes += line.len() + 1;
         if bytes > cap {
             return Err(BackendError::Crashed);
@@ -309,6 +310,7 @@ fn read_stream<R: BufRead>(
             continue;
         };
         if payload.trim() == "[DONE]" {
+            finished = true;
             break;
         }
         let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
@@ -329,9 +331,12 @@ fn read_stream<R: BufRead>(
             }
         }
     }
+    if !finished {
+        return Err(BackendError::Crashed);
+    }
     on_event(BackendEvent {
         phase: Phase::Generate,
-        tokens_done: done.max(max_tokens.min(done + 1)),
+        tokens_done: max_tokens,
         tokens_total: max_tokens,
     });
     Ok(text)
@@ -397,13 +402,17 @@ pub fn kill_current() {
 }
 
 pub fn loaded_model_sha() -> Option<String> {
-    let mut cell = sidecar_cell().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(state) = cell.as_mut() {
-        if state.child.try_wait().ok().flatten().is_none() {
-            return Some(state.model_sha.clone());
+    let dead = {
+        let mut cell = sidecar_cell().lock().unwrap_or_else(|e| e.into_inner());
+        let alive = cell
+            .as_mut()
+            .is_some_and(|state| state.child.try_wait().ok().flatten().is_none());
+        if alive {
+            return cell.as_ref().map(|state| state.model_sha.clone());
         }
-    }
-    kill_state(cell.take());
+        cell.take()
+    };
+    kill_state(dead);
     None
 }
 
@@ -515,6 +524,30 @@ mod tests {
         let wrong_model = ok.replace("sum-qwen3-4b-instruct-2507-q4km", "other");
         let (port, _) = serve("200 OK", Box::leak(wrong_model.into_boxed_str()));
         assert!(!props_ok(port, "t", Path::new("/models/q.gguf"), 8192));
+    }
+
+    #[test]
+    fn stream_without_done_marker_is_rejected() {
+        let data = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n";
+        let cancel = CancelToken::new();
+        let mut events = |_event: BackendEvent| {};
+        let error =
+            read_stream(std::io::Cursor::new(data), 16, 1024, &cancel, &mut events).unwrap_err();
+        assert_eq!(error, BackendError::Crashed);
+    }
+
+    #[test]
+    fn final_progress_reaches_max_tokens() {
+        let data = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\ndata: [DONE]\n";
+        let cancel = CancelToken::new();
+        let mut last = 0;
+        let mut events = |event: BackendEvent| {
+            if event.phase == Phase::Generate {
+                last = event.tokens_done;
+            }
+        };
+        read_stream(std::io::Cursor::new(data), 16, 1024, &cancel, &mut events).unwrap();
+        assert_eq!(last, 16);
     }
 
     #[test]

@@ -133,6 +133,10 @@ pub fn invalidate_model_cache() {
     MODEL_GEN.fetch_add(1, Ordering::SeqCst);
 }
 
+pub(super) fn model_generation() -> u64 {
+    MODEL_GEN.load(Ordering::SeqCst)
+}
+
 pub fn supported() -> bool {
     !cfg!(target_os = "android")
 }

@@ -197,6 +197,22 @@ pub fn task_rejected(text: &str) -> bool {
     TASK_REJECT.iter().any(|marker| normalized.contains(marker))
 }
 
+/// Отрицание в реплике-источнике отменяет задачу, даже если модель её
+/// сформулировала; остальные стоп-слова источника — контекст, не отмена.
+pub fn task_negated(text: &str) -> bool {
+    let normalized = normalize(text);
+    [
+        "не нужно",
+        "не надо",
+        "не буду",
+        "не будет",
+        "не сможет",
+        "не готов",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
+}
+
 const QUESTION_STARTS: &[&str] = &[
     "кто",
     "что",
