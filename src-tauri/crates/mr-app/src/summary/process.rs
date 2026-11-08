@@ -45,6 +45,7 @@ pub fn read_record() -> Option<PidRecord> {
 
 /// Часть `/proc/<pid>/stat` после `comm`: поле 22 (starttime) лежит по
 /// индексу 19, потому что поля 1–2 уже разобраны.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn parse_linux_starttime(stat: &str) -> Option<u64> {
     let close = stat.rfind(')')?;
     let mut rest = stat.get(close + 1..)?.split_whitespace();
@@ -61,10 +62,10 @@ fn start_time_impl(pid: u32) -> Option<String> {
     parse_linux_starttime(&stat).map(|v| v.to_string())
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[cfg(target_os = "macos")]
 fn start_time_impl(pid: u32) -> Option<String> {
-    // libc на Apple не экспортирует kinfo_proc; proc_pidinfo даёт
-    // pbi_start_tvsec/usec без парсинга sysctl.
+    // libc на Apple не экспортирует kinfo_proc; proc_pidinfo (macOS-only)
+    // даёт pbi_start_tvsec/usec без парсинга sysctl.
     let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
     let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
     // SAFETY: proc_pidinfo заполняет структуру известного размера.
@@ -119,6 +120,11 @@ fn start_time_impl(pid: u32) -> Option<String> {
     target_os = "macos",
     target_os = "ios"
 )))]
+fn start_time_impl(_pid: u32) -> Option<String> {
+    None
+}
+
+#[cfg(target_os = "ios")]
 fn start_time_impl(_pid: u32) -> Option<String> {
     None
 }
@@ -236,6 +242,7 @@ pub fn cleanup_orphans() {
 mod tests {
     use super::*;
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn stat_starttime_survives_spaces_and_parens_in_comm() {
         // Поле 22 — 999; после `comm` идут поля 3.., поэтому индекс 19.

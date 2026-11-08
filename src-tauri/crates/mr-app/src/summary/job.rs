@@ -285,9 +285,18 @@ pub fn generate(input: &GenerateInput, recording: bool) -> Result<StartOutcome, 
     let sidecar_loaded = sidecar::loaded_model_sha().as_deref() == Some(model_sha.as_str());
     #[cfg(target_os = "android")]
     let sidecar_loaded = false;
-    let guard = memory::precheck(sidecar_loaded)
-        .map_err(|error| ApiError::new(422, "low_memory", error.user_message()))?;
-    if memory::free_disk_mb(&paths.parent).is_some_and(|free| free < 512) {
+    // Fake-режим существует только в debug и не грузит модель: проверки
+    // памяти и диска относятся к настоящему sidecar, поэтому здесь они
+    // только ломали бы контрактные тесты на слабых CI-раннерах.
+    let guard = if fake {
+        memory::GuardInfo {
+            threads: memory::threads(memory::logical_cores()),
+        }
+    } else {
+        memory::precheck(sidecar_loaded)
+            .map_err(|error| ApiError::new(422, "low_memory", error.user_message()))?
+    };
+    if !fake && memory::free_disk_mb(&paths.parent).is_some_and(|free| free < 512) {
         return Err(ApiError::new(
             422,
             "disk_low",
