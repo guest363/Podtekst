@@ -498,8 +498,9 @@ pub(crate) fn diarize_channel(
                     .map(|seg| seg.exclude_overlap(&mut chunk, lo))
                     .unwrap_or(chunk.len());
                 if clean_len >= (sr * 0.4) as usize {
-                    if let Ok(Some(e)) = ext.embed(&chunk) {
-                        quals[i] = rms_quality(&chunk);
+                    let clean = &chunk[..clean_len];
+                    if let Ok(Some(e)) = ext.embed(clean) {
+                        quals[i] = rms_quality(clean);
                         embs[i] = Some(e);
                     }
                 }
@@ -551,7 +552,7 @@ pub(crate) fn diarize_channel(
     } else {
         None
     };
-    // Калибровка Complete Linkage для ERes2NetV2: кросс-спикерные пары ≤ 0.22 (dist ≥ 0.78),
+    // Калибровка Average Linkage для ERes2NetV2: кросс-спикерные пары ≤ 0.22 (dist ≥ 0.78),
     // один голос ≥ 0.48 (dist ≤ 0.52). Порог 0.52 предотвращает расщепление одного человека.
     let mut core_labels = agglomerative(&core_vecs, 0.52, k);
     // Короткие шумные куски часто образуют ложные «голоса». Сливаем их с
@@ -1549,7 +1550,7 @@ pub(crate) fn split_long_by_speaker_change(
                     .map(|seg| seg.exclude_overlap(&mut chunk, lo))
                     .unwrap_or(chunk.len());
                 if clean_len >= (sr * 0.4) as usize {
-                    if let Ok(Some(e)) = ext.embed(&chunk) {
+                    if let Ok(Some(e)) = ext.embed(&chunk[..clean_len]) {
                         wins.push((t, e));
                     }
                 }

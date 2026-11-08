@@ -126,10 +126,9 @@ fn to_log_row(row: &[f32]) -> Vec<f32> {
     if non_negative && (sum - 1.0).abs() <= 1e-3 {
         return row.iter().map(|&x| x.max(1e-12).ln()).collect();
     }
-    let max = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-    if max <= 0.0 {
-        return row.to_vec();
-    }
+    // Для уже нормированных лог-вероятностей LSE = 0, поэтому повторный
+    // log_softmax идемпотентен. Ветка «все ≤ 0 — значит уже лог» ошибалась
+    // на сырых логитах с отрицательным максимумом.
     let lse = row.iter().fold(f32::NEG_INFINITY, |a, &x| log_add(a, x));
     row.iter().map(|x| x - lse).collect()
 }
@@ -231,11 +230,22 @@ pub fn decode_ctc_greedy(logprobs: &[Vec<f32>], vocab: &[String], blank: usize) 
     }
 }
 
-fn contains_seq(hay: &[i64], needle: &[i64]) -> bool {
+fn contains_seq(hay: &[i64], needle: &[i64], vocab: &[String]) -> bool {
     if needle.is_empty() || needle.len() > hay.len() {
         return false;
     }
-    hay.windows(needle.len()).any(|w| w == needle)
+    hay.windows(needle.len()).enumerate().any(|(i, w)| {
+        w == needle
+            && hay
+                .get(i + needle.len())
+                .map(|&id| {
+                    id == 0
+                        || vocab
+                            .get(id as usize)
+                            .is_some_and(|piece| piece.starts_with('▁'))
+                })
+                .unwrap_or(true)
+    })
 }
 
 pub fn decode_ctc_beam(
@@ -251,8 +261,10 @@ pub fn decode_ctc_beam(
     for row in logprobs {
         let lp = to_log_row(row);
         let mut order: Vec<usize> = (0..lp.len()).collect();
-        order.sort_by(|&a, &b| lp[b].total_cmp(&lp[a]));
-        order.truncate(TOP_K);
+        if order.len() > TOP_K {
+            order.select_nth_unstable_by(TOP_K, |&a, &b| lp[b].total_cmp(&lp[a]));
+            order.truncate(TOP_K);
+        }
         if !order.contains(&blank) {
             order.push(blank);
         }
@@ -299,7 +311,7 @@ pub fn decode_ctc_beam(
     for (prefix, pb, pnb) in &beams {
         let mut s = log_add(*pb, *pnb);
         for hw in hotword_ids {
-            if contains_seq(prefix, hw) {
+            if contains_seq(prefix, hw, vocab) {
                 s += bonus;
             }
         }
@@ -732,7 +744,34 @@ mod tests {
             0.05f32.ln(),
             0.05f32.ln(),
         ];
-        assert_eq!(to_log_row(&row), row.to_vec());
+        for (actual, expected) in to_log_row(&row).into_iter().zip(row) {
+            assert!((actual - expected).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn negative_raw_logits_are_normalized() {
+        // Все логиты < 0 — это ещё не лог-вероятности: сумма exp должна быть 1.
+        let out = to_log_row(&[-3.0, -1.0, -2.0]);
+        let sum: f32 = out.iter().map(|x| x.exp()).sum();
+        assert!((sum - 1.0).abs() < 1e-6, "сумма {sum}");
+        assert!(out[1] > out[2] && out[2] > out[0]);
+    }
+
+    #[test]
+    fn hotword_does_not_match_prefix_of_longer_word() {
+        let v = vec![
+            "<unk>".to_string(),
+            "▁".to_string(),
+            "▁ит".to_string(),
+            "о".to_string(),
+            "г".to_string(),
+            "<blk>".to_string(),
+        ];
+        assert!(contains_seq(&[2], &[2], &v));
+        assert!(contains_seq(&[2, 0, 3], &[2], &v));
+        assert!(!contains_seq(&[2, 3, 4], &[2], &v));
+        assert!(!contains_seq(&[1, 2, 3, 4], &[1, 2, 3], &v));
     }
 
     #[test]
