@@ -1,5 +1,9 @@
+use std::io::Read;
+use std::sync::{Mutex, OnceLock};
+
 use mr_summarize::Detail;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use super::config::{
     self, ClassifierMode, ESTIMATE_PEAK_MB, MAX_CHARS, MAX_SECONDS, MIN_SYSTEM_RAM_MB, MODEL_ID,
@@ -36,6 +40,59 @@ pub(super) fn model_status_json() -> Option<Value> {
 
 pub fn model_ready() -> bool {
     model_path().is_some()
+}
+
+struct Verified {
+    path: std::path::PathBuf,
+    len: u64,
+    mtime: std::time::SystemTime,
+    sha: String,
+}
+
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+/// SHA-256 файла модели с кэшем по (путь, размер, mtime). 2.3 ГБ на каждый
+/// job читать нельзя, но подменённый файл обязан изменить mtime/размер.
+pub fn verified_model_sha(path: &std::path::Path) -> Option<String> {
+    static CACHE: OnceLock<Mutex<Option<Verified>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(None));
+    let metadata = std::fs::metadata(path).ok()?;
+    let len = metadata.len();
+    let mtime = metadata.modified().ok()?;
+    {
+        let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(item) = guard.as_ref() {
+            if item.path == path && item.len == len && item.mtime == mtime {
+                return Some(item.sha.clone());
+            }
+        }
+    }
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 1024 * 1024];
+    loop {
+        let read = file.read(&mut buf).ok()?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buf[..read]);
+    }
+    let sha = hex(&hasher.finalize());
+    let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    *guard = Some(Verified {
+        path: path.to_path_buf(),
+        len,
+        mtime,
+        sha: sha.clone(),
+    });
+    Some(sha)
 }
 
 pub fn model_path() -> Option<std::path::PathBuf> {
@@ -104,9 +161,10 @@ pub fn settings_view() -> Value {
 }
 
 pub fn update_settings(body: &Value) -> Result<Value, ApiError> {
-    let mut settings = config::load();
+    let effective = config::load();
+    let mut settings = config::stored();
     if let Some(auto) = body.get("auto_suggest").and_then(Value::as_bool) {
-        if settings.classifier == ClassifierMode::ManualOnly && auto {
+        if effective.classifier == ClassifierMode::ManualOnly && auto {
             return Err(ApiError::new(
                 409,
                 "classifier_manual_only",
@@ -137,4 +195,35 @@ pub fn update_settings(body: &Value) -> Result<Value, ApiError> {
         )
     })?;
     Ok(json!({ "settings": config::load().public_json() }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verified_sha_is_cached_and_rechecks_changed_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "mr-model-sha-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("model.gguf");
+        std::fs::write(&path, b"abcdef").unwrap();
+        let first = verified_model_sha(&path).expect("sha");
+        assert_eq!(
+            first,
+            hex(&Sha256::digest(b"abcdef")),
+            "sha не совпал с файлом"
+        );
+        assert_eq!(verified_model_sha(&path).as_deref(), Some(first.as_str()));
+        std::fs::write(&path, b"abcdef-longer").unwrap();
+        let second = verified_model_sha(&path).expect("sha");
+        assert_ne!(first, second, "кэш не заметил новый файл");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

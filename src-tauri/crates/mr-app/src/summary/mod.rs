@@ -78,6 +78,7 @@ pub enum SummaryJobError {
     OutputCapped,
     BackendCrashed,
     StaleSource,
+    SchemaUnsupported,
     NoTranscript,
     NoText,
     TooShort,
@@ -97,6 +98,7 @@ impl SummaryJobError {
             Self::OutputCapped => "output_capped",
             Self::BackendCrashed => "backend_crashed",
             Self::StaleSource => "stale_source",
+            Self::SchemaUnsupported => "schema_unsupported",
             Self::NoTranscript => "no_transcript",
             Self::NoText => "no_text",
             Self::TooShort => "too_short",
@@ -163,13 +165,26 @@ pub fn block_reason(recording: bool) -> Option<&'static str> {
     if is_active() {
         return Some("busy_summary");
     }
-    if !model_ready() {
+    readiness_reason(headless(), runtime_ready(), model_ready())
+}
+
+/// Headless (`--web`) сначала требует runtime: без него скачивание модели
+/// не приближает генерацию (M17). Desktop сохраняет прежний порядок.
+fn readiness_reason(headless: bool, runtime: bool, model: bool) -> Option<&'static str> {
+    if headless && !runtime {
+        return Some("runtime_missing");
+    }
+    if !model {
         return Some("model_missing");
     }
-    if !runtime_ready() {
+    if !runtime {
         return Some("runtime_missing");
     }
     None
+}
+
+fn headless() -> bool {
+    !cfg!(feature = "tauri-ui")
 }
 
 fn transcription_pending() -> bool {
@@ -241,3 +256,24 @@ pub(super) fn emit_event(event: Value) {
 
 #[cfg(not(feature = "onnx"))]
 pub(super) fn emit_event(_event: Value) {}
+
+#[cfg(test)]
+mod tests {
+    use super::readiness_reason;
+
+    #[test]
+    fn headless_leads_with_runtime_not_model() {
+        assert_eq!(
+            readiness_reason(true, false, false),
+            Some("runtime_missing"),
+            "headless без обоих компонентов должен вести к runtime"
+        );
+        assert_eq!(readiness_reason(false, false, false), Some("model_missing"));
+        assert_eq!(readiness_reason(true, true, false), Some("model_missing"));
+        assert_eq!(
+            readiness_reason(false, false, true),
+            Some("runtime_missing")
+        );
+        assert_eq!(readiness_reason(true, true, true), None);
+    }
+}

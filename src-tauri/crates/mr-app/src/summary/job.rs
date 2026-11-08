@@ -6,7 +6,7 @@ use mr_summarize::Detail;
 use serde_json::{json, Value};
 
 use super::backend::CancelToken;
-use super::catalog::{model_path, model_ready};
+use super::catalog::{model_path, model_ready, verified_model_sha};
 use super::config::{self, MODEL_SHA256};
 use super::memory;
 use super::pipeline;
@@ -14,7 +14,10 @@ use super::runner::{run_pipeline, JobFinish};
 #[cfg(not(target_os = "android"))]
 use super::sidecar;
 use super::store;
-use super::{activity_start, emit_event, id, runtime_ready, supported, ApiError, SummaryJobError};
+use super::{
+    activity_finish, activity_start, emit_event, id, runtime_ready, supported, ApiError,
+    SummaryJobError,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct JobState {
@@ -37,6 +40,69 @@ pub(super) static JOB: Mutex<Option<Arc<Job>>> = Mutex::new(None);
 
 pub(super) fn job_cell() -> std::sync::MutexGuard<'static, Option<Arc<Job>>> {
     JOB.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Слот резервируется под тем же мьютексом, что и публикуется job: две
+/// одновременные заявки не могут обе пройти preflight (H02). Ошибка на любом
+/// пути освобождает слот и счётчик активности через Drop.
+struct Reservation {
+    job: Arc<Job>,
+    armed: bool,
+}
+
+impl Reservation {
+    fn job(&self) -> &Arc<Job> {
+        &self.job
+    }
+
+    fn disarm(mut self) -> Arc<Job> {
+        self.armed = false;
+        self.job.clone()
+    }
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        {
+            let mut cell = job_cell();
+            if !cell.as_ref().is_some_and(|job| job.id == self.job.id) {
+                return;
+            }
+            *cell = None;
+        }
+        activity_finish();
+    }
+}
+
+fn reserve(file: String) -> Result<Reservation, ApiError> {
+    let mut cell = job_cell();
+    if cell.is_some() {
+        return Err(ApiError::new(
+            409,
+            "summary_busy",
+            "Итоги уже собираются для другой записи. Повторите позже.",
+        ));
+    }
+    let job = Arc::new(Job {
+        id: id::new_job_id(),
+        file,
+        started: Instant::now(),
+        cancel: CancelToken::new(),
+        timed_out: AtomicBool::new(false),
+        state: Mutex::new(JobState {
+            phase: "load",
+            pct: 0,
+            chunk: None,
+            chunks: None,
+        }),
+    });
+    *cell = Some(job.clone());
+    drop(cell);
+    activity_start();
+    Ok(Reservation { job, armed: true })
 }
 
 pub(super) fn is_current(job_id: &str) -> bool {
@@ -129,13 +195,6 @@ pub fn generate(input: &GenerateInput, recording: bool) -> Result<StartOutcome, 
             "Идёт расшифровка. Итоги можно собрать после её окончания.",
         ));
     }
-    if is_active() {
-        return Err(ApiError::new(
-            409,
-            "summary_busy",
-            "Итоги уже собираются для другой записи. Повторите позже.",
-        ));
-    }
     let preset = mr_summarize::preset::get(&input.preset_id)
         .ok_or_else(|| ApiError::new(400, "invalid_preset", "Неизвестный шаблон."))?;
     let detail = Detail::parse(&input.detail)
@@ -155,6 +214,7 @@ pub fn generate(input: &GenerateInput, recording: bool) -> Result<StartOutcome, 
         ));
     }
     let paths = store::resolve(&input.file).map_err(ApiError::store)?;
+    let reservation = reserve(paths.relative.clone())?;
     let source = super::cache::read(&paths).map_err(ApiError::store)?;
     if source.rev != input.source_rev {
         return Err(ApiError::new(
@@ -164,7 +224,9 @@ pub fn generate(input: &GenerateInput, recording: bool) -> Result<StartOutcome, 
         ));
     }
     let loaded = store::load(&paths, &source.rev);
-    if loaded.state == store::State::Unsupported && !input.allow_downgrade {
+    // Новее-major артефакт заменяется только при явных force и
+    // allow_downgrade (M03); одного allow_downgrade недостаточно.
+    if loaded.state == store::State::Unsupported && !(input.allow_downgrade && input.force) {
         return Err(ApiError::new(
             422,
             "schema_unsupported",
@@ -179,12 +241,35 @@ pub fn generate(input: &GenerateInput, recording: bool) -> Result<StartOutcome, 
         }
     }
     let fake = super::backend::fake_mode().is_some();
-    if !fake {
-        if model_path().is_none() {
+    let model_sha = if fake {
+        MODEL_SHA256.to_string()
+    } else {
+        if super::headless() && !runtime_ready() {
+            return Err(ApiError::new(
+                503,
+                "runtime_missing",
+                "Итоги недоступны: локальный движок не найден.",
+            ));
+        }
+        let Some(path) = model_path() else {
             return Err(ApiError::new(
                 503,
                 "model_missing",
                 "Модель итогов не скачана.",
+            ));
+        };
+        let Some(sha) = verified_model_sha(&path) else {
+            return Err(ApiError::new(
+                503,
+                "model_missing",
+                "Модель итогов не читается. Скачайте её заново.",
+            ));
+        };
+        if sha != MODEL_SHA256 {
+            return Err(ApiError::new(
+                422,
+                "model_corrupt",
+                "Модель итогов повреждена. Скачайте её заново.",
             ));
         }
         if !runtime_ready() {
@@ -194,9 +279,10 @@ pub fn generate(input: &GenerateInput, recording: bool) -> Result<StartOutcome, 
                 "Итоги недоступны: локальный движок не найден.",
             ));
         }
-    }
+        sha
+    };
     #[cfg(not(target_os = "android"))]
-    let sidecar_loaded = sidecar::loaded_model_sha().as_deref() == Some(MODEL_SHA256);
+    let sidecar_loaded = sidecar::loaded_model_sha().as_deref() == Some(model_sha.as_str());
     #[cfg(target_os = "android")]
     let sidecar_loaded = false;
     let guard = memory::precheck(sidecar_loaded)
@@ -208,28 +294,16 @@ pub fn generate(input: &GenerateInput, recording: bool) -> Result<StartOutcome, 
             "Не хватает места на диске. Освободите место и повторите.",
         ));
     }
-    let job_id = id::new_job_id();
-    let job = Arc::new(Job {
-        id: job_id.clone(),
-        file: paths.relative.clone(),
-        started: Instant::now(),
-        cancel: CancelToken::new(),
-        timed_out: AtomicBool::new(false),
-        state: Mutex::new(JobState {
-            phase: "load",
-            pct: 0,
-            chunk: None,
-            chunks: None,
-        }),
-    });
-    *job_cell() = Some(job.clone());
-    activity_start();
+    let job_id = reservation.job().id.clone();
+    let job = reservation.job().clone();
     let spec = pipeline::JobSpec {
         paths,
         preset_id: input.preset_id.clone(),
         detail,
         confirmed_sensitive: input.confirm_sensitive,
         allow_downgrade: input.allow_downgrade,
+        force: input.force,
+        model_sha,
     };
     let worker_job = job.clone();
     let spawn = std::thread::Builder::new()
@@ -276,8 +350,6 @@ pub fn generate(input: &GenerateInput, recording: bool) -> Result<StartOutcome, 
             }
         });
     if let Err(error) = spawn {
-        *job_cell() = None;
-        super::activity_finish();
         crate::note!("summary: spawn failed: {error}");
         return Err(ApiError::new(
             500,
@@ -285,7 +357,7 @@ pub fn generate(input: &GenerateInput, recording: bool) -> Result<StartOutcome, 
             "Внутренняя ошибка итогов. Повторите и лог.",
         ));
     }
-    arm_timeout(job, source.transcript.total_chars());
+    arm_timeout(reservation.disarm(), source.transcript.total_chars());
     Ok(StartOutcome::Started { job_id })
 }
 
@@ -365,4 +437,89 @@ pub fn cancel_for_transcription() {
 
 pub fn cancel_for_recording() {
     cancel_active();
+}
+
+#[cfg(all(test, unix, not(target_os = "android")))]
+mod tests {
+    use super::*;
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn alive(pid: u32) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            std::path::Path::new(&format!("/proc/{pid}")).exists()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            // SAFETY: signal 0 только проверяет существование PID.
+            unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+        }
+    }
+
+    #[test]
+    fn cancel_kills_generation_child_and_releases_slot() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        *job_cell() = None;
+        let reservation = reserve("cancel.wav".to_string()).expect("слот занят");
+        let job_id = reservation.job().id.clone();
+        let job = reservation.disarm();
+        let pid = sidecar::install_test_child("sleep", &["30"]);
+        let worker_job = job.clone();
+        let worker = std::thread::spawn(move || {
+            while !worker_job.cancel.is_cancelled() {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            super::super::runner::cancel_sidecar(&worker_job);
+            drop(JobFinish {
+                id: worker_job.id.clone(),
+            });
+        });
+        assert!(cancel(&job_id));
+        let started = Instant::now();
+        while alive(pid) && started.elapsed() < Duration::from_secs(2) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!alive(pid), "generation-child пережил отмену");
+        worker.join().unwrap();
+        assert!(!is_active(), "слот job не освобождён");
+        #[cfg(feature = "onnx")]
+        assert!(
+            !crate::transcribe::events::is_summary_active(),
+            "счётчик активности не вернулся в ноль"
+        );
+        assert!(
+            sidecar::test_state_pid().is_none(),
+            "sidecar state остался после kill"
+        );
+    }
+
+    #[test]
+    fn double_reserve_yields_one_slot() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        *job_cell() = None;
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|i| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    reserve(format!("race-{i}.wav"))
+                })
+            })
+            .collect();
+        let winners: Vec<Reservation> = handles
+            .into_iter()
+            .filter_map(|handle| handle.join().unwrap().ok())
+            .collect();
+        assert_eq!(winners.len(), 1, "две заявки заняли слот");
+        assert!(is_active());
+        drop(winners);
+        assert!(!is_active(), "drop резерва не освободил слот");
+        #[cfg(feature = "onnx")]
+        assert!(
+            !crate::transcribe::events::is_summary_active(),
+            "счётчик после резерва не вернулся в ноль"
+        );
+    }
 }

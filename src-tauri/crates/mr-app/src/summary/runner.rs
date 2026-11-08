@@ -3,8 +3,6 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::backend::{BackendEvent, Phase, SummaryBackend};
-#[cfg(not(target_os = "android"))]
-use super::config::MODEL_SHA256;
 use super::job::{job_cell, Job};
 use super::pipeline;
 #[cfg(not(target_os = "android"))]
@@ -19,13 +17,18 @@ pub(super) struct JobFinish {
 
 impl Drop for JobFinish {
     fn drop(&mut self) {
-        {
+        let owned = {
             let mut cell = job_cell();
             if cell.as_ref().is_some_and(|job| job.id == self.id) {
                 *cell = None;
+                true
+            } else {
+                false
             }
+        };
+        if owned {
+            activity_finish();
         }
-        activity_finish();
         #[cfg(not(target_os = "android"))]
         sidecar::arm_idle_monitor();
     }
@@ -46,7 +49,7 @@ pub(super) fn run_pipeline(
                 super::runtime_locator::locate().map_err(|_| SummaryJobError::ModelLoad)?;
             Box::new(sidecar::SidecarBackend::new(
                 runtime,
-                MODEL_SHA256.to_string(),
+                spec.model_sha.clone(),
                 threads,
             ))
         }
@@ -78,12 +81,26 @@ pub(super) fn run_pipeline(
     let cancel = job.cancel.clone();
     let result = pipeline::run(spec, backend.as_mut(), &cancel, &mut on_event);
     backend.shutdown();
+    cancel_sidecar(job);
     if let Err(error) = &result {
         if job.cancel.is_cancelled() && *error != SummaryJobError::OutputCapped {
             return Err(SummaryJobError::Cancelled);
         }
     }
     result
+}
+
+/// Отмена обязана погасить именно generation-child, а не ждать idle-таймер:
+/// иначе llama-server продолжает считать токены после ухода job (S-05).
+/// Kill идёт до `JobFinish::drop`, поэтому слот и счётчик освобождаются после
+/// join ребёнка.
+pub(super) fn cancel_sidecar(job: &Arc<Job>) {
+    #[cfg(not(target_os = "android"))]
+    if job.cancel.is_cancelled() {
+        sidecar::kill_current();
+    }
+    #[cfg(target_os = "android")]
+    let _ = job;
 }
 
 fn stage(job: &Arc<Job>, phase: &'static str, pct: u8, chunk: Option<u32>, chunks: Option<u32>) {

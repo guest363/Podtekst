@@ -31,10 +31,7 @@ fn hard_facts(text: &str) -> Vec<String> {
         }
     }
     let words: Vec<&str> = text.split_whitespace().collect();
-    for (i, word) in words.iter().enumerate() {
-        if i == 0 {
-            continue;
-        }
+    for word in &words {
         let clean = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
         let mut chars = clean.chars();
         if let Some(first) = chars.next() {
@@ -74,10 +71,12 @@ fn fact_supported(fact: &str, support: &str) -> bool {
     if normalized_fact.contains(' ') {
         return format!(" {normalized_support} ").contains(&format!(" {normalized_fact} "));
     }
+    let fact_stem = text::stem_token(&normalized_fact);
     normalized_support.split_whitespace().any(|token| {
         token == normalized_fact
             || (normalized_fact.chars().count() >= 5 && token.starts_with(&normalized_fact))
             || (token.chars().count() >= 5 && normalized_fact.starts_with(token))
+            || (normalized_fact.chars().count() >= 4 && fact_stem == text::stem_token(token))
     })
 }
 
@@ -102,7 +101,7 @@ pub(super) fn soft_claim_unsupported(
             "завершил",
             "заблокирован",
         ],
-    ) && !contains_any(
+    ) && !contains_any_unnegated(
         support,
         &[
             "сделал",
@@ -133,7 +132,7 @@ pub(super) fn soft_claim_unsupported(
             "поддерживают",
             "не возражают",
         ],
-    ) && !contains_any(
+    ) && !contains_any_unnegated(
         support,
         &[
             "согласова",
@@ -227,6 +226,20 @@ fn has_explicit_name(utterances: &[Utterance], indices: &[usize]) -> bool {
 
 pub(super) fn contains_any(text: &str, needles: &[&str]) -> bool {
     needles.iter().any(|n| text.contains(n))
+}
+
+/// «Не согласны» и «не в работе» содержат положительные cue, но отрицают
+/// их; для soft-claim поддержкой считаем только неотрицательное вхождение.
+fn contains_any_unnegated(text: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| {
+        text.match_indices(needle).any(|(index, _)| {
+            let tail: Vec<&str> = text[..index].split_whitespace().rev().take(2).collect();
+            !tail.iter().any(|word| {
+                let word = word.trim_matches(|c: char| !c.is_alphanumeric());
+                word == "не" || word == "not"
+            })
+        })
+    })
 }
 
 pub(super) fn decision_cue(support: &str) -> bool {

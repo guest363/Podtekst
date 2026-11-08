@@ -236,3 +236,92 @@ fn object_key_deduplicates_hints_tasks() {
         task_object_key("Надо заполнить журнал.")
     );
 }
+
+#[test]
+fn need_assignee_requires_label_or_adjacent_action() {
+    let known = vec!["Вера".to_string(), "Борис".to_string()];
+    assert_eq!(
+        assignee_for(
+            "Вере отчёт нужно подготовить.",
+            None,
+            Some("Анна"),
+            &known,
+            TaskKind::Need
+        ),
+        None,
+        "имя упомянуто, но не рядом с действием"
+    );
+    assert_eq!(
+        assignee_for(
+            "Вере нужно подготовить отчёт.",
+            None,
+            Some("Анна"),
+            &known,
+            TaskKind::Need
+        )
+        .as_deref(),
+        Some("Вера")
+    );
+    assert_eq!(
+        assignee_for(
+            "Подготовить отчёт; Кто: Борис",
+            None,
+            Some("Анна"),
+            &known,
+            TaskKind::Need
+        )
+        .as_deref(),
+        Some("Борис")
+    );
+}
+
+#[test]
+fn task_kind_rejects_discussion_and_negations() {
+    for text in [
+        "Обсудить бюджет.",
+        "Предлагаю подготовить отчёт.",
+        "Можно обновить документацию.",
+        "Не нужно готовить отчёт.",
+        "Не надо проверять журнал.",
+    ] {
+        let normalized = crate::text::normalize(text);
+        assert_eq!(
+            task_kind(text, &normalized, &[]),
+            None,
+            "ложная задача: {text}"
+        );
+    }
+    let normalized = crate::text::normalize("Надо подготовить отчёт.");
+    assert_eq!(
+        task_kind("Надо подготовить отчёт.", &normalized, &[]),
+        Some(TaskKind::Need)
+    );
+}
+
+#[test]
+fn english_first_person_and_need_are_tasks() {
+    let t = transcript(&[
+        ("Bob", "I will update the report by Friday."),
+        ("Ann", "We need to check the budget tomorrow."),
+    ]);
+    let found = candidates(&t, preset::get("meeting").unwrap());
+    let tasks: Vec<_> = found.iter().filter(|c| c.section_id == "tasks").collect();
+    assert_eq!(
+        tasks.len(),
+        2,
+        "{:?}",
+        tasks.iter().map(|c| &c.item.text).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        tasks[0].item.task.as_ref().unwrap().assignee.as_deref(),
+        Some("Bob")
+    );
+    assert_eq!(
+        tasks[0].item.task.as_ref().unwrap().deadline.as_deref(),
+        Some("by Friday")
+    );
+    assert_eq!(
+        tasks[1].item.task.as_ref().unwrap().deadline.as_deref(),
+        Some("tomorrow")
+    );
+}

@@ -15,9 +15,10 @@ pub(crate) fn assignee_for(
     let speaker = speaker.map(str::trim).filter(|s| !s.is_empty());
 
     if kind == TaskKind::Need {
-        // «Надо/нужно» не назначает исполнителя само по себе: только явное
-        // имя говорящего в тексте задачи (в т.ч. «Вере нужно…»).
-        return known_name_in_text(&task_norm, known).or_else(|| label_assignee(task_text, known));
+        // «Надо/нужно» само исполнителя не назначает: только явная метка
+        // «Кто:» или имя рядом с действием в тексте задачи (H03).
+        return label_assignee(task_text, known)
+            .or_else(|| extract_assignee_name(task_text, known));
     }
 
     let first_person = FIRST_PERSON
@@ -50,22 +51,16 @@ fn speaker_name_in_text(speaker: Option<&str>, support: &str, task_text: &str) -
     appears.then(|| speaker.to_owned())
 }
 
-fn known_name_in_text(text: &str, known: &[String]) -> Option<String> {
-    for word in text.split_whitespace() {
-        if let Some(name) = known_name(word, known) {
-            return Some(name);
-        }
-    }
-    None
-}
-
 fn label_assignee(text: &str, _known: &[String]) -> Option<String> {
     for part in text.split(';') {
         let Some((label, value)) = part.split_once(':') else {
             continue;
         };
         let normalized = text::normalize(label);
-        if normalized == "кто" || normalized == "ответственный" {
+        if matches!(
+            normalized.as_str(),
+            "кто" | "ответственный" | "who" | "assignee" | "owner"
+        ) {
             let value = value.trim().trim_matches('*').trim();
             if !value.is_empty() && !is_placeholder_name(value) {
                 return Some(value.to_owned());

@@ -19,6 +19,7 @@ fn run(preset: &str, output: &str, utterances: Vec<Utterance>) -> GroundedSummar
         &transcript,
         crate::preset::get(preset).unwrap(),
         Detail::Normal,
+        Language::Ru,
     )
 }
 
@@ -127,7 +128,7 @@ fn structured_fallback_fills_missing_tasks_without_duplicates() {
     let output = "## Кратко\n- Обсудили запуск.\n## Задачи\n- Подготовить отчёт; Кто: Борис; Срок: до среды\n";
     let preset = crate::preset::get("meeting").unwrap();
     let parsed = parse::parse(output, preset).unwrap();
-    let summary = ground(&parsed, &transcript, preset, Detail::Long);
+    let summary = ground(&parsed, &transcript, preset, Detail::Long, Language::Ru);
 
     let tasks = summary
         .sections
@@ -225,7 +226,7 @@ fn tasks_and_decisions_survive_brief_flood_at_normal() {
     let transcript = Transcript { utterances };
     let preset = crate::preset::get("meeting").unwrap();
     let parsed = parse::parse(&output, preset).unwrap();
-    let summary = ground(&parsed, &transcript, preset, Detail::Normal);
+    let summary = ground(&parsed, &transcript, preset, Detail::Normal, Language::Ru);
 
     let tasks_section = summary
         .sections
@@ -284,7 +285,7 @@ fn brief_is_truncated_to_four_without_warning() {
     let transcript = Transcript { utterances };
     let preset = crate::preset::get("meeting").unwrap();
     let parsed = parse::parse(&output, preset).unwrap();
-    let summary = ground(&parsed, &transcript, preset, Detail::Normal);
+    let summary = ground(&parsed, &transcript, preset, Detail::Normal, Language::Ru);
     let brief = summary.sections.iter().find(|s| s.id == "brief").unwrap();
     assert_eq!(brief.items.len(), 4);
     assert!(!summary.warnings.contains(&Warning::OutputCapped));
@@ -336,7 +337,7 @@ fn synthetic_meeting_fallback_has_no_false_tasks() {
     let output = "## Кратко\n- Обсудили запуск и сроки.\n";
     let preset = crate::preset::get("meeting").unwrap();
     let parsed = parse::parse(output, preset).unwrap();
-    let summary = ground(&parsed, &transcript, preset, Detail::Normal);
+    let summary = ground(&parsed, &transcript, preset, Detail::Normal, Language::Ru);
 
     let tasks = summary
         .sections
@@ -434,7 +435,7 @@ fn explicit_phone_commitment_replaces_need_task() {
         "## Кратко\n- Обсудили запуск и сроки.\n## Задачи\n- Вере нужно позвонить клиенту.\n";
     let preset = crate::preset::get("meeting").unwrap();
     let parsed = parse::parse(output, preset).unwrap();
-    let summary = ground(&parsed, &transcript, preset, Detail::Normal);
+    let summary = ground(&parsed, &transcript, preset, Detail::Normal, Language::Ru);
     let tasks = summary
         .sections
         .iter()
@@ -602,4 +603,122 @@ fn brief_is_derived_when_empty() {
     assert!(!brief.items.is_empty());
     assert!(brief.items.iter().all(|i| i.task.is_none()));
     assert!(summary.warnings.contains(&Warning::BriefDerived));
+}
+
+#[test]
+fn assignee_from_another_utterance_is_dropped() {
+    let summary = run(
+        "meeting",
+        "## Задачи\n- Подготовить отчёт; Кто: Вера\n",
+        vec![
+            u(
+                0.0,
+                "Анна",
+                "Анна обсуждала, как подготовить отчёт к среде.",
+            ),
+            u(1.0, "Анна", "Обсудили сроки."),
+            u(2.0, "Анна", "Проверили план."),
+            u(3.0, "Вера", "Вера проверит журнал."),
+        ],
+    );
+    let tasks = summary
+        .sections
+        .iter()
+        .find(|s| s.id == "tasks")
+        .expect("task потерян");
+    let task = tasks.items[0].task.as_ref().unwrap();
+    assert_eq!(task.assignee, None, "чужой спикер назначен исполнителем");
+    assert!(summary.warnings.contains(&Warning::AssigneeNotStated));
+}
+
+#[test]
+fn invented_first_word_name_is_dropped() {
+    let summary = run(
+        "meeting",
+        "## Кратко\n- Анна подготовит отчёт.\n",
+        vec![u(0.0, "Борис", "Подготовит отчёт.")],
+    );
+    assert_eq!(summary.items_dropped, 1, "{summary:?}");
+    assert!(summary.warnings.contains(&Warning::ItemsDroppedUnsupported));
+    assert!(summary.sections.is_empty());
+}
+
+#[test]
+fn discussion_is_not_a_task() {
+    let summary = run(
+        "meeting",
+        "## Задачи\n- Обсудить бюджет.\n",
+        vec![u(0.0, "Анна", "Задача: обсудить бюджет.")],
+    );
+    assert!(
+        summary.sections.iter().all(|s| s.id != "tasks"),
+        "{:?}",
+        summary.sections
+    );
+}
+
+#[test]
+fn negated_need_is_not_a_task() {
+    for support in ["Не нужно готовить отчёт.", "Не надо готовить отчёт."]
+    {
+        let summary = run(
+            "meeting",
+            "## Задачи\n- Подготовить отчёт.\n",
+            vec![u(0.0, "Анна", support)],
+        );
+        assert!(
+            summary.sections.iter().all(|s| s.id != "tasks"),
+            "{support}: {:?}",
+            summary.sections
+        );
+    }
+}
+
+#[test]
+fn negated_status_and_agreement_do_not_support_soft_claims() {
+    let status = run(
+        "scrum",
+        "## В работе\n- Запуск в работе.\n",
+        vec![u(0.0, "Анна", "Запуск не в работе.")],
+    );
+    assert!(status.soft_claims_dropped >= 1, "{status:?}");
+    let agreement = run(
+        "scrum",
+        "## Сделано\n- Команда согласны с планом.\n",
+        vec![u(0.0, "Анна", "Команда не согласны с планом.")],
+    );
+    assert!(agreement.soft_claims_dropped >= 1, "{agreement:?}");
+}
+
+#[test]
+fn english_sections_and_deadline_are_preserved() {
+    let transcript = Transcript {
+        utterances: vec![
+            u(0.0, "Ann", "We decided to move the launch to next week."),
+            u(1.0, "Bob", "Bob will update the report by Friday."),
+        ],
+    };
+    let preset = crate::preset::get("meeting").unwrap();
+    let parsed = parse::parse(
+        "## Decisions\n- We decided to move the launch to next week.\n## Tasks\n- Update the report; Who: Bob; Due: by Friday\n",
+        preset,
+    )
+    .unwrap();
+    let summary = ground(&parsed, &transcript, preset, Detail::Normal, Language::En);
+    let decisions = summary
+        .sections
+        .iter()
+        .find(|s| s.id == "decisions")
+        .expect("decisions");
+    assert_eq!(decisions.title, "Decisions");
+    let tasks = summary
+        .sections
+        .iter()
+        .find(|s| s.id == "tasks")
+        .expect("tasks");
+    assert_eq!(tasks.title, "Tasks");
+    let task = tasks.items[0].task.as_ref().unwrap();
+    assert_eq!(task.assignee.as_deref(), Some("Bob"));
+    assert_eq!(task.deadline.as_deref(), Some("by Friday"));
+    assert!(summary.sections.iter().all(|s| s.title != "Задачи"));
 }

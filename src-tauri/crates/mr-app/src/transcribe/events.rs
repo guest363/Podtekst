@@ -82,6 +82,12 @@ pub fn is_transcribe_running() -> bool {
     *running_flag().lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Контрактный тест 409 `transcription_running` без реального ASR.
+#[cfg(debug_assertions)]
+pub fn set_running_for_test(running: bool) {
+    *running_flag().lock().unwrap_or_else(|e| e.into_inner()) = running;
+}
+
 pub fn start_model_download() {
     MODEL_ACTIVE.fetch_add(1, Ordering::SeqCst);
 }

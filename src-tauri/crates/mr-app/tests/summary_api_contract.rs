@@ -355,6 +355,40 @@ fn summary_contract_suite() {
         (200, Some("fresh")),
         "rename→fresh"
     );
+    // 9b. Абсолютный путь: тот же резолвер и тот же относительный ключ.
+    let absolute = rec.join(renamed).to_string_lossy().to_string();
+    let (st, v) = json_call(
+        port,
+        "GET",
+        &format!("/api/summary?file={}", absolute),
+        json!({}),
+    );
+    assert_eq!(
+        (st, v["state"].as_str()),
+        (200, Some("fresh")),
+        "absolute path: {v}"
+    );
+    assert!(v["summary"].is_object(), "absolute path без артефакта: {v}");
+    #[cfg(unix)]
+    {
+        let outside = base.join("outside.wav");
+        std::fs::write(&outside, b"not-audio").unwrap();
+        let link = rec.join("evil.wav");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        let (st, v) = json_call(
+            port,
+            "POST",
+            "/api/summary/generate",
+            json!({"file": "evil.wav", "preset_id": "meeting", "detail": "normal",
+                   "source_rev": v_rev(port, renamed), "force": true}),
+        );
+        assert_eq!(
+            (st, v["code"].as_str()),
+            (404, Some("outside_save_dir")),
+            "symlink наружу: {v}"
+        );
+    }
     let (st, v) = json_call(
         port,
         "POST",
@@ -524,7 +558,53 @@ fn summary_contract_suite() {
         "pct не монотонен: {pcts:?}"
     );
     assert!(wait_idle(port, std::time::Duration::from_secs(5)));
+
+    // 13d. Две одновременные заявки: ровно один 202 и один 409 (H02).
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let rev_concurrent = v_rev(port, renamed);
+    let file_concurrent = renamed.to_string();
+    let handles: Vec<_> = (0..2)
+        .map(|_| {
+            let barrier = barrier.clone();
+            let rev = rev_concurrent.clone();
+            let file = file_concurrent.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                json_call(
+                    port,
+                    "POST",
+                    "/api/summary/generate",
+                    json!({"file": file, "preset_id": "meeting", "detail": "normal",
+                           "source_rev": rev, "force": true}),
+                )
+                .0
+            })
+        })
+        .collect();
+    let mut statuses: Vec<u16> = handles
+        .into_iter()
+        .map(|handle| handle.join().unwrap())
+        .collect();
+    statuses.sort_unstable();
+    assert_eq!(statuses, vec![202, 409], "double-start: {statuses:?}");
+    assert!(wait_idle(port, std::time::Duration::from_secs(20)));
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "1");
+
+    // 13e. Расшифровка идёт -> 409 transcription_running.
+    mr_app_lib::set_transcribing_for_test(true);
+    let (st, v) = json_call(
+        port,
+        "POST",
+        "/api/summary/generate",
+        json!({"file": renamed, "preset_id": "meeting", "detail": "normal",
+               "source_rev": v_rev(port, renamed), "force": true}),
+    );
+    assert_eq!(
+        (st, v["code"].as_str()),
+        (409, Some("transcription_running")),
+        "transcribing: {v}"
+    );
+    mr_app_lib::set_transcribing_for_test(false);
 
     // 13b. Неизвестный job_id -> 404 unknown_job.
     let (st, v) = json_call(
@@ -623,6 +703,18 @@ fn summary_contract_suite() {
                "source_rev": rev_now, "force": true}),
     );
     assert_eq!((st, v["code"].as_str()), (422, Some("schema_unsupported")));
+    let (st, v) = json_call(
+        port,
+        "POST",
+        "/api/summary/generate",
+        json!({"file": renamed, "preset_id": "meeting", "detail": "normal",
+               "source_rev": rev_now, "allow_downgrade": true}),
+    );
+    assert_eq!(
+        (st, v["code"].as_str()),
+        (422, Some("schema_unsupported")),
+        "allow_downgrade без force: {v}"
+    );
     assert!(
         std::fs::read_to_string(&json_path)
             .unwrap()
@@ -645,6 +737,45 @@ fn summary_contract_suite() {
         .filter(|n| n.contains(".summary.json.newer."))
         .collect();
     assert_eq!(backups.len(), 1, "нет backup newer: {backups:?}");
+
+    // 15b. v2 появляется между preflight и commit: без force+allow commit
+    // отказывает и не трогает файл (M03).
+    std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "slow");
+    let (mut sse, cursor) = open_sse(port);
+    let (st, v) = json_call(
+        port,
+        "POST",
+        "/api/summary/generate",
+        json!({"file": renamed, "preset_id": "meeting", "detail": "normal",
+               "source_rev": v_rev(port, renamed), "force": true}),
+    );
+    assert_eq!(st, 202, "race preflight: {v}");
+    let v2_during = std::fs::read_to_string(&json_path)
+        .unwrap()
+        .replace("podtekst.summary/v1", "podtekst.summary/v2");
+    std::fs::write(&json_path, &v2_during).unwrap();
+    let capture = read_sse_until_terminal(&mut sse, cursor, std::time::Duration::from_secs(20));
+    assert!(
+        capture.contains("schema_unsupported"),
+        "commit не отказал: {capture}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&json_path).unwrap(),
+        v2_during,
+        "v2 перезаписан при commit"
+    );
+    std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "1");
+    assert!(wait_idle(port, std::time::Duration::from_secs(5)));
+    let (st, v) = json_call(
+        port,
+        "POST",
+        "/api/summary/generate",
+        json!({"file": renamed, "preset_id": "meeting", "detail": "normal",
+               "source_rev": v_rev(port, renamed), "force": true, "allow_downgrade": true}),
+    );
+    assert_eq!(st, 202, "restore after race: {v}");
+    assert!(wait_idle(port, std::time::Duration::from_secs(20)));
+    wait_state(port, renamed, "fresh", std::time::Duration::from_secs(10));
 
     // 16. System: summary не core, отдельный блок.
     let (_, v) = json_call(port, "GET", "/api/system", json!({}));
@@ -677,6 +808,18 @@ fn summary_contract_suite() {
         "record start: {v}"
     );
     let started_file = v["file"].as_str().unwrap().to_string();
+    let (st, v) = json_call(
+        port,
+        "POST",
+        "/api/summary/generate",
+        json!({"file": renamed, "preset_id": "meeting", "detail": "normal",
+               "source_rev": v_rev(port, renamed), "force": true}),
+    );
+    assert_eq!(
+        (st, v["code"].as_str()),
+        (409, Some("recording_active")),
+        "recording: {v}"
+    );
     std::thread::sleep(std::time::Duration::from_millis(50));
     let (st, v) = json_call(port, "POST", "/api/record/stop", json!({}));
     assert_eq!(

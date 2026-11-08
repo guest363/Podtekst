@@ -107,6 +107,8 @@ pub fn fake_mode() -> Option<&'static str> {
         "flat_once" => Some("flat_once"),
         "no_decisions" => Some("no_decisions"),
         "reduce_invalid" => Some("reduce_invalid"),
+        "nonce_echo" => Some("nonce_echo"),
+        "map_injection" => Some("map_injection"),
         "slow" => Some("slow"),
         _ => None,
     }

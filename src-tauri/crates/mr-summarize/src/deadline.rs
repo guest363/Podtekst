@@ -81,12 +81,17 @@ fn patterns() -> &'static [Regex] {
     PATTERNS.get_or_init(|| {
         [
             r"\b(до|к|ко|в|во|на)\s+(понедельник[ау]?|вторник[ау]?|сред[ауы]|четверг[ау]?|пятниц[ауые]|суббот[ауы]|воскресень[еяю])\b",
+            r"\b(by|before|on|until|till)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
             r"\b(сегодня|завтра|послезавтра|на этой неделе|на следующей неделе|к концу (недели|месяца|квартала|года)|в конце (недели|месяца)|через\s+\d+\s+(день|дня|дней|неделю|недели|недель|месяц|месяца|месяцев))\b",
+            r"\b(today|tomorrow|tonight|this week|next week|next month|next quarter|by the end of (the )?(week|month|quarter|year)|in\s+\d+\s+(day|days|week|weeks|month|months))\b",
             r"\b\d{1,2}[./-]\d{1,2}([./-]\d{2,4})?\b",
             r"\b\d{1,2}\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\b",
+            r"\b\d{1,2}(st|nd|rd|th)?\s+(of\s+)?(january|february|march|april|may|june|july|august|september|october|november|december)\b",
             r"\b(январь|февраль|март|апрель|май|июнь|июль|август|сентябрь|октябрь|ноябрь|декабрь)\s+\d{4}\b",
+            r"\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}(st|nd|rd|th)?(,?\s*\d{4})?\b",
             r"\b(до|к)\s+\d{1,2}[:.]\d{2}\b",
             r"\b(до конца (квартала|года)|в (первом|втором|третьем|четвёртом) квартале|Q[1-4])\b",
+            r"\b(end of (the )?(quarter|year)|in (the )?(first|second|third|fourth) quarter)\b",
         ]
         .iter()
         .map(|p| Regex::new(&format!("(?i){p}")).expect("deadline regex"))
@@ -121,8 +126,10 @@ pub fn reconcile(model: Option<&str>, extracted: Option<&DeadlineMatch>) -> Dead
         },
         (Some(model), None) => {
             let placeholder = model.trim().is_empty()
-                || normalize(model) == "срок не назван"
-                || normalize(model) == "не назван";
+                || matches!(
+                    normalize(model).as_str(),
+                    "срок не назван" | "не назван" | "no deadline" | "not stated" | "none"
+                );
             DeadlineOutcome {
                 deadline: None,
                 reference: None,
@@ -157,6 +164,35 @@ mod tests {
             speaker: "A".into(),
             text: text.into(),
         }
+    }
+
+    #[test]
+    fn recall_english_relative_and_absolute() {
+        let utterances = [
+            u("I will send the report by Friday."),
+            u("We will check it tomorrow."),
+            u("Prepare the deck by the end of the week."),
+            u("Ship it on November 14."),
+        ];
+        let phrases: Vec<_> = (0..4)
+            .map(|i| find(&utterances, &[i]).unwrap().phrase)
+            .collect();
+        assert_eq!(
+            phrases,
+            [
+                "by Friday",
+                "tomorrow",
+                "by the end of the week",
+                "November 14"
+            ]
+        );
+    }
+
+    #[test]
+    fn english_placeholder_is_not_an_invented_deadline() {
+        let outcome = reconcile(Some("no deadline"), None);
+        assert!(outcome.deadline.is_none());
+        assert!(outcome.warning.is_none());
     }
 
     #[test]

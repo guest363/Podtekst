@@ -119,7 +119,7 @@ pub fn parse(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErro
                 continue;
             }
             match label.as_str() {
-                "задача" | "что" => {
+                "задача" | "что" | "task" | "what" => {
                     if role == SectionRole::Task {
                         let (text, task) = parse_task(&value);
                         push_item(&mut sections[current], text, role, task, None);
@@ -128,11 +128,20 @@ pub fn parse(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErro
                     }
                     last = Some((current, sections[current].items.len() - 1));
                 }
-                "решение" => {
+                "решение" | "decision" => {
                     push_item(&mut sections[current], value, role, None, None);
                     last = Some((current, sections[current].items.len() - 1));
                 }
-                "срок" | "кто" | "ответственный" if role == SectionRole::Task => {
+                "срок"
+                | "deadline"
+                | "due"
+                | "кто"
+                | "ответственный"
+                | "who"
+                | "assignee"
+                | "owner"
+                    if role == SectionRole::Task =>
+                {
                     if let Some((section, item)) = last {
                         apply_task_field(&mut sections[section].items[item], &label, &value);
                     }
@@ -172,6 +181,13 @@ pub fn parse(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErro
                 continue;
             };
             let text = clean_text(trimmed);
+            if contains_injection(&text) {
+                injection += 1;
+                sections[section].items.remove(item);
+                last = None;
+                last_raw = trimmed.to_owned();
+                continue;
+            }
             let is_task = sections[section].role == SectionRole::Task;
             let target = &mut sections[section].items[item];
             if target.text.is_empty() {
@@ -262,8 +278,11 @@ fn parse_flat(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErr
         }
         let (text, quote) = split_quote(&text);
         let normalized = crate::text::normalize(&text);
-        let decision_label = label.as_deref() == Some("решение");
-        let task_label = matches!(label.as_deref(), Some("задача") | Some("что"));
+        let decision_label = matches!(label.as_deref(), Some("решение") | Some("decision"));
+        let task_label = matches!(
+            label.as_deref(),
+            Some("задача") | Some("что") | Some("task") | Some("what")
+        );
         let target = if decision_label {
             decisions.unwrap_or(default_index)
         } else if task_label {
@@ -343,13 +362,14 @@ fn apply_task_field(item: &mut ParsedItem, label: &str, value: &str) {
         return;
     };
     match label {
-        "срок" => {
+        "срок" | "deadline" | "due" => {
             if !is_no_deadline(value) {
                 task.deadline = Some(value.to_owned());
                 task.deadline_source = DeadlineSource::Model;
             }
         }
-        "кто" | "ответственный" if !is_no_assignee(value) => {
+        "кто" | "ответственный" | "who" | "assignee" | "owner" if !is_no_assignee(value) =>
+        {
             task.assignee = Some(value.to_owned());
         }
         _ => {}
@@ -363,16 +383,18 @@ fn parse_task(text: &str) -> (String, Option<TaskMeta>) {
     let mut source = DeadlineSource::Model;
     for part in text.split(';') {
         let part = part.trim();
-        if let Some(value) = strip_label(part, &["кто", "ответственный"]) {
+        if let Some(value) =
+            strip_label(part, &["кто", "ответственный", "who", "assignee", "owner"])
+        {
             if !is_no_assignee(value) {
                 assignee = Some(value.to_owned());
             }
-        } else if let Some(value) = strip_label(part, &["срок"]) {
+        } else if let Some(value) = strip_label(part, &["срок", "deadline", "due"]) {
             if !is_no_deadline(value) {
                 deadline = Some(value.to_owned());
                 source = DeadlineSource::Model;
             }
-        } else if let Some(value) = strip_label(part, &["задача", "что"]) {
+        } else if let Some(value) = strip_label(part, &["задача", "что", "task", "what"]) {
             rest.push(value.to_owned());
         } else if !part.is_empty() {
             rest.push(part.to_owned());
@@ -408,16 +430,32 @@ fn strip_label<'a>(part: &'a str, labels: &[&str]) -> Option<&'a str> {
 
 fn is_no_deadline(value: &str) -> bool {
     matches!(
-        value.trim().to_lowercase().as_str(),
-        "срок не назван" | "не назван" | "нет"
+        normalize_placeholder(value).as_str(),
+        "срок не назван" | "не назван" | "нет" | "no deadline" | "not stated" | "none"
     )
 }
 
 fn is_no_assignee(value: &str) -> bool {
     matches!(
-        value.trim().to_lowercase().as_str(),
-        "не назначен" | "не назван" | "нет"
+        normalize_placeholder(value).as_str(),
+        "не назначен"
+            | "не назван"
+            | "нет"
+            | "not assigned"
+            | "unassigned"
+            | "no assignee"
+            | "none"
     )
+}
+
+fn normalize_placeholder(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('*')
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn split_quote(text: &str) -> (String, Option<String>) {
@@ -441,6 +479,15 @@ pub(crate) fn contains_injection(text: &str) -> bool {
         "### instruction",
         "ignore previous",
         "instructions",
+        "system:",
+        "assistant:",
+        "<script",
+        "<iframe",
+        "<img",
+        "javascript:",
+        "href=",
+        "http://",
+        "https://",
     ];
     MARKERS.iter().any(|m| low.contains(m))
 }
@@ -474,7 +521,7 @@ fn label_line(line: &str) -> Option<(String, &str)> {
     static L: OnceLock<Regex> = OnceLock::new();
     let re = L.get_or_init(|| {
         Regex::new(
-            r"(?i)^\*{0,2}(Задача|Срок|Кто|Что|Решение|Ответственный)\*{0,2}\s*:\s*\*{0,2}\s*(.+?)\s*\*{0,2}$",
+            r"(?i)^\*{0,2}(Задача|Срок|Кто|Что|Решение|Ответственный|Task|Deadline|Due|Who|What|Decision|Assignee|Owner)\*{0,2}\s*:\s*\*{0,2}\s*(.+?)\s*\*{0,2}$",
         )
         .unwrap()
     });

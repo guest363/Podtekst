@@ -1,5 +1,5 @@
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::io::{BufRead, BufReader, Read};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -11,7 +11,7 @@ use super::backend::{
 use super::config::{CONTEXT_TOKENS, MODEL_ID};
 use super::runtime_locator::RuntimeInfo;
 use helpers::{
-    api_key_path, build_args, free_port, hide_window, map_ureq, new_token, prepend_lib_path,
+    api_key_path, build_args, hide_window, map_ureq, new_token, prepend_lib_path, reserve_port,
     sanitize_output, spawn_stderr, token_hash, write_token,
 };
 
@@ -19,6 +19,10 @@ mod helpers;
 
 const IDLE_KILL: Duration = Duration::from_secs(120);
 const HEALTH_WAIT: Duration = Duration::from_secs(10);
+/// Жёсткий потолок SSE: даже бесконечный поток не съест память (M05).
+const STREAM_CEILING: usize = 4 * 1024 * 1024;
+/// Байт SSE на один токен с запасом на UTF-8 и служебный JSON.
+const STREAM_BYTES_PER_TOKEN: usize = 128;
 
 struct SidecarState {
     child: Child,
@@ -45,23 +49,72 @@ pub fn touch() {
     *last_used().lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
 }
 
-fn health_ok(port: u16) -> bool {
-    let agent = ureq::AgentBuilder::new()
+fn agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_millis(300))
-        .timeout_read(Duration::from_millis(500))
-        .build();
-    agent
+        .timeout_read(Duration::from_millis(1000))
+        .build()
+}
+
+fn auth(token: &str) -> String {
+    format!("Bearer {token}")
+}
+
+fn health_ok(port: u16, token: &str) -> bool {
+    agent()
         .get(&format!("http://127.0.0.1:{port}/health"))
+        .set("Authorization", &auth(token))
         .call()
         .map(|response| response.status() == 200)
         .unwrap_or(false)
 }
 
-fn wait_health(child: &mut Child, port: u16, cancel: &CancelToken) -> Result<(), BackendError> {
+/// `/props` подтверждает, что на порту именно наш alias, файл модели и
+/// контекст; одного 200 от чужого локального слушателя недостаточно (M04/M05).
+fn props_ok(port: u16, token: &str, model_path: &Path, n_ctx: u32) -> bool {
+    let Ok(response) = agent()
+        .get(&format!("http://127.0.0.1:{port}/props"))
+        .set("Authorization", &auth(token))
+        .call()
+    else {
+        return false;
+    };
+    let Ok(text) = response.into_string() else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return false;
+    };
+    value.get("model_alias").and_then(|v| v.as_str()) == Some(MODEL_ID)
+        && value.get("total_slots").and_then(|v| v.as_u64()) == Some(1)
+        && value
+            .pointer("/default_generation_settings/n_ctx")
+            .and_then(|v| v.as_u64())
+            == Some(n_ctx as u64)
+        && same_model_path(value.get("model_path").and_then(|v| v.as_str()), model_path)
+}
+
+fn same_model_path(reported: Option<&str>, expected: &Path) -> bool {
+    let Some(reported) = reported else {
+        return false;
+    };
+    let reported = Path::new(reported);
+    match (reported.canonicalize(), expected.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => reported.file_name() == expected.file_name(),
+    }
+}
+
+fn wait_health(
+    child: &mut Child,
+    port: u16,
+    token: &str,
+    cancel: &CancelToken,
+) -> Result<(), BackendError> {
     let started = Instant::now();
     while started.elapsed() < HEALTH_WAIT {
         cancel.check()?;
-        if health_ok(port) {
+        if health_ok(port, token) {
             return Ok(());
         }
         if let Ok(Some(status)) = child.try_wait() {
@@ -102,7 +155,10 @@ impl SidecarBackend {
         let reuse = match cell.as_mut() {
             Some(state) => {
                 let alive = state.child.try_wait().ok().flatten().is_none();
-                alive && state.model_sha == self.model_sha && health_ok(state.port)
+                alive
+                    && state.model_sha == self.model_sha
+                    && health_ok(state.port, &state.token)
+                    && props_ok(state.port, &state.token, &req.model_path, req.n_ctx)
             }
             None => false,
         };
@@ -114,7 +170,8 @@ impl SidecarBackend {
         }
         kill_state(cell.take());
         drop(cell);
-        let port = free_port()?;
+        let port_guard = reserve_port()?;
+        let port = port_guard.port();
         let token = new_token();
         let token_path = api_key_path();
         write_token(&token_path, &token)?;
@@ -128,16 +185,24 @@ impl SidecarBackend {
         prepend_lib_path(&mut cmd, &self.runtime.dir);
         hide_window(&mut cmd);
         let load_started = Instant::now();
+        port_guard.release();
         let child = cmd.spawn().map_err(|e| BackendError::Load(e.to_string()))?;
         let pid = child.id();
         let start = super::process::start_time(pid).unwrap_or_default();
         let (mut child, stderr) = spawn_stderr(child);
-        if let Err(e) = wait_health(&mut child, port, cancel) {
+        if let Err(e) = wait_health(&mut child, port, &token, cancel) {
             let _ = child.kill();
             let _ = child.wait();
             let _ = stderr.join();
             let _ = std::fs::remove_file(&token_path);
             return Err(e);
+        }
+        if !props_ok(port, &token, &req.model_path, req.n_ctx) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stderr.join();
+            let _ = std::fs::remove_file(&token_path);
+            return Err(BackendError::Load("props mismatch".to_string()));
         }
         self.load_ms = load_started.elapsed().as_millis() as u64;
         if let Err(error) = super::memory::check_peak(pid) {
@@ -204,7 +269,7 @@ impl SidecarBackend {
         let response = agent
             .post(&format!("http://127.0.0.1:{port}/v1/chat/completions"))
             .set("Content-Type", "application/json")
-            .set("Authorization", &format!("Bearer {token}"))
+            .set("Authorization", &auth(&token))
             .send_string(&body.to_string())
             .map_err(map_ureq)?;
         on_event(BackendEvent {
@@ -212,42 +277,62 @@ impl SidecarBackend {
             tokens_done: 0,
             tokens_total: req.max_tokens,
         });
-        let mut text = String::new();
-        let mut done = 0u32;
-        for line in BufReader::new(response.into_reader()).lines() {
-            cancel.check()?;
-            let Ok(line) = line else { break };
-            let Some(payload) = line.strip_prefix("data: ") else {
-                continue;
-            };
-            if payload.trim() == "[DONE]" {
-                break;
-            }
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
-                continue;
-            };
-            if let Some(delta) = value
-                .pointer("/choices/0/delta/content")
-                .and_then(|v| v.as_str())
-            {
-                text.push_str(delta);
-                done += 1;
-                if done.is_multiple_of(8) {
-                    on_event(BackendEvent {
-                        phase: Phase::Generate,
-                        tokens_done: done,
-                        tokens_total: req.max_tokens,
-                    });
-                }
-            }
-        }
-        on_event(BackendEvent {
-            phase: Phase::Generate,
-            tokens_done: done.max(req.max_tokens.min(done + 1)),
-            tokens_total: req.max_tokens,
-        });
+        let cap = (req.max_tokens as usize)
+            .saturating_mul(STREAM_BYTES_PER_TOKEN)
+            .clamp(256 * 1024, STREAM_CEILING);
+        let reader = BufReader::new(response.into_reader().take(cap as u64 + 1));
+        let text = read_stream(reader, req.max_tokens, cap, cancel, on_event)?;
         Ok(sanitize_output(&text))
     }
+}
+
+fn read_stream<R: BufRead>(
+    reader: R,
+    max_tokens: u32,
+    cap: usize,
+    cancel: &CancelToken,
+    on_event: &mut dyn FnMut(BackendEvent),
+) -> Result<String, BackendError> {
+    let mut text = String::new();
+    let mut bytes = 0usize;
+    let mut done = 0u32;
+    for line in reader.lines() {
+        cancel.check()?;
+        let Ok(line) = line else { break };
+        bytes += line.len() + 1;
+        if bytes > cap {
+            return Err(BackendError::Crashed);
+        }
+        let Some(payload) = line.strip_prefix("data: ") else {
+            continue;
+        };
+        if payload.trim() == "[DONE]" {
+            break;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
+            continue;
+        };
+        if let Some(delta) = value
+            .pointer("/choices/0/delta/content")
+            .and_then(|v| v.as_str())
+        {
+            text.push_str(delta);
+            done += 1;
+            if done.is_multiple_of(8) {
+                on_event(BackendEvent {
+                    phase: Phase::Generate,
+                    tokens_done: done,
+                    tokens_total: max_tokens,
+                });
+            }
+        }
+    }
+    on_event(BackendEvent {
+        phase: Phase::Generate,
+        tokens_done: done.max(max_tokens.min(done + 1)),
+        tokens_total: max_tokens,
+    });
+    Ok(text)
 }
 
 fn error_peak(error: &super::memory::MemoryError) -> u64 {
@@ -340,4 +425,114 @@ pub fn arm_idle_monitor() {
             touch();
         }
     });
+}
+
+#[cfg(test)]
+pub(super) fn install_test_child(program: &str, args: &[&str]) -> u32 {
+    let child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("test child");
+    let pid = child.id();
+    let token_path = std::env::temp_dir().join(format!("mr-sidecar-test-token-{pid}"));
+    let mut cell = sidecar_cell().lock().unwrap_or_else(|e| e.into_inner());
+    *cell = Some(SidecarState {
+        child,
+        port: 1,
+        model_sha: "test".to_string(),
+        token: "test".to_string(),
+        token_path,
+        stderr: None,
+    });
+    pid
+}
+
+#[cfg(test)]
+pub(super) fn test_state_pid() -> Option<u32> {
+    sidecar_cell()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|state| state.child.id())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    fn serve(status: &'static str, body: &'static str) -> (u16, std::thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let n = socket.read(&mut buf).unwrap_or(0);
+            let request = String::from_utf8_lossy(&buf[..n]).to_string();
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = socket.write_all(response.as_bytes());
+            request
+        });
+        (port, handle)
+    }
+
+    #[test]
+    fn health_requires_and_sends_bearer() {
+        let (port, request) = serve("200 OK", r#"{"status":"ok"}"#);
+        assert!(health_ok(port, "secret"));
+        let request = request.join().unwrap();
+        assert!(
+            request
+                .to_lowercase()
+                .contains("authorization: bearer secret"),
+            "{request}"
+        );
+        let (port, _) = serve("401 Unauthorized", "{}");
+        assert!(!health_ok(port, "secret"));
+    }
+
+    #[test]
+    fn props_mismatch_is_rejected() {
+        let ok = concat!(
+            r#"{"model_alias":"sum-qwen3-4b-instruct-2507-q4km","#,
+            r#""model_path":"/models/q.gguf","total_slots":1,"#,
+            r#""default_generation_settings":{"n_ctx":8192}}"#
+        );
+        let (port, _) = serve("200 OK", ok);
+        assert!(props_ok(port, "t", Path::new("/models/q.gguf"), 8192));
+        let wrong_ctx = ok.replace("8192", "4096");
+        let (port, _) = serve("200 OK", Box::leak(wrong_ctx.into_boxed_str()));
+        assert!(!props_ok(port, "t", Path::new("/models/q.gguf"), 8192));
+        let wrong_model = ok.replace("sum-qwen3-4b-instruct-2507-q4km", "other");
+        let (port, _) = serve("200 OK", Box::leak(wrong_model.into_boxed_str()));
+        assert!(!props_ok(port, "t", Path::new("/models/q.gguf"), 8192));
+    }
+
+    #[test]
+    fn oversized_stream_is_capped() {
+        let line = "data: {\"choices\":[{\"delta\":{\"content\":\"xxxxxxxx\"}}]}\n";
+        let data = line.repeat(2000);
+        let cancel = CancelToken::new();
+        let mut events = |_event: BackendEvent| {};
+        let error =
+            read_stream(std::io::Cursor::new(data), 16, 1024, &cancel, &mut events).unwrap_err();
+        assert_eq!(error, BackendError::Crashed);
+        let good = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\ndata: [DONE]\n";
+        let text = read_stream(
+            std::io::Cursor::new(good.as_bytes().to_vec()),
+            16,
+            1024,
+            &cancel,
+            &mut events,
+        )
+        .unwrap();
+        assert_eq!(text, "ok");
+    }
 }

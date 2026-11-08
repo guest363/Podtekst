@@ -137,6 +137,12 @@ pub fn shutdown_summary_for_test() {
     summary::shutdown();
 }
 
+#[doc(hidden)]
+#[cfg(debug_assertions)]
+pub fn set_transcribing_for_test(running: bool) {
+    transcribe::events::set_running_for_test(running);
+}
+
 // TCC и реальный SCK иначе проверяются только руками на живом Mac.
 #[cfg(target_os = "macos")]
 fn macos_selftest() -> i32 {

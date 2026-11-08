@@ -1,8 +1,12 @@
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
+
+const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Deserialize)]
 struct Manifest {
@@ -144,36 +148,52 @@ fn candidate_dirs() -> Vec<PathBuf> {
     out
 }
 
-pub fn locate() -> Result<&'static RuntimeInfo, &'static RuntimeError> {
-    static CACHE: OnceLock<Result<RuntimeInfo, RuntimeError>> = OnceLock::new();
-    CACHE.get_or_init(discover).as_ref()
+pub fn locate() -> Result<&'static RuntimeInfo, RuntimeError> {
+    static CACHE: OnceLock<RuntimeInfo> = OnceLock::new();
+    if let Some(info) = CACHE.get() {
+        return Ok(info);
+    }
+    let info = discover()?;
+    Ok(CACHE.get_or_init(|| info))
 }
 
 fn discover() -> Result<RuntimeInfo, RuntimeError> {
+    discover_from(candidate_dirs())
+}
+
+/// Один битый кандидат не должен скрывать рабочий runtime за ним (M01):
+/// идём по всем каталогам и возвращаем последнюю содержательную ошибку.
+fn discover_from(dirs: Vec<PathBuf>) -> Result<RuntimeInfo, RuntimeError> {
     let manifest = manifest();
-    for dir in candidate_dirs() {
+    let mut last = RuntimeError::NotFound;
+    for dir in dirs {
         let exe = dir.join(exe_name());
         if !exe.is_file() {
             continue;
         }
-        let probe = probe(&exe, &dir)?;
-        if probe.build != manifest.build || probe.commit != manifest.commit {
-            return Err(RuntimeError::VersionMismatch {
-                version: probe.version,
-                commit: probe.commit,
-            });
+        match probe(&exe, &dir) {
+            Ok(probe) if probe.build == manifest.build && probe.commit == manifest.commit => {
+                if !probe.help_ok {
+                    last = RuntimeError::MissingFlags(manifest.required_flags.clone());
+                    continue;
+                }
+                return Ok(RuntimeInfo {
+                    dir,
+                    exe,
+                    version: manifest.version.clone(),
+                    commit: manifest.commit.clone(),
+                });
+            }
+            Ok(probe) => {
+                last = RuntimeError::VersionMismatch {
+                    version: probe.version,
+                    commit: probe.commit,
+                };
+            }
+            Err(error) => last = error,
         }
-        if !probe.help_ok {
-            return Err(RuntimeError::MissingFlags(manifest.required_flags.clone()));
-        }
-        return Ok(RuntimeInfo {
-            dir,
-            exe,
-            version: manifest.version.clone(),
-            commit: manifest.commit.clone(),
-        });
     }
-    Err(RuntimeError::NotFound)
+    Err(last)
 }
 
 struct Probe {
@@ -200,17 +220,43 @@ fn probe_with_env(exe: &Path, dir: &Path) -> Command {
     cmd
 }
 
-fn run_output(cmd: &mut Command) -> String {
-    let Ok(output) = cmd.output() else {
-        return String::new();
-    };
-    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
-    text.push_str(&String::from_utf8_lossy(&output.stderr));
-    text
+fn run_output(cmd: &mut Command, timeout: Duration) -> Result<String, RuntimeError> {
+    let mut child = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| RuntimeError::Probe(e.to_string()))?;
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if started.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(RuntimeError::Probe("probe timeout".to_string()));
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => return Err(RuntimeError::Probe(e.to_string())),
+        }
+    }
+    let mut text = String::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        text.push_str(&String::from_utf8_lossy(&buf));
+    }
+    if let Some(mut stderr) = child.stderr.take() {
+        let mut buf = Vec::new();
+        let _ = stderr.read_to_end(&mut buf);
+        text.push_str(&String::from_utf8_lossy(&buf));
+    }
+    Ok(text)
 }
 
 fn probe(exe: &Path, dir: &Path) -> Result<Probe, RuntimeError> {
-    let version_text = run_output(probe_with_env(exe, dir).arg("--version"));
+    let version_text = run_output(probe_with_env(exe, dir).arg("--version"), PROBE_TIMEOUT)?;
     if version_text.trim().is_empty() {
         return Err(RuntimeError::Probe("--version не ответил".to_string()));
     }
@@ -233,7 +279,7 @@ fn probe(exe: &Path, dir: &Path) -> Result<Probe, RuntimeError> {
         .unwrap_or_default()
         .trim()
         .to_string();
-    let help_text = run_output(probe_with_env(exe, dir).arg("--help"));
+    let help_text = run_output(probe_with_env(exe, dir).arg("--help"), PROBE_TIMEOUT)?;
     let missing: Vec<String> = manifest()
         .required_flags
         .iter()
@@ -255,6 +301,75 @@ fn probe(exe: &Path, dir: &Path) -> Result<Probe, RuntimeError> {
 mod tests {
     use super::*;
     use crate::summary::config::RUNTIME_COMMIT;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "mr-runtime-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[cfg(unix)]
+    fn stub(dir: &Path, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join(exe_name());
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    fn matching_stub(dir: &Path) {
+        let flags = manifest().required_flags.join(" ");
+        stub(
+            dir,
+            &format!(
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo 'version: b12182'\n  echo 'built with build 12182 commit {RUNTIME_COMMIT}'\nelse\n  echo '{flags}'\nfi\n"
+            ),
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bad_candidate_does_not_hide_valid_runtime() {
+        let base = temp_dir("candidates");
+        let bad = base.join("bad");
+        stub(
+            &bad,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'version: b1'; echo 'build 1 commit deadbeef'; else echo '--jinja'; fi\n",
+        );
+        let good = base.join("good");
+        matching_stub(&good);
+        let info = discover_from(vec![bad, good.clone()]).expect("второй runtime не найден");
+        assert_eq!(info.dir, good);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hung_probe_is_bounded() {
+        let base = temp_dir("hung");
+        let exe = stub(&base.join("hung"), "#!/bin/sh\nsleep 60\n");
+        let started = Instant::now();
+        let error = run_output(
+            Command::new(&exe).arg("--version"),
+            Duration::from_millis(150),
+        )
+        .unwrap_err();
+        assert!(matches!(error, RuntimeError::Probe(_)));
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "probe не прервался"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn manifest_pin_matches_config() {

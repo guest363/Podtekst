@@ -9,7 +9,7 @@ use mr_summarize::{classify, parse, preset, prompt, text, Detail, SummaryError, 
 use super::backend::{
     BackendError, BackendEvent, BackendInfo, CancelToken, GenerateRequest, Phase, SummaryBackend,
 };
-use super::config::{CONTEXT_TOKENS, MODEL_ID, MODEL_SHA256, MODEL_TITLE, RUNTIME_COMMIT};
+use super::config::{CONTEXT_TOKENS, MODEL_ID, MODEL_TITLE, RUNTIME_COMMIT};
 use super::store::Paths;
 
 pub struct JobSpec {
@@ -18,6 +18,8 @@ pub struct JobSpec {
     pub detail: Detail,
     pub confirmed_sensitive: bool,
     pub allow_downgrade: bool,
+    pub force: bool,
+    pub model_sha: String,
 }
 
 pub struct PipelineOutput {
@@ -112,11 +114,13 @@ pub fn run(
         retry: &mut retry,
         language,
     };
-    let (parsed, last_req) = if single {
+    let mut map_warnings: Vec<Warning> = Vec::new();
+    let mut map_injection = 0usize;
+    let (parsed, last_req, last_nonce) = if single {
         let prompt = prompt::build(preset, &transcript.utterances, language);
         let req = request(&info, &prompt, max_tokens);
-        let generated = generate_with_retry(backend, &req, preset, &mut ctx)?;
-        (generated.parsed, generated.req)
+        let generated = generate_with_retry(backend, &req, preset, &mut ctx, &prompt.nonce)?;
+        (generated.parsed, generated.req, generated.nonce)
     } else {
         let plan = mr_summarize::chunk::plan(&transcript, mr_summarize::chunk::MAX_CHUNKS);
         truncated = plan.truncated;
@@ -139,7 +143,7 @@ pub fn run(
             let slice = &transcript.utterances[chunk.start..chunk.end];
             let prompt = prompt::build(preset, slice, language);
             let req = request(&info, &prompt, max_tokens);
-            let generated = generate_with_retry(backend, &req, preset, &mut ctx)?;
+            let generated = generate_with_retry(backend, &req, preset, &mut ctx, &prompt.nonce)?;
             let items = generated
                 .parsed
                 .sections
@@ -150,6 +154,12 @@ pub fn run(
                 empty_chunks += 1;
             }
             partials.push(generated.raw);
+            for warning in &generated.parsed.warnings {
+                if !map_warnings.contains(warning) {
+                    map_warnings.push(*warning);
+                }
+            }
+            map_injection += generated.parsed.injection_flagged;
             for (target, source) in merged.sections.iter_mut().zip(generated.parsed.sections) {
                 target.items.extend(source.items);
             }
@@ -166,7 +176,9 @@ pub fn run(
             tokens_done: 0,
             tokens_total: 0,
         });
-        let repair_req = reduce_request(preset, language, &partials, &info, max_tokens);
+        let repair_prompt = prompt::build_reduce(preset, language, &partials);
+        let fallback_nonce = repair_prompt.nonce.clone();
+        let repair_req = request(&info, &repair_prompt, max_tokens);
         let reduced = if partials.len() < 2 {
             None
         } else {
@@ -180,7 +192,7 @@ pub fn run(
             )?
         };
         match reduced {
-            Some((parsed, req)) => (parsed, req),
+            Some((parsed, req, nonce)) => (parsed, req, nonce),
             None => {
                 if partials.len() >= 2 {
                     // Reduce не дал валидных секций: не теряем job, отдаём
@@ -189,10 +201,14 @@ pub fn run(
                     warnings.push(Warning::ParserRecovered);
                     ctx.retry.reason = Some("reduce_invalid".to_string());
                 }
-                (merged, repair_req)
+                (merged, repair_req, fallback_nonce)
             }
         }
     };
+    warnings.extend(map_warnings);
+    if map_injection > 0 && !warnings.contains(&Warning::InjectionSuspected) {
+        warnings.push(Warning::InjectionSuspected);
+    }
 
     (ctx.on_event)(BackendEvent {
         phase: Phase::Verify,
@@ -201,7 +217,8 @@ pub fn run(
     });
     let mut verify_ms = 0u64;
     let started_grounding = Instant::now();
-    let mut grounded = mr_summarize::grounding::ground(&parsed, &transcript, preset, spec.detail);
+    let mut grounded =
+        mr_summarize::grounding::ground(&parsed, &transcript, preset, spec.detail, output_language);
     verify_ms += started_grounding.elapsed().as_millis() as u64;
     let mut items_total: usize = grounded.sections.iter().map(|s| s.items.len()).sum();
     let decision_cue = mr_summarize::grounding::has_decision_cue(&transcript);
@@ -225,29 +242,40 @@ pub fn run(
         ctx.retry.reason = Some(reasons.join(","));
         let repair = repair_request(&last_req, thin, decision_missed);
         match backend.generate(&repair, ctx.cancel, &mut *ctx.on_event) {
-            Ok(out) => match parse::parse(&out, preset) {
-                Ok(parsed2) => {
-                    let retry_grounding = Instant::now();
-                    let grounded2 =
-                        mr_summarize::grounding::ground(&parsed2, &transcript, preset, spec.detail);
-                    verify_ms += retry_grounding.elapsed().as_millis() as u64;
-                    let items2: usize = grounded2.sections.iter().map(|s| s.items.len()).sum();
-                    let thin2 = items2 == 0 || (chars >= 1000 && items2 < 2);
-                    if thin2 {
+            Ok(out) => {
+                let (out, injected) = screen_output(out, &last_nonce);
+                match parse::parse(&out, preset) {
+                    Ok(mut parsed2) => {
+                        if injected {
+                            mark_injection(&mut parsed2);
+                        }
+                        let retry_grounding = Instant::now();
+                        let grounded2 = mr_summarize::grounding::ground(
+                            &parsed2,
+                            &transcript,
+                            preset,
+                            spec.detail,
+                            output_language,
+                        );
+                        verify_ms += retry_grounding.elapsed().as_millis() as u64;
+                        let items2: usize = grounded2.sections.iter().map(|s| s.items.len()).sum();
+                        let thin2 = items2 == 0 || (chars >= 1000 && items2 < 2);
+                        if thin2 {
+                            if thin {
+                                return Err(super::SummaryJobError::OutputThin);
+                            }
+                        } else {
+                            grounded = grounded2;
+                            items_total = items2;
+                        }
+                    }
+                    Err(_) => {
                         if thin {
                             return Err(super::SummaryJobError::OutputThin);
                         }
-                    } else {
-                        grounded = grounded2;
-                        items_total = items2;
                     }
                 }
-                Err(_) => {
-                    if thin {
-                        return Err(super::SummaryJobError::OutputThin);
-                    }
-                }
-            },
+            }
             Err(BackendError::Cancelled) => {
                 return Err(super::SummaryJobError::Cancelled);
             }
@@ -310,7 +338,7 @@ pub fn run(
             backend: "sidecar".to_string(),
             model_id: MODEL_ID.to_string(),
             model_title: MODEL_TITLE.to_string(),
-            model_sha256: MODEL_SHA256.to_string(),
+            model_sha256: spec.model_sha.clone(),
             quant: "Q4_K_M".to_string(),
             context: CONTEXT_TOKENS,
             threads: info.threads,
@@ -363,10 +391,11 @@ pub fn run(
     match super::store::inspect(&spec.paths) {
         super::store::State::Corrupt => super::store::backup_corrupt(&spec.paths)
             .map_err(|e| super::SummaryJobError::Internal(e.code().to_string()))?,
-        super::store::State::Unsupported if spec.allow_downgrade => {
+        super::store::State::Unsupported if spec.allow_downgrade && spec.force => {
             super::store::backup_newer(&spec.paths)
                 .map_err(|e| super::SummaryJobError::Internal(e.code().to_string()))?
         }
+        super::store::State::Unsupported => return Err(super::SummaryJobError::SchemaUnsupported),
         _ => {}
     }
     let md_written = match super::store::write(&spec.paths, &artifact) {
@@ -408,6 +437,26 @@ struct Generated {
     raw: String,
     parsed: mr_summarize::parse::ParsedSummary,
     req: GenerateRequest,
+    nonce: String,
+}
+
+fn screen_output(mut out: String, nonce: &str) -> (String, bool) {
+    if !prompt::nonce_in_output(&out, nonce) {
+        return (out, false);
+    }
+    out = out
+        .lines()
+        .filter(|line| !line.contains(nonce))
+        .collect::<Vec<_>>()
+        .join("\n");
+    (out, true)
+}
+
+fn mark_injection(parsed: &mut mr_summarize::parse::ParsedSummary) {
+    parsed.injection_flagged += 1;
+    if !parsed.warnings.contains(&Warning::InjectionSuspected) {
+        parsed.warnings.push(Warning::InjectionSuspected);
+    }
 }
 
 fn generate_with_retry(
@@ -415,46 +464,52 @@ fn generate_with_retry(
     req: &GenerateRequest,
     preset: &preset::Preset,
     ctx: &mut GenCtx<'_>,
+    nonce: &str,
 ) -> Result<Generated, super::SummaryJobError> {
-    let out = backend
-        .generate(req, ctx.cancel, ctx.on_event)
-        .map_err(map_backend)?;
+    let (out, injected) = screen_output(
+        backend
+            .generate(req, ctx.cancel, ctx.on_event)
+            .map_err(map_backend)?,
+        nonce,
+    );
     // Плоский ответ с пунктами parser восстанавливает сам; repair нужен
     // только когда пунктов нет (иначе лишний вызов 60–140 с).
     match parse::parse(&out, preset) {
-        Ok(parsed) => Ok(Generated {
-            raw: out,
-            parsed,
-            req: req.clone(),
-        }),
+        Ok(mut parsed) => {
+            if injected {
+                mark_injection(&mut parsed);
+            }
+            Ok(Generated {
+                raw: out,
+                parsed,
+                req: req.clone(),
+                nonce: nonce.to_string(),
+            })
+        }
         Err(_) => {
             ctx.retry.retries += 1;
             ctx.retry.reason = Some("invalid_output".to_string());
             let repair_prompt = prompt::build_repair(preset, ctx.language, &out);
             let retry = request_seed(&request(ctx.info, &repair_prompt, ctx.max_tokens), 43);
-            let repaired = backend
-                .generate(&retry, ctx.cancel, ctx.on_event)
-                .map_err(map_backend)?;
-            let parsed = parse::parse(&repaired, preset)
+            let (repaired, injected) = screen_output(
+                backend
+                    .generate(&retry, ctx.cancel, ctx.on_event)
+                    .map_err(map_backend)?,
+                &repair_prompt.nonce,
+            );
+            let mut parsed = parse::parse(&repaired, preset)
                 .map_err(|_| super::SummaryJobError::InvalidOutput)?;
+            if injected {
+                mark_injection(&mut parsed);
+            }
             Ok(Generated {
                 raw: repaired,
                 parsed,
                 req: retry,
+                nonce: repair_prompt.nonce,
             })
         }
     }
-}
-
-fn reduce_request(
-    preset: &preset::Preset,
-    language: text::Language,
-    partials: &[String],
-    info: &BackendInfo,
-    max_tokens: u32,
-) -> GenerateRequest {
-    let prompt = prompt::build_reduce(preset, language, partials);
-    request(info, &prompt, max_tokens)
 }
 
 /// Один или два уровня reduce. `None` — reduce не дал валидных секций;
@@ -466,7 +521,10 @@ fn reduce_all(
     partials: &[String],
     ctx: &mut GenCtx<'_>,
     reduce_levels: &mut usize,
-) -> Result<Option<(mr_summarize::parse::ParsedSummary, GenerateRequest)>, super::SummaryJobError> {
+) -> Result<
+    Option<(mr_summarize::parse::ParsedSummary, GenerateRequest, String)>,
+    super::SummaryJobError,
+> {
     if partials.len() < 2 {
         return Ok(None);
     }
@@ -486,7 +544,7 @@ fn reduce_all(
             }
             let prompt = prompt::build_reduce(preset, language, &group);
             let req = request(ctx.info, &prompt, ctx.max_tokens);
-            match generate_with_retry(backend, &req, preset, ctx) {
+            match generate_with_retry(backend, &req, preset, ctx, &prompt.nonce) {
                 Ok(generated) => {
                     next.push(generated.raw.clone());
                     final_gen = Some(generated);
@@ -500,7 +558,7 @@ fn reduce_all(
             let generated = final_gen.ok_or_else(|| {
                 super::SummaryJobError::Internal("reduce without output".to_string())
             })?;
-            return Ok(Some((generated.parsed, generated.req)));
+            return Ok(Some((generated.parsed, generated.req, generated.nonce)));
         }
         inputs = next;
         if *reduce_levels >= 2 {
@@ -600,6 +658,8 @@ mod tests {
             detail: Detail::Normal,
             confirmed_sensitive: false,
             allow_downgrade: false,
+            force: false,
+            model_sha: super::super::config::MODEL_SHA256.to_string(),
         };
         let mut backend = super::super::fake::FakeBackend::new("flat_once");
         let cancel = CancelToken::new();
@@ -658,6 +718,8 @@ mod tests {
             detail: Detail::Normal,
             confirmed_sensitive: false,
             allow_downgrade: false,
+            force: false,
+            model_sha: super::super::config::MODEL_SHA256.to_string(),
         };
         let mut backend = super::super::fake::FakeBackend::new("ok");
         let cancel = CancelToken::new();
@@ -667,6 +729,228 @@ mod tests {
         assert_eq!(output.artifact.provenance.mode, "map_reduce");
         assert_eq!(output.artifact.provenance.reduce_levels, 1);
         assert!(!output.artifact.summary.sections.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn english_fixture_keeps_titles_deadline_and_locale() {
+        let dir = std::env::temp_dir().join(format!(
+            "mr-pipeline-en-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let utterances = vec![
+            serde_json::json!({"start":0.0,"end":1.0,"speaker":"Ann","text":"We decided to move the launch to next week."}),
+            serde_json::json!({"start":1.0,"end":2.0,"speaker":"Bob","text":"Bob will update the report by Friday."}),
+            serde_json::json!({"start":2.0,"end":3.0,"speaker":"Ann","text":"Who checks the budget?"}),
+        ];
+        let paths = super::super::store::summary_paths(&dir, "en", "en.wav".into());
+        std::fs::write(
+            &paths.transcript,
+            serde_json::to_vec(&serde_json::json!({"utterances": utterances})).unwrap(),
+        )
+        .unwrap();
+        let spec = JobSpec {
+            paths,
+            preset_id: "meeting".to_string(),
+            detail: Detail::Normal,
+            confirmed_sensitive: false,
+            allow_downgrade: false,
+            force: false,
+            model_sha: super::super::config::MODEL_SHA256.to_string(),
+        };
+        let mut backend = super::super::fake::FakeBackend::new("ok");
+        let cancel = CancelToken::new();
+        let mut on_event = |_event: BackendEvent| {};
+        let output = super::run(&spec, &mut backend, &cancel, &mut on_event)
+            .expect("english fixture должен собраться");
+        let artifact = output.artifact;
+        assert_eq!(artifact.output_language, mr_summarize::text::Language::En);
+        assert_eq!(artifact.source.language, mr_summarize::text::Language::En);
+        assert!(artifact
+            .summary
+            .sections
+            .iter()
+            .all(|s| s.title != "Кратко" && s.title != "Задачи" && s.title != "Решения"));
+        let tasks = artifact
+            .summary
+            .sections
+            .iter()
+            .find(|s| s.id == "tasks")
+            .expect("tasks потеряны");
+        assert_eq!(tasks.title, "Tasks");
+        let task = tasks
+            .items
+            .iter()
+            .find(|i| i.task.is_some())
+            .and_then(|i| i.task.as_ref())
+            .expect("task без метаданных");
+        assert_eq!(task.deadline.as_deref(), Some("by Friday"));
+        assert_eq!(task.assignee.as_deref(), Some("Bob"));
+        let markdown = artifact.to_markdown();
+        assert!(markdown.contains("# Meeting summary"), "{markdown}");
+        assert!(markdown.contains("## Tasks"), "{markdown}");
+        assert!(markdown.contains("Preset:"), "{markdown}");
+        assert!(markdown.contains("Who: Bob; Due: by Friday"), "{markdown}");
+        assert!(!markdown.contains("## Кратко"), "{markdown}");
+        assert!(!markdown.contains("Кто:"), "{markdown}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn echoed_nonce_is_dropped_and_flagged() {
+        let dir = std::env::temp_dir().join(format!(
+            "mr-pipeline-nonce-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let utterances = vec![
+            serde_json::json!({"start":0.0,"end":1.0,"speaker":"Анна","text":"Нормальный пункт из источника."}),
+            serde_json::json!({"start":1.0,"end":2.0,"speaker":"Борис","text":"Второй нормальный пункт."}),
+        ];
+        let paths = super::super::store::summary_paths(&dir, "nonce", "nonce.wav".into());
+        std::fs::write(
+            &paths.transcript,
+            serde_json::to_vec(&serde_json::json!({"utterances": utterances})).unwrap(),
+        )
+        .unwrap();
+        let spec = JobSpec {
+            paths,
+            preset_id: "meeting".to_string(),
+            detail: Detail::Normal,
+            confirmed_sensitive: false,
+            allow_downgrade: false,
+            force: false,
+            model_sha: super::super::config::MODEL_SHA256.to_string(),
+        };
+        let mut backend = super::super::fake::FakeBackend::new("nonce_echo");
+        let cancel = CancelToken::new();
+        let mut on_event = |_event: BackendEvent| {};
+        let output = super::run(&spec, &mut backend, &cancel, &mut on_event)
+            .expect("nonce не должен ронять весь job");
+        assert!(output
+            .artifact
+            .summary
+            .warnings
+            .contains(&Warning::InjectionSuspected));
+        assert!(output
+            .artifact
+            .summary
+            .sections
+            .iter()
+            .flat_map(|s| &s.items)
+            .all(|i| !i.text.contains("Утечка")));
+        let json = output.artifact.to_json().unwrap();
+        assert!(!json.contains("Утечка"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn map_chunk_injection_reaches_final_warnings() {
+        let dir = std::env::temp_dir().join(format!(
+            "mr-pipeline-map-inj-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let utterances: Vec<serde_json::Value> = (0..200)
+            .map(|i| {
+                serde_json::json!({
+                    "start": i as f64,
+                    "end": i as f64 + 0.9,
+                    "speaker": "Спикер 1",
+                    "text": format!("Обсудили пункт {i}: решили подготовить отчёт и проверить срок до среды."),
+                })
+            })
+            .collect();
+        let paths = super::super::store::summary_paths(&dir, "mapinj", "mapinj.wav".into());
+        std::fs::write(
+            &paths.transcript,
+            serde_json::to_vec(&serde_json::json!({"utterances": utterances})).unwrap(),
+        )
+        .unwrap();
+        let spec = JobSpec {
+            paths,
+            preset_id: "meeting".to_string(),
+            detail: Detail::Normal,
+            confirmed_sensitive: false,
+            allow_downgrade: false,
+            force: false,
+            model_sha: super::super::config::MODEL_SHA256.to_string(),
+        };
+        let mut backend = super::super::fake::FakeBackend::new("map_injection");
+        let cancel = CancelToken::new();
+        let mut on_event = |_event: BackendEvent| {};
+        let output = super::run(&spec, &mut backend, &cancel, &mut on_event)
+            .expect("map injection не должен терять job");
+        assert_eq!(output.artifact.provenance.mode, "map_reduce");
+        assert!(
+            output
+                .artifact
+                .summary
+                .warnings
+                .contains(&Warning::InjectionSuspected),
+            "map-инъекция потерялась: {:?}",
+            output.artifact.summary.warnings
+        );
+        assert!(output
+            .artifact
+            .summary
+            .sections
+            .iter()
+            .flat_map(|s| &s.items)
+            .all(|i| !i.text.to_lowercase().contains("ignore previous")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn model_load_failure_writes_no_artifact() {
+        let dir = std::env::temp_dir().join(format!(
+            "mr-pipeline-load-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let utterances = vec![
+            serde_json::json!({"start":0.0,"end":1.0,"speaker":"Анна","text":"Решили перенести запуск."}),
+            serde_json::json!({"start":1.0,"end":2.0,"speaker":"Борис","text":"Надо подготовить отчёт до среды."}),
+        ];
+        let paths = super::super::store::summary_paths(&dir, "load", "load.wav".into());
+        std::fs::write(
+            &paths.transcript,
+            serde_json::to_vec(&serde_json::json!({"utterances": utterances})).unwrap(),
+        )
+        .unwrap();
+        let spec = JobSpec {
+            paths: paths.clone(),
+            preset_id: "meeting".to_string(),
+            detail: Detail::Normal,
+            confirmed_sensitive: false,
+            allow_downgrade: false,
+            force: false,
+            model_sha: super::super::config::MODEL_SHA256.to_string(),
+        };
+        let mut backend = super::super::fake::FakeBackend::new("model_load");
+        let cancel = CancelToken::new();
+        let mut on_event = |_event: BackendEvent| {};
+        let error = match super::run(&spec, &mut backend, &cancel, &mut on_event) {
+            Ok(_) => panic!("model_load не вернул ошибку"),
+            Err(error) => error,
+        };
+        assert_eq!(error, super::super::SummaryJobError::ModelLoad);
+        assert!(!paths.json.exists(), "артефакт записан после model_load");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -37,13 +37,32 @@ pub(super) fn write_token(path: &Path, token: &str) -> Result<(), BackendError> 
         .map_err(|e| BackendError::Load(format!("token file: {e}")))
 }
 
-pub(super) fn free_port() -> Result<u16, BackendError> {
+/// Порт удерживается слушателем до самого spawn: окно гонки сокращается до
+/// drop→bind. Полностью закрыть его нельзя без передачи fd (shortcut: редкий
+/// TOCTOU, апгрейд — socket activation); идентичность добивает bearer + `/props`.
+pub(super) struct PortReservation {
+    listener: std::net::TcpListener,
+    port: u16,
+}
+
+impl PortReservation {
+    pub(super) fn port(&self) -> u16 {
+        self.port
+    }
+
+    pub(super) fn release(self) {
+        drop(self.listener);
+    }
+}
+
+pub(super) fn reserve_port() -> Result<PortReservation, BackendError> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")
         .map_err(|e| BackendError::Load(format!("port: {e}")))?;
-    listener
+    let port = listener
         .local_addr()
         .map(|addr| addr.port())
-        .map_err(|e| BackendError::Load(format!("port: {e}")))
+        .map_err(|e| BackendError::Load(format!("port: {e}")))?;
+    Ok(PortReservation { listener, port })
 }
 
 /// Пины §6: без GPU/mlock/-march; `--parallel 1` обязателен против дефолтных

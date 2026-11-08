@@ -42,21 +42,44 @@ fn private_options() -> std::fs::OpenOptions {
 }
 
 #[cfg(windows)]
-fn apply_private_acl(path: &Path) {
-    // Фолбэк из §16: полный SetNamedSecurityInfoW не оправдан для двух файлов.
+fn apply_private_acl(path: &Path) -> bool {
+    // Фолбэк из §16: полный SetNamedSecurityInfoW не оправдан для двух файлов,
+    // но DACL применяется до записи и проверяется (M08).
     let user = std::env::var("USERNAME").unwrap_or_default();
     if user.is_empty() {
-        return;
+        return false;
     }
-    let _ = std::process::Command::new("icacls")
+    let principal = match std::env::var("USERDOMAIN") {
+        Ok(domain) if !domain.is_empty() => format!("{domain}\\{user}"),
+        _ => user,
+    };
+    let applied = std::process::Command::new("icacls")
         .arg(path)
         .args(["/inheritance:r", "/grant:r"])
-        .arg(format!("{user}:F"))
-        .status();
+        .arg(format!("{principal}:F"))
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if !applied {
+        return false;
+    }
+    std::process::Command::new("icacls")
+        .arg(path)
+        .output()
+        .ok()
+        .map(|output| {
+            let text = String::from_utf8_lossy(&output.stdout);
+            text.contains(&principal)
+                && !text.contains("BUILTIN\\Users")
+                && !text.contains("Everyone")
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(not(windows))]
-fn apply_private_acl(_path: &Path) {}
+fn apply_private_acl(_path: &Path) -> bool {
+    true
+}
 
 /// Итоги содержат личный текст встречи: файл создаётся 0600 (Unix) и с
 /// DACL только для текущего пользователя (Windows), в отличие от записей.
@@ -69,15 +92,22 @@ pub(crate) fn write_atomic_private(path: &Path, bytes: &[u8]) -> std::io::Result
     {
         use std::io::Write as _;
         let mut file = private_options().create_new(true).open(&tmp)?;
+        if !apply_private_acl(&tmp) {
+            crate::note!("summary: acl_fallback file={} reason=icacls", tmp.display());
+        }
         file.write_all(bytes)?;
         file.sync_all()?;
     }
-    apply_private_acl(&tmp);
     if let Err(e) = std::fs::rename(&tmp, path) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
     }
-    apply_private_acl(path);
+    if !apply_private_acl(path) {
+        crate::note!(
+            "summary: acl_fallback file={} reason=icacls",
+            path.display()
+        );
+    }
     Ok(())
 }
 
@@ -94,6 +124,28 @@ mod tests {
         write_atomic(&p, b"one").unwrap();
         write_atomic(&p, b"two").unwrap();
         assert_eq!(std::fs::read(&p).unwrap(), b"two");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_write_has_user_only_acl() {
+        let dir = std::env::temp_dir().join(format!("mr-fsutil-acl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("s.summary.json");
+        write_atomic_private(&p, b"{}").unwrap();
+        let user = std::env::var("USERNAME").unwrap_or_default();
+        let output = std::process::Command::new("icacls")
+            .arg(&p)
+            .output()
+            .expect("icacls");
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(text.contains(&user), "DACL без пользователя: {text}");
+        assert!(
+            !text.contains("BUILTIN\\Users") && !text.contains("Everyone"),
+            "DACL остался наследуемым: {text}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -2,7 +2,7 @@ use crate::artifact::{SummaryItem, SummaryRef, SummarySection, TaskMeta, Warning
 use crate::deadline;
 use crate::parse::{ParsedItem, ParsedSummary};
 use crate::preset::{self, Detail, Preset, SectionRole};
-use crate::text::{self, Transcript, Utterance};
+use crate::text::{self, Language, Transcript, Utterance};
 use std::collections::HashSet;
 
 mod merge;
@@ -34,6 +34,7 @@ pub fn ground(
     transcript: &Transcript,
     preset: &Preset,
     detail: Detail,
+    language: Language,
 ) -> GroundedSummary {
     let mut warnings = parsed.warnings.clone();
     let mut dropped = 0usize;
@@ -176,8 +177,15 @@ pub fn ground(
             Some(SummarySection {
                 id: spec.id.to_owned(),
                 title: preset::section(preset, spec.id)
-                    .map(|s| s.title_ru.to_owned())
-                    .unwrap_or_else(|| spec.title.clone()),
+                    .map(|s| {
+                        if language == Language::En {
+                            s.title_en
+                        } else {
+                            s.title_ru
+                        }
+                    })
+                    .unwrap_or(spec.title.as_str())
+                    .to_owned(),
                 role: spec.role,
                 items: items.into_iter().map(|s| s.item).collect(),
             })
@@ -308,11 +316,25 @@ fn reconcile_task(
         .first()
         .map(|r| adjacent(std::slice::from_ref(r), utterances.len()))
         .unwrap_or_default();
+    let best_index = output.refs.first().map(|r| r.utterance_index);
+    // Ворота задачи смотрят только реплику-источник, без соседей: иначе
+    // соседняя задача делает задачей соседнее решение (H05/S-08).
+    let best_support = best_index
+        .map(|index| support_text(utterances, &[index]))
+        .unwrap_or_default();
+    let normalized_best = text::normalize(&best_support);
     let support = support_text(utterances, &primary);
-    if crate::cues::task_rejected(&output.text) || crate::cues::task_rejected(&support) {
+    let normalized_support = text::normalize(&support);
+    let normalized_text = text::normalize(&output.text);
+    if crate::cues::task_rejected(&output.text) || crate::cues::task_rejected(&best_support) {
         return false;
     }
-    if !crate::cues::task_cue(&support) {
+    let kind = crate::extract::task_kind(&output.text, &normalized_text, known)
+        .or_else(|| crate::extract::task_kind(&best_support, &normalized_best, known));
+    let explicit = kind.is_some()
+        || (crate::extract::explicit_action(&output.text)
+            && crate::extract::explicit_action(&best_support));
+    if !explicit {
         return false;
     }
     if output.task.is_none() {
@@ -326,7 +348,6 @@ fn reconcile_task(
     let task = output.task.as_mut().expect("task was just set");
     // Дедлайн — только из лучшей реплики: соседняя реплика часто про другую
     // задачу, а «на пятницу» из неё — ложный срок (наблюдение E2E).
-    let best_index = output.refs.first().map(|r| r.utterance_index);
     let found = best_index.and_then(|index| deadline::find(utterances, &[index]));
     let outcome = deadline::reconcile(task.deadline.as_deref(), found.as_ref());
     task.deadline = outcome.deadline;
@@ -336,8 +357,6 @@ fn reconcile_task(
         push_once(warnings, warning);
     }
 
-    let normalized_support = text::normalize(&support);
-    let normalized_text = text::normalize(&output.text);
     let speaker = best_index
         .and_then(|index| utterances.get(index))
         .map(|u| u.speaker.trim())
@@ -351,35 +370,40 @@ fn reconcile_task(
                 .find(|s| !s.is_empty())
                 .map(str::to_owned)
         });
+    let had_assignee = task.assignee.is_some();
     if let Some(assignee) = task.assignee.clone() {
         let normalized = text::normalize(&assignee);
         let speaker_match = speaker
             .as_deref()
             .map(|s| text::normalize(s) == normalized)
-            .unwrap_or(false)
-            || crate::extract::is_known_speaker(&assignee, known);
-        if !normalized_support.contains(&normalized)
-            && !normalized_text.contains(&normalized)
+            .unwrap_or(false);
+        if !name_mentioned(&normalized_support, &normalized)
+            && !name_mentioned(&normalized_text, &normalized)
             && !speaker_match
         {
             task.assignee = None;
             push_once(warnings, Warning::AssigneeNotStated);
         }
     }
-    if task.assignee.is_none() {
-        let normalized = text::normalize(&output.text);
-        let kind = crate::extract::task_kind(&output.text, &normalized, known)
-            .or_else(|| crate::extract::task_kind(&support, &text::normalize(&support), known))
-            .unwrap_or(crate::extract::TaskKind::Explicit);
+    if task.assignee.is_none() && !had_assignee {
         task.assignee = crate::extract::assignee_for(
             &output.text,
             Some(&support),
             speaker.as_deref(),
             known,
-            kind,
+            kind.unwrap_or(crate::extract::TaskKind::Explicit),
         );
     }
     true
+}
+
+/// Имя может стоять в падеже («Анне»): сравниваем начало слова, как в
+/// `extract::name_key`, а не только точное вхождение.
+fn name_mentioned(text: &str, name: &str) -> bool {
+    let chars: Vec<char> = name.chars().collect();
+    let take = if chars.len() <= 4 { 3 } else { 5 };
+    let key: String = chars.into_iter().take(take).collect();
+    !key.is_empty() && text.split_whitespace().any(|token| token.starts_with(&key))
 }
 
 fn push_once(warnings: &mut Vec<Warning>, warning: Warning) {

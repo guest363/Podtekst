@@ -46,6 +46,10 @@ const FIRST_PERSON: &[&str] = &[
     "я согласую",
     "беру",
     "отвечаю",
+    "i will",
+    "i ll",
+    "i am going to",
+    "i m going to",
 ];
 
 /// Детерминированный fallback: только явные source-реплики, без новых фактов.
@@ -171,9 +175,16 @@ pub(crate) fn task_kind(source: &str, normalized: &str, known: &[String]) -> Opt
     {
         return Some(TaskKind::Explicit);
     }
-    let need = ["нужно", "надо", "задача", "требуется"]
-        .iter()
-        .any(|marker| normalized.contains(marker));
+    let need = [
+        "нужно",
+        "надо",
+        "задача",
+        "требуется",
+        "need to",
+        "needs to",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker));
     if need && has_infinitive(normalized) {
         return Some(TaskKind::Need);
     }
@@ -182,8 +193,9 @@ pub(crate) fn task_kind(source: &str, normalized: &str, known: &[String]) -> Opt
 
 fn has_infinitive(normalized: &str) -> bool {
     normalized.split_whitespace().any(|word| {
-        (word.ends_with("ть") || word.ends_with("ться") || word.ends_with("ти"))
-            && cues::action_verb(word)
+        ((word.ends_with("ть") || word.ends_with("ться") || word.ends_with("ти"))
+            && cues::action_verb(word))
+            || (word.is_ascii() && cues::ACTION_VERBS.contains(&word))
     })
 }
 
@@ -223,8 +235,13 @@ fn known_name(token: &str, known: &[String]) -> Option<String> {
     known.iter().find(|name| name_key(name) == key).cloned()
 }
 
-pub(crate) fn is_known_speaker(name: &str, known: &[String]) -> bool {
-    known_name(name, known).is_some()
+/// Явное действие в тексте: инфинитив или личная форма из ACTION_VERBS.
+/// Нужен как второй вход в ворота задачи, когда обязательство не выражено
+/// («Обновить документацию» при источнике «Обновлю документацию»).
+pub(crate) fn explicit_action(text: &str) -> bool {
+    text::normalize(text)
+        .split_whitespace()
+        .any(|word| cues::ACTION_VERBS.contains(&word))
 }
 
 fn task_meta(

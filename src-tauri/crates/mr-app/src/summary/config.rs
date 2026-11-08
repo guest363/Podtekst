@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+#[cfg(test)]
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
@@ -94,15 +96,37 @@ impl Settings {
     }
 }
 
+#[cfg(test)]
+static TEST_CONFIG_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
+
 pub fn config_path() -> PathBuf {
+    #[cfg(test)]
+    if let Some(path) = TEST_CONFIG_PATH
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+    {
+        return path.clone();
+    }
     app_data_dir().join("summary-config.json")
 }
 
-pub fn load() -> Settings {
-    let stored = std::fs::read_to_string(config_path())
+#[cfg(test)]
+fn set_test_config_path(path: Option<PathBuf>) {
+    *TEST_CONFIG_PATH.lock().unwrap_or_else(|e| e.into_inner()) = path;
+}
+
+/// Сохранённые настройки без env-оверрайдов: их и только их пишем в файл
+/// (M02), иначе временный `PODTEKST_SUMMARY_ENABLED=0` закрепляется навсегда.
+pub(crate) fn stored() -> Settings {
+    std::fs::read_to_string(config_path())
         .ok()
         .and_then(|text| serde_json::from_str::<Settings>(&text).ok())
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+pub fn load() -> Settings {
+    let stored = stored();
     let classifier = std::env::var("SUMMARY_CLASSIFIER_MODE")
         .ok()
         .and_then(|value| ClassifierMode::parse(&value))
@@ -137,6 +161,8 @@ pub fn enabled() -> bool {
 mod tests {
     use super::*;
 
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn default_is_heuristic_not_manual_only() {
         assert_eq!(
@@ -163,5 +189,47 @@ mod tests {
         assert_eq!(value["detail"], "normal");
         assert_eq!(value["auto_suggest"], true);
         assert!(value.get("classifier").is_none());
+    }
+    #[test]
+    fn env_override_is_not_persisted_by_settings_update() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let old_mode = std::env::var_os("SUMMARY_CLASSIFIER_MODE");
+        let old_enabled = std::env::var_os("PODTEKST_SUMMARY_ENABLED");
+        let dir = std::env::temp_dir().join(format!(
+            "mr-summary-config-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        set_test_config_path(Some(dir.join("summary-config.json")));
+        std::env::set_var("SUMMARY_CLASSIFIER_MODE", "manual_only");
+        std::env::set_var("PODTEKST_SUMMARY_ENABLED", "0");
+        assert_eq!(load().classifier, ClassifierMode::ManualOnly);
+        assert!(!load().enabled);
+        super::super::catalog::update_settings(&serde_json::json!({"detail": "short"}))
+            .expect("settings update");
+        std::env::remove_var("SUMMARY_CLASSIFIER_MODE");
+        std::env::remove_var("PODTEKST_SUMMARY_ENABLED");
+        let loaded = load();
+        assert_eq!(
+            loaded.classifier,
+            ClassifierMode::Heuristic,
+            "env закреплён"
+        );
+        assert!(loaded.enabled, "env enabled закреплён");
+        assert_eq!(loaded.detail, mr_summarize::Detail::Short);
+        match old_mode {
+            Some(value) => std::env::set_var("SUMMARY_CLASSIFIER_MODE", value),
+            None => std::env::remove_var("SUMMARY_CLASSIFIER_MODE"),
+        }
+        match old_enabled {
+            Some(value) => std::env::set_var("PODTEKST_SUMMARY_ENABLED", value),
+            None => std::env::remove_var("PODTEKST_SUMMARY_ENABLED"),
+        }
+        set_test_config_path(None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
