@@ -392,7 +392,7 @@ def run_case(case, args, model_sha):
             if case.get("sensitive"):
                 payload["confirm_sensitive"] = True
             started = time.monotonic()
-            status_code, body = post_json(f"{base}/api/summary/generate", payload)
+            status_code, body = post_json(f"{base}/api/summary/generate", payload, timeout=args.timeout)
             if status_code != 202:
                 fail(f"{result['id']}: generate HTTP {status_code} {body}")
             job_id = body.get("job_id")
@@ -471,7 +471,7 @@ def run_case(case, args, model_sha):
             }
             if case.get("sensitive"):
                 payload["confirm_sensitive"] = True
-            status_code, body = post_json(f"{base}/api/summary/generate", payload)
+            status_code, body = post_json(f"{base}/api/summary/generate", payload, timeout=args.timeout)
             if status_code != 202:
                 fail(f"{result['id']}: cancel-generate HTTP {status_code} {body}")
             job_id = body.get("job_id")
