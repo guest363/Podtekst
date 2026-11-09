@@ -552,8 +552,9 @@ pub(crate) fn diarize_channel(
     } else {
         None
     };
-    // Калибровка Average Linkage для ERes2NetV2: кросс-спикерные пары ≤ 0.22 (dist ≥ 0.78),
-    // один голос ≥ 0.48 (dist ≤ 0.52). Порог 0.52 предотвращает расщепление одного человека.
+    // Замеры ERes2NetV2 (`onnx_real`): разные дикторы ≤ 0.22 (dist ≥ 0.78),
+    // один голос ≥ 0.48 (dist ≤ 0.52). shortcut: порог 0.52 перенесён с
+    // complete linkage без замера average; перекалибровать на встречах.
     let mut core_labels = agglomerative(&core_vecs, 0.52, k);
     // Короткие шумные куски часто образуют ложные «голоса». Сливаем их с
     // ближайшим похожим голосом (косинус ≥ 0.45) как в моно, так и в стерео.
@@ -1605,7 +1606,7 @@ fn speaker_change_cuts(start: f64, end: f64, wins: &[(f64, Vec<f64>)]) -> Vec<f6
 
 /// Один голос даёт ~0.5+, смена диктора ≤ 0.22 — замеры ERes2NetV2
 /// (`onnx_real::eres2netv2_parity_with_official_reference`).
-/// Перекрытия обнуляются до эмбеддинга: иначе оба голоса дают «средний» вектор.
+/// Перекрытия вырезаются до эмбеддинга: иначе оба голоса дают «средний» вектор.
 pub(crate) fn split_long_by_speaker_change(
     samples: &[f32],
     utterances: Vec<Utterance>,

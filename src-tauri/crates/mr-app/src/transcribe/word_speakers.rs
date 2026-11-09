@@ -206,6 +206,8 @@ pub(crate) fn split_utterance_by_word_speakers(
             .map(|word| word.chars().count() as f64 + 1.0)
             .collect();
         let total: f64 = weights.iter().sum::<f64>().max(f64::EPSILON);
+        // 20 мс — минимум, чтобы assign_dominant_speaker видел пересечение;
+        // иначе кумулятивный пол даёт слова нулевой длины.
         let step = ((utterance.end - utterance.start) / word_count as f64).min(0.02);
         let mut bounds = Vec::with_capacity(word_count + 1);
         bounds.push(utterance.start);

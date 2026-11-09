@@ -7,7 +7,6 @@ use mr_ml::{cosine_similarity, linear_sum_assignment_max, weighted_centroid};
 
 use super::Utterance;
 
-/// Непрерывный участок окна, уверенно отнесённый к глобальному кластеру.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SpeakerSpan {
     pub start: f64,
@@ -265,8 +264,7 @@ fn aggregate_spans(spans: &[SpeakerSpan]) -> Vec<SpeakerSpan> {
     out
 }
 
-/// Локальный спикер кадра. Для overlap берём того, кто звучит сразу после
-/// перекрытия, — это входящий голос, ради которого и нужна тонкая граница.
+/// Для overlap берём входящий голос: именно он начинает новую реплику.
 fn frame_local(classes: &[u8], index: usize) -> Option<usize> {
     match classes.get(index).copied()? {
         1..=3 => Some(classes[index] as usize - 1),
@@ -323,6 +321,8 @@ fn collect_spans(
         });
     }
 }
+
+/// Иначе одновременно звучавшие разные голоса слипаются в «средний» профиль.
 fn resolve_label_conflicts(
     votes: &HashMap<usize, HashMap<usize, f64>>,
     cooccur: &HashMap<(usize, usize), f64>,

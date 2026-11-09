@@ -25,9 +25,8 @@ pub struct Segmentation {
 }
 
 impl Segmentation {
-    /// Вырезает перекрытия, сдвигая чистые сэмплы к началу. Нули на месте
-    /// перекрытия давали бы в fbank кадры цифровой тишины, которые искажают
-    /// CMN и attentive pooling голосового эмбеддинга.
+    /// Нули на месте перекрытия давали бы в fbank кадры цифровой тишины,
+    /// которые искажают CMN и attentive pooling голосового эмбеддинга.
     pub fn exclude_overlap(&self, samples: &mut [f32], offset: usize) -> usize {
         let end = offset + samples.len();
         let mut write = 0usize;
@@ -220,7 +219,6 @@ fn frame_class(scores: &[f32; POWERSET_CLASSES], overlap: f32, count: u32) -> u8
 fn argmax(scores: &[f32]) -> u8 {
     let mut best = 0usize;
     for (index, &score) in scores.iter().enumerate().skip(1) {
-        // Строгое сравнение: при равенстве остаётся меньший класс.
         if score > scores[best] {
             best = index;
         }
