@@ -2416,7 +2416,7 @@ dependencies = [
  "ureq 2.12.1",
  "uuid",
  "windows-sys 0.61.2",
- "zbus 6.0.0",
+ "zbus 6.2.1",
  "zip 4.6.1",
 ]
 
@@ -5901,9 +5901,9 @@ dependencies = [
 
 [[package]]
 name = "zbus"
-version = "6.0.0"
+version = "6.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "266223222c9d81e5966455a9da0783e35d56a7ccab79a03c2366b2d98f8fc8a9"
+checksum = "0ddb2961d9587ef9f24ad14cde1c3bc4c5edc9f1525932a8cffdd5bd98886eb9"
 dependencies = [
  "async-trait",
  "bitflags 2.13.2",
