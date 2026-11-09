@@ -124,15 +124,6 @@
     }
     return ''
   })
-  const hasVisibleBadges = $derived(
-    Boolean(
-      (currentPreset && summaryState.record) ||
-      (summaryState.phase === 'result' && summaryState.record) ||
-      (currentPreset?.sensitive && summaryState.record) ||
-      summaryState.stale ||
-      warnings.length > 0,
-    ),
-  )
   const liveText = $derived.by(() => {
     if (summaryState.phase === 'generating') return summaryState.stage || 'Собираю итоги'
     if (summaryState.phase === 'result' && summaryState.record) return 'Итоги готовы'
@@ -203,29 +194,10 @@
     aria-busy={summaryState.generating}
     bind:this={panelEl}
   >
-    {#if !summaryState.expanded || hasVisibleBadges}
+    {#if !summaryState.expanded}
       <div class="summary-bar">
         <div class="summary-head">
           <h2 class="summary-title" id="summary-title">Итоги встречи</h2>
-          {#if hasVisibleBadges}
-            <div class="summary-badges">
-              {#if currentPreset && summaryState.record}
-                <span class="summary-badge preset">{currentPreset.label}</span>
-              {/if}
-              {#if summaryState.phase === 'result' && summaryState.record}
-                <span class="summary-badge ok">Сгенерировано</span>
-              {/if}
-              {#if currentPreset?.sensitive && summaryState.record}
-                <span class="summary-badge draft">Черновик</span>
-              {/if}
-              {#if summaryState.stale}
-                <span class="summary-badge warn">Расшифровка изменена</span>
-              {/if}
-              {#if warnings.length > 0}
-                <span class="summary-badge warn">Есть замечания</span>
-              {/if}
-            </div>
-          {/if}
           <button
             type="button"
             class="summary-toggle"
@@ -240,7 +212,7 @@
             </svg>
           </button>
         </div>
-        {#if barStatus && !summaryState.expanded}
+        {#if barStatus}
           <div class="summary-status">{barStatus}</div>
         {/if}
       </div>
@@ -358,27 +330,6 @@
     font-size: 16px; font-weight: 800; letter-spacing: -0.02em;
     color: var(--text-primary); margin: 0;
   }
-  .summary-badges {
-    display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0;
-  }
-  .summary-badge {
-    font-size: 11.5px; font-weight: 600; border: 1px solid var(--border-card);
-    border-radius: var(--radius-pill); padding: 1px 7px; color: var(--text-muted);
-    background: #fff; white-space: nowrap;
-  }
-  .summary-badge.preset {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 2px 8px; background: #f8fafc;
-    border-color: rgba(15, 30, 51, 0.08); color: #475569;
-  }
-  .summary-badge.preset::before {
-    content: ""; width: 5px; height: 5px; border-radius: 50%;
-    background: currentColor; opacity: 0.55; flex-shrink: 0;
-  }
-  .summary-badge.ok { color: var(--accent-ok); border-color: var(--accent-ok); }
-  .summary-badge.warn, .summary-badge.draft {
-    color: var(--accent-amber); border-color: #d9b45c;
-  }
   .summary-toggle {
     display: inline-flex; align-items: center; gap: 4px;
     margin-left: auto; border: 1px solid transparent; border-radius: var(--radius-pill);
@@ -422,7 +373,7 @@
     .summary-toggle { min-height: 40px; padding: 8px 2px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .summary-toggle, .summary-badge { transition: none; }
+    .summary-toggle { transition: none; }
   }
   @media print {
     .summary-block { display: none !important; }
