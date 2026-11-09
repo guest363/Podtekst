@@ -210,10 +210,11 @@ export async function loadSummary(
 }
 
 export async function loadSummaryPresets(): Promise<void> {
-  if (summaryState.presets.length > 0) return
+  if (summaryState.presets.length > 0 && summaryState.systemPromptBase) return
   try {
     const d = await apiJson<SummaryPresetsResponse>('/api/summary/presets')
     if (Array.isArray(d.presets)) summaryState.presets = d.presets
+    if (d.system_prompt_base) summaryState.systemPromptBase = d.system_prompt_base
   } catch {
     /* шаблоны догрузятся в настройках или при повторном открытии */
   }
@@ -223,6 +224,7 @@ export async function loadSummarySettings(): Promise<void> {
   const d = await apiJson<SummarySettingsResponse>('/api/summary/settings')
   summaryState.settings = d.settings
   summaryState.presets = Array.isArray(d.presets) ? d.presets : summaryState.presets
+  if (d.system_prompt_base) summaryState.systemPromptBase = d.system_prompt_base
   summaryState.model = d.model
   summaryState.capabilities = d.capabilities
 }

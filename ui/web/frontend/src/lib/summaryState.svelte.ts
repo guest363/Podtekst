@@ -17,6 +17,7 @@ export const summaryState = $state({
   phase: 'idle' as SummaryPhase,
   expanded: false,
   presets: [] as SummaryPreset[],
+  systemPromptBase: '',
   classification: null as SummaryClassification | null,
   chosenPresetId: '',
   pendingPresetId: '',

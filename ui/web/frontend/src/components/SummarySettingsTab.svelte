@@ -5,6 +5,7 @@
   import { downloadModel } from '../lib/transcript.svelte.ts'
   import { fmtBytes, loadSystem, openTarget, system } from '../lib/system.svelte.ts'
   import { toast } from '../lib/toast.svelte.ts'
+  import SummaryPromptModal from './SummaryPromptModal.svelte'
   import {
     loadSummarySettings,
     saveSummarySettings,
@@ -18,6 +19,8 @@
   let presetOpen = $state(false)
   let presetTrigger = $state<HTMLButtonElement | null>(null)
   let presetList = $state<HTMLDivElement | null>(null)
+  let guideOpen = $state(false)
+  let guidePresetId = $state('')
 
   const settings = $derived(summaryState.settings)
   const manualOnly = $derived(summaryState.capabilities?.classifier === 'manual_only')
@@ -136,6 +139,11 @@
     void save({ default_preset: id || null })
   }
 
+  function openGuide(presetId?: string): void {
+    guidePresetId = presetId || defaultPreset || summaryState.presets[0]?.id || 'meeting'
+    guideOpen = true
+  }
+
   function onPresetKeydown(e: KeyboardEvent): void {
     if (e.key === 'Escape' && presetOpen) {
       e.stopPropagation()
@@ -198,7 +206,16 @@
       {/if}
 
       <div class="summary-setting-row">
-        <span id="summary-default-preset-label">Шаблон по умолчанию</span>
+        <div class="summary-setting-col">
+          <span id="summary-default-preset-label">Шаблон по умолчанию</span>
+          <button
+            type="button"
+            class="summary-guide-link"
+            onclick={() => openGuide()}
+          >
+            Справочник шаблонов и промптов
+          </button>
+        </div>
         <div class="summary-preset-select" onfocusout={onPresetFocusOut}>
           <button
             bind:this={presetTrigger}
@@ -250,6 +267,14 @@
                   </span>
                 </button>
               {/each}
+              <div class="summary-popover-divider"></div>
+              <button
+                type="button"
+                class="speaker-select-item summary-popover-action"
+                onclick={() => { closePreset(); openGuide(); }}
+              >
+                <span class="speaker-select-item-name">Справочник всех шаблонов…</span>
+              </button>
             </div>
           {/if}
         </div>
@@ -379,6 +404,16 @@
       </div>
     {/if}
   {/if}
+
+  <SummaryPromptModal
+    open={guideOpen}
+    presets={summaryState.presets}
+    initialId={guidePresetId}
+    defaultPresetId={defaultPreset}
+    systemPromptBase={summaryState.systemPromptBase}
+    onselect={(id) => choosePreset(id)}
+    onclose={() => (guideOpen = false)}
+  />
 </div>
 
 <style>
@@ -433,6 +468,36 @@
     font-size: 12.5px;
     font-weight: 600;
     color: var(--text-primary);
+  }
+  .summary-setting-col {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+  .summary-guide-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--accent-blue);
+    cursor: pointer;
+    text-underline-offset: 2px;
+  }
+  .summary-guide-link:hover {
+    text-decoration: underline;
+  }
+  .summary-popover-divider {
+    height: 1px;
+    background: var(--border-soft);
+    margin: 4px 0;
+  }
+  .summary-popover-action {
+    color: var(--accent-blue);
+    font-weight: 600;
+    font-size: 12px;
   }
   .summary-row-note {
     font-size: 12px;

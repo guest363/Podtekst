@@ -191,6 +191,7 @@ pub(super) fn dispatch(
                     "ok": true,
                     "catalog_version": view["catalog_version"],
                     "presets": view["presets"],
+                    "system_prompt_base": view["system_prompt_base"],
                 }),
                 200,
             );

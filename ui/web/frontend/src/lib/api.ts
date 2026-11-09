@@ -86,13 +86,24 @@ export interface SummarySection {
   items: SummaryItem[]
 }
 
+export interface SummaryPresetSection {
+  id: string
+  title: string
+  role: SummaryRole
+}
+
 export interface SummaryPreset {
   id: string
   label: string
   short: string
   caution: string
   sections: string[]
+  sections_detail?: SummaryPresetSection[]
   sensitive: boolean
+  role?: string
+  domain?: string
+  prompt_version?: string
+  speaker_primary?: string[]
 }
 
 export interface SummaryModelInfo extends ModelInfo {
@@ -282,12 +293,14 @@ export interface SummaryPresetsResponse {
   ok: boolean
   catalog_version: number
   presets: SummaryPreset[]
+  system_prompt_base?: string
 }
 
 export interface SummarySettingsResponse {
   ok: boolean
   settings: SummarySettings
   presets: SummaryPreset[]
+  system_prompt_base?: string
   model: SummaryModelInfo | null
   capabilities: SummaryCapabilities
 }

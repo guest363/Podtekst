@@ -147,21 +147,33 @@ pub fn presets_json() -> Value {
                 "short": p.short_ru,
                 "caution": p.caution_ru,
                 "sections": p.sections.iter().map(|s| s.id).collect::<Vec<_>>(),
+                "sections_detail": p.sections.iter().map(|s| json!({
+                    "id": s.id,
+                    "title": s.title_ru,
+                    "role": s.role.as_str(),
+                })).collect::<Vec<_>>(),
+                "role": p.role,
+                "domain": p.domain,
                 "sensitive": p.sensitive,
+                "speaker_primary": p.speaker_primary,
+                "prompt_version": p.prompt_version,
             })
         })
         .collect();
     json!({
         "catalog_version": mr_summarize::preset::CATALOG_VERSION,
         "presets": list,
+        "system_prompt_base": mr_summarize::prompt::SYSTEM_PROMPT,
     })
 }
 
 pub fn settings_view() -> Value {
     let settings = config::load();
+    let pj = presets_json();
     json!({
         "settings": settings.public_json(),
-        "presets": presets_json()["presets"],
+        "presets": pj["presets"],
+        "system_prompt_base": pj["system_prompt_base"],
         "model": model_status_json(),
         "capabilities": capabilities(),
     })
