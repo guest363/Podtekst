@@ -265,10 +265,7 @@ fn transcribe_file_inner(
                 reason = "ctc_disabled";
                 "ev=asr.ctc.skip"
             );
-            on_event(
-                6,
-                "Словарь терминов не применён: второй проход выключен в «Модели ИИ»",
-            );
+            on_event(6, "Словарь терминов не применён: CTC-уточнение выключено");
         } else if models.ctc.is_none() {
             log::warn!(
                 target: "asr",
