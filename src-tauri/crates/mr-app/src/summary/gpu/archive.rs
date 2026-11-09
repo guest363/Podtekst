@@ -79,7 +79,10 @@ fn extract_zip(archive: &Path, library: &str, target: &Path) -> Result<(), Strin
     let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("zip: {e}"))?;
     for index in 0..zip.len() {
         let mut entry = zip.by_index(index).map_err(|e| format!("zip entry: {e}"))?;
-        let raw = entry.name();
+        let Ok(raw) = entry.name() else {
+            continue;
+        };
+        let raw = raw.as_ref();
         if raw.contains('\\') || raw.contains(':') || raw.contains('\0') {
             continue;
         }
