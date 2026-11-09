@@ -7,9 +7,13 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.app.json --tsgo && tsc -p tsconfig.node.json && node scripts/check-summary-fixtures.mjs"
+    "check": "svelte-check --tsconfig ./tsconfig.app.json --tsgo && tsc -p tsconfig.node.json && node scripts/check-summary-fixtures.mjs",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write ."
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.4",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@tsconfig/svelte": "^5.0.8",
     "@types/node": "^26.6.6",
