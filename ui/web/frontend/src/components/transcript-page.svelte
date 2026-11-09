@@ -11,6 +11,7 @@ import {
   emptyHint,
   engine,
   openTranscriptFile,
+  refineCurrentTranscript,
   startTranscription,
   transcript,
 } from '../lib/transcript.svelte.ts'
@@ -34,6 +35,13 @@ let summaryAvailable = $derived(
     transcript.hasText &&
     summaryState.capabilities?.summary_supported !== false &&
     summaryState.blockReason !== 'no_text',
+)
+
+let qwenInstalled = $derived(
+  Boolean(
+    summaryState.model?.is_installed ||
+    settings.models.find((m) => m.kind === 'summary')?.is_installed,
+  ),
 )
 
 const toggleSpeakers = (): void => {
@@ -305,6 +313,28 @@ const onWindowKey = (e: KeyboardEvent): void => {
               <span class="spk-notify-dot warn" aria-hidden="true" title="Идёт формирование итогов"></span>
             {:else if summaryState.record}
               <span class="spk-notify-dot ok" aria-hidden="true" title="Итоги сформированы"></span>
+            {/if}
+          </button>
+        {/if}
+
+        {#if !isAndroid}
+          <button
+            class="btn-secondary btn-sm btn-refine-toggle {transcript.refining ? 'active' : ''}"
+            disabled={!qwenInstalled || transcript.refining || thisRunning || otherRunning || engine.summaryRunning || !transcript.hasText}
+            aria-label="ИИ-реставрация реплик через Qwen"
+            title={!qwenInstalled
+              ? 'Требуется модель «Итоги (Qwen)» (скачайте в Настройки → Итоги)'
+              : transcript.refining
+                ? 'Идёт реставрация реплик через локальную модель Qwen…'
+                : 'Исправить искажённые слова и восстановить спикеров через локальную модель Qwen'}
+            onclick={() => void refineCurrentTranscript(ui.currentTranscriptPath)}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3z"/>
+            </svg>
+            <span>{transcript.refining ? 'Реставрация…' : 'Реставрация'}</span>
+            {#if transcript.refining}
+              <span class="spk-notify-dot warn" aria-hidden="true"></span>
             {/if}
           </button>
         {/if}

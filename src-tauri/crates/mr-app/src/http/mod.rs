@@ -39,7 +39,15 @@ use self::transcribe_api::{
 #[cfg(feature = "onnx")]
 use self::transcribe_api::{handle_queue_clear, handle_queue_get, handle_queue_remove};
 #[cfg(feature = "onnx")]
-use self::transcript_edit::handle_transcript_edit;
+use self::transcript_edit::{handle_transcript_edit, handle_transcript_refine};
+#[cfg(not(feature = "onnx"))]
+fn handle_transcript_refine(request: tiny_http::Request, _body: serde_json::Value) {
+    json_response(
+        request,
+        json!({"ok": false, "error": "Реставрация недоступна: сборка без onnx"}),
+        501,
+    );
+}
 #[cfg(not(feature = "onnx"))]
 fn handle_transcript_edit(request: tiny_http::Request, _body: serde_json::Value) {
     json_response(
@@ -1136,6 +1144,10 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 (tiny_http::Method::Post, "/api/transcript/edit") => {
                     let body = read_body_to_json(&mut request);
                     handle_transcript_edit(request, body);
+                }
+                (tiny_http::Method::Post, "/api/transcript/refine") => {
+                    let body = read_body_to_json(&mut request);
+                    handle_transcript_refine(request, body);
                 }
                 (tiny_http::Method::Post, "/api/export/save_dialog") => {
                     handle_save_dialog(request, &query);

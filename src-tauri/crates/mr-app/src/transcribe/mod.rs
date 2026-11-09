@@ -8,6 +8,7 @@ pub mod memory;
 pub mod report;
 mod speaker_assignment;
 mod word_speakers;
+pub mod refine;
 
 use std::path::PathBuf;
 

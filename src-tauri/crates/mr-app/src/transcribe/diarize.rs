@@ -1213,12 +1213,43 @@ pub(crate) fn diarize_channel(
     for (k, &c) in raw_clusters.iter().enumerate() {
         if matches[k].matched {
             let m_name = matches[k].name.clone().unwrap();
-            cluster_name.insert(c, m_name);
-            if let Some(pid) = &matches[k].pack_id {
-                cluster_pack_id.insert(c, pid.clone());
-            }
-            if let Some(pname) = &matches[k].pack_name {
-                cluster_pack_name.insert(c, pname.clone());
+            let members: Vec<usize> = label_of
+                .iter()
+                .filter(|(_, &l)| l == c)
+                .map(|(&i, _)| i)
+                .collect();
+            let member_embs: Vec<&Vec<f64>> = members
+                .iter()
+                .filter_map(|&i| embs[i].as_ref())
+                .collect();
+            let impure = if member_embs.len() >= 3 {
+                let centroid = &ordered_centroids[k];
+                let avg_dist = member_embs
+                    .iter()
+                    .map(|v| 1.0 - mr_ml::cosine_similarity(v, centroid))
+                    .sum::<f64>()
+                    / member_embs.len() as f64;
+                avg_dist > 0.35
+            } else {
+                false
+            };
+            if !impure {
+                cluster_name.insert(c, m_name);
+                if let Some(pid) = &matches[k].pack_id {
+                    cluster_pack_id.insert(c, pid.clone());
+                }
+                if let Some(pname) = &matches[k].pack_name {
+                    cluster_pack_name.insert(c, pname.clone());
+                }
+            } else {
+                log::info!(
+                    target: "diar",
+                    cluster = c,
+                    profile = m_name,
+                    members = member_embs.len();
+                    "ev=diar.voiceprint.rejected_impure_cluster"
+                );
+                unmatched.push(c);
             }
         } else {
             unmatched.push(c);
