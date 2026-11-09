@@ -71,6 +71,36 @@ CI - bootstrap по файлам, 1000 ресэмплов, seed `20261109`. Дл
 
 Для сравнения с публикациями нужен рабочий Whisper и повторный прогон с `collar=0`, `skip_overlap=False` на тех же RTTM.
 
+### Синтетические встречи
+
+Открытого русского корпуса встреч с эталоном «кто и когда» нет, поэтому добавлен генератор `tools/diar_eval/synth_meetings.py`. Встреча собирается из клипов FLEURS: один клип - один диктор с уникальным голосом, реплики чередуются с паузами 0,2-0,5 с, перекрытие задаётся процентом от длительности предыдущей реплики. На выходе 16 кГц моно WAV, RTTM, эталонный JSON с текстом каждой реплики и manifest для `run_batch.py`.
+
+| Сценарий | Реплик | DER | SCA | cpWER | Attribution |
+|---|---:|---:|---:|---:|---:|
+| ru, 2 спикера, 60 с, 0% | 5 | 27,11% | 100% | 31,67% | 85,34% (99/116) |
+| ru, 3 спикера, 60 с, 5% | 6 | 40,24% | 0% | 40,16% | 60,80% (76/125) |
+| ru, 4 спикера, 60 с, 15% | 7 | 33,66% | 0% | 41,96% | 79,56% (109/137) |
+| en, 2 спикера, 60 с, 0%, Whisper | 6 | 13,39% | 100% | 18,85% | 100,00% (114/114) |
+
+Прогон: `~/.cache/podtekst-bench/runs/synth-meetings`, seed `20261109`, collar 0, `skip_overlap=False`, release-сборка `podtekst 0.7.0` на ветке `fix/benchmark-gates`. Русские файлы - GigaAM v3 RNNT с CTC, английский - Whisper turbo. Whisper на 60 с отработал без Reshape-ошибок.
+
+Текст на синтетике распознаётся хорошо: WER 3,33-4,20% на русских файлах и 18,85% на английском (там разошлись формат времени и сокращения). Почти весь cpWER - это атрибуция, а не распознавание: cpWER 31,67-41,96% при WER 3,33-4,20%.
+
+Диаризация: два спикера определяются верно, три и четыре - слипаются в 2 и 3 кластера (SCA 0). DER 27-40% складывается из пропусков 5-14 с (VAD подрезает края реплик на 0,3-1,2 с) и путаницы 8,6-20,3 с. Ложных срабатываний нет. На английском confusion 0 с и attribution 100%.
+
+Оговорка: голоса повторяются. Каждый спикер - один и тот же клип FLEURS, он звучит дословно несколько раз, естественного turn-taking и фонового шума нет, перекрытия синтетические (два независимых клипа, а не живая перебивка). Резкие стыки без фейдов могут дополнительно завышать DER. Абсолютные цифры нельзя сравнивать с публикациями, только версии Podtekst между собой.
+
+```bash
+PY=~/.cache/podtekst-bench/venv/bin/python
+$PY tools/diar_eval/synth_meetings.py --clips-dir ~/.cache/podtekst-bench/data/fleurs/ru_ru \
+  --out ~/.cache/podtekst-bench/synth/ru-2spk-60s-ov0 --speakers 2 --duration 60 --overlap 0 \
+  --manifest-out ~/.cache/podtekst-bench/synth/manifest.json
+PODTEKST_DATA_DIR=~/.cache/podtekst-bench/appdata $PY tools/diar_eval/run_batch.py \
+  --manifest ~/.cache/podtekst-bench/synth/manifest.json \
+  --out ~/.cache/podtekst-bench/runs/synth-meetings \
+  --app src-tauri/target/release/podtekst --timeout 900
+```
+
 ## 5. Производительность
 
 | Набор | Файлов | Мин | RTF p50 | RTF p95 | RSS max | Примечание |
@@ -227,6 +257,7 @@ PY=~/.cache/podtekst-bench/venv/bin/python
 $PY tools/diar_eval/transcript_to_rttm.py --self-test
 $PY tools/diar_eval/evaluate.py --self-test
 $PY tools/diar_eval/metrics.py --self-test
+$PY tools/diar_eval/synth_meetings.py --self-test
 $PY tools/diar_eval/normalize_wer.py --self-test
 $PY tools/diar_eval/run_batch.py --self-test
 $PY tools/diar_eval/report.py --self-test

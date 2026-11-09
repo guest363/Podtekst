@@ -22,6 +22,7 @@ PY=~/.cache/podtekst-bench/venv/bin/python
 $PY tools/diar_eval/transcript_to_rttm.py --self-test
 $PY tools/diar_eval/evaluate.py --self-test
 $PY tools/diar_eval/metrics.py --self-test
+$PY tools/diar_eval/synth_meetings.py --self-test
 $PY tools/diar_eval/normalize_wer.py --self-test
 $PY tools/diar_eval/run_batch.py --self-test
 $PY tools/diar_eval/report.py --self-test
@@ -269,6 +270,24 @@ attribution - больше 3 п.п.; RTF - +15%; peak RSS - +20%. Это пра�
 - Peak RSS только Linux; для macOS/Windows нужен отдельный замер.
 - `run_batch.py` не скачивает модели и не собирает приложение.
 - Аудио, эталоны, транскрипты и каталог `runs/` не коммитятся.
+
+## 10. Синтетические встречи
+
+```bash
+$PY tools/diar_eval/synth_meetings.py \
+  --clips-dir ~/.cache/podtekst-bench/data/fleurs/ru_ru \
+  --out ~/.cache/podtekst-bench/synth/ru-2spk-60s-ov0 \
+  --speakers 2 --duration 60 --overlap 0 --seed 20261109 \
+  --manifest-out ~/.cache/podtekst-bench/synth/manifest.json
+```
+
+Один клип FLEURS = один диктор: клип повторяется, но разные дикторы внутри
+сегмента не смешиваются. Реплики чередуются с паузами 0,2-0,5 с, `--overlap`
+- процент от длительности предыдущей реплики. Пишутся `meeting.wav`
+(16 кГц моно), `meeting.rttm`, `meeting.ref.json` с текстом реплик и запись
+manifest для `run_batch.py` (`ref_rttm`, `ref_text`, `language`, `engine`:
+`whisper` для `en`, `gigaam` для `ru`). `--manifest-out` накапливает записи
+нескольких сценариев в один общий манифест.
 
 ## P12
 
