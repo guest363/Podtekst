@@ -166,33 +166,37 @@
     </div>
   </div>
 
-  {#if engine.running}
+  {#if engine.running || engine.summaryRunning}
+    {@const activeFile = engine.running ? engine.file : engine.summaryFile}
+    {@const activePct = engine.running ? engine.pct : engine.summaryPct}
+    {@const activeMsg = engine.running ? engine.msg : (engine.summaryMsg || 'Сборка итогов…')}
+    {@const activeTitle = engine.running ? 'Выполняется сейчас' : 'Сборка итогов'}
     <div class="queue-section">
       <div class="section-title">
         <span class="status-dot active" aria-hidden="true"></span>
-        <span>Выполняется сейчас</span>
+        <span>{activeTitle}</span>
       </div>
       <div class="active-task-card">
         <div class="active-task-row">
           <div class="task-file-info">
-            <span class="task-name" title={engine.file}>{baseName(engine.file)}</span>
-            <span class="task-msg">{engine.msg}</span>
+            <span class="task-name" title={activeFile}>{baseName(activeFile)}</span>
+            <span class="task-msg">{activeMsg}</span>
           </div>
           <div class="task-right">
-            <span class="task-pct">{engine.pct}%</span>
-            {#if engine.file}
+            <span class="task-pct">{activePct}%</span>
+            {#if activeFile}
               <button
                 type="button"
                 class="btn-secondary btn-sm"
-                onclick={() => openTranscript(engine.file)}
+                onclick={() => openTranscript(activeFile)}
               >
                 Открыть
               </button>
             {/if}
           </div>
         </div>
-        <div class="progress-track" role="progressbar" aria-valuenow={engine.pct} aria-valuemin="0" aria-valuemax="100">
-          <div class="vu-bar" style={`width: ${engine.pct}%`}></div>
+        <div class="progress-track" role="progressbar" aria-valuenow={activePct} aria-valuemin="0" aria-valuemax="100">
+          <div class="vu-bar" style={`width: ${activePct}%`}></div>
         </div>
       </div>
     </div>

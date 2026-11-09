@@ -380,16 +380,18 @@
             <span class="rec-meta">
                 {#if rec.duration_sec}{fmtClock(rec.duration_sec)} •
                 {/if}
-                {#if rec.has_transcript}
+                {#if engine.summaryRunning && engine.summaryFile === rec.path}
+                    <span class="rec-state-running">Итоги {engine.summaryPct}%</span>
+                {:else if (engine.running && engine.file === rec.path) || isActive(rec.path)}
+                    <span class="rec-state-running"
+                        >Расшифровка {engine.pct}%</span
+                    >
+                {:else if rec.has_transcript}
                     <span class="rec-state-ok">
                         {#if rec.speakers_count}{rec.speakers_count}
                             {pluralSpeakers(rec.speakers_count)}{:else}Текст
                             готов{/if}
                     </span>
-                {:else if isActive(rec.path)}
-                    <span class="rec-state-running"
-                        >Расшифровка {engine.pct}%</span
-                    >
                 {:else if isQueued(rec.path)}
                     <span class="rec-state-queued"
                         >В очереди (#{getPosition(rec.path)})</span
@@ -460,9 +462,9 @@
                     class="btn-secondary btn-sm"
                     onclick={() => openTranscript(rec.path, rec.is_video)}
                 >
-                    {rec.has_transcript
-                        ? "Текст и спикеры"
-                        : isActive(rec.path)
+                    {engine.summaryRunning && engine.summaryFile === rec.path
+                        ? `Итоги ${engine.summaryPct}%`
+                        : (engine.running && engine.file === rec.path) || isActive(rec.path)
                           ? "Смотреть ход"
                           : "Текст и спикеры"}
                 </button>

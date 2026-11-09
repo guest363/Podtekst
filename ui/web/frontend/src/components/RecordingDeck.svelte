@@ -3,7 +3,7 @@
   import { baseName, isMobile, readJsonSafe } from '../lib/api'
   import { hasSystemAudio, settings } from '../lib/settings.svelte.ts'
   import { toast } from '../lib/toast.svelte.ts'
-  import { emit, ui } from '../lib/ui.svelte.ts'
+  import { emit, openTranscript, ui } from '../lib/ui.svelte.ts'
   import { engine, syncEngineFromStatus } from '../lib/transcript.svelte.ts'
   import {
     screenRecorder,
@@ -33,6 +33,9 @@
   let busyLabel = $derived(engine.running ? 'Ход расшифровки' : 'Ход сборки итогов')
   let busyAria = $derived(
     engine.running ? 'Прогресс расшифровки' : 'Прогресс сборки итогов',
+  )
+  let busyFile = $derived(
+    engine.running ? engine.file : engine.summaryRunning ? engine.summaryFile : '',
   )
 
   const hotkeyLabel = /Mac/i.test(navigator.userAgent) ? 'Cmd+Shift+R' : 'Ctrl+Shift+R'
@@ -202,18 +205,26 @@
       <span
         class="deck-status {isRecording ? 'recording' : ''}"
         role="status"
-        title={engine.running && engine.file ? engine.file : undefined}
+        title={busyFile || undefined}
       >
         <span class="status-dot {isRecording ? 'active' : ''}" aria-hidden="true"></span>
-        <span>
+        <span class="deck-status-content">
           {#if isRecording}
             {screenRecorder.active ? 'Идёт запись экрана и звука' : 'Идёт запись встречи'}
           {:else if engine.running}
-            Расшифровка {engine.pct}%{engine.file ? ` · ${baseName(engine.file)}` : ''}
+            Расшифровка {engine.pct}%{#if engine.file} · <button
+              type="button"
+              class="deck-file-link"
+              onclick={() => openTranscript(engine.file)}
+              title="Перейти к расшифровке"
+            >{baseName(engine.file)}</button>{/if}
           {:else if engine.summaryRunning}
-            Сборка итогов {engine.summaryPct}%{engine.summaryFile
-              ? ` · ${baseName(engine.summaryFile)}`
-              : ''}
+            Сборка итогов {engine.summaryPct}%{#if engine.summaryFile} · <button
+              type="button"
+              class="deck-file-link"
+              onclick={() => openTranscript(engine.summaryFile)}
+              title="Перейти к расшифровке"
+            >{baseName(engine.summaryFile)}</button>{/if}
           {:else if Object.keys(engine.downloading).length > 0}
             {@const activeId = Object.keys(engine.downloading)[0]}
             {@const activePct = engine.downloading[activeId]}
@@ -293,19 +304,51 @@
     </div>
 
     {#if busyRunning}
-      <div class="deck-transcribe" aria-label={busyLabel}>
-        <div
-          class="progress-track"
-          role="progressbar"
-          aria-valuenow={busyPct}
-          aria-valuemin="0"
-          aria-valuemax="100"
-          aria-label={busyAria}
+      {#if busyFile}
+        <button
+          type="button"
+          class="deck-transcribe clickable"
+          aria-label={busyLabel}
+          onclick={() => openTranscript(busyFile)}
+          title={`Перейти к записи: ${baseName(busyFile)}`}
         >
-          <div class="vu-bar" style={`width: ${busyPct}%`}></div>
+          <div
+            class="progress-track"
+            role="progressbar"
+            aria-valuenow={busyPct}
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-label={busyAria}
+          >
+            <div class="vu-bar" style={`width: ${busyPct}%`}></div>
+          </div>
+          <div class="deck-transcribe-meta">
+            <span class="deck-transcribe-msg">{busyMsg}</span>
+            <span class="deck-transcribe-action">
+              <span>Открыть</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="9 18 15 12 9 6"></polyline>
+              </svg>
+            </span>
+          </div>
+        </button>
+      {:else}
+        <div class="deck-transcribe" aria-label={busyLabel}>
+          <div
+            class="progress-track"
+            role="progressbar"
+            aria-valuenow={busyPct}
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-label={busyAria}
+          >
+            <div class="vu-bar" style={`width: ${busyPct}%`}></div>
+          </div>
+          <div class="deck-transcribe-meta">
+            <span class="deck-transcribe-msg">{busyMsg}</span>
+          </div>
         </div>
-        <div class="deck-transcribe-msg">{busyMsg}</div>
-      </div>
+      {/if}
     {/if}
 
     <div class="deck-wave" aria-hidden="true">

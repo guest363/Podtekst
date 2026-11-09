@@ -69,6 +69,17 @@
     }
   })
 
+  $effect(() => {
+    if (
+      ui.transcriptOpen &&
+      ((summaryState.generating && summaryState.file === ui.currentTranscriptPath) ||
+        (engine.summaryRunning && engine.summaryFile === ui.currentTranscriptPath))
+    ) {
+      summaryOpen = true
+      summaryState.expanded = true
+    }
+  })
+
   let hasUnmatchedSpeakers = $derived(
     Boolean(transcript.speakers?.length && transcript.speakers.some((s) => !s.matched)),
   )
