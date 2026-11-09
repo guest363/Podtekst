@@ -2369,7 +2369,7 @@ dependencies = [
 
 [[package]]
 name = "mr-app"
-version = "0.6.3"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "clap",
@@ -2403,7 +2403,7 @@ dependencies = [
 
 [[package]]
 name = "mr-audio"
-version = "0.6.3"
+version = "0.7.0"
 dependencies = [
  "hound",
  "libc",
@@ -2419,7 +2419,7 @@ dependencies = [
 
 [[package]]
 name = "mr-ml"
-version = "0.6.3"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "log",
@@ -2431,7 +2431,7 @@ dependencies = [
 
 [[package]]
 name = "mr-models"
-version = "0.6.3"
+version = "0.7.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2442,7 +2442,7 @@ dependencies = [
 
 [[package]]
 name = "mr-packs"
-version = "0.6.3"
+version = "0.7.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2452,7 +2452,7 @@ dependencies = [
 
 [[package]]
 name = "mr-summarize"
-version = "0.1.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "regex",
