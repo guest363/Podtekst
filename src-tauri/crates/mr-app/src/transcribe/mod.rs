@@ -24,8 +24,8 @@ use mr_ml::onnx::whisper::Whisper;
 
 pub use events::{
     clear_queue, emit_model_event, enqueue_transcription, finish_model_events, get_queue_status,
-    is_transcribe_running, remove_from_queue, rename_in_queue, spawn_transcription_worker,
-    start_model_download, take_new_events, transcribing_file,
+    has_pending_work, is_transcribe_running, remove_from_queue, rename_in_queue,
+    spawn_transcription_worker, start_model_download, take_new_events, transcribing_file,
 };
 
 fn models_root() -> PathBuf {

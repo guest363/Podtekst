@@ -1,0 +1,217 @@
+{
+  "cases": [
+    {
+      "ambiguous": false,
+      "confidence": "high",
+      "id": "english",
+      "language": "en",
+      "margin": 4,
+      "preset_id": "meeting",
+      "scores": {
+        "lecture": 1,
+        "legal": 1,
+        "meeting": 9,
+        "personal": 3,
+        "psychology": 2,
+        "scrum": 5
+      },
+      "signals": [
+        "tasks",
+        "deadlines",
+        "decisions",
+        "multiple_speakers",
+        "status_round",
+        "personal_topics",
+        "short_turns",
+        "timing_short"
+      ],
+      "style": "dialogue"
+    },
+    {
+      "ambiguous": false,
+      "confidence": "high",
+      "id": "injection-ru",
+      "language": "ru",
+      "margin": 5,
+      "preset_id": "meeting",
+      "scores": {
+        "lecture": 1,
+        "legal": 1,
+        "meeting": 8,
+        "personal": 2,
+        "psychology": 2,
+        "scrum": 3
+      },
+      "signals": [
+        "tasks",
+        "deadlines",
+        "decisions",
+        "multiple_speakers",
+        "personal_topics",
+        "short_turns",
+        "timing_short"
+      ],
+      "style": "dialogue"
+    },
+    {
+      "ambiguous": false,
+      "confidence": "high",
+      "id": "lecture-ru",
+      "language": "ru",
+      "margin": 5,
+      "preset_id": "lecture",
+      "scores": {
+        "lecture": 9,
+        "legal": 1,
+        "meeting": 4,
+        "personal": 1,
+        "psychology": 2,
+        "scrum": 3
+      },
+      "signals": [
+        "tasks",
+        "multiple_speakers",
+        "lecture_terms",
+        "definitions",
+        "qa_pattern",
+        "timing_short"
+      ],
+      "style": "dialogue"
+    },
+    {
+      "ambiguous": false,
+      "confidence": "high",
+      "id": "legal-ru",
+      "language": "ru",
+      "margin": 6,
+      "preset_id": "legal",
+      "scores": {
+        "lecture": 0,
+        "legal": 10,
+        "meeting": 4,
+        "personal": 2,
+        "psychology": 1,
+        "scrum": 1
+      },
+      "signals": [
+        "tasks",
+        "multiple_speakers",
+        "legal_terms",
+        "procedural_roles",
+        "personal_topics",
+        "timing_short"
+      ],
+      "style": "multi-party"
+    },
+    {
+      "ambiguous": false,
+      "confidence": "high",
+      "id": "meeting-ru",
+      "language": "ru",
+      "margin": 4,
+      "preset_id": "meeting",
+      "scores": {
+        "lecture": 0,
+        "legal": 5,
+        "meeting": 9,
+        "personal": 4,
+        "psychology": 2,
+        "scrum": 3
+      },
+      "signals": [
+        "tasks",
+        "deadlines",
+        "decisions",
+        "multiple_speakers",
+        "status_round",
+        "legal_terms",
+        "personal_topics",
+        "timing_short"
+      ],
+      "style": "multi-party"
+    },
+    {
+      "ambiguous": false,
+      "confidence": "medium",
+      "id": "personal-ru",
+      "language": "ru",
+      "margin": 2,
+      "preset_id": "personal",
+      "scores": {
+        "lecture": 2,
+        "legal": 2,
+        "meeting": 4,
+        "personal": 6,
+        "psychology": 2,
+        "scrum": 3
+      },
+      "signals": [
+        "tasks",
+        "single_speaker",
+        "status_round",
+        "blockers",
+        "legal_terms",
+        "therapy_terms",
+        "personal_topics",
+        "timing_short"
+      ],
+      "style": "monologue"
+    },
+    {
+      "ambiguous": false,
+      "confidence": "high",
+      "id": "psychology-ru",
+      "language": "ru",
+      "margin": 6,
+      "preset_id": "psychology",
+      "scores": {
+        "lecture": 2,
+        "legal": 1,
+        "meeting": 1,
+        "personal": 3,
+        "psychology": 9,
+        "scrum": 2
+      },
+      "signals": [
+        "multiple_speakers",
+        "status_round",
+        "therapy_terms",
+        "personal_topics",
+        "timing_short"
+      ],
+      "style": "dialogue"
+    },
+    {
+      "ambiguous": false,
+      "confidence": "high",
+      "id": "scrum-ru",
+      "language": "ru",
+      "margin": 3,
+      "preset_id": "scrum",
+      "scores": {
+        "lecture": 0,
+        "legal": 2,
+        "meeting": 8,
+        "personal": 2,
+        "psychology": 2,
+        "scrum": 11
+      },
+      "signals": [
+        "tasks",
+        "decisions",
+        "multiple_speakers",
+        "status_round",
+        "blockers",
+        "sprint_terms",
+        "personal_topics",
+        "qa_pattern",
+        "short_turns",
+        "timing_short"
+      ],
+      "style": "multi-party"
+    }
+  ],
+  "golden_version": 1,
+  "heuristic_version": 1,
+  "spec_version": "classify-spec.v1"
+}

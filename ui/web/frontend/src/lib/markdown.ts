@@ -1,3 +1,5 @@
+import type { InlineSegment } from './api'
+
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => (({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c))
 }
@@ -75,4 +77,52 @@ export function renderMarkdown(src: string): string {
   flushPara()
   flushList()
   return out.join('')
+}
+
+/** Безопасные inline-сегменты для итогов: модель не может вставить HTML,
+ *  ссылку или обработчик. Svelte рендерит только текст/strong/code. */
+export function renderInline(text: string): InlineSegment[] {
+  const src = String(text ?? '')
+  const out: InlineSegment[] = []
+  let buf = ''
+  let i = 0
+  const flush = () => {
+    if (buf) {
+      out.push({ kind: 'text', value: buf })
+      buf = ''
+    }
+  }
+  while (i < src.length) {
+    if (src.startsWith('**', i)) {
+      const end = src.indexOf('**', i + 2)
+      if (end > i + 2) {
+        flush()
+        out.push({ kind: 'bold', value: src.slice(i + 2, end) })
+        i = end + 2
+        continue
+      }
+    }
+    if (src[i] === '`') {
+      const end = src.indexOf('`', i + 1)
+      if (end > i + 1) {
+        flush()
+        out.push({ kind: 'code', value: src.slice(i + 1, end) })
+        i = end + 1
+        continue
+      }
+    }
+    if (src[i] === '[') {
+      const m = /^\[([^\]]*)\]\(([^)]*)\)/.exec(src.slice(i))
+      if (m) {
+        flush()
+        if (m[1]) out.push({ kind: 'text', value: m[1] })
+        i += m[0].length
+        continue
+      }
+    }
+    buf += src[i]
+    i += 1
+  }
+  flush()
+  return out
 }

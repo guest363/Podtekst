@@ -1,0 +1,119 @@
+{
+  "schema": "podtekst.summary/v1",
+  "schema_minor": 0,
+  "id": "0f2b6c1e-5a4d-4f7e-9c2a-1b3d5e7f9012",
+  "generated_at": "2026-11-07T10:00:00Z",
+  "source": {
+    "schema": 1,
+    "rev": "df83afb242b2c7e81a47800cc198ae0f4634bf78fc4846846cd8dd09f52ab866",
+    "utterances": 3,
+    "chars": 88,
+    "language": "ru",
+    "duration_sec": 44.0
+  },
+  "classification": {
+    "preset_id": "meeting",
+    "confidence": "high",
+    "alternatives": [],
+    "signals": [
+      "tasks",
+      "deadlines"
+    ],
+    "ambiguous": false,
+    "style": "multi-party",
+    "language": "ru",
+    "classified_at": "2026-11-07T09:58:00Z",
+    "heuristic_version": 1,
+    "spec_version": "classify-spec.v1",
+    "user_override": false
+  },
+  "preset": {
+    "id": "meeting",
+    "version": 1,
+    "label": "Встреча",
+    "confirmed_sensitive": false
+  },
+  "detail": "normal",
+  "output_language": "ru",
+  "generator": {
+    "runtime": "llama.cpp/b12182",
+    "runtime_commit": "fd27b2034",
+    "backend": "sidecar",
+    "model_id": "sum-qwen3-4b-instruct-2507-q4km",
+    "model_title": "Qwen3-4B Instruct 2507 (итоги, Q4_K_M)",
+    "model_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+    "quant": "Q4_K_M",
+    "context": 16384,
+    "threads": 8,
+    "temperature": 0.2,
+    "top_p": 0.9,
+    "repeat_penalty": 1.05,
+    "max_tokens": 768,
+    "seed": 42,
+    "prompt_version": "meeting-v4",
+    "duration_ms": 38000,
+    "timings_ms": {
+      "load": 2510,
+      "prepare": 120,
+      "generate": 34000,
+      "verify": 1370,
+      "total": 38000
+    }
+  },
+  "summary": {
+    "sections": [
+      {
+        "id": "brief",
+        "title": "Кратко",
+        "role": "plain",
+        "items": [
+          {
+            "text": "Обсудили срок запуска.",
+            "role": "plain"
+          }
+        ]
+      },
+      {
+        "id": "decisions",
+        "title": "Решения",
+        "role": "decision",
+        "items": [
+          {
+            "text": "Запуск переносится на следующую неделю.",
+            "role": "decision"
+          }
+        ]
+      },
+      {
+        "id": "tasks",
+        "title": "Задачи",
+        "role": "task",
+        "items": [
+          {
+            "text": "Подготовить отчёт.",
+            "role": "task",
+            "task": {
+              "assignee": null,
+              "deadline": "до среды",
+              "deadline_source": "extracted"
+            }
+          }
+        ]
+      }
+    ],
+    "warnings": [],
+    "truncated": false,
+    "coverage": 1.0,
+    "items_total": 3
+  },
+  "provenance": {
+    "mode": "single_pass",
+    "chunks": 1,
+    "reduce_levels": 0,
+    "items_dropped": 0,
+    "soft_claims_dropped": 0,
+    "parser_retries": 0,
+    "parser_recovered": 0,
+    "retry_reason": null
+  }
+}

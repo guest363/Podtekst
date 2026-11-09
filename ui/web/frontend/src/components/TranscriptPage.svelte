@@ -1,15 +1,18 @@
 <script lang="ts">
-  import { baseName, fmtClock, fmtClockShort, isMobile, pluralSpeakers } from '../lib/api'
-  import { copyText, toast } from '../lib/toast.svelte.ts'
+  import { baseName, fmtClock, fmtClockShort, isAndroid, isMobile, pluralSpeakers } from '../lib/api'
+  import { copyText, toast, toastConfirm } from '../lib/toast.svelte.ts'
   import { closeTranscript, ui } from '../lib/ui.svelte.ts'
   import { emptyHint, engine, openTranscriptFile, startTranscription, transcript } from '../lib/transcript.svelte.ts'
+  import { cancelSummary, summaryState } from '../lib/summary.svelte.ts'
   import { isQueued } from '../lib/queue.svelte.ts'
   import { extractMp3 } from '../lib/recordings.svelte.ts'
   import { peopleState } from '../lib/people.svelte.ts'
   import { exportDocx, printTranscript } from '../lib/export.ts'
+  import { settings } from '../lib/settings.svelte.ts'
   import SlimPlayer from './SlimPlayer.svelte'
   import SpeakersPane from './SpeakersPane.svelte'
   import TranscriptDoc from './TranscriptDoc.svelte'
+  import SummaryPanel from './SummaryPanel.svelte'
 
   let speakersOpen = $state(
     typeof localStorage !== 'undefined'
@@ -17,10 +20,36 @@
       : true,
   )
 
+  let summaryOpen = $state(
+    typeof localStorage !== 'undefined'
+      ? localStorage.getItem('mr_summary_open') === 'true'
+      : false,
+  )
+
+  let summaryAvailable = $derived(
+    !isAndroid &&
+      settings.summaryFeature !== false &&
+      transcript.hasText &&
+      summaryState.capabilities?.summary_supported !== false &&
+      summaryState.blockReason !== 'no_text',
+  )
+
   function toggleSpeakers(): void {
     speakersOpen = !speakersOpen
     try {
       localStorage.setItem('mr_speakers_open', String(speakersOpen))
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function toggleSummaryPanel(): void {
+    summaryOpen = !summaryOpen
+    if (summaryOpen) {
+      summaryState.expanded = true
+    }
+    try {
+      localStorage.setItem('mr_summary_open', String(summaryOpen))
     } catch {
       /* ignore */
     }
@@ -37,6 +66,17 @@
       videoExpanded = false
       playbackTime = 0
       void openTranscriptFile(ui.currentTranscriptPath)
+    }
+  })
+
+  $effect(() => {
+    if (
+      ui.transcriptOpen &&
+      ((summaryState.generating && summaryState.file === ui.currentTranscriptPath) ||
+        (engine.summaryRunning && engine.summaryFile === ui.currentTranscriptPath))
+    ) {
+      summaryOpen = true
+      summaryState.expanded = true
     }
   })
 
@@ -142,6 +182,22 @@
     }
   }
 
+  function requestTranscription(): void {
+    const path = ui.currentTranscriptPath
+    if (summaryState.generating && summaryState.file === path) {
+      toastConfirm(
+        'Идёт сборка итогов. Начать расшифровку заново? Итоги будут остановлены.',
+        'Начать',
+        () => {
+          void cancelSummary()
+          void startTranscription(path)
+        },
+      )
+      return
+    }
+    void startTranscription(path)
+  }
+
   function goBack(): void {
     document
       .querySelectorAll('.transcript-page audio, .transcript-page video')
@@ -152,7 +208,10 @@
   function onWindowKey(e: KeyboardEvent): void {
     if (!ui.transcriptOpen) return
     if (e.key === 'Escape') {
-      if (isMobile && speakersOpen) {
+      if (isMobile && summaryOpen) {
+        summaryOpen = false
+        e.stopPropagation()
+      } else if (isMobile && speakersOpen) {
         speakersOpen = false
         e.stopPropagation()
       } else {
@@ -218,6 +277,29 @@
           </button>
         {/if}
 
+        {#if summaryAvailable}
+          <button
+            class="btn-secondary btn-sm btn-summary-toggle {summaryOpen ? 'active' : ''}"
+            aria-label="Итоги встречи"
+            title={summaryOpen ? 'Скрыть панель итогов' : 'Показать итоги встречи'}
+            onclick={toggleSummaryPanel}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+              <line x1="10" y1="9" x2="8" y2="9"></line>
+            </svg>
+            <span>Итоги</span>
+            {#if summaryState.generating}
+              <span class="spk-notify-dot warn" aria-hidden="true" title="Идёт формирование итогов"></span>
+            {:else if summaryState.record}
+              <span class="spk-notify-dot ok" aria-hidden="true" title="Итоги сформированы"></span>
+            {/if}
+          </button>
+        {/if}
+
         <button
           class="btn-primary btn-sm btn-transcribe-header"
           disabled={isQueued(ui.currentTranscriptPath) || thisRunning}
@@ -230,7 +312,7 @@
               : transcript.hasText
                 ? 'Текст будет распознан заново и заменит текущий'
                 : ''}
-          onclick={() => void startTranscription(ui.currentTranscriptPath)}
+          onclick={requestTranscription}
         >
           <span class="btn-text-full">
             {thisRunning
@@ -370,7 +452,7 @@
         <button
           class="btn-primary"
           disabled={isQueued(ui.currentTranscriptPath)}
-          onclick={() => void startTranscription(ui.currentTranscriptPath)}
+          onclick={requestTranscription}
         >
           {isQueued(ui.currentTranscriptPath)
             ? 'В очереди'
@@ -381,13 +463,23 @@
       </div>
     </div>
   {:else}
-    <div class="transcript-grid {speakersOpen ? 'sidebar-open' : ''}">
+    <div
+      class="transcript-grid {speakersOpen ? 'sidebar-open' : ''} {summaryOpen && summaryAvailable ? 'summary-open' : ''}"
+    >
       {#if isMobile && speakersOpen}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <div
           class="speakers-drawer-overlay"
           role="presentation"
           onclick={() => (speakersOpen = false)}
+        ></div>
+      {/if}
+      {#if isMobile && summaryOpen && summaryAvailable}
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <div
+          class="speakers-drawer-overlay summary-drawer-overlay"
+          role="presentation"
+          onclick={() => (summaryOpen = false)}
         ></div>
       {/if}
 
@@ -415,6 +507,26 @@
         meta={transcriptMeta}
         onseek={seekTo}
       />
+
+      {#if summaryAvailable}
+        <div class="transcript-summary-wrap {summaryOpen ? 'open drawer-open' : ''}">
+          <div class="summary-drawer-top">
+            <span class="card-title">Итоги встречи</span>
+            <button
+              class="btn-close-page"
+              aria-label="Скрыть панель итогов"
+              title="Скрыть панель итогов"
+              onclick={() => (summaryOpen = false)}
+            >
+              ✕
+            </button>
+          </div>
+          <SummaryPanel
+            file={ui.currentTranscriptPath}
+            transcriptMarkdown={buildFullTranscriptMarkdown}
+          />
+        </div>
+      {/if}
     </div>
   {/if}
 </div>

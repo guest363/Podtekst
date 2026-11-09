@@ -7,6 +7,7 @@
 | Файл | Лицензия |
 |---|---|
 | `MIT.txt` | MIT |
+| `llama.cpp-LICENSE.txt` | MIT (llama.cpp, copyright The ggml authors) |
 | `Apache-2.0.txt` | Apache License 2.0 |
 | `MPL-2.0.txt` | Mozilla Public License 2.0 |
 | `Unicode-3.0.txt` | Unicode License 3.0 |

@@ -50,6 +50,9 @@ pub(super) fn serve_transcript(request: tiny_http::Request, query: &str) {
         }
     }
     let md_text = std::fs::read_to_string(&md_p).unwrap_or_default();
+    let rev = serde_json::from_value::<Vec<mr_summarize::Utterance>>(utterances.clone())
+        .ok()
+        .map(|items| mr_summarize::artifact::source_rev(&items));
     json_response(
         request,
         json!({
@@ -58,6 +61,7 @@ pub(super) fn serve_transcript(request: tiny_http::Request, query: &str) {
             "speakers_info": speakers_info,
             "utterances": utterances,
             "markdown": md_text,
+            "rev": rev,
         }),
         200,
     );
@@ -104,6 +108,9 @@ pub(super) fn serve_transcribe_stream(request: tiny_http::Request) {
         {
             return;
         }
+        // Без паузы первый же опрос «не running» закрывал поток раньше, чем
+        // summary успевал выставить SUMMARY_ACTIVE.
+        let mut idle_ticks = 0u8;
         loop {
             let (fresh, total, running) = crate::transcribe::take_new_events(since);
             let mut buf = String::new();
@@ -116,11 +123,20 @@ pub(super) fn serve_transcribe_stream(request: tiny_http::Request) {
                 ));
             }
             since = total;
-            if (!buf.is_empty() && out.write_all(buf.as_bytes()).is_err()) || out.flush().is_err() {
+            let wrote = !buf.is_empty();
+            if (wrote && out.write_all(buf.as_bytes()).is_err()) || out.flush().is_err() {
                 return;
             }
             if !running {
-                break;
+                idle_ticks += 1;
+                if idle_ticks >= 2 {
+                    break;
+                }
+            } else {
+                idle_ticks = 0;
+            }
+            if wrote {
+                idle_ticks = 0;
             }
             std::thread::sleep(std::time::Duration::from_millis(300));
         }
@@ -327,6 +343,30 @@ pub(super) fn handle_models_update(request: tiny_http::Request, body: serde_json
         );
         return;
     }
+    let manifest = mr_models::load_bundled_manifest();
+    let entry = manifest.models.iter().find(|m| m.id == model_id);
+    let kind = entry.map(|m| m.kind.as_str()).unwrap_or("asr").to_string();
+    if kind == "summary" {
+        let need = entry
+            .map(|m| m.files.iter().map(|f| f.size_bytes).sum::<u64>())
+            .unwrap_or(0);
+        let dir = mr_models::models_dir(&app_data_dir());
+        if fs2::available_space(&dir)
+            .ok()
+            .is_some_and(|free| free < need.saturating_add(512 * 1024 * 1024))
+        {
+            json_response(
+                request,
+                json!({
+                    "ok": false,
+                    "code": "disk_low",
+                    "error": "Не хватает места на диске. Освободите место и повторите.",
+                }),
+                422,
+            );
+            return;
+        }
+    }
     let reply_id = model_id.clone();
     // Стартовое событие (и флаг «модель качается») — синхронно до ответа:
     // иначе EventSource, подключённый сразу после 200, мог поймать обрыв
@@ -351,10 +391,19 @@ pub(super) fn handle_models_update(request: tiny_http::Request, body: serde_json
                 "total_bytes": ev.total_bytes, "message": ev.message,
             }));
         });
+        if res.is_ok() {
+            // Модель итогов не должна вытеснять кэш ASR: иначе каждая расшифровка
+            // после сводки считается заново.
+            if kind == "summary" {
+                crate::summary::invalidate_model_cache();
+            } else {
+                #[cfg(feature = "onnx")]
+                crate::transcribe::invalidate_models_cache();
+            }
+        }
         #[cfg(feature = "onnx")]
         match res {
             Ok(()) => {
-                crate::transcribe::invalidate_models_cache();
                 crate::transcribe::emit_model_event(
                     serde_json::json!({"type": "model-done", "ok": true, "model_id": model_id}),
                 );

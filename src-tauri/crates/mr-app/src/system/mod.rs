@@ -17,11 +17,14 @@ pub(crate) fn snapshot(recording: bool, elapsed: u64, mode: &str) -> Value {
     let recordings = crate::config::save_dir();
     let manifest = mr_models::load_bundled_manifest();
     let models = mr_models::get_models_status(&data, &manifest);
-    let is_core = |id: &str| {
-        let id = id.to_lowercase();
+    let is_core = |m: &mr_models::ModelStatus| {
+        if m.kind == "summary" {
+            return false;
+        }
+        let id = m.id.to_lowercase();
         !id.contains("whisper") && !id.contains("ctc")
     };
-    let core: Vec<&mr_models::ModelStatus> = models.iter().filter(|m| is_core(&m.id)).collect();
+    let core: Vec<&mr_models::ModelStatus> = models.iter().filter(|m| is_core(m)).collect();
     let missing_core: Vec<String> = core
         .iter()
         .filter(|m| !m.is_installed)
@@ -29,7 +32,7 @@ pub(crate) fn snapshot(recording: bool, elapsed: u64, mode: &str) -> Value {
         .collect();
     let updates: Vec<String> = models
         .iter()
-        .filter(|m| m.has_update)
+        .filter(|m| m.has_update && m.kind != "summary")
         .map(|m| m.id.clone())
         .collect();
     let cfg = crate::config::load_config();
@@ -65,11 +68,14 @@ pub(crate) fn snapshot(recording: bool, elapsed: u64, mode: &str) -> Value {
         },
         "models": {
             "core_ready": !core.is_empty() && missing_core.is_empty(),
+            "core_installed": core.iter().filter(|m| m.is_installed).count(),
+            "core_total": core.len(),
             "installed": models.iter().filter(|m| m.is_installed).count(),
             "total": models.len(),
             "missing_core": missing_core,
             "updates": updates,
             "items": models,
+            "summary": crate::summary::system_block(),
         },
         "ffmpeg": crate::ffmpeg_dl::status_json(),
         "devices": devices_value(&mr_audio::capture::devices()),

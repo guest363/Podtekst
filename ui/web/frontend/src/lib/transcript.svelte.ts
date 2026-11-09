@@ -5,11 +5,13 @@ import { emit, ui } from './ui.svelte.ts'
 import { settings } from './settings.svelte.ts'
 import { isVideoPath } from './api'
 import { loadQueue, queueState } from './queue.svelte.ts'
+import { summaryStageText } from './summaryUi.ts'
 
 export const transcript = $state({
   speakers: [] as SpeakerInfo[],
   utterances: [] as Utterance[],
   markdown: '',
+  rev: '',
   hasText: false,
   loadError: '',
   extractVisible: false,
@@ -20,33 +22,50 @@ export const transcript = $state({
 // выглядеть одинаково в любом месте интерфейса.
 export const engine = $state({
   running: false,
+  summaryRunning: false,
   file: '',
   msg: 'Обработка…',
   pct: 0,
+  summaryFile: '',
+  summaryMsg: '',
+  summaryPct: 0,
   downloading: {} as Record<string, number>,
 })
 
+let openSeq = 0
+let openAbort: AbortController | null = null
+
 export async function openTranscriptFile(rawPath: string): Promise<void> {
+  const seq = ++openSeq
+  openAbort?.abort()
+  openAbort = new AbortController()
   transcript.speakers = []
   transcript.utterances = []
   transcript.markdown = ''
+  transcript.rev = ''
   transcript.hasText = false
   transcript.loadError = ''
   transcript.extractVisible = isVideoPath(rawPath)
 
   let d: TranscriptData
   try {
-    const r = await fetch(`/api/transcript?file=${encPath(rawPath)}`)
+    const r = await fetch(`/api/transcript?file=${encPath(rawPath)}`, {
+      signal: openAbort.signal,
+    })
+    if (seq !== openSeq) return
     d = (await readJsonSafe(r)) as TranscriptData
   } catch (e) {
+    if (seq !== openSeq || (e as Error)?.name === 'AbortError') return
     transcript.hasText = false
     transcript.loadError = 'Не удалось загрузить расшифровку: ' + (e as Error).message
     return
   }
+  if (seq !== openSeq) return
 
   transcript.utterances = d.utterances || []
   transcript.speakers = d.speakers_info || []
   transcript.markdown = d.markdown || ''
+  transcript.rev = typeof d.rev === 'string' ? d.rev : ''
   transcript.hasText = Boolean((d.markdown && d.markdown.trim()) || transcript.utterances.length > 0)
 }
 
@@ -64,7 +83,9 @@ export async function editTranscript(
   transcript.utterances = d.utterances || []
   transcript.speakers = d.speakers_info || []
   transcript.markdown = d.markdown || ''
+  transcript.rev = typeof d.rev === 'string' ? d.rev : transcript.rev
   transcript.hasText = Boolean(transcript.markdown.trim() || transcript.utterances.length)
+  emit('transcript-edited')
 }
 
 export function emptyHint(): string {
@@ -83,8 +104,8 @@ let evtSource: EventSource | null = null
 let finishedAt = 0
 let finishing = false
 
-function closeStreamIfIdle(): void {
-  if (!engine.running && Object.keys(engine.downloading).length === 0) {
+export function closeStreamIfIdle(): void {
+  if (!engine.running && !engine.summaryRunning && Object.keys(engine.downloading).length === 0) {
     evtSource?.close()
     evtSource = null
   }
@@ -92,13 +113,13 @@ function closeStreamIfIdle(): void {
 
 export function ensureStream(): void {
   if (evtSource) return
-  if (!engine.running && Object.keys(engine.downloading).length === 0) return
+  if (!engine.running && !engine.summaryRunning && Object.keys(engine.downloading).length === 0) return
   evtSource = new EventSource('/api/transcribe_stream')
   evtSource.onmessage = (e: MessageEvent) => handleEngineEvent(e)
   evtSource.onerror = () => {
-    // Если движок не работает и нет активных скачиваний — закрываем стрим,
-    // чтобы браузер не крутил бесконечный реконнект каждые 3 секунды.
-    if (!engine.running && Object.keys(engine.downloading).length === 0) {
+    // Если движок не работает, нет активных скачиваний и итогов — закрываем
+    // стрим, чтобы браузер не крутил бесконечный реконнект каждые 3 секунды.
+    if (!engine.running && !engine.summaryRunning && Object.keys(engine.downloading).length === 0) {
       evtSource?.close()
       evtSource = null
       return
@@ -116,11 +137,43 @@ export function ensureStream(): void {
   }
 }
 
+// Итог model-done по id: без него исчезновение прогресса неотличимо от успеха.
+const downloadOutcome: Record<string, boolean> = {}
+
 function handleEngineEvent(e: MessageEvent): void {
   let evt: any
   try {
     evt = JSON.parse(e.data)
   } catch {
+    return
+  }
+  if (typeof evt.type === 'string' && evt.type.startsWith('summary-')) {
+    if (evt.type === 'summary-stage') {
+      if (!engine.summaryRunning) {
+        engine.summaryPct = 0
+        engine.summaryMsg = 'Собираю итоги…'
+      }
+      engine.summaryRunning = true
+      engine.summaryFile = String(evt.file || engine.summaryFile || '')
+      engine.summaryPct = Math.max(
+        engine.summaryPct,
+        Math.min(100, Number(evt.pct) || 0),
+      )
+      engine.summaryMsg = summaryStageText(
+        String(evt.phase || ''),
+        evt.chunk,
+        evt.chunks,
+      )
+    } else if (evt.type === 'summary-done' || evt.type === 'summary-error') {
+      engine.summaryRunning = false
+      engine.summaryPct = 0
+      engine.summaryMsg = ''
+      engine.summaryFile = ''
+    }
+    emit('summary-event', evt)
+    // Слушатель итогов снимает engine.summaryRunning синхронно; после
+    // терминального события поток можно закрыть, если больше никто не работает.
+    if (evt.type === 'summary-done' || evt.type === 'summary-error') closeStreamIfIdle()
     return
   }
   if (evt.type === 'queue') {
@@ -150,9 +203,11 @@ function handleEngineEvent(e: MessageEvent): void {
   } else if (evt.type === 'done') {
     finishEngine(String(evt.file || engine.file))
   } else if (evt.type === 'model-done') {
-    delete engine.downloading[evt.model_id]
+    const modelId = String(evt.model_id || '')
+    downloadOutcome[modelId] = evt.ok === true
+    delete engine.downloading[modelId]
     emit('models-changed')
-    const title = settings.models.find((m) => m.id === evt.model_id)?.title || evt.model_id
+    const title = settings.models.find((m) => m.id === modelId)?.title || modelId
     if (evt.ok) toast(`Модель «${title}» готова`)
     else toast('Ошибка модели: ' + (evt.error || ''), 'error')
     closeStreamIfIdle()
@@ -225,7 +280,34 @@ export async function startTranscription(rawPath: string): Promise<void> {
  *  завершить мимо этой страницы (авто-расшифровка после записи, CLI, IPC,
  *  сон телефона). 2 секунды после done игнорируем — флаг ядра снимается
  *  чуть позже самого события, иначе опрос «оживил» бы завершённую задачу. */
-export function syncEngineFromStatus(running: boolean, file: string): void {
+export function syncEngineFromStatus(
+  running: boolean,
+  file: string,
+  summary?: { active: boolean; file?: string; phase?: string; pct?: number },
+): void {
+  if (summary && summary.active) {
+    if (!engine.summaryRunning) {
+      engine.summaryPct = 0
+      engine.summaryMsg = 'Собираю итоги…'
+    }
+    engine.summaryRunning = true
+    if (summary.file) engine.summaryFile = summary.file
+    if (summary.pct !== undefined) {
+      engine.summaryPct = Math.max(engine.summaryPct, Math.min(100, summary.pct))
+    }
+    if (summary.phase) {
+      engine.summaryMsg = summaryStageText(summary.phase)
+    }
+    ensureStream()
+  } else if (summary && !summary.active && engine.summaryRunning) {
+    // Задача могла завершиться, пока SSE был потерян. Итоговый экран
+    // обновится при следующем GET /api/summary.
+    engine.summaryRunning = false
+    engine.summaryPct = 0
+    engine.summaryMsg = ''
+    engine.summaryFile = ''
+    closeStreamIfIdle()
+  }
   if (running && !engine.running) {
     if (Date.now() - finishedAt < 2000) return
     engine.running = true
@@ -246,6 +328,7 @@ export const downloadingCore = $state({
 })
 
 export async function downloadModel(m: ModelInfo): Promise<boolean> {
+  delete downloadOutcome[m.id]
   engine.downloading[m.id] = 0
   ensureStream()
   try {
@@ -269,7 +352,9 @@ export async function downloadModel(m: ModelInfo): Promise<boolean> {
     const timer = setInterval(async () => {
       if (lastPct() === -1) {
         clearInterval(timer)
-        resolve(true)
+        const ok = downloadOutcome[m.id] === true
+        delete downloadOutcome[m.id]
+        resolve(ok)
         return
       }
       if (lastPct() !== prevPct) {
@@ -278,6 +363,7 @@ export async function downloadModel(m: ModelInfo): Promise<boolean> {
       } else if (++stall > 30) {
         clearInterval(timer)
         delete engine.downloading[m.id]
+        delete downloadOutcome[m.id]
         emit('models-changed')
         resolve(false)
         return
@@ -288,6 +374,7 @@ export async function downloadModel(m: ModelInfo): Promise<boolean> {
         if (cur && cur.is_installed && !cur.has_update) {
           clearInterval(timer)
           delete engine.downloading[m.id]
+          delete downloadOutcome[m.id]
           emit('models-changed')
           resolve(true)
         }

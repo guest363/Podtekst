@@ -46,6 +46,7 @@ export interface RecordingInfo {
 
 export interface ModelItem {
   id: string
+  kind?: string
   title: string
   version?: string
   installed_version?: string | null
@@ -55,6 +56,13 @@ export interface ModelItem {
   on_disk_bytes?: number
   license?: string
   description?: string
+  ram_mb?: number
+  required_free_mb?: number
+  context_tokens?: number
+  native_context_tokens?: number
+  min_system_ram_mb?: number
+  license_url?: string
+  source_url?: string
 }
 
 export interface ModelsSummary {

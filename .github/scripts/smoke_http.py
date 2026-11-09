@@ -9,6 +9,7 @@ import platform
 import shutil
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -62,6 +63,106 @@ def read_json(url, method="GET"):
         return json.loads(body)
     except json.JSONDecodeError as e:
         fail(f"{method} {url}: не JSON ({e})")
+
+
+def post_json(url, payload):
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url, method="POST", data=data, headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            return response.status, json.loads(response.read())
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read())
+        except json.JSONDecodeError:
+            return e.code, {}
+
+
+def source_rev(utterances):
+    digest = hashlib.sha256()
+    digest.update(b"schema=1\n")
+    for utterance in utterances:
+        digest.update(struct.pack("<dd", float(utterance["start"]), float(utterance["end"])))
+        speaker = utterance["speaker"].encode("utf-8")
+        text = utterance["text"].encode("utf-8")
+        digest.update(struct.pack("<I", len(speaker)))
+        digest.update(speaker)
+        digest.update(struct.pack("<I", len(text)))
+        digest.update(text)
+    return digest.hexdigest()
+
+
+def check_summary(base, data, expect_runtime):
+    status = read_json(f"{base}/api/status")
+    if status.get("features", {}).get("summary") is not True:
+        fail("/api/status: features.summary не включён")
+    if status.get("summary_supported") is not True:
+        fail("/api/status: summary_supported не true")
+    runtime = status.get("summary_runtime")
+    if runtime not in ("sidecar", "missing"):
+        fail(f"/api/status: неизвестный summary_runtime={runtime!r}")
+    expected = {"bundled": "sidecar", "missing": "missing"}.get(expect_runtime)
+    if expected and runtime != expected:
+        fail(f"/api/status: summary_runtime={runtime!r}, ожидался {expected!r}")
+    for key in ("summary_model_ready", "summary_classifier", "summarizing"):
+        if key not in status:
+            fail(f"/api/status: нет поля {key}")
+
+    presets = read_json(f"{base}/api/summary/presets")
+    if presets.get("ok") is not True or len(presets.get("presets", [])) != 7:
+        fail("/api/summary/presets: ожидались 7 шаблонов без модели")
+
+    missing = f"{base}/api/summary?file=smoke.wav"
+    status_code, body = request(missing)
+    try:
+        value = json.loads(body)
+    except json.JSONDecodeError:
+        value = {}
+    if status_code != 404 or value.get("code") != "no_transcript":
+        fail(f"/api/summary без расшифровки: HTTP {status_code} {value.get('code')!r}")
+
+    utterances = [
+        {
+            "start": 0.0,
+            "end": 1.5,
+            "speaker": "Спикер 1",
+            "text": "Синтетическая реплика для проверки HTTP-контракта смоука.",
+        },
+        {
+            "start": 1.5,
+            "end": 3.0,
+            "speaker": "Спикер 2",
+            "text": "Вторая синтетическая реплика без реальных данных и тем.",
+        },
+    ]
+    transcript = {"meta": {}, "stats": {}, "utterances": utterances}
+    recordings = Path(status.get("recordings_dir") or data)
+    recordings.mkdir(parents=True, exist_ok=True)
+    (recordings / "smoke.transcript.json").write_text(
+        json.dumps(transcript, ensure_ascii=False), encoding="utf-8"
+    )
+    rev = source_rev(utterances)
+    view = read_json(f"{base}/api/summary?file=smoke.wav")
+    if view.get("source_rev") != rev:
+        fail("/api/summary: source_rev не совпал с контрактом digest")
+    if view.get("capabilities", {}).get("runtime") != runtime:
+        fail("/api/summary: capabilities.runtime не совпал со статусом")
+
+    code, value = post_json(
+        f"{base}/api/summary/generate",
+        {
+            "file": "smoke.wav",
+            "preset_id": "universal",
+            "detail": "short",
+            "source_rev": rev,
+        },
+    )
+    if code != 503:
+        fail(f"/api/summary/generate без модели/runtime: HTTP {code}, ожидался 503")
+    if value.get("code") not in ("model_missing", "runtime_missing", "summary_disabled"):
+        fail(f"/api/summary/generate: неожиданный код {value.get('code')!r}")
 
 
 def wait_ready(proc, base, timeout, log_path):
@@ -121,6 +222,12 @@ def main():
     parser.add_argument("--expected-os", required=True, choices=["linux", "macos", "windows"])
     parser.add_argument("--expected-arch", required=True)
     parser.add_argument("--static-dir", required=True, type=Path)
+    parser.add_argument(
+        "--expect-summary-runtime",
+        choices=["any", "bundled", "missing"],
+        default="any",
+        help="bundled — sidecar найден в бандле; missing — headless без runtime",
+    )
     parser.add_argument("--timeout", type=int, default=120)
     args = parser.parse_args()
 
@@ -136,6 +243,11 @@ def main():
     work = Path(tempfile.mkdtemp(prefix="podtekst-smoke-"))
     data = work / "data"
     data.mkdir()
+    recordings = data / "recordings"
+    recordings.mkdir()
+    (data / "config.json").write_text(
+        json.dumps({"save_dir": str(recordings)}), encoding="utf-8"
+    )
     log_path = work / "server.log"
     env = os.environ.copy()
     env.pop("PODTEKST_DATA_DIR", None)
@@ -182,6 +294,8 @@ def main():
         models = read_json(f"{base}/api/models")
         if models.get("ok") is not True or "models" not in models:
             fail("/api/models вернул неожиданный ответ")
+
+        check_summary(base, data, args.expect_summary_runtime)
 
         diagnostics = read_json(f"{base}/api/diagnostics", method="POST")
         if diagnostics.get("ok") is not True:

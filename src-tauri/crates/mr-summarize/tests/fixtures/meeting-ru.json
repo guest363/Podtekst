@@ -1,0 +1,175 @@
+{
+  "meta": {
+    "title": "Встреча по запуску",
+    "audio": "Встреча по запуску.wav",
+    "duration": "01:22",
+    "duration_sec": 85.7,
+    "engine": "test",
+    "speaker_method": "test",
+    "speakers": [
+      "Анна",
+      "Борис",
+      "Вера"
+    ],
+    "speakers_info": []
+  },
+  "stats": {
+    "utterances": 13
+  },
+  "utterances": [
+    {
+      "start": 0.0,
+      "end": 6.64,
+      "speaker": "Анна",
+      "channel": null,
+      "text": "Коллеги, начинаем планёрку по запуску новой версии. Цель — согласовать сроки и ответственных.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 7.04,
+      "end": 13.04,
+      "speaker": "Борис",
+      "channel": null,
+      "text": "Со стороны разработки всё готово, кроме экрана настроек. Осталась задача на два дня.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 13.44,
+      "end": 21.44,
+      "speaker": "Вера",
+      "channel": null,
+      "text": "Я проверила тексты интерфейса. Нужно доработать три подсказки, иначе пользователи не поймут, где скачать модель.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 21.84,
+      "end": 27.99,
+      "speaker": "Анна",
+      "channel": null,
+      "text": "Хорошо. Решение: переносим публикацию на пятницу, четырнадцатое ноября. Это фиксируем.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 28.39,
+      "end": 32.39,
+      "speaker": "Борис",
+      "channel": null,
+      "text": "Тогда я доделаю экран настроек до среды. Это моя задача.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 32.79,
+      "end": 37.79,
+      "speaker": "Вера",
+      "channel": null,
+      "text": "А я обновлю подсказки до четверга. Срок — четверг, тринадцатое ноября.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 38.19,
+      "end": 43.61,
+      "speaker": "Анна",
+      "channel": null,
+      "text": "Ещё вопрос: нужен ли нам отдельный экран для итогов встречи? Пока не решили.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 44.01,
+      "end": 50.3,
+      "speaker": "Борис",
+      "channel": null,
+      "text": "Я считаю, что можно встроить блок прямо в расшифровку. Отдельный экран добавит путаницы.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 50.7,
+      "end": 54.84,
+      "speaker": "Вера",
+      "channel": null,
+      "text": "Согласна. Но надо проверить, как это выглядит на телефоне.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 55.24,
+      "end": 60.53,
+      "speaker": "Анна",
+      "channel": null,
+      "text": "Проверку на телефоне беру на себя до пятницы. Сделаю вместе с публикацией.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 60.93,
+      "end": 67.86,
+      "speaker": "Борис",
+      "channel": null,
+      "text": "Ещё риск: если модель не скачана, пользователь должен увидеть понятную кнопку, а не пустой экран.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 68.26,
+      "end": 72.47,
+      "speaker": "Анна",
+      "channel": null,
+      "text": "Да, это требование. Добавляем в проверку перед публикацией.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 72.87,
+      "end": 78.09,
+      "speaker": "Борис",
+      "channel": null,
+      "text": "Ещё после публикации нужно проверить журнал ошибок. Это задача без срока.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 78.49,
+      "end": 85.34,
+      "speaker": "Вера",
+      "channel": null,
+      "text": "Тогда договорились. Итоги: публикация в пятницу, экран настроек до среды, подсказки до четверга.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    }
+  ]
+}

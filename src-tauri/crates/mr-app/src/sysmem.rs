@@ -10,6 +10,14 @@ fn parse_mem_available(text: &str) -> Option<u64> {
     Some(kb * 1024)
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub(crate) fn total_bytes() -> Option<u64> {
+    let text = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let line = text.lines().find(|l| l.starts_with("MemTotal:"))?;
+    let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kb * 1024)
+}
+
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub(crate) fn available_bytes() -> Option<u64> {
     // `_SC_AVPHYS_PAGES` на macOS считает только совсем свободные страницы:
@@ -41,6 +49,24 @@ pub(crate) fn available_bytes() -> Option<u64> {
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub(crate) fn total_bytes() -> Option<u64> {
+    let mut total: u64 = 0;
+    let mut len = std::mem::size_of::<u64>();
+    let name = c"hw.memsize";
+    // SAFETY: sysctlbyname пишет ровно u64 по валидному указателю и длине.
+    let ok = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            &mut total as *mut u64 as *mut libc::c_void,
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    (ok == 0 && len == std::mem::size_of::<u64>()).then_some(total)
+}
+
 #[cfg(windows)]
 pub(crate) fn available_bytes() -> Option<u64> {
     use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
@@ -52,6 +78,17 @@ pub(crate) fn available_bytes() -> Option<u64> {
     }
 }
 
+#[cfg(windows)]
+pub(crate) fn total_bytes() -> Option<u64> {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    // SAFETY: структура целиком заполняется системным вызовом, размер передан.
+    unsafe {
+        let mut st: MEMORYSTATUSEX = std::mem::zeroed();
+        st.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+        (GlobalMemoryStatusEx(&mut st) != 0).then_some(st.ullTotalPhys)
+    }
+}
+
 #[cfg(not(any(
     target_os = "linux",
     target_os = "android",
@@ -60,6 +97,17 @@ pub(crate) fn available_bytes() -> Option<u64> {
     windows
 )))]
 pub(crate) fn available_bytes() -> Option<u64> {
+    None
+}
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios",
+    windows
+)))]
+pub(crate) fn total_bytes() -> Option<u64> {
     None
 }
 

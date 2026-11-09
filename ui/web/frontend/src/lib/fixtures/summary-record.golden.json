@@ -1,0 +1,60 @@
+{
+  "id": "0f2b6c1e-5a4d-4f7e-9c2a-1b3d5e7f9012",
+  "job_id": "0f2b6c1e-5a4d-4f7e-9c2a-1b3d5e7f9012",
+  "file": "records/synthetic-meeting-01.json",
+  "preset_id": "meeting",
+  "preset_label": "Встреча",
+  "model_id": "sum-qwen3-4b-instruct-2507-q4km",
+  "model_title": "Qwen3-4B Instruct 2507 (итоги, Q4_K_M)",
+  "created_at": "2026-11-07T10:00:00Z",
+  "duration_ms": 38000,
+  "source_rev": "df83afb242b2c7e81a47800cc198ae0f4634bf78fc4846846cd8dd09f52ab866",
+  "detail": "normal",
+  "language": "ru",
+  "output_language": "ru",
+  "sections": [
+    {
+      "id": "brief",
+      "title": "Кратко",
+      "role": "plain",
+      "items": [
+        {
+          "text": "Обсудили срок запуска.",
+          "role": "plain"
+        }
+      ]
+    },
+    {
+      "id": "decisions",
+      "title": "Решения",
+      "role": "decision",
+      "items": [
+        {
+          "text": "Запуск переносится на следующую неделю.",
+          "role": "decision"
+        }
+      ]
+    },
+    {
+      "id": "tasks",
+      "title": "Задачи",
+      "role": "task",
+      "items": [
+        {
+          "text": "Подготовить отчёт.",
+          "role": "task",
+          "task": {
+            "assignee": null,
+            "deadline": "до среды",
+            "deadline_source": "extracted"
+          }
+        }
+      ]
+    }
+  ],
+  "markdown": "# Итоги встречи\n\nШаблон: «Встреча» · 07.11.2026, 10:00 · Модель: Qwen3-4B Instruct 2507 (итоги, Q4_K_M) · 38 с\n\n## Кратко\n\n- Обсудили срок запуска.\n\n## Решения\n\n- Запуск переносится на следующую неделю.\n\n## Задачи\n\n- Подготовить отчёт. — Кто: не назначен; Срок: до среды\n\n---\nИтоги собраны локальной моделью. Проверьте имена, сроки и решения.\n",
+  "truncated": false,
+  "warnings": [],
+  "schema": "podtekst.summary/v1",
+  "schema_minor": 0
+}

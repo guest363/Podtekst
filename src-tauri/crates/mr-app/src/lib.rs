@@ -18,6 +18,7 @@ mod media_registry;
 mod privacy;
 mod recording;
 pub(crate) mod screen;
+mod summary;
 mod sysmem;
 mod system;
 #[cfg(feature = "tauri-ui")]
@@ -118,8 +119,28 @@ pub(crate) fn opener_url(url: &str) {
 pub fn mobile_main() {
     let state = Arc::new(Mutex::new(recording::RecordingState::default()));
     cleanup_stale_files();
+    summary::init();
     let code = tauri_shell::run_tauri_window(state, DEFAULT_HTTP_PORT, true);
+    summary::shutdown();
     std::process::exit(code);
+}
+
+#[doc(hidden)]
+pub fn spawn_test_http_server(port: u16) {
+    summary::init();
+    let state = Arc::new(Mutex::new(recording::RecordingState::default()));
+    std::thread::spawn(move || run_http_server(state, port));
+}
+
+#[doc(hidden)]
+pub fn shutdown_summary_for_test() {
+    summary::shutdown();
+}
+
+#[doc(hidden)]
+#[cfg(debug_assertions)]
+pub fn set_transcribing_for_test(running: bool) {
+    transcribe::events::set_running_for_test(running);
 }
 
 // TCC и реальный SCK иначе проверяются только руками на живом Mac.
@@ -379,6 +400,7 @@ pub fn run_cli() {
     };
     cleanup_stale_files();
     system::cleanup_stale();
+    summary::init();
     crash::begin_run();
 
     if start_on_launch {
@@ -400,6 +422,7 @@ pub fn run_cli() {
     if !cli.web && !cli.browser && !cli.no_browser {
         let visible = cli.show || !cli.tray;
         let code = tauri_shell::run_tauri_window(state.clone(), cli.port, visible);
+        summary::shutdown();
         if code != 0 {
             std::process::exit(code);
         }
@@ -422,7 +445,7 @@ pub fn run_cli() {
 use serde_json::json;
 
 #[cfg(test)]
-static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 mod tests {
@@ -660,6 +683,11 @@ mod live_api_tests {
             js.contains("transcript-grid"),
             "нет двухколоночной расшифровки"
         );
+        // Ищем классы, которые реально попадают в собранный бандл: у picker это
+        // `summary-picker`, а не имя компонента.
+        for marker in ["summary-block", "summary-picker", "summary-result"] {
+            assert!(js.contains(marker), "нет summary-маркера {marker}");
+        }
         assert!(js.contains("packsListSettings"), "нет меню настроек");
         let (st, _, css) = http(port, "GET", "/css/app.css", &[], &[]);
         assert_eq!(st, 200);
@@ -702,6 +730,10 @@ mod live_api_tests {
         );
         assert_eq!(
             item.get("has_transcript").and_then(|x| x.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            item.get("has_summary").and_then(|x| x.as_bool()),
             Some(false)
         );
         assert!(
@@ -858,6 +890,42 @@ mod live_api_tests {
         );
         assert!(v.get("arch").and_then(|x| x.as_str()).is_some());
         assert!(v.get("self_update").and_then(|x| x.as_bool()).is_some());
+        assert_eq!(v["features"]["summary"].as_bool(), Some(true));
+        assert!(v
+            .get("summary_supported")
+            .and_then(|x| x.as_bool())
+            .is_some());
+        assert_eq!(v["summarizing"].as_bool(), Some(false));
+
+        // Summary: каталог и настройки живут без модели и runtime, а удалённые
+        // маршруты не должны вернуться под новыми именами.
+        let (st, v) = json(http(port, "GET", "/api/summary/presets", &[], &[]));
+        assert_eq!(st, 200, "summary presets: {v}");
+        assert_eq!(v["presets"].as_array().map(Vec::len), Some(7));
+        let (st, v) = json(http(port, "GET", "/api/summary/settings", &[], &[]));
+        assert_eq!(st, 200, "summary settings: {v}");
+        assert_eq!(v["capabilities"]["classifier"].as_str(), Some("heuristic"));
+        let (st, v) = json(http(port, "GET", "/api/summary", &[], &[]));
+        assert_eq!((st, v["code"].as_str()), (400, Some("no_file")));
+        let (st, v) = json(http(port, "GET", "/api/summary?file=nope.wav", &[], &[]));
+        assert_eq!((st, v["code"].as_str()), (404, Some("no_transcript")));
+        for (method, path) in [
+            ("GET", "/api/summary/status"),
+            ("GET", "/api/summary_stream"),
+            ("POST", "/api/summary/edit"),
+        ] {
+            let (st, _, _) = http(port, method, path, &[], b"{}");
+            assert_eq!(st, 404, "{method} {path} должен быть 404");
+        }
+        let too_big = vec![b'{'; 65 * 1024 + 1];
+        let (st, v) = json(http(
+            port,
+            "POST",
+            "/api/summary/classify",
+            &[("Content-Type", "application/json")],
+            &too_big,
+        ));
+        assert_eq!((st, v["code"].as_str()), (413, Some("body_too_large")));
 
         let (st, v) = json(http(port, "GET", "/api/transcribe/queue", &[], &[]));
         assert_eq!(st, 200);

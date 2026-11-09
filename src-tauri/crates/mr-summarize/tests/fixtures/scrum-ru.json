@@ -1,0 +1,153 @@
+{
+  "meta": {
+    "title": "Спринт команды",
+    "audio": "Спринт команды.wav",
+    "duration": "00:56",
+    "duration_sec": 56.6,
+    "engine": "test",
+    "speaker_method": "test",
+    "speakers": [
+      "Ирина",
+      "Павел",
+      "Максим"
+    ],
+    "speakers_info": []
+  },
+  "stats": {
+    "utterances": 12
+  },
+  "utterances": [
+    {
+      "start": 0.0,
+      "end": 3.07,
+      "speaker": "Ирина",
+      "channel": null,
+      "text": "Начинаем стендап. Павел, что сделано вчера?",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 3.47,
+      "end": 9.04,
+      "speaker": "Павел",
+      "channel": null,
+      "text": "Вчера закрыл задачу с очередью расшифровки и добавил тест на повторный запуск.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 9.44,
+      "end": 11.44,
+      "speaker": "Ирина",
+      "channel": null,
+      "text": "Что в работе сегодня?",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 11.84,
+      "end": 16.41,
+      "speaker": "Павел",
+      "channel": null,
+      "text": "Сегодня проверяю ошибку с отменой задачи. Пока не понял причину.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 16.81,
+      "end": 22.1,
+      "speaker": "Максим",
+      "channel": null,
+      "text": "У меня вчера была встреча с дизайнером. Согласовали макет карточки итогов.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 22.5,
+      "end": 24.5,
+      "speaker": "Ирина",
+      "channel": null,
+      "text": "Есть блокеры?",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 24.9,
+      "end": 32.26,
+      "speaker": "Максим",
+      "channel": null,
+      "text": "Да. Нет доступа к тестовому ноутбуку с малой памятью. Без него не проверить поведение при нехватке ОЗУ.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 32.66,
+      "end": 34.66,
+      "speaker": "Ирина",
+      "channel": null,
+      "text": "Кто может помочь с доступом?",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 35.06,
+      "end": 37.99,
+      "speaker": "Павел",
+      "channel": null,
+      "text": "Я могу выдать доступ сегодня после обеда.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 38.39,
+      "end": 42.81,
+      "speaker": "Ирина",
+      "channel": null,
+      "text": "Хорошо, это задача Павлу. Блокер снимаем после выдачи доступа.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 43.21,
+      "end": 50.21,
+      "speaker": "Максим",
+      "channel": null,
+      "text": "Ещё предложение: добавить в карточку предупреждение, если итоги устарели после правки расшифровки.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 50.61,
+      "end": 56.19,
+      "speaker": "Ирина",
+      "channel": null,
+      "text": "Это не решение, а предложение. Обсудим отдельно. В спринт не берём без оценки.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    }
+  ]
+}

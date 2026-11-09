@@ -156,6 +156,32 @@
       "embedding_dim": 192,
       "license": "Apache-2.0",
       "description": "Биометрические отпечатки голосов (192-dim) для узнавания участников."
+    },
+    {
+      "id": "sum-qwen3-4b-instruct-2507-q4km",
+      "kind": "summary",
+      "tier": "",
+      "title": "Qwen3-4B Instruct 2507 (итоги, Q4_K_M)",
+      "version": "2507-q4km-1",
+      "files": [
+        {
+          "filename": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "url_hf": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "mirrors": [],
+          "size_bytes": 2497281120,
+          "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+          "optional": false
+        }
+      ],
+      "embedding_space": null,
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507",
+      "source_url": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF",
+      "description": "Локальные итоги встреч. 2,33 ГБ; около 5,4 ГиБ памяти; нужно не меньше 6,5 ГиБ свободно.",
+      "context_tokens": 16384,
+      "ram_mb": 5530,
+      "required_free_mb": 6656,
+      "min_system_ram_mb": 12288
     }
   ]
 }

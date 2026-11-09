@@ -53,6 +53,28 @@ pub struct ModelEntry {
     pub license: String,
     #[serde(default)]
     pub description: String,
+    /// `asr` для речевых моделей, `summary` для локальных итогов. Старый
+    /// манифест без поля читается как `asr`.
+    #[serde(default = "default_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub tier: String,
+    #[serde(default)]
+    pub ram_mb: u64,
+    #[serde(default)]
+    pub required_free_mb: u64,
+    #[serde(default)]
+    pub context_tokens: u32,
+    #[serde(default)]
+    pub min_system_ram_mb: u64,
+    #[serde(default)]
+    pub license_url: String,
+    #[serde(default)]
+    pub source_url: String,
+}
+
+fn default_kind() -> String {
+    "asr".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +109,7 @@ pub struct ModelsState {
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelStatus {
     pub id: String,
+    pub kind: String,
     pub title: String,
     pub version: String,
     pub installed_version: Option<String>,
@@ -99,6 +122,12 @@ pub struct ModelStatus {
     pub license: String,
     pub description: String,
     pub embedding_space: Option<String>,
+    pub ram_mb: u64,
+    pub required_free_mb: u64,
+    pub context_tokens: u32,
+    pub min_system_ram_mb: u64,
+    pub license_url: String,
+    pub source_url: String,
 }
 
 pub fn models_dir(app_data: &Path) -> PathBuf {
@@ -172,6 +201,7 @@ pub fn get_models_status(app_data: &Path, manifest: &ModelsManifest) -> Vec<Mode
             let has_update = installed && inst.map(|i| i.version != m.version).unwrap_or(false);
             ModelStatus {
                 id: m.id.clone(),
+                kind: m.kind.clone(),
                 title: m.title.clone(),
                 version: m.version.clone(),
                 installed_version: inst.map(|i| i.version.clone()),
@@ -184,6 +214,12 @@ pub fn get_models_status(app_data: &Path, manifest: &ModelsManifest) -> Vec<Mode
                 license: m.license.clone(),
                 description: m.description.clone(),
                 embedding_space: m.embedding_space.clone(),
+                ram_mb: m.ram_mb,
+                required_free_mb: m.required_free_mb,
+                context_tokens: m.context_tokens,
+                min_system_ram_mb: m.min_system_ram_mb,
+                license_url: m.license_url.clone(),
+                source_url: m.source_url.clone(),
             }
         })
         .collect()
@@ -553,6 +589,14 @@ mod tests {
                 embedding_dim: None,
                 license: String::new(),
                 description: String::new(),
+                kind: "asr".to_string(),
+                tier: String::new(),
+                ram_mb: 0,
+                required_free_mb: 0,
+                context_tokens: 0,
+                min_system_ram_mb: 0,
+                license_url: String::new(),
+                source_url: String::new(),
             }],
         };
         let dir = models_dir(&tmp).join("m");

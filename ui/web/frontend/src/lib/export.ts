@@ -112,14 +112,11 @@ export function buildDocx(fileName: string, utterances: Utterance[], meta?: Tran
   ])
 }
 
-export async function exportDocx(
-  fileName: string,
-  utterances: Utterance[],
-  meta?: TranscriptMeta,
+async function saveBinary(
+  defaultName: string,
+  bytes: Uint8Array,
+  type: { mime: string; description: string; accept: Record<string, string[]> },
 ): Promise<void> {
-  const bytes = buildDocx(fileName, utterances, meta)
-  const defaultName = `${fileName.replace(/\.[^.]+$/, '') || 'Расшифровка'}.docx`
-
   try {
     const res = await fetch(`/api/export/save_dialog?name=${encodeURIComponent(defaultName)}`, {
       method: 'POST',
@@ -164,14 +161,7 @@ export async function exportDocx(
     try {
       const handle = await win.showSaveFilePicker({
         suggestedName: defaultName,
-        types: [
-          {
-            description: 'Word Document (*.docx)',
-            accept: {
-              'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
-            },
-          },
-        ],
+        types: [{ description: type.description, accept: type.accept }],
       })
       const writable = await handle.createWritable()
       await writable.write(bytes)
@@ -185,9 +175,7 @@ export async function exportDocx(
     }
   }
 
-  const blob = new Blob([bytes.buffer as ArrayBuffer], {
-    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  })
+  const blob = new Blob([bytes.buffer as ArrayBuffer], { type: type.mime })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
@@ -198,6 +186,41 @@ export async function exportDocx(
   setTimeout(() => URL.revokeObjectURL(url), 1000)
   toast(`Файл скачан: ${defaultName}`)
 }
+
+export async function exportDocx(
+  fileName: string,
+  utterances: Utterance[],
+  meta?: TranscriptMeta,
+): Promise<void> {
+  const bytes = buildDocx(fileName, utterances, meta)
+  const defaultName = `${fileName.replace(/\.[^.]+$/, '') || 'Расшифровка'}.docx`
+  await saveBinary(defaultName, bytes, {
+    mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    description: 'Word Document (*.docx)',
+    accept: {
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+    },
+  })
+}
+
+export function buildComposedMarkdown(summaryMarkdown: string, transcriptMarkdown: string): string {
+  const summary = String(summaryMarkdown || '').trim()
+  const transcript = String(transcriptMarkdown || '').trim()
+  if (summary && transcript) return `${summary}\n\n---\n\n${transcript}`
+  return summary || transcript
+}
+
+export async function downloadMarkdown(fileName: string, markdown: string): Promise<void> {
+  const base = fileName.replace(/\.[^.]+$/, '').trim() || 'Итоги и расшифровка'
+  const name = `${base}.md`
+  const bytes = new TextEncoder().encode(markdown)
+  await saveBinary(name, bytes, {
+    mime: 'text/markdown;charset=utf-8',
+    description: 'Markdown (*.md)',
+    accept: { 'text/markdown': ['.md'], 'text/plain': ['.md'] },
+  })
+}
+
 
 export function printTranscript(): void {
   window.print()

@@ -13,6 +13,7 @@
     loadAutoTranscribe,
     loadModels,
     loadRecordMode,
+    loadSummaryFeature,
     loadVoicePacks,
     settings,
     statusBadge,
@@ -21,7 +22,6 @@
   import { system } from './lib/system.svelte.ts'
   import { checkUpdate, dismissUpdate, openUpdateModal, update } from './lib/update.svelte.ts'
   import { emit, initRouting, on, openTranscript, selectTab, ui } from './lib/ui.svelte.ts'
-  import { renderMarkdown } from './lib/markdown'
   import RecordingDeck from './components/RecordingDeck.svelte'
   import Recordings from './components/Recordings.svelte'
   import QueueHub from './components/QueueHub.svelte'
@@ -37,6 +37,7 @@
   import { loadQueue, queueState } from './lib/queue.svelte.ts'
 
   let introOpen = $state(false)
+  let introStep = $state<1 | 2 | 3>(1)
 
   function openDiagnostics(): void {
     selectTab('settings')
@@ -114,6 +115,7 @@
 
   function closeIntro(): void {
     introOpen = false
+    introStep = 1
     try {
       localStorage.setItem('mr_intro_seen', '1')
     } catch {}
@@ -123,34 +125,10 @@
     if (introOpen && e.key === 'Escape') closeIntro()
   }
 
-  function buildHelp(): string {
-    const steps = isMobile
-      ? [
-          '1. Нажмите **«Начать запись»** или выберите готовый аудиофайл.',
-          '2. После остановки расшифровка запускается автоматически. Это можно выключить: «Настройки» → «Запись».',
-        ]
-      : [
-          '1. Нажмите **«Начать запись»** или перетащите готовый аудио- или видеофайл. Из любого приложения запись включает и выключает **Ctrl+Shift+R** (на macOS – **Cmd+Shift+R**).',
-          '2. После остановки расшифровка запускается автоматически. Это можно выключить: «Настройки» → «Запись».',
-        ]
-    if (!coreInstalled) {
-      steps.push('3. Для распознавания и разделения спикеров скачайте базовые модели ИИ ниже.')
-    }
-    steps.push(
-      `${steps.length + 1}. В разделе **«Текст и спикеры»** прослушайте фрагменты и привяжите голос к человеку.`,
-    )
-    steps.push('')
-    steps.push(
-      isMobile
-        ? 'Записи, расшифровки и голосовые отпечатки хранятся только на этом устройстве и никуда не отправляются.'
-        : 'Записи, расшифровки и голосовые отпечатки хранятся только на этом компьютере и никуда не отправляются.',
-    )
-    return steps.join('\n')
-  }
-
   onMount(() => {
     initRouting()
     if (typeof window !== 'undefined' && !localStorage.getItem('mr_intro_seen')) {
+      introStep = 1
       introOpen = true
     }
     on('recordings-changed', () => void loadRecordings())
@@ -172,6 +150,7 @@
       loadModels(),
       loadRecordMode(),
       loadAutoTranscribe(),
+      loadSummaryFeature(),
       loadSupportInfo(),
       checkUpdate(),
     ])
@@ -288,7 +267,10 @@
           class="icon-btn help-btn"
           title="Как это работает"
           aria-label="Справка"
-          onclick={() => (introOpen = true)}
+          onclick={() => {
+            introStep = 1
+            introOpen = true
+          }}
         >
           ?
         </button>
@@ -318,7 +300,10 @@
             class="icon-btn help-btn"
             title="Как это работает"
             aria-label="Справка"
-            onclick={() => (introOpen = true)}
+            onclick={() => {
+              introStep = 1
+              introOpen = true
+            }}
           >
             ?
           </button>
@@ -458,9 +443,10 @@
 {#if introOpen}
   <div
     class="modal-overlay open"
-    role="dialog" tabindex="-1"
+    role="dialog"
+    tabindex="-1"
     aria-modal="true"
-    aria-label="Как это работает"
+    aria-label="Добро пожаловать в Подтекст"
     onmousedown={(e) => {
       if (e.target === e.currentTarget) closeIntro()
     }}
@@ -468,72 +454,190 @@
     <div class="modal-box intro-box">
       <div class="modal-top">
         <div class="modal-title">Добро пожаловать в Подтекст</div>
-        <button class="icon-btn" aria-label="Закрыть справку" onclick={closeIntro}>✕</button>
-      </div>
-      <div class="help-text md-body">
-        {@html renderMarkdown(buildHelp())}
+        <button class="icon-btn" aria-label="Закрыть справку" title="Закрыть" onclick={closeIntro}>✕</button>
       </div>
 
-      {#if !coreInstalled}
-      <div class="intro-models-card">
-        <div class="intro-models-head">
-          <span class="intro-models-title">Локальные модели ИИ</span>
-          <span class="intro-models-sub">
-            Для локального распознавания русской речи и разделения спикеров скачайте базовые модели (~{coreLeftMb} МБ).
-            Whisper и CTC (словарь и уверенность слов) можно установить позже в Настройках.
-          </span>
-        </div>
+      <!-- Навигация по шагам -->
+      <div class="intro-steps-nav" role="tablist" aria-label="Шаги знакомства">
+        <button
+          type="button"
+          class="intro-step-tab {introStep === 1 ? 'active' : ''}"
+          role="tab"
+          aria-selected={introStep === 1}
+          onclick={() => (introStep = 1)}
+        >
+          1. Запись
+        </button>
+        <button
+          type="button"
+          class="intro-step-tab {introStep === 2 ? 'active' : ''}"
+          role="tab"
+          aria-selected={introStep === 2}
+          onclick={() => (introStep = 2)}
+        >
+          2. Офлайн
+        </button>
+        <button
+          type="button"
+          class="intro-step-tab {introStep === 3 ? 'active' : ''}"
+          role="tab"
+          aria-selected={introStep === 3}
+          onclick={() => (introStep = 3)}
+        >
+          3. Модели
+        </button>
+      </div>
 
-        {#if coreModels.length > 0}
-          <div class="recordings-list">
-            {#each coreModels as m (m.id)}
-              {@const sizeMb = remainingMb(m)}
-              {@const pct = engine.downloading[m.id]}
-              {@const isQueued = downloadingCore.queued.includes(m.id) && pct === undefined}
-              {@const badge = pct !== undefined
-                ? statusBadge('info', `Скачивание ${pct}%`)
-                : isQueued
-                  ? statusBadge('info', 'В очереди…')
-                  : m.is_installed
-                    ? statusBadge('ok', '✓ Готово')
-                    : statusBadge('info', `${sizeMb} МБ`)}
-              <div class="rec-item">
-                <div class="rec-info">
-                  <span class="rec-name">{m.title}</span>
-                  <span class="rec-meta">{m.description || m.id}</span>
-                  {#if pct !== undefined}
-                    <div
-                      class="vu-track progress-track"
-                      role="progressbar"
-                      aria-valuenow={pct}
-                      aria-label={`Прогресс скачивания ${m.title}`}
-                    >
-                      <div class="vu-bar" style={`width: ${pct}%`}></div>
-                    </div>
-                  {/if}
-                </div>
-                <div class="rec-actions">
-                  {@html badge}
-                </div>
-              </div>
-            {/each}
+      <!-- Контент шагов -->
+      <div class="intro-step-body">
+        {#if introStep === 1}
+          <div class="intro-step-pane">
+            <div class="intro-step-tag">Аудиозахват</div>
+            <div class="intro-step-heading">Запись встреч и заметок в один клик</div>
+            <p class="intro-step-text">
+              {#if isMobile}
+                На телефоне приложение пишет звук через микрофон и работает в фоновом режиме даже при выключенном экране.
+              {:else}
+                На компьютере поддерживается раздельная запись микрофона и системного звука собеседников (горячая клавиша: <kbd class="intro-kbd">Ctrl+Shift+R</kbd> или <kbd class="intro-kbd">Cmd+Shift+R</kbd>).
+              {/if}
+            </p>
+            <div class="intro-fact-box">
+              <span class="intro-fact-title">Готово к работе сразу:</span>
+              <span class="intro-fact-desc">Звук сохраняется в формате WAV 16 кГц. Записывать можно прямо сейчас без загрузки моделей.</span>
+            </div>
+          </div>
+        {:else if introStep === 2}
+          <div class="intro-step-pane">
+            <div class="intro-step-tag">Безопасность</div>
+            <div class="intro-step-heading">100% локальная обработка без сети</div>
+            <p class="intro-step-text">
+              Никаких облачных серверов, аналитики и передачи данных. Все записи, расшифровки и биометрические профили голосов хранятся строго в локальной памяти вашего устройства.
+            </p>
+            <div class="intro-fact-box">
+              <span class="intro-fact-title">Принцип Zero-Leak:</span>
+              <span class="intro-fact-desc">Все операции выполняются локально на процессоре, в том числе в авиарежиме без доступа к интернету.</span>
+            </div>
           </div>
         {:else}
-          <div class="empty-note">Загрузка информации о моделях…</div>
+          <div class="intro-step-pane">
+            <div class="intro-step-tag">Расшифровка</div>
+            <div class="intro-step-heading">Базовый пакет распознавания речи</div>
+            <p class="intro-step-text">
+              Для автоматического перевода аудио в текст и разделения по спикерам приложению требуются локальные веса моделей (~{coreLeftMb} МБ).
+            </p>
+
+            {#if coreInstalled}
+              <div class="intro-fact-box intro-fact-ok">
+                <span class="intro-fact-title">✓ Модели уже установлены</span>
+                <span class="intro-fact-desc">Локальное распознавание речи и разделение спикеров готовы к работе.</span>
+              </div>
+            {:else if anyCoreDownloading || downloadingCore.active}
+              <div class="intro-download-progress">
+                <div class="intro-fact-row">
+                  <span class="intro-fact-title">Загрузка базовых моделей…</span>
+                  <span class="intro-tag-mono">{coreModels.filter((m) => m.is_installed).length}/{coreModels.length}</span>
+                </div>
+                <div class="intro-progress-list">
+                  {#each coreModels as m (m.id)}
+                    {@const pct = engine.downloading[m.id]}
+                    {@const isQueued = downloadingCore.queued.includes(m.id) && pct === undefined}
+                    <div class="intro-progress-row">
+                      <span class="intro-progress-name">{m.title}</span>
+                      <span class="intro-progress-status">
+                        {#if pct !== undefined}
+                          {pct}%
+                        {:else if isQueued}
+                          В очереди…
+                        {:else if m.is_installed}
+                          ✓ Готово
+                        {:else}
+                          {remainingMb(m)} МБ
+                        {/if}
+                      </span>
+                    </div>
+                    {#if pct !== undefined}
+                      <div class="vu-track progress-track" role="progressbar" aria-valuenow={pct} aria-label={`Прогресс ${m.title}`}>
+                        <div class="vu-bar" style={`width: ${pct}%`}></div>
+                      </div>
+                    {/if}
+                  {/each}
+                </div>
+              </div>
+            {:else}
+              <div class="intro-fact-box">
+                <div class="intro-fact-row">
+                  <span class="intro-fact-title">Пакет «Русский язык» (SOTA)</span>
+                  <span class="intro-tag-mono">{coreLeftMb} МБ</span>
+                </div>
+                <span class="intro-fact-desc">
+                  Включает Silero VAD, GigaAM RNN-T и PyAnnote. Рекомендуется загружать по Wi-Fi. Если вы сейчас на мобильном интернете — можно пропустить и скачать в любой момент в «Настройках».
+                </span>
+              </div>
+            {/if}
+          </div>
         {/if}
       </div>
-      {/if}
 
-      <div class="row-end intro-actions">
-        {#if coreInstalled}
-          <button class="btn-primary" onclick={closeIntro}>Всё готово, начать работу</button>
-        {:else if anyCoreDownloading || downloadingCore.active}
-          <button class="btn-secondary" onclick={closeIntro}>Продолжить в фоне</button>
+      <!-- Действия снизу -->
+      <div class="intro-footer">
+        {#if introStep === 1}
+          <div class="intro-nav-row">
+            <button type="button" class="btn-secondary" onclick={closeIntro}>
+              Пропустить
+            </button>
+            <button type="button" class="btn-primary" onclick={() => (introStep = 2)}>
+              Далее →
+            </button>
+          </div>
+        {:else if introStep === 2}
+          <div class="intro-nav-row">
+            <button type="button" class="btn-secondary" onclick={() => (introStep = 1)}>
+              ← Назад
+            </button>
+            <button type="button" class="btn-primary" onclick={() => (introStep = 3)}>
+              Далее →
+            </button>
+          </div>
         {:else}
-          <button class="btn-secondary" onclick={closeIntro}>Позже</button>
-          <button class="btn-primary" onclick={() => void downloadAllCoreModels()}>
-            Скачать базовые модели (~{coreLeftMb} МБ)
-          </button>
+          <div class="intro-actions-final">
+            {#if coreInstalled}
+              <div class="intro-nav-row">
+                <button type="button" class="btn-secondary" onclick={() => (introStep = 2)}>
+                  ← Назад
+                </button>
+                <button type="button" class="btn-primary" onclick={closeIntro}>
+                  Всё готово, начать работу
+                </button>
+              </div>
+            {:else if anyCoreDownloading || downloadingCore.active}
+              <div class="intro-nav-row">
+                <button type="button" class="btn-secondary" onclick={() => (introStep = 2)}>
+                  ← Назад
+                </button>
+                <button type="button" class="btn-primary" onclick={closeIntro}>
+                  Продолжить в фоне
+                </button>
+              </div>
+            {:else}
+              <div class="intro-download-actions">
+                <button
+                  type="button"
+                  class="btn-primary intro-btn-main"
+                  onclick={() => void downloadAllCoreModels()}
+                >
+                  Скачать базовые модели (~{coreLeftMb} МБ)
+                </button>
+                <div class="intro-sub-actions">
+                  <button type="button" class="btn-secondary btn-sm" onclick={() => (introStep = 2)}>
+                    ← Назад
+                  </button>
+                  <button type="button" class="btn-secondary btn-sm" onclick={closeIntro}>
+                    Начать без моделей (скачать позже)
+                  </button>
+                </div>
+              </div>
+            {/if}
+          </div>
         {/if}
       </div>
     </div>
@@ -541,37 +645,216 @@
 {/if}
 
 <style>
-  .intro-models-card {
+  .intro-box {
+    max-width: 520px;
+    gap: 14px;
+    padding: 20px 22px;
+  }
+  .intro-steps-nav {
+    display: flex;
+    gap: 6px;
+    border-bottom: 1px solid var(--border-soft);
+    padding-bottom: 2px;
+  }
+  .intro-step-tab {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 6px 12px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 140ms var(--ease-spring);
+    margin-bottom: -1px;
+    white-space: nowrap;
+  }
+  .intro-step-tab:hover {
+    color: var(--text-primary);
+  }
+  .intro-step-tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--text-primary);
+  }
+  .intro-step-body {
+    min-height: 180px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    justify-content: center;
+  }
+  .intro-step-pane {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+  .intro-step-tag {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--accent-blue);
+  }
+  .intro-step-heading {
+    font-size: 15.5px;
+    font-weight: 700;
+    line-height: 1.35;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+  }
+  .intro-step-text {
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--text-muted);
+    margin: 0;
+  }
+  .intro-kbd {
+    display: inline-block;
+    padding: 1px 5px;
+    font-family: var(--font-mono);
+    font-size: 11px;
     background: var(--bg-inset);
     border: 1px solid var(--border-soft);
     border-radius: var(--radius-sm);
-    padding: 12px 14px;
-    margin-top: 4px;
-  }
-  .intro-models-head {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-  .intro-models-title {
-    font-size: 13.5px;
-    font-weight: 700;
     color: var(--text-primary);
   }
-  .intro-models-sub {
+  .intro-fact-box {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    background: var(--bg-inset);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-inner);
+    font-size: 12px;
+  }
+  .intro-fact-ok {
+    background: rgba(34, 197, 94, 0.06);
+    border-color: rgba(34, 197, 94, 0.2);
+  }
+  .intro-fact-ok .intro-fact-title {
+    color: var(--accent-ok);
+  }
+  .intro-fact-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .intro-fact-title {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .intro-fact-desc {
     font-size: 11.5px;
     color: var(--text-muted);
-    line-height: 1.4;
+    line-height: 1.45;
   }
-  .intro-actions {
+  .intro-tag-mono {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-primary);
+    background: var(--border-soft);
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+  }
+  .intro-download-progress {
     display: flex;
+    flex-direction: column;
     gap: 8px;
-    justify-content: flex-end;
-    flex-wrap: wrap;
-    margin-top: 4px;
+    padding: 10px 12px;
+    background: var(--bg-inset);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-inner);
+    font-size: 12px;
+  }
+  .intro-progress-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .intro-progress-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11.5px;
+  }
+  .intro-progress-name {
+    color: var(--text-primary);
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .intro-progress-status {
+    color: var(--accent-blue);
+    font-family: var(--font-mono);
+    font-weight: 600;
+    white-space: nowrap;
+    margin-left: 8px;
+  }
+  .intro-footer {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-soft);
+  }
+  .intro-nav-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .intro-actions-final {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+  }
+  .intro-download-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .intro-btn-main {
+    width: 100%;
+    min-height: 38px;
+  }
+  .intro-sub-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  @media (max-width: 640px) {
+    .intro-box {
+      padding: 16px 14px;
+      gap: 12px;
+    }
+    .intro-step-body {
+      min-height: auto;
+    }
+    .intro-step-tab {
+      padding: 6px 8px;
+      font-size: 12px;
+    }
+    .intro-step-heading {
+      font-size: 14.5px;
+    }
+    .intro-step-text {
+      font-size: 12px;
+    }
+    .intro-sub-actions {
+      flex-direction: column-reverse;
+      gap: 6px;
+    }
+    .intro-sub-actions .btn-sm {
+      width: 100%;
+      min-height: 36px;
+    }
   }
   .status-pill {
     display: inline-flex;

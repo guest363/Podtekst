@@ -43,6 +43,9 @@ fn running_flag() -> Arc<Mutex<bool>> {
 
 /// Счётчик активных скачиваний моделей: SSE-стрим живёт, пока хотя бы одна модель качается.
 static MODEL_ACTIVE: AtomicUsize = AtomicUsize::new(0);
+/// Активный summary job: выставляется синхронно до ответа `202`,
+/// снимается после терминального события, чтобы SSE не закрылся между ними.
+static SUMMARY_ACTIVE: AtomicUsize = AtomicUsize::new(0);
 
 fn current_file_cell() -> Arc<Mutex<String>> {
     CURRENT_FILE
@@ -70,7 +73,8 @@ pub fn take_new_events(since: usize) -> (Vec<serde_json::Value>, usize, bool) {
     let total = drained + lock.len();
     drop(lock);
     let running = *running_flag().lock().unwrap_or_else(|e| e.into_inner())
-        || MODEL_ACTIVE.load(Ordering::Relaxed) > 0;
+        || MODEL_ACTIVE.load(Ordering::Relaxed) > 0
+        || SUMMARY_ACTIVE.load(Ordering::Relaxed) > 0;
     (fresh, total, running)
 }
 
@@ -78,8 +82,43 @@ pub fn is_transcribe_running() -> bool {
     *running_flag().lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Контрактный тест 409 `transcription_running` без реального ASR.
+#[cfg(debug_assertions)]
+pub fn set_running_for_test(running: bool) {
+    *running_flag().lock().unwrap_or_else(|e| e.into_inner()) = running;
+}
+
 pub fn start_model_download() {
     MODEL_ACTIVE.fetch_add(1, Ordering::SeqCst);
+}
+
+pub fn start_summary_activity() {
+    SUMMARY_ACTIVE.fetch_add(1, Ordering::SeqCst);
+}
+
+pub fn finish_summary_activity() {
+    let mut cur = SUMMARY_ACTIVE.load(Ordering::SeqCst);
+    while cur > 0 {
+        match SUMMARY_ACTIVE.compare_exchange_weak(cur, cur - 1, Ordering::SeqCst, Ordering::SeqCst)
+        {
+            Ok(_) => break,
+            Err(actual) => cur = actual,
+        }
+    }
+}
+
+pub fn is_summary_active() -> bool {
+    SUMMARY_ACTIVE.load(Ordering::SeqCst) > 0
+}
+
+/// Идёт расшифровка или в очереди есть задачи: summary-генерация запрещена.
+pub fn has_pending_work() -> bool {
+    if is_transcribe_running() {
+        return true;
+    }
+    let q = queue_cell();
+    let lock = q.lock().unwrap_or_else(|e| e.into_inner());
+    !lock.is_empty()
 }
 
 pub fn emit_model_event(evt: serde_json::Value) {
@@ -216,6 +255,9 @@ pub fn rename_in_queue(old: &Path, new: &Path) {
 }
 
 pub fn enqueue_transcription(audio_path: PathBuf, opts: TranscribeOptions) -> (bool, usize) {
+    // Расшифровка выигрывает у итогов: отмена до выставления RUNNING, чтобы
+    // UI не увидел одновременно «итоги идут» и «расшифровка идёт».
+    crate::summary::cancel_for_transcription();
     let flag = running_flag();
     let mut r = flag.lock().unwrap_or_else(|e| e.into_inner());
     let cur_str = audio_path.to_string_lossy().to_string();

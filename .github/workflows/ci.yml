@@ -19,11 +19,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: No personal data or build artifacts in git
+      - name: No personal data, models or runtime binaries in git
         run: |
-          bad=$(git ls-files | grep -E '(^|/)(people|external_people|voiceprints|config|media_registry)\.json$|\.(log|apk|onnx|part)$' || true)
+          bad=$(git ls-files | grep -E '(^|/)(people|external_people|voiceprints|config|media_registry)\.json$|\.(log|apk|onnx|part|gguf|dylib|dll)$|(^|/)llama-server(\.exe)?$|(^|/)lib[^/]*\.so(\.[0-9]+)*$|(^|/)runtime/(x86_64-unknown-linux-gnu|aarch64-apple-darwin|x86_64-pc-windows-msvc)/|llama-b[0-9]+-bin-[^/]*\.(tar\.gz|zip)$' || true)
           if [ -n "$bad" ]; then
-            echo "В git попали личные данные или артефакты:"
+            echo "В git попали личные данные, модель или runtime:"
             echo "$bad"
             exit 1
           fi
@@ -32,6 +32,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   rust:
+    needs: frontend
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -51,8 +52,20 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Tests
         run: cargo test --workspace --locked
+      - name: Summary API contract (no model, no runtime)
+        run: cargo test -p mr-app --test summary_api_contract --locked
       - name: Release build (default features, no system deps)
         run: cargo build --release -p mr-app --locked
+      - name: Headless --web smoke (no runtime -> 503, startup OK)
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/mr-app/Cargo.toml | head -n1)"
+          python3 ../.github/scripts/smoke_http.py \
+            --exe target/release/podtekst \
+            --expected-version "$version" \
+            --expected-os linux \
+            --expected-arch x86_64 \
+            --static-dir ../ui/web/static \
+            --expect-summary-runtime missing
       - name: Clippy (tauri-ui feature; tauri_shell.rs иначе не компилируется)
         run: |
           sudo apt-get update
@@ -60,6 +73,7 @@ jobs:
           cargo clippy -p mr-app --features tauri-ui --all-targets --locked -- -D warnings
 
   macos:
+    needs: frontend
     runs-on: macos-26
     defaults:
       run:

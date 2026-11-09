@@ -1,0 +1,108 @@
+{
+  "meta": {
+    "title": "Лекция о локальных моделях",
+    "audio": "Лекция о локальных моделях.wav",
+    "duration": "00:49",
+    "duration_sec": 49.9,
+    "engine": "test",
+    "speaker_method": "test",
+    "speakers": [
+      "Лектор",
+      "Студент"
+    ],
+    "speakers_info": []
+  },
+  "stats": {
+    "utterances": 8
+  },
+  "utterances": [
+    {
+      "start": 0.0,
+      "end": 6.0,
+      "speaker": "Лектор",
+      "channel": null,
+      "text": "Сегодня разберём, как небольшие языковые модели работают на ноутбуке без видеокарты.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 6.4,
+      "end": 14.83,
+      "speaker": "Лектор",
+      "channel": null,
+      "text": "Квантизация — это уменьшение точности весов, например до четырёх бит. Она снижает размер модели и ускоряет вычисления.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 15.23,
+      "end": 17.44,
+      "speaker": "Студент",
+      "channel": null,
+      "text": "А это всегда ухудшает качество?",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 17.84,
+      "end": 25.77,
+      "speaker": "Лектор",
+      "channel": null,
+      "text": "Не всегда одинаково. На больших моделях потеря часто меньше, чем на маленьких. Нужно измерять на своих задачах.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 26.17,
+      "end": 33.1,
+      "speaker": "Лектор",
+      "channel": null,
+      "text": "Второе понятие — контекст. Это количество токенов, которые модель может учитывать за один проход.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 33.5,
+      "end": 35.57,
+      "speaker": "Студент",
+      "channel": null,
+      "text": "Если текст длиннее контекста?",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 35.97,
+      "end": 41.97,
+      "speaker": "Лектор",
+      "channel": null,
+      "text": "Его разбивают на фрагменты и собирают результат постепенно. Это называют map-reduce.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    },
+    {
+      "start": 42.37,
+      "end": 49.51,
+      "speaker": "Лектор",
+      "channel": null,
+      "text": "Запомните: для итогов важнее не размер модели, а качество инструкции и проверка фактов по источнику.",
+      "diarized": true,
+      "silhouette": 0.9,
+      "words": [],
+      "ctc_used": false
+    }
+  ]
+}
