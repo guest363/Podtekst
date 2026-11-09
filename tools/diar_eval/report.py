@@ -7,12 +7,21 @@ import argparse
 import csv
 import json
 import math
+import random
 import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
 
 RATE_METRICS = ("WER", "CER", "DER", "SCA", "cpWER", "attribution")
+BOOTSTRAP_SAMPLES = 1000
+BOOTSTRAP_SEED = 20261109
+CI_METRICS = {
+    "WER": ("wer_errors", "ref_words"),
+    "CER": ("cer_errors", "ref_chars"),
+    "attribution": ("attribution_correct", "attribution_matched"),
+}
+DER_PARTS = ("der_miss_sec", "der_false_alarm_sec", "der_confusion_sec")
 BASELINE_ALIASES = {
     "WER": ("WER", "wer"),
     "CER": ("CER", "cer"),
@@ -100,6 +109,48 @@ def _percentile(values: list[float], percentile: float) -> float:
     return ordered[low] * (1.0 - weight) + ordered[high] * weight
 
 
+def _ci_pairs(rows: list[dict], metric: str) -> list[tuple[float, float]]:
+    pairs: list[tuple[float, float]] = []
+    for row in rows:
+        if metric == "DER":
+            parts = [_value(row, key) for key in DER_PARTS]
+            if any(part is None for part in parts):
+                continue
+            numerator = sum(part for part in parts if part is not None)
+            denominator = _value(row, "der_ref_sec")
+        else:
+            numerator_key, denominator_key = CI_METRICS[metric]
+            numerator = _value(row, numerator_key)
+            denominator = _value(row, denominator_key)
+        if numerator is None or denominator is None or denominator <= 0:
+            continue
+        pairs.append((numerator, denominator))
+    return pairs
+
+
+def bootstrap_ci(
+    rows: list[dict],
+    metric: str,
+    samples: int = BOOTSTRAP_SAMPLES,
+    seed: int = BOOTSTRAP_SEED,
+) -> tuple[float, float] | None:
+    pairs = _ci_pairs(rows, metric)
+    if len(pairs) < 2 or samples < 1:
+        return None
+    rng = random.Random(seed)
+    count = len(pairs)
+    estimates = []
+    for _ in range(samples):
+        numerator = 0.0
+        denominator = 0.0
+        for _ in range(count):
+            top, bottom = pairs[rng.randrange(count)]
+            numerator += top
+            denominator += bottom
+        estimates.append(numerator / denominator)
+    return _percentile(estimates, 2.5), _percentile(estimates, 97.5)
+
+
 def _fallback_ratio(rows: list[dict], numerator: str, denominator: str, key: str) -> float:
     value = _ratio(rows, numerator, denominator)
     return value if math.isfinite(value) else _mean(rows, key)
@@ -179,6 +230,14 @@ def _fmt_rate(value: float | None) -> str:
 
 def _fmt_number(value: float | None, digits: int = 3) -> str:
     return "—" if value is None or not math.isfinite(value) else f"{value:.{digits}f}"
+
+
+def _fmt_ci(rows: list[dict], metric: str, point: float) -> str:
+    interval = bootstrap_ci(rows, metric)
+    if interval is None or not math.isfinite(point):
+        return "n/a"
+    low, high = interval
+    return f"{point * 100:.2f}% [{low * 100:.2f}; {high * 100:.2f}]"
 
 
 def _status(metric: str, base: float, current: float) -> tuple[str, str]:
@@ -339,6 +398,49 @@ def render(
         )
     lines.extend(_table(header, table_rows))
 
+    group_rows: dict[str, list[dict]] = {}
+    for row in rows:
+        group_rows.setdefault(_group_key(row), []).append(row)
+    ci_rows = []
+    for key, item, items in [
+        ("ВСЕГО", overall, rows),
+        *((name, value, group_rows[name]) for name, value in groups.items()),
+    ]:
+        ci_rows.append(
+            [
+                key,
+                str(item["files"]),
+                _fmt_ci(items, "WER", item["WER"]),
+                _fmt_ci(items, "CER", item["CER"]),
+                _fmt_ci(items, "DER", item["DER"]),
+                _fmt_ci(items, "attribution", item["attribution"]),
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "## Доверительные интервалы",
+            "",
+            f"- Bootstrap по файлам: {BOOTSTRAP_SAMPLES} ресэмплов, seed {BOOTSTRAP_SEED}, "
+            "95% перцентильный интервал micro-оценки.",
+            "- `n/a` — меньше двух файлов с данными или нулевой знаменатель.",
+            "",
+        ]
+    )
+    lines.extend(
+        _table(
+            [
+                "Набор",
+                "Файлов",
+                "WER 95% CI",
+                "CER 95% CI",
+                "DER 95% CI",
+                "Attribution 95% CI",
+            ],
+            ci_rows,
+        )
+    )
+
     if baseline:
         comparisons = compare_baseline(groups, baseline)
         lines.extend(["", "## Сравнение с baseline", ""])
@@ -407,6 +509,7 @@ def render(
             "- Attribution accuracy требует эталонный текст с метками спикеров.",
             "- RTF p50/p95 включает все успешные файлы; прогрев отдельно не исключается.",
             "- Peak RSS снят через `/usr/bin/time -v`, если он доступен.",
+            "- CI bootstrap по файлам: на 1-2 файлах перцентильный интервал недооценивает разброс.",
             "",
         ]
     )
@@ -515,6 +618,78 @@ def _self_test() -> int:
         path = Path(tmp) / "report.md"
         path.write_text(report, encoding="utf-8")
         assert path.stat().st_size > 0
+
+    ci_rows = [
+        {
+            "dataset": "ci",
+            "subset": "test",
+            "file_id": "a",
+            "wer_errors": "2",
+            "ref_words": "10",
+            "cer_errors": "1",
+            "ref_chars": "10",
+            "der_ref_sec": "100",
+            "der_miss_sec": "10",
+            "der_false_alarm_sec": "5",
+            "der_confusion_sec": "5",
+            "attribution_correct": "8",
+            "attribution_matched": "10",
+        },
+        {
+            "dataset": "ci",
+            "subset": "test",
+            "file_id": "b",
+            "wer_errors": "0",
+            "ref_words": "20",
+            "cer_errors": "2",
+            "ref_chars": "20",
+            "der_ref_sec": "100",
+            "der_miss_sec": "0",
+            "der_false_alarm_sec": "10",
+            "der_confusion_sec": "0",
+            "attribution_correct": "10",
+            "attribution_matched": "10",
+        },
+        {
+            "dataset": "ci",
+            "subset": "test",
+            "file_id": "c",
+            "wer_errors": "1",
+            "ref_words": "10",
+            "cer_errors": "0",
+            "ref_chars": "10",
+            "der_ref_sec": "100",
+            "der_miss_sec": "0",
+            "der_false_alarm_sec": "0",
+            "der_confusion_sec": "0",
+            "attribution_correct": "9",
+            "attribution_matched": "10",
+        },
+    ]
+    ci_aggregate = aggregate(ci_rows)
+    assert abs(ci_aggregate["WER"] - 3 / 40) < 1e-12
+    for metric, point in (
+        ("WER", ci_aggregate["WER"]),
+        ("CER", ci_aggregate["CER"]),
+        ("DER", ci_aggregate["DER"]),
+        ("attribution", ci_aggregate["attribution"]),
+    ):
+        interval = bootstrap_ci(ci_rows, metric)
+        assert interval is not None, metric
+        low, high = interval
+        assert math.isfinite(low) and math.isfinite(high), metric
+        assert low <= point <= high, (metric, low, point, high)
+        assert low < high, metric
+        assert bootstrap_ci(ci_rows, metric) == interval, metric
+    assert bootstrap_ci(ci_rows[:1], "WER") is None
+    assert bootstrap_ci([{"ref_words": "10"}, {"ref_words": "10"}], "WER") is None
+    assert bootstrap_ci(ci_rows, "WER", samples=0) is None
+
+    ci_report = render(ci_rows, aggregate_groups(ci_rows), None, "memory.csv", "Тест CI", 0.0, False)
+    assert "## Доверительные интервалы" in ci_report and "WER 95% CI" in ci_report
+    assert f"seed {BOOTSTRAP_SEED}" in ci_report
+    single_report = render(ci_rows[:1], aggregate_groups(ci_rows[:1]), None, "memory.csv", "Т", 0.0, False)
+    assert "n/a" in single_report
 
     print("self-test ok")
     return 0
