@@ -1,9 +1,10 @@
 use super::fft::{self, Cx};
 
 const FRAME: usize = 1 << 14;
+#[cfg(test)]
 pub(crate) const MIN_WINDOW_SAMPLES: usize = FRAME;
 
-pub(crate) fn estimate(mic: &[f32], reference: &[f32], max_delay: usize) -> Option<(usize, f32)> {
+pub fn estimate(mic: &[f32], reference: &[f32], max_delay: usize) -> Option<(usize, f32)> {
     let n = mic.len().min(reference.len());
     if n < FRAME {
         return None;

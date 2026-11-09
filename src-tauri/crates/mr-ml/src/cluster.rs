@@ -40,6 +40,20 @@ pub fn agglomerative(
     distance_threshold: f64,
     n_clusters: Option<usize>,
 ) -> Vec<usize> {
+    let weights = vec![1.0; embeddings.len()];
+    agglomerative_weighted(embeddings, &weights, &[], distance_threshold, n_clusters)
+}
+
+/// Average linkage с весами сегментов и запретом прямого слияния пар
+/// `cannot_link`. Вес — длительность чистого фрагмента × качество: короткий
+/// шумный кусок не должен перетягивать центроид длинного монолога.
+pub fn agglomerative_weighted(
+    embeddings: &[Vec<f64>],
+    weights: &[f64],
+    cannot_link: &[(usize, usize)],
+    distance_threshold: f64,
+    n_clusters: Option<usize>,
+) -> Vec<usize> {
     fn find(parent: &mut [usize], i: usize) -> usize {
         if parent[i] != i {
             parent[i] = find(parent, parent[i]);
@@ -47,13 +61,25 @@ pub fn agglomerative(
         parent[i]
     }
 
+    const CANNOT_LINK_DISTANCE: f64 = 10.0;
     let n = embeddings.len();
     if n == 0 {
         return vec![];
     }
     let mut distances = DistanceMatrix::new(embeddings);
     let mut active = vec![true; n];
-    let mut sizes = vec![1usize; n];
+    let mut sizes: Vec<f64> = (0..n)
+        .map(|i| weights.get(i).copied().unwrap_or(1.0).max(1e-6))
+        .collect();
+    let mut blocked = vec![vec![false; n]; n];
+    for &(i, j) in cannot_link {
+        if i >= n || j >= n || i == j {
+            continue;
+        }
+        blocked[i][j] = true;
+        blocked[j][i] = true;
+        distances.set(i, j, CANNOT_LINK_DISTANCE);
+    }
     let mut active_count = n;
     let mut chain = Vec::with_capacity(n);
     let mut merges = Vec::with_capacity(n - 1);
@@ -73,11 +99,18 @@ pub fn agglomerative(
             chain.pop();
             // Average linkage: шумные короткие реплики одного голоса не
             // разваливают кластер из-за одной дальней пары, как при complete.
-            let (wa, wb) = (sizes[a] as f64, sizes[b] as f64);
+            let (wa, wb) = (sizes[a], sizes[b]);
             for (c, &is_active) in active.iter().enumerate() {
                 if is_active && c != a && c != b {
                     let d = (distances.get(a, c) * wa + distances.get(b, c) * wb) / (wa + wb);
+                    let d = if blocked[a][c] || blocked[b][c] {
+                        CANNOT_LINK_DISTANCE
+                    } else {
+                        d
+                    };
                     distances.set(a, c, d);
+                    blocked[a][c] = blocked[a][c] || blocked[b][c];
+                    blocked[c][a] = blocked[a][c];
                 }
             }
             sizes[a] += sizes[b];
@@ -276,6 +309,24 @@ mod tests {
         assert_eq!(labels[3], labels[4]);
         assert_eq!(labels[3], labels[5]);
         assert_ne!(labels[0], labels[3]);
+    }
+
+    #[test]
+    fn cannot_link_prevents_merge_of_similar_embeddings() {
+        let embs = vec![unit(4, 0), unit(4, 0)];
+        let labels = agglomerative_weighted(&embs, &[1.0, 1.0], &[(0, 1)], 0.55, None);
+        assert_ne!(labels[0], labels[1]);
+        let free = agglomerative(&embs, 0.55, None);
+        assert_eq!(free[0], free[1]);
+    }
+
+    #[test]
+    fn weighted_linkage_lets_long_segment_dominate() {
+        let embs = vec![vec![1.0, 0.0], vec![0.0, 1.0], vec![0.7, 0.7]];
+        let low = agglomerative_weighted(&embs, &[1.0, 1.0, 0.01], &[], 0.7, None);
+        assert_ne!(low[0], low[1]);
+        let high = agglomerative_weighted(&embs, &[1.0, 1.0, 10.0], &[], 0.7, None);
+        assert_eq!(high[0], high[1]);
     }
 
     #[test]
