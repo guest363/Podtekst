@@ -669,7 +669,10 @@ pub(crate) fn diarize_channel(
         return vec![];
     }
     let mut embs: Vec<Option<Vec<f64>>> = vec![None; n];
-    let mut durs = vec![0.0f64; n];
+    let mut durs: Vec<f64> = utterances
+        .iter()
+        .map(|u| (u.end - u.start).max(0.0))
+        .collect();
     let mut quals = vec![1.0f64; n];
     let units = build_acoust_units(samples, utterances, extractor, segmentation, on_event);
     if units.is_empty() {
