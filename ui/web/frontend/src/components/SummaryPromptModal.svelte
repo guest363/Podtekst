@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte'
   import type { SummaryPreset } from '../lib/api'
 
   interface Props {
@@ -24,18 +25,30 @@
   let activeId = $state('')
   let showFullPrompt = $state(false)
   let copied = $state(false)
+  let selectOpen = $state(false)
+  let selectTrigger = $state<HTMLButtonElement | null>(null)
+  let selectList = $state<HTMLDivElement | null>(null)
 
   $effect(() => {
     if (open) {
       activeId = initialId || defaultPresetId || presets[0]?.id || 'meeting'
       showFullPrompt = false
       copied = false
+      selectOpen = false
     }
   })
 
   const activePreset = $derived(
     presets.find((p) => p.id === activeId) ?? presets[0] ?? null,
   )
+
+  const activeSections = $derived.by(() => {
+    if (!activePreset) return []
+    if (activePreset.sections_detail && activePreset.sections_detail.length > 0) {
+      return activePreset.sections_detail
+    }
+    return activePreset.sections.map((id) => ({ id, title: id, role: 'plain' as const }))
+  })
 
   const activeFullPrompt = $derived.by(() => {
     if (!activePreset) return ''
@@ -59,15 +72,67 @@
   })
 
   function onWindowKey(e: KeyboardEvent): void {
-    if (open && e.key === 'Escape') {
-      e.stopPropagation()
-      onclose()
+    if (!open) return
+    if (e.key === 'Escape') {
+      if (selectOpen) {
+        closeSelect(true)
+        e.stopPropagation()
+      } else {
+        onclose()
+      }
     }
   }
 
   function onBackdropMouseDown(e: MouseEvent): void {
     if (e.target === e.currentTarget) {
       onclose()
+    }
+  }
+
+  function openSelectList(): void {
+    selectOpen = true
+    void tick().then(() => {
+      const current = selectList?.querySelector<HTMLElement>('[aria-selected="true"]')
+      const first = selectList?.querySelector<HTMLElement>('.speaker-select-item')
+      ;(current ?? first)?.focus()
+    })
+  }
+
+  function closeSelect(returnFocus = false): void {
+    selectOpen = false
+    if (returnFocus) selectTrigger?.focus()
+  }
+
+  function choosePreset(id: string): void {
+    activeId = id
+    closeSelect(true)
+  }
+
+  function onSelectKeydown(e: KeyboardEvent): void {
+    if (e.key === 'Escape' && selectOpen) {
+      e.stopPropagation()
+      closeSelect(true)
+      return
+    }
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    e.preventDefault()
+    if (!selectOpen) {
+      openSelectList()
+      return
+    }
+    const items = [...(selectList?.querySelectorAll<HTMLElement>('.speaker-select-item') ?? [])]
+    if (!items.length) return
+    const index = items.indexOf(document.activeElement as HTMLElement)
+    const next = e.key === 'ArrowDown'
+      ? items[(index + 1) % items.length]
+      : items[(index - 1 + items.length) % items.length]
+    next?.focus()
+  }
+
+  function onSelectFocusOut(e: FocusEvent): void {
+    const next = e.relatedTarget as Node | null
+    if (selectOpen && (!next || !(e.currentTarget as HTMLElement).contains(next))) {
+      selectOpen = false
     }
   }
 
@@ -109,28 +174,79 @@
         <button class="icon-btn" aria-label="Закрыть окно" onclick={onclose}>✕</button>
       </div>
 
-      <!-- Селектор шаблона: один чистый элемент без горизонтальных табов -->
+      <!-- Селектор шаблона: в стандартном для приложения дизайне (.summary-select) -->
       <div class="guide-select-field">
-        <label for="guide-preset-select" class="guide-label">Шаблон</label>
-        <div class="guide-select-wrap">
-          <select
-            id="guide-preset-select"
-            class="guide-select"
-            value={activeId}
-            onchange={(e) => (activeId = e.currentTarget.value)}
+        <div class="summary-preset-select" onfocusout={onSelectFocusOut}>
+          <button
+            bind:this={selectTrigger}
+            type="button"
+            class="summary-select"
+            aria-haspopup="listbox"
+            aria-expanded={selectOpen}
+            aria-label="Выбрать шаблон"
+            onclick={() => (selectOpen ? closeSelect() : openSelectList())}
+            onkeydown={onSelectKeydown}
           >
-            {#each presets as p (p.id)}
-              <option value={p.id}>
-                {p.label}{p.sensitive ? ' (черновик)' : ''}{p.id === defaultPresetId ? ' — по умолчанию' : ''}
-              </option>
-            {/each}
-          </select>
+            <span class="summary-preset-value">
+              <span class="guide-select-name">{activePreset?.label || 'Выберите шаблон'}</span>
+              {#if activePreset?.sensitive}
+                <span class="guide-select-badge warn">черновик</span>
+              {/if}
+              {#if activePreset?.id === defaultPresetId}
+                <span class="guide-select-badge info">по умолчанию</span>
+              {/if}
+            </span>
+            <span class="summary-preset-chevron {selectOpen ? 'open' : ''}" aria-hidden="true">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </span>
+          </button>
+
+          {#if selectOpen}
+            <button
+              type="button"
+              class="speaker-popover-backdrop"
+              aria-label="Закрыть список шаблонов"
+              onclick={() => closeSelect(true)}
+            ></button>
+            <div
+              bind:this={selectList}
+              class="speaker-select-popover summary-guide-popover"
+              role="listbox"
+              tabindex="-1"
+              onkeydown={onSelectKeydown}
+            >
+              {#each presets as p (p.id)}
+                <button
+                  type="button"
+                  class="speaker-select-item"
+                  role="option"
+                  aria-selected={p.id === activeId}
+                  onclick={() => choosePreset(p.id)}
+                >
+                  <span class="speaker-select-item-left">
+                    <span
+                      class="speaker-select-item-dot"
+                      style={`background: ${p.id === activeId ? 'var(--accent-blue)' : '#94a3b8'}`}
+                    ></span>
+                    <span class="speaker-select-item-name">{p.label}</span>
+                  </span>
+                  {#if p.sensitive}
+                    <span class="speaker-select-item-sub">черновик</span>
+                  {:else if p.id === defaultPresetId}
+                    <span class="speaker-select-item-sub">по умолчанию</span>
+                  {/if}
+                </button>
+              {/each}
+            </div>
+          {/if}
         </div>
       </div>
 
       {#if activePreset}
         <div class="guide-body">
-          <!-- Описание и назначение выбранного шаблона -->
+          <!-- Описание и назначение -->
           <div class="guide-meta">
             <div class="guide-desc-row">
               <span class="guide-desc">{activePreset.short}</span>
@@ -150,7 +266,27 @@
             {/if}
           </div>
 
-          <!-- Блок системного промпта без лишних обводок -->
+          <!-- Секции выжимки: структура ответа модели в порядке следования -->
+          <div class="guide-sections-block">
+            <span class="guide-label">Структура ответа ({activeSections.length} секций)</span>
+            <div class="guide-sections-flow">
+              {#each activeSections as sec, idx (sec.id)}
+                <div class="guide-section-step">
+                  <span class="guide-step-num">{idx + 1}</span>
+                  <span class="guide-step-title">{sec.title}</span>
+                  {#if sec.role === 'task'}
+                    <span class="guide-step-tag task">задачи</span>
+                  {:else if sec.role === 'decision'}
+                    <span class="guide-step-tag decision">решения</span>
+                  {:else if sec.role === 'status'}
+                    <span class="guide-step-tag status">статус</span>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          </div>
+
+          <!-- Блок системного промпта -->
           <div class="guide-prompt-block">
             <div class="guide-prompt-header">
               <span class="guide-label">
@@ -199,49 +335,92 @@
 
 <style>
   .summary-guide-box {
-    max-width: 560px;
+    max-width: 580px;
     width: 100%;
-    max-height: min(640px, calc(100dvh - 48px));
+    max-height: min(680px, calc(100dvh - 48px));
     display: flex;
     flex-direction: column;
     gap: 14px;
     padding: 22px;
   }
   .guide-select-field {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+    width: 100%;
   }
-  .guide-label {
-    font-size: 11.5px;
-    font-weight: 600;
-    color: var(--text-muted);
-  }
-  .guide-select-wrap {
+  .summary-preset-select {
     position: relative;
     width: 100%;
   }
-  .guide-select {
+  .summary-select {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
     width: 100%;
-    padding: 8px 34px 8px 12px;
-    font: inherit;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary);
-    background: var(--bg-inset);
+    min-width: 0;
     border: 1px solid var(--border-card);
     border-radius: var(--radius-inner);
-    appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' xmlns='http://www.w3.org/2000/svg'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 12px center;
+    background: #fff;
+    color: var(--text-primary);
+    padding: 7px 10px;
+    font: inherit;
+    font-size: 12.5px;
+    text-align: left;
     cursor: pointer;
-    transition: border-color 150ms var(--ease-spring);
   }
-  .guide-select:focus-visible {
+  .summary-select:focus-visible {
     outline: 2px solid var(--accent-blue);
-    outline-offset: 1px;
-    border-color: var(--accent-blue);
+    outline-offset: 2px;
+  }
+  .summary-preset-value {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .guide-select-name {
+    font-weight: 600;
+  }
+  .guide-select-badge {
+    font-size: 10.5px;
+    font-weight: 500;
+    border-radius: var(--radius-pill);
+    padding: 1px 6px;
+    line-height: 1.3;
+  }
+  .guide-select-badge.warn {
+    color: var(--accent-amber);
+    background: var(--accent-amber-bg, #faf3e3);
+  }
+  .guide-select-badge.info {
+    color: var(--accent-blue);
+    background: rgba(36, 86, 198, 0.08);
+  }
+  .summary-preset-chevron {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    color: var(--text-faint);
+    transition: transform 160ms var(--ease-spring);
+  }
+  .summary-preset-chevron.open {
+    transform: rotate(180deg);
+  }
+  .speaker-popover-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 85;
+    background: transparent;
+  }
+  .summary-guide-popover {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    width: 100%;
+    z-index: 90;
+    box-sizing: border-box;
   }
   .guide-body {
     display: flex;
@@ -286,6 +465,61 @@
     color: var(--text-muted);
     line-height: 1.4;
   }
+  .guide-sections-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .guide-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .guide-sections-flow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .guide-section-step {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--bg-inset);
+    border-radius: var(--radius-sm);
+    padding: 3px 8px;
+    font-size: 11.5px;
+  }
+  .guide-step-num {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-faint);
+  }
+  .guide-step-title {
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+  .guide-step-tag {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    padding: 0 4px;
+    border-radius: 3px;
+    line-height: 1.4;
+  }
+  .guide-step-tag.task {
+    color: var(--accent-blue);
+    background: rgba(36, 86, 198, 0.08);
+  }
+  .guide-step-tag.decision {
+    color: var(--accent-ok);
+    background: rgba(14, 122, 85, 0.08);
+  }
+  .guide-step-tag.status {
+    color: var(--text-muted);
+    background: rgba(100, 116, 139, 0.1);
+  }
   .guide-prompt-block {
     display: flex;
     flex-direction: column;
@@ -328,7 +562,7 @@
     color: var(--text-primary);
     white-space: pre-wrap;
     word-break: break-word;
-    max-height: 220px;
+    max-height: 200px;
     overflow-y: auto;
   }
   .guide-footer {
