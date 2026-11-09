@@ -5,7 +5,6 @@ pub mod diarize;
 pub mod document;
 pub mod events;
 pub mod memory;
-pub(crate) mod refine;
 pub mod report;
 mod speaker_assignment;
 mod word_speakers;
@@ -20,9 +19,10 @@ pub use models::invalidate_models_cache;
 pub use pipeline::transcribe_file;
 
 pub use events::{
-    clear_queue, emit_model_event, enqueue_transcription, finish_model_events, get_queue_status,
-    has_pending_work, is_transcribe_running, remove_from_queue, rename_in_queue,
-    spawn_transcription_worker, start_model_download, take_new_events, transcribing_file,
+    clear_queue, emit_model_event, enqueue_transcription, finish_model_events,
+    finish_summary_activity, get_queue_status, has_pending_work, is_transcribe_running,
+    remove_from_queue, rename_in_queue, spawn_transcription_worker, start_model_download,
+    start_summary_activity, take_new_events, transcribing_file,
 };
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

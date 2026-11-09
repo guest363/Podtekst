@@ -5,27 +5,21 @@ import {
   baseName,
   encPath,
   fmtClockShort,
-  isAndroid,
   readJsonSafe,
   speakerColor,
   speakerTint,
 } from '../lib/api'
 import { errText } from '../lib/guards.ts'
 import { loadPeople, peopleState } from '../lib/people.svelte.ts'
-import { refineAvailable } from '../lib/summary.svelte.ts'
 import { toast, toastConfirm } from '../lib/toast.svelte.ts'
-import {
-  editTranscript,
-  engine,
-  refineCurrentTranscript,
-  transcript,
-} from '../lib/transcript.svelte.ts'
+import { editTranscript, transcript } from '../lib/transcript.svelte.ts'
 import { emit, ui } from '../lib/ui.svelte.ts'
 
 type Props = {
   speakers: SpeakerInfo[]
+  onseek?: (sec: number) => void
 }
-let { speakers }: Props = $props()
+let { speakers, onseek }: Props = $props()
 
 type MergedSpeaker = Omit<SpeakerInfo, 'samples'> & { key: string; samples: SpeakerSample[] }
 
@@ -438,9 +432,17 @@ const onInputKey = (e: KeyboardEvent, btn: HTMLButtonElement | null): void => {
         </svg>
       {/if}
     </button>
-    <span class="sample-text" title={s.full_text || s.text || ''}>
+    <button
+      type="button"
+      class="sample-text"
+      title={`Перейти к этой части записи: ${s.full_text || s.text || ''}`}
+      onclick={() => {
+        stopSample()
+        onseek?.(s.start)
+      }}
+    >
       {fmtClockShort(s.start)} · «{s.text || ''}»
-    </span>
+    </button>
     <button
       type="button"
       class="sample-detach-btn"
@@ -455,26 +457,6 @@ const onInputKey = (e: KeyboardEvent, btn: HTMLButtonElement | null): void => {
 <aside class="transcript-speakers">
   <div class="pane-title">Спикеры</div>
   <div class="speakers-deck">
-    {#if !isAndroid && transcript.hasText && mergedSpeakers.length > 0}
-      <div class="speakers-deck-action">
-        <button
-          type="button"
-          class="btn-secondary btn-sm btn-speakers-refine"
-          disabled={!refineAvailable() || transcript.refining || engine.running || engine.summaryRunning}
-          title={!refineAvailable()
-            ? 'Нужна модель «Итоги (Qwen)» и включённая поддержка итогов'
-            : transcript.refining
-              ? 'Идёт реставрация реплик через локальную модель Qwen…'
-              : 'Исправить искажённые слова и восстановить спикеров через локальную модель Qwen'}
-          onclick={() => void refineCurrentTranscript(ui.currentTranscriptPath)}
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3z"/>
-          </svg>
-          <span>{transcript.refining ? 'Реставрация…' : 'Восстановить реплики (Qwen)'}</span>
-        </button>
-      </div>
-    {/if}
     {#if mergedSpeakers.length === 0}
       <div class="empty-note">Спикеры появятся после расшифровки</div>
     {:else}

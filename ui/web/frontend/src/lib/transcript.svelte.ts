@@ -8,7 +8,6 @@ import { toast } from './toast.svelte.ts'
 import { emit, ui } from './ui.svelte.ts'
 
 type TranscriptEditResponse = OkResponse & TranscriptData
-type TranscriptRefineResponse = TranscriptEditResponse & { failed_batches?: number }
 type TranscribeStartResponse = OkResponse & {
   started?: boolean
   queued?: boolean
@@ -41,7 +40,6 @@ type TranscriptState = {
   hasText: boolean
   loadError: string
   extractVisible: boolean
-  refining: boolean
 }
 
 export const transcript: TranscriptState = $state({
@@ -52,7 +50,6 @@ export const transcript: TranscriptState = $state({
   hasText: false,
   loadError: '',
   extractVisible: false,
-  refining: false,
 })
 
 // Единственное состояние движка для всего UI (дека, модалка, настройки):
@@ -136,37 +133,6 @@ export const editTranscript = async (
   transcript.rev = typeof d.rev === 'string' ? d.rev : transcript.rev
   transcript.hasText = Boolean(transcript.markdown.trim() || transcript.utterances.length)
   emit('transcript-edited')
-}
-
-export const refineCurrentTranscript = async (rawPath: string): Promise<void> => {
-  if (transcript.refining) return
-  const target = rawPath
-  transcript.refining = true
-  try {
-    const r = await fetch('/api/transcript/refine', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file: rawPath }),
-    })
-    const d = await readJsonSafe<TranscriptRefineResponse>(r)
-    if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`)
-    if (ui.currentTranscriptPath !== target) return
-    transcript.utterances = d.utterances || []
-    transcript.speakers = d.speakers_info || []
-    transcript.markdown = d.markdown || ''
-    transcript.rev = typeof d.rev === 'string' ? d.rev : transcript.rev
-    transcript.hasText = Boolean(transcript.markdown.trim() || transcript.utterances.length)
-    emit('transcript-edited')
-    if (d.failed_batches) {
-      toast(`Реплики восстановлены не полностью: ${d.failed_batches} частей осталось без изменений`)
-    } else {
-      toast('Реплики успешно восстановлены')
-    }
-  } catch (e) {
-    toast(`Ошибка реставрации: ${errText(e)}`, 'error')
-  } finally {
-    transcript.refining = false
-  }
 }
 
 export const emptyHint = (): string => {

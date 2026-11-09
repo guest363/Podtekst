@@ -5,13 +5,12 @@ import { peopleState } from '../lib/people.svelte.ts'
 import { isQueued } from '../lib/queue.svelte.ts'
 import { extractMp3 } from '../lib/recordings.svelte.ts'
 import { settings } from '../lib/settings.svelte.ts'
-import { cancelSummary, refineAvailable, summaryState } from '../lib/summary.svelte.ts'
+import { cancelSummary, summaryState } from '../lib/summary.svelte.ts'
 import { copyText, toast, toastConfirm } from '../lib/toast.svelte.ts'
 import {
   emptyHint,
   engine,
   openTranscriptFile,
-  refineCurrentTranscript,
   startTranscription,
   transcript,
 } from '../lib/transcript.svelte.ts'
@@ -310,28 +309,6 @@ const onWindowKey = (e: KeyboardEvent): void => {
           </button>
         {/if}
 
-        {#if !isAndroid}
-          <button
-            class="btn-secondary btn-sm btn-refine-toggle {transcript.refining ? 'active' : ''}"
-            disabled={!refineAvailable() || transcript.refining || thisRunning || otherRunning || engine.summaryRunning || !transcript.hasText}
-            aria-label="ИИ-реставрация реплик через Qwen"
-            title={!refineAvailable()
-              ? 'Нужна модель «Итоги (Qwen)» и включённая поддержка итогов'
-              : transcript.refining
-                ? 'Идёт реставрация реплик через локальную модель Qwen…'
-                : 'Исправить искажённые слова и восстановить спикеров через локальную модель Qwen'}
-            onclick={() => void refineCurrentTranscript(ui.currentTranscriptPath)}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3z"/>
-            </svg>
-            <span>{transcript.refining ? 'Реставрация…' : 'Реставрация'}</span>
-            {#if transcript.refining}
-              <span class="spk-notify-dot warn" aria-hidden="true"></span>
-            {/if}
-          </button>
-        {/if}
-
         <button
           class="btn-primary btn-sm btn-transcribe-header"
           disabled={isQueued(ui.currentTranscriptPath) || thisRunning}
@@ -527,7 +504,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
             ✕
           </button>
         </div>
-        <SpeakersPane speakers={transcript.speakers} />
+        <SpeakersPane speakers={transcript.speakers} onseek={seekTo} />
       </div>
 
       <TranscriptDoc

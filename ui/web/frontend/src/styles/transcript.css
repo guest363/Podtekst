@@ -316,16 +316,14 @@ body:has(.transcript-page) {
 }
 
 .btn-speakers-toggle,
-.btn-summary-toggle,
-.btn-refine-toggle {
+.btn-summary-toggle {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   transition: all 160ms ease;
 }
 .btn-speakers-toggle.active,
-.btn-summary-toggle.active,
-.btn-refine-toggle.active {
+.btn-summary-toggle.active {
   background: rgba(37, 99, 235, 0.09);
   border-color: rgba(37, 99, 235, 0.35);
   color: var(--accent-blue);
@@ -444,20 +442,6 @@ body:has(.transcript-page) {
   flex: 1;
   min-height: 0;
   padding-right: 4px;
-}
-
-.speakers-deck-action {
-  flex-shrink: 0;
-  margin-bottom: 2px;
-}
-.speakers-deck-action .btn-speakers-refine {
-  width: 100%;
-  justify-content: center;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  padding: 6px 10px;
 }
 
 .speaker-card {
@@ -594,6 +578,23 @@ body:has(.transcript-page) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sample-text:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.sample-text:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 .sample-detach-btn {
   display: none;

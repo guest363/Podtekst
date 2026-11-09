@@ -71,7 +71,6 @@ pub use job::{
     active_json, cancel, cancel_for_recording, cancel_for_transcription, generate, is_active,
     status_fields, GenerateInput, StartOutcome,
 };
-pub use runner::run_prompts_session;
 pub use view::{classify_view, get_view};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

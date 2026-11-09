@@ -50,78 +50,38 @@ impl HighPassFilter {
     }
 }
 
-/// AGC и обрезка низа для 16 кГц PCM: подтягивает тихую речь к уровню ASR.
-pub fn normalize_speech(mut samples: Vec<f32>) -> Vec<f32> {
+/// Оконный AGC (RMS-левеллер) для 16 кГц PCM: вытягивает тихую речь до ~ -20 dBFS
+/// перед VAD и ASR, не разгоняя шум в паузах.
+// shortcut: фиксированные пороги под речь 16kHz, при клиппинге шумных записей вынести max_gain в конфиг
+pub fn agc_rms_16k(samples: &mut [f32]) {
     if samples.is_empty() {
-        return samples;
+        return;
     }
 
     let mut hp = HighPassFilter::new(80.0, 16000.0);
-    hp.process(&mut samples);
+    hp.process(samples);
 
-    const FRAME_SIZE: usize = 1600;
-    let mut frame_rms = Vec::with_capacity(samples.len() / FRAME_SIZE + 1);
-    for chunk in samples.chunks(FRAME_SIZE) {
-        let sum_sq: f32 = chunk.iter().map(|&x| x * x).sum();
-        frame_rms.push((sum_sq / chunk.len() as f32).sqrt());
-    }
+    const WIN: usize = 6400; // 400 ms @ 16kHz
+    const TARGET_RMS: f32 = 0.10; // ~ -20 dBFS
+    const NOISE_FLOOR: f32 = 0.002; // ~ -54 dBFS (не тянем цифровой ноль)
+    const MAX_GAIN: f32 = 15.0; // до +23.5 dB для шёпота/тихих фраз
 
-    let mut sorted_rms = frame_rms.clone();
-    sorted_rms.sort_by(f32::total_cmp);
-    let p5_idx = (sorted_rms.len() as f32 * 0.05).round() as usize;
-    let p5_rms = sorted_rms.get(p5_idx).copied().unwrap_or(0.0);
-
-    let noise_floor = (p5_rms * 0.8).clamp(0.0003, 0.0012);
-    const TARGET_RMS: f32 = 0.045;
-    const MAX_GAIN: f32 = 14.0;
-    const HOP_LEN: usize = 4000;
-    const WINDOW_LEN: usize = 8000;
-
-    let num_hops = samples.len().div_ceil(HOP_LEN);
-    let mut hop_gains = Vec::with_capacity(num_hops);
-
-    for h in 0..num_hops {
-        let center = h * HOP_LEN;
-        let start = center.saturating_sub(WINDOW_LEN / 2);
-        let end = (center + WINDOW_LEN / 2).min(samples.len());
-        let chunk = &samples[start..end];
-        let rms = if chunk.is_empty() {
-            0.0
+    let mut gain = 1.0f32;
+    for chunk in samples.chunks_mut(WIN / 4) {
+        let sum_sq: f32 = chunk.iter().map(|&s| s * s).sum();
+        let rms = (sum_sq / chunk.len().max(1) as f32).sqrt();
+        let desired = if rms > NOISE_FLOOR {
+            (TARGET_RMS / rms).clamp(0.5, MAX_GAIN)
         } else {
-            let sum_sq: f32 = chunk.iter().map(|&x| x * x).sum();
-            (sum_sq / chunk.len() as f32).sqrt()
-        };
-
-        let gain = if rms < noise_floor {
             1.0
-        } else if rms < noise_floor * 1.5 {
-            let t = (rms - noise_floor) / (noise_floor * 0.5);
-            let des = (TARGET_RMS / rms).min(MAX_GAIN);
-            1.0 + t * (des - 1.0)
-        } else {
-            (TARGET_RMS / rms).min(MAX_GAIN)
         };
-        hop_gains.push(gain);
+        // Плавная атака/релиз без щелчков
+        let alpha = if desired < gain { 0.4 } else { 0.15 };
+        gain += alpha * (desired - gain);
+        for s in chunk.iter_mut() {
+            *s = (*s * gain).tanh(); // soft-clip вместо жёсткого среза
+        }
     }
-
-    let mut cur_gain = hop_gains.first().copied().unwrap_or(1.0);
-
-    for (i, sample) in samples.iter_mut().enumerate() {
-        let hop_idx = (i / HOP_LEN).min(hop_gains.len().saturating_sub(1));
-        let target_g = hop_gains[hop_idx];
-        let rate = if target_g < cur_gain { 0.005 } else { 0.0008 };
-        cur_gain += (target_g - cur_gain) * rate;
-
-        let boosted = *sample * cur_gain;
-        let limited = if boosted.abs() > 0.95 {
-            boosted.signum() * (0.95 + 0.045 * ((boosted.abs() - 0.95) / 0.045).tanh())
-        } else {
-            boosted
-        };
-        *sample = limited.clamp(-1.0, 1.0);
-    }
-
-    samples
 }
 
 #[cfg(test)]
@@ -148,22 +108,22 @@ mod tests {
     }
 
     #[test]
-    fn normalize_speech_amplifies_quiet_signal() {
-        let quiet: Vec<f32> = (0..32000)
-            .map(|i| 0.003 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 16000.0).sin())
+    fn agc_rms_16k_amplifies_quiet_signal() {
+        let mut quiet: Vec<f32> = (0..32000)
+            .map(|i| 0.005 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 16000.0).sin())
             .collect();
-        let normalized = normalize_speech(quiet);
+        agc_rms_16k(&mut quiet);
         let out_rms =
-            (normalized[8000..24000].iter().map(|&x| x * x).sum::<f32>() / 16000.0).sqrt();
-        assert!(out_rms > 0.02, "Тихий сигнал должен быть усилен AGC");
-        assert!(normalized.iter().all(|&x| x.abs() <= 1.0));
+            (quiet[8000..24000].iter().map(|&x| x * x).sum::<f32>() / 16000.0).sqrt();
+        assert!(out_rms > 0.03, "Тихий сигнал должен быть усилен AGC (out_rms={out_rms})");
+        assert!(quiet.iter().all(|&x| x.abs() <= 1.0));
     }
 
     #[test]
-    fn normalize_speech_does_not_explode_on_silence() {
-        let silence = vec![0.0001f32; 16000];
-        let normalized = normalize_speech(silence);
-        let max_val = normalized.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+    fn agc_rms_16k_does_not_explode_on_silence() {
+        let mut silence = vec![0.0001f32; 16000];
+        agc_rms_16k(&mut silence);
+        let max_val = silence.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
         assert!(
             max_val < 0.01,
             "Шумовой пол не должен разгоняться компрессором"

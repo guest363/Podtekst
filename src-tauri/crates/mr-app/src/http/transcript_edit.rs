@@ -16,28 +16,6 @@ pub(super) fn handle_transcript_edit(request: tiny_http::Request, body: Value) {
     }
 }
 
-pub(super) fn handle_transcript_refine(request: tiny_http::Request, body: Value) {
-    let file = body
-        .get("file")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim();
-    if file.is_empty() {
-        json_response(
-            request,
-            json!({"ok": false, "error": "Файл не указан"}),
-            400,
-        );
-        return;
-    }
-    match crate::transcribe::refine::refine_transcript_file(file) {
-        Ok(result) => json_response(request, result, 200),
-        Err((status, error)) => {
-            json_response(request, json!({"ok": false, "error": error}), status)
-        }
-    }
-}
-
 fn edit_transcript(body: &Value) -> Result<Value, (u16, String)> {
     let (json_path, md_path, txt_path) = transcript_paths(body)?;
     let source = std::fs::read_to_string(&json_path).map_err(|error| {

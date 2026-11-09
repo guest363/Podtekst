@@ -168,60 +168,6 @@ fn open_backend(model_sha: String, threads: u32) -> Result<sidecar::SidecarBacke
     ))
 }
 
-#[cfg(not(target_os = "android"))]
-pub fn run_prompts_session<F, R>(f: F) -> Result<R, String>
-where
-    F: FnOnce(&mut dyn FnMut(&str, &str, u32, f32) -> Result<String, String>) -> Result<R, String>,
-{
-    let path =
-        super::catalog::model_path().ok_or_else(|| "Модель Qwen не установлена".to_string())?;
-    let sha = super::catalog::verified_model_sha(&path)
-        .ok_or_else(|| "Не удалось проверить хэш модели".to_string())?;
-    let threads = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
-        .clamp(1, 8) as u32;
-    let mut backend = open_backend(sha, threads)?;
-    let cancel = super::backend::CancelToken::default();
-
-    let mut runner =
-        |system: &str, prompt: &str, max_tokens: u32, temperature: f32| -> Result<String, String> {
-            let req = super::backend::GenerateRequest {
-                model_path: path.clone(),
-                system: system.to_string(),
-                prompt: prompt.to_string(),
-                max_tokens,
-                temperature: temperature as f64,
-                top_p: 0.9,
-                repeat_penalty: 1.1,
-                seed: 42,
-                n_ctx: super::config::CONTEXT_TOKENS,
-                threads,
-                stop: vec![],
-            };
-            let mut on_event = |event: BackendEvent| {
-                if event.phase == Phase::Generate {
-                    sidecar::touch();
-                }
-            };
-            backend
-                .generate(&req, &cancel, &mut on_event)
-                .map_err(|e| format!("Ошибка генерации: {e:?}"))
-        };
-
-    // Idle-таймер ставим до работы: иначе ошибка оставит sidecar без присмотра.
-    sidecar::arm_idle_monitor();
-    f(&mut runner)
-}
-
-#[cfg(target_os = "android")]
-pub fn run_prompts_session<F, R>(_f: F) -> Result<R, String>
-where
-    F: FnOnce(&mut dyn FnMut(&str, &str, u32, f32) -> Result<String, String>) -> Result<R, String>,
-{
-    Err("Генерация недоступна на Android".to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
