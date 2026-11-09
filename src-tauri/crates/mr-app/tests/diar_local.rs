@@ -5,10 +5,15 @@
 //!   cargo test -p mr-app --test diar_local \
 //!   --manifest-path src-tauri/Cargo.toml -- --ignored --nocapture
 //! ```
+//!
+//! `cases.json` может содержать `expected_turns` (эталон для DER) и
+//! `max_rtf`; без них проверяются только число спикеров и хеш.
 
 #![cfg(feature = "onnx")]
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use mr_app_lib::{transcribe_file, TranscribeOptions};
 
@@ -20,6 +25,147 @@ struct Case {
     expected_speakers: usize,
     #[serde(default)]
     probe_mark: Option<String>,
+    /// Эталонные интервалы спикеров для DER; опционально.
+    #[serde(default)]
+    expected_turns: Option<Vec<Turn>>,
+    /// Верхняя граница Real-Time Factor (время обработки / длительность).
+    #[serde(default)]
+    max_rtf: Option<f64>,
+}
+
+#[derive(serde::Deserialize, Clone)]
+struct Turn {
+    start: f64,
+    end: f64,
+    speaker: String,
+}
+
+#[derive(serde::Deserialize)]
+struct TranscriptUtterance {
+    start: f64,
+    end: f64,
+    speaker: String,
+}
+
+#[derive(serde::Deserialize)]
+struct Transcript {
+    utterances: Vec<TranscriptUtterance>,
+}
+
+#[derive(Debug)]
+struct DerMetrics {
+    der: f64,
+    missed: f64,
+    false_alarm: f64,
+    confusion: f64,
+    total_ref: f64,
+}
+
+fn dominant<'a>(intervals: &[(&'a str, f64, f64)], start: f64, end: f64) -> Option<&'a str> {
+    let mut best: Option<(&str, f64)> = None;
+    for &(speaker, a, b) in intervals {
+        let overlap = (end.min(b) - start.max(a)).max(0.0);
+        if overlap <= 0.0 {
+            continue;
+        }
+        if best.is_none_or(|(_, score)| overlap > score) {
+            best = Some((speaker, overlap));
+        }
+    }
+    best.map(|(speaker, _)| speaker)
+}
+
+/// DER с collar вокруг границ эталонных реплик и оптимальным сопоставлением
+/// меток через венгерский алгоритм. Интервалы режутся по всем границам,
+/// поэтому результат не зависит от шага сетки.
+fn compute_der(hyp: &[TranscriptUtterance], reference: &[Turn], collar_sec: f64) -> DerMetrics {
+    let hyp_intervals: Vec<(&str, f64, f64)> = hyp
+        .iter()
+        .map(|u| (u.speaker.as_str(), u.start, u.end))
+        .collect();
+    let ref_intervals: Vec<(&str, f64, f64)> = reference
+        .iter()
+        .map(|t| (t.speaker.as_str(), t.start, t.end))
+        .collect();
+    let mut edges: Vec<f64> = hyp
+        .iter()
+        .flat_map(|u| [u.start, u.end])
+        .chain(reference.iter().flat_map(|t| [t.start, t.end]))
+        .filter(|x| x.is_finite())
+        .collect();
+    edges.sort_by(f64::total_cmp);
+    edges.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+    let ref_edges: Vec<f64> = reference
+        .iter()
+        .flat_map(|t| [t.start, t.end])
+        .filter(|x| x.is_finite())
+        .collect();
+    let total_ref: f64 = reference.iter().map(|t| (t.end - t.start).max(0.0)).sum();
+    let mut matrix: HashMap<(String, String), f64> = HashMap::new();
+    let mut missed = 0.0;
+    let mut false_alarm = 0.0;
+    for pair in edges.windows(2) {
+        let (start, end) = (pair[0], pair[1]);
+        let duration = end - start;
+        if duration <= 0.0 {
+            continue;
+        }
+        let mid = (start + end) / 2.0;
+        if ref_edges
+            .iter()
+            .any(|edge| (mid - edge).abs() <= collar_sec)
+        {
+            continue;
+        }
+        let hyp_speaker = dominant(&hyp_intervals, start, end);
+        let ref_speaker = dominant(&ref_intervals, start, end);
+        match (hyp_speaker, ref_speaker) {
+            (Some(h), Some(r)) => {
+                *matrix.entry((h.to_string(), r.to_string())).or_default() += duration;
+            }
+            (Some(_), None) => false_alarm += duration,
+            (None, Some(_)) => missed += duration,
+            (None, None) => {}
+        }
+    }
+    let hyp_names: Vec<String> = {
+        let mut names: Vec<String> = hyp.iter().map(|u| u.speaker.clone()).collect();
+        names.sort();
+        names.dedup();
+        names
+    };
+    let ref_names: Vec<String> = {
+        let mut names: Vec<String> = reference.iter().map(|t| t.speaker.clone()).collect();
+        names.sort();
+        names.dedup();
+        names
+    };
+    let scores: Vec<Vec<f64>> = hyp_names
+        .iter()
+        .map(|h| {
+            ref_names
+                .iter()
+                .map(|r| matrix.get(&(h.clone(), r.clone())).copied().unwrap_or(0.0))
+                .collect()
+        })
+        .collect();
+    let correct: f64 = mr_ml::linear_sum_assignment_max(&scores)
+        .into_iter()
+        .map(|(h, r)| scores[h][r])
+        .sum();
+    let confused: f64 = matrix.values().sum::<f64>() - correct;
+    let der = if total_ref > 0.0 {
+        (missed + false_alarm + confused) / total_ref
+    } else {
+        0.0
+    };
+    DerMetrics {
+        der,
+        missed,
+        false_alarm,
+        confusion: confused,
+        total_ref,
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -62,11 +208,13 @@ fn local_diarization_cases() {
         assert_eq!(channels, case.channels, "{}: число каналов", case.id);
 
         let opts = TranscribeOptions::default();
+        let started = Instant::now();
         let report = transcribe_file(&wav, &opts, &|pct, msg| {
             if pct % 10 == 0 {
                 eprintln!("{}: {pct}% {msg}", case.id);
             }
         });
+        let elapsed = started.elapsed().as_secs_f64();
         let report = match report {
             Ok(report) => report,
             Err(error) => {
@@ -74,6 +222,36 @@ fn local_diarization_cases() {
                 continue;
             }
         };
+        let rtf = elapsed / report.duration_sec.max(1e-9);
+        if let Some(max_rtf) = case.max_rtf {
+            if rtf > max_rtf {
+                failures.push(format!(
+                    "{}: RTF {rtf:.3} выше предела {max_rtf:.3}",
+                    case.id
+                ));
+            }
+        }
+        if let Some(reference) = &case.expected_turns {
+            match std::fs::read_to_string(&report.json_path)
+                .ok()
+                .and_then(|text| serde_json::from_str::<Transcript>(&text).ok())
+            {
+                Some(transcript) => {
+                    let der = compute_der(&transcript.utterances, reference, 0.25);
+                    eprintln!(
+                        "{}: DER {:.3} (miss {:.2}, fa {:.2}, conf {:.2})",
+                        case.id, der.der, der.missed, der.false_alarm, der.confusion
+                    );
+                    if der.total_ref <= 0.0 || der.der > 0.12 {
+                        failures.push(format!(
+                            "{}: DER {:.3} выше 0.12 (эталон {:.2} с)",
+                            case.id, der.der, der.total_ref
+                        ));
+                    }
+                }
+                None => failures.push(format!("{}: не читается transcript.json", case.id)),
+            }
+        }
         eprintln!(
             "{}: спикеры {:?}, реплик {}, probe: {}",
             case.id,
@@ -92,4 +270,75 @@ fn local_diarization_cases() {
         }
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+#[test]
+fn der_identical_turns_is_zero() {
+    let reference = vec![Turn {
+        start: 0.0,
+        end: 5.0,
+        speaker: "A".to_string(),
+    }];
+    let hyp = vec![TranscriptUtterance {
+        start: 0.0,
+        end: 5.0,
+        speaker: "Спикер 1".to_string(),
+    }];
+    let der = compute_der(&hyp, &reference, 0.25);
+    assert!(der.der < 1e-9, "{der:?}");
+}
+
+#[test]
+fn der_counts_missed_and_false_alarm() {
+    let reference = vec![Turn {
+        start: 0.0,
+        end: 10.0,
+        speaker: "A".to_string(),
+    }];
+    let hyp = vec![
+        TranscriptUtterance {
+            start: 0.0,
+            end: 5.0,
+            speaker: "Спикер 1".to_string(),
+        },
+        TranscriptUtterance {
+            start: 11.0,
+            end: 12.0,
+            speaker: "Спикер 2".to_string(),
+        },
+    ];
+    let der = compute_der(&hyp, &reference, 0.25);
+    assert!((der.missed - 5.0).abs() < 1e-9, "{der:?}");
+    assert!((der.false_alarm - 1.0).abs() < 1e-9, "{der:?}");
+    assert!((der.der - 0.6).abs() < 1e-9, "{der:?}");
+}
+
+#[test]
+fn der_maps_swapped_labels() {
+    let reference = vec![
+        Turn {
+            start: 0.0,
+            end: 5.0,
+            speaker: "A".to_string(),
+        },
+        Turn {
+            start: 5.0,
+            end: 10.0,
+            speaker: "B".to_string(),
+        },
+    ];
+    let hyp = vec![
+        TranscriptUtterance {
+            start: 0.0,
+            end: 5.0,
+            speaker: "X".to_string(),
+        },
+        TranscriptUtterance {
+            start: 5.0,
+            end: 10.0,
+            speaker: "Y".to_string(),
+        },
+    ];
+    let der = compute_der(&hyp, &reference, 0.25);
+    assert!(der.der < 1e-9, "{der:?}");
 }

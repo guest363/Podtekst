@@ -447,6 +447,7 @@ pub fn transcribe_file(
         .collect();
 
     let mut channel_grouped: HashMap<usize, Vec<(f64, f64)>> = HashMap::new();
+    let mut channel_vad: HashMap<usize, Vec<f32>> = HashMap::new();
     let channel_count = chan_list.len().max(1) as f64;
     for (ch_i, (ch, label)) in chan_list.iter().enumerate() {
         let samples = &channel_samples[ch];
@@ -462,10 +463,32 @@ pub fn transcribe_file(
                 );
             })
             .map_err(|e| format!("VAD: {e}"))?;
-        let segs = vad_segments_from_probs(&probs, 0.1, 0.25, 0.5);
+        channel_vad.insert(*ch, probs);
+    }
+    // Пролезание системного канала в микрофон создаёт ложные реплики
+    // «Участник N». Гасим VAD микрофона только там, где он тише системы.
+    if is_stereo {
+        if let (Some(mic), Some(system)) = (channel_samples.get(&0), channel_samples.get(&1)) {
+            if let Some(probs) = channel_vad.get_mut(&0) {
+                let suppressed = channel_mix::suppress_mic_bleed(mic, system, probs);
+                if suppressed > 0 {
+                    on_event(
+                        14,
+                        &format!("Микрофон: подавлено эхо в {suppressed} кадрах"),
+                    );
+                }
+            }
+        }
+    }
+    for (ch_i, (ch, label)) in chan_list.iter().enumerate() {
+        let samples = &channel_samples[ch];
+        let base = 6.0 + 8.0 * ch_i as f64 / channel_count;
+        let span = 8.0 / channel_count;
+        let probs = &channel_vad[ch];
+        let segs = vad_segments_from_probs(probs, 0.1, 0.25, 0.5);
         let grouped = diarize::merge_quiet_short(
             samples,
-            diarize::group_segments(&segs, &probs, MAX_SEGMENT_SEC, SEGMENT_GAP_SEC),
+            diarize::group_segments(&segs, probs, MAX_SEGMENT_SEC, SEGMENT_GAP_SEC),
         );
         on_event(
             (base + span) as u8,
@@ -601,16 +624,19 @@ pub fn transcribe_file(
         let source_utts = channel_utts.remove(ch).unwrap_or_default();
         let segmentation = if models.embed.is_some() && !source_utts.is_empty() {
             on_event(80, "Ищу одновременную речь…");
-            models
-                .segmentation
-                .as_mut()
-                .and_then(|model| match model.segment(samples) {
+            models.segmentation.as_mut().and_then(|model| {
+                let result = match channel_vad.get(ch) {
+                    Some(probs) => model.segment_with_vad(samples, probs),
+                    None => model.segment(samples),
+                };
+                match result {
                     Ok(result) => Some(result),
                     Err(error) => {
                         crate::note!("PyAnnote segmentation недоступна: {error}");
                         None
                     }
-                })
+                }
+            })
         } else {
             None
         };
