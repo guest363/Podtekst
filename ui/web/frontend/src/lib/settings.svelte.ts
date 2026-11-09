@@ -41,10 +41,18 @@ type SettingsState = {
   systemAudio: boolean
   systemAudioPermission: boolean
   autoTranscribe: boolean
+  speakers: number
   hotwords: string[]
   ctcEnabled: boolean
   hotwordsLoaded: boolean
   summaryFeature: boolean | null
+}
+
+// 0 — автоопределение диаризации; 2..6 — фиксированное число спикеров.
+const storedSpeakers = (): number => {
+  if (typeof localStorage === 'undefined') return 0
+  const n = Number(localStorage.getItem('mr_speakers'))
+  return Number.isInteger(n) && n >= 2 && n <= 6 ? n : 0
 }
 
 export const settings: SettingsState = $state({
@@ -56,6 +64,7 @@ export const settings: SettingsState = $state({
   systemAudio: false,
   systemAudioPermission: true,
   autoTranscribe: true,
+  speakers: storedSpeakers(),
   hotwords: [],
   ctcEnabled: true,
   hotwordsLoaded: false,
@@ -106,6 +115,15 @@ export const setAutoTranscribe = async (enabled: boolean): Promise<void> => {
     if (!d.ok) toast(d.error || 'Не удалось сохранить авто-расшифровку', 'error')
   } catch {
     toast('Не удалось сохранить авто-расшифровку', 'error')
+  }
+}
+
+export const setSpeakers = (n: number): void => {
+  settings.speakers = Number.isInteger(n) && n >= 2 && n <= 6 ? n : 0
+  try {
+    localStorage.setItem('mr_speakers', String(settings.speakers))
+  } catch {
+    /* приватный режим: настройка просто не переживёт перезагрузку */
   }
 }
 

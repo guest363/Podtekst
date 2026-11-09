@@ -79,12 +79,28 @@ struct Cli {
     speaker_l: String,
     #[arg(long, default_value = "Собеседник")]
     speaker_r: String,
+    #[arg(long, default_value_t = 0, help = "Минимум спикеров (0 — авто)")]
+    min_speakers: usize,
+    #[arg(long, default_value_t = 0, help = "Максимум спикеров (0 — авто)")]
+    max_speakers: usize,
     #[arg(long, hide = true)]
     macos_selftest: bool,
     #[arg(long, help = "Собрать отчёт диагностики и выйти")]
     diagnostics: bool,
     #[arg(long, help = "Добавить в отчёт хвост dev-логов (только dev-сборка)")]
     with_dev_logs: bool,
+}
+
+impl Cli {
+    fn validate_speakers(&self) -> Result<(), String> {
+        if self.min_speakers > 0 && self.max_speakers > 0 && self.min_speakers > self.max_speakers {
+            return Err(format!(
+                "--min-speakers ({}) не может быть больше --max-speakers ({})",
+                self.min_speakers, self.max_speakers
+            ));
+        }
+        Ok(())
+    }
 }
 
 const DEFAULT_HTTP_PORT: u16 = 8765;
@@ -206,6 +222,10 @@ pub fn run_cli() {
     let cli = Cli::parse();
     logging::init();
     crash::install_hook();
+    if let Err(e) = cli.validate_speakers() {
+        crate::note!("{e}");
+        exit_now(2);
+    }
     if cli.diagnostics {
         match diagnostics::collect(cli.with_dev_logs) {
             Ok(path) => println!("{}", path.display()),
@@ -233,8 +253,8 @@ pub fn run_cli() {
             speaker_right: cli.speaker_r.clone(),
             engine: cli.engine.clone(),
             language: cli.language.to_lowercase(),
-            min_speakers: 0,
-            max_speakers: 0,
+            min_speakers: cli.min_speakers,
+            max_speakers: cli.max_speakers,
             hotwords: crate::config::configured_hotwords(),
             ctc_enabled: crate::config::configured_ctc_enabled(),
         };
@@ -472,6 +492,63 @@ mod tests {
     fn cli_parses_toggle() {
         let cli = Cli::try_parse_from(["podtekst", "--toggle"]).unwrap();
         assert!(cli.toggle);
+    }
+
+    #[test]
+    fn cli_speakers_default_to_auto() {
+        let cli = Cli::try_parse_from(["podtekst"]).unwrap();
+        assert_eq!((cli.min_speakers, cli.max_speakers), (0, 0));
+        assert!(cli.validate_speakers().is_ok());
+    }
+
+    #[test]
+    fn cli_speakers_accept_bounds() {
+        let fixed = Cli::try_parse_from([
+            "podtekst",
+            "--transcribe",
+            "a.wav",
+            "--min-speakers",
+            "2",
+            "--max-speakers",
+            "2",
+        ])
+        .unwrap();
+        assert_eq!((fixed.min_speakers, fixed.max_speakers), (2, 2));
+        assert!(fixed.validate_speakers().is_ok());
+
+        let range = Cli::try_parse_from([
+            "podtekst",
+            "--transcribe",
+            "a.wav",
+            "--min-speakers",
+            "2",
+            "--max-speakers",
+            "5",
+        ])
+        .unwrap();
+        assert!(range.validate_speakers().is_ok());
+
+        let lower_only =
+            Cli::try_parse_from(["podtekst", "--transcribe", "a.wav", "--min-speakers", "3"])
+                .unwrap();
+        assert!(lower_only.validate_speakers().is_ok());
+    }
+
+    #[test]
+    fn cli_rejects_min_above_max() {
+        let cli = Cli::try_parse_from([
+            "podtekst",
+            "--transcribe",
+            "a.wav",
+            "--min-speakers",
+            "5",
+            "--max-speakers",
+            "2",
+        ])
+        .unwrap();
+        let err = cli.validate_speakers().unwrap_err();
+        assert!(err.contains("--min-speakers"), "{err}");
+        assert!(err.contains("--max-speakers"), "{err}");
     }
 
     #[test]
