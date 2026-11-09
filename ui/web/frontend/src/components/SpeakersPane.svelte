@@ -14,7 +14,7 @@ import { toast, toastConfirm } from '../lib/toast.svelte.ts'
 import { editTranscript, transcript } from '../lib/transcript.svelte.ts'
 import { emit, ui } from '../lib/ui.svelte.ts'
 
-interface Props {
+type Props = {
   speakers: SpeakerInfo[]
 }
 let { speakers }: Props = $props()
@@ -308,7 +308,7 @@ function getCardPack(key: string, currentVal?: string): string {
   return peopleState.packs[0]?.id || 'default'
 }
 
-interface DropdownState {
+type DropdownState = {
   spkKey: string
   x: number
   y: number

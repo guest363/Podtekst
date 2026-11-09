@@ -1,7 +1,7 @@
 import { readJsonSafe } from './api'
 import { copyText, toast } from './toast.svelte.ts'
 
-export interface DonateMethod {
+export type DonateMethod = {
   title?: string
   desc?: string
   url?: string

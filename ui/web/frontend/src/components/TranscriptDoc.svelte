@@ -6,7 +6,7 @@ import { addHotword } from '../lib/settings.svelte.ts'
 import { toast } from '../lib/toast.svelte.ts'
 import { editTranscript } from '../lib/transcript.svelte.ts'
 
-interface Props {
+type Props = {
   utterances: Utterance[]
   markdown: string
   file?: string
@@ -328,7 +328,7 @@ function inlineMd(s: string): string {
     )
 }
 
-interface Block {
+type Block = {
   kind: 'utt'
   time: string
   speaker: string
@@ -338,7 +338,7 @@ interface Block {
   index: number
 }
 
-interface Raw {
+type Raw = {
   kind: 'h1' | 'h2' | 'h3' | 'p' | 'hr' | 'ul'
   text?: string
   items?: string[]

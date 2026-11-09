@@ -2,7 +2,7 @@
 // Захват экрана и склейка выполняются нативно на стороне Rust-ядра.
 import { toast } from './toast.svelte.ts'
 
-export interface ScreenRecorderState {
+export type ScreenRecorderState = {
   enabled: boolean
   active: boolean
   error: string | null

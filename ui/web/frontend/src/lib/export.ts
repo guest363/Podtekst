@@ -2,7 +2,7 @@ import type { Utterance } from './api'
 import { fmtClockShort } from './api'
 import { toast } from './toast.svelte.ts'
 
-export interface TranscriptMeta {
+export type TranscriptMeta = {
   title: string
   source: string
   durStr?: string

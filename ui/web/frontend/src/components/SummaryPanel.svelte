@@ -25,7 +25,7 @@ import SummaryResult from './SummaryResult.svelte'
 import SummaryStage from './SummaryStage.svelte'
 import SummarySuggestion from './SummarySuggestion.svelte'
 
-interface Props {
+type Props = {
   file: string
   transcriptMarkdown: () => string
 }

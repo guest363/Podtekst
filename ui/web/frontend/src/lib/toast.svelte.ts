@@ -1,9 +1,9 @@
-export interface ToastAction {
+export type ToastAction = {
   label: string
   run: () => void
 }
 
-export interface Toast {
+export type Toast = {
   id: number
   msg: string
   kind: '' | 'error'

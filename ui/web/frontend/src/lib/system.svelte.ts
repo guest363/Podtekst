@@ -1,13 +1,13 @@
 import { readJsonSafe } from './api'
 import { toast } from './toast.svelte.ts'
 
-export interface CheckFix {
+export type CheckFix = {
   kind: string
   target: string
   label: string
 }
 
-export interface SystemCheck {
+export type SystemCheck = {
   id: string
   title: string
   status: string
@@ -17,7 +17,7 @@ export interface SystemCheck {
   duration_ms: number
 }
 
-export interface ChecksSummary {
+export type ChecksSummary = {
   status: string
   ok: number
   warn: number
@@ -25,26 +25,26 @@ export interface ChecksSummary {
   skip: number
 }
 
-export interface DiskInfo {
+export type DiskInfo = {
   path?: string
   total_bytes?: number
   free_bytes?: number
   used_bytes?: number
 }
 
-export interface MemoryInfo {
+export type MemoryInfo = {
   total_bytes?: number
   available_bytes?: number
   used_bytes?: number
 }
 
-export interface RecordingInfo {
+export type RecordingInfo = {
   active?: boolean
   elapsed?: number
   mode?: string
 }
 
-export interface ModelItem {
+export type ModelItem = {
   id: string
   kind?: string
   title: string
@@ -65,7 +65,7 @@ export interface ModelItem {
   source_url?: string
 }
 
-export interface ModelsSummary {
+export type ModelsSummary = {
   core_ready?: boolean
   installed?: number
   total?: number
@@ -74,7 +74,7 @@ export interface ModelsSummary {
   items?: ModelItem[]
 }
 
-export interface FfmpegStatus {
+export type FfmpegStatus = {
   available?: boolean
   downloading?: boolean
   pct?: number
@@ -82,14 +82,14 @@ export interface FfmpegStatus {
   manual_url?: string
 }
 
-export interface DeviceInfo {
+export type DeviceInfo = {
   id?: string
   name?: string
   muted?: boolean
   system?: boolean
 }
 
-export interface DevicesInfo {
+export type DevicesInfo = {
   platform?: string
   inputs?: DeviceInfo[]
   system?: DeviceInfo[]
@@ -98,26 +98,26 @@ export interface DevicesInfo {
   has_system_audio?: boolean
 }
 
-export interface PermissionInfo {
+export type PermissionInfo = {
   id?: string
   name?: string
   granted?: boolean
   detail?: string
 }
 
-export interface PermissionsInfo {
+export type PermissionsInfo = {
   system_audio?: boolean | string
   screen_capture_supported?: boolean | string
   microphone?: boolean | string
   [key: string]: boolean | string | undefined
 }
 
-export interface HotkeyInfo {
+export type HotkeyInfo = {
   accelerator?: string
   registered?: boolean | null
 }
 
-export interface IntegrationInfo {
+export type IntegrationInfo = {
   hotkey?: HotkeyInfo
   autostart?: boolean
   single_instance?: boolean
@@ -126,7 +126,7 @@ export interface IntegrationInfo {
   [key: string]: unknown
 }
 
-export interface UpdateSnapshotInfo {
+export type UpdateSnapshotInfo = {
   current?: string
   mode?: string
   install_mode?: string
@@ -138,14 +138,14 @@ export interface UpdateSnapshotInfo {
   signed?: boolean
 }
 
-export interface DirStats {
+export type DirStats = {
   count?: number
   last_at?: string
   unacknowledged?: number
   session_count?: number
 }
 
-export interface JournalSession {
+export type JournalSession = {
   id: string
   started_at?: string
   ended_at?: string
@@ -167,7 +167,7 @@ export interface JournalSession {
   app_version?: string
 }
 
-export interface JournalSummary {
+export type JournalSummary = {
   count?: number
   last_at?: string
   total?: number
@@ -175,7 +175,7 @@ export interface JournalSummary {
   truncated?: boolean
 }
 
-export interface CrashItem {
+export type CrashItem = {
   id: string
   created_at?: string
   kind?: string
@@ -193,7 +193,7 @@ export interface CrashItem {
   acked?: boolean
 }
 
-export interface SystemSnapshot {
+export type SystemSnapshot = {
   version?: string
   os?: string | { name?: string; family?: string; version?: string; arch?: string; kernel?: string }
   paths?: Record<string, string>

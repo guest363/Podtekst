@@ -1,7 +1,7 @@
 // Типизированный клиент REST-ядра. Формы ответов зафиксированы здесь;
 // страж контракта — Rust-тест restored_endpoints_roundtrip.
 
-export interface Person {
+export type Person = {
   name: string
   role?: string
   domain?: string
@@ -11,7 +11,7 @@ export interface Person {
   pack_enabled?: boolean
 }
 
-export interface Voicepack {
+export type Voicepack = {
   id: string
   name: string
   enabled: boolean
@@ -20,7 +20,7 @@ export interface Voicepack {
   snippets_count?: number
 }
 
-export interface ModelInfo {
+export type ModelInfo = {
   id: string
   kind?: string
   title: string
@@ -74,32 +74,32 @@ export type OutLang = 'ru' | 'en'
 export type SummaryRole = 'plain' | 'decision' | 'task' | 'status'
 export type InlineSegment = { kind: 'text' | 'bold' | 'code'; value: string }
 
-export interface TaskMeta {
+export type TaskMeta = {
   assignee: string | null
   deadline: string | null
   deadline_source: 'model' | 'extracted'
 }
 
-export interface SummaryItem {
+export type SummaryItem = {
   text: string
   role: SummaryRole
   task?: TaskMeta
 }
 
-export interface SummarySection {
+export type SummarySection = {
   id: string
   title: string
   role: SummaryRole
   items: SummaryItem[]
 }
 
-export interface SummaryPresetSection {
+export type SummaryPresetSection = {
   id: string
   title: string
   role: SummaryRole
 }
 
-export interface SummaryPreset {
+export type SummaryPreset = {
   id: string
   label: string
   short: string
@@ -113,11 +113,11 @@ export interface SummaryPreset {
   speaker_primary?: string[]
 }
 
-export interface SummaryModelInfo extends ModelInfo {
+export type SummaryModelInfo = ModelInfo & {
   kind: 'summary'
 }
 
-export interface SummaryClassification {
+export type SummaryClassification = {
   preset_id: string | null
   confidence: Confidence
   alternatives: string[]
@@ -133,7 +133,7 @@ export interface SummaryClassification {
   cache_hit?: boolean
 }
 
-export interface SummaryRecord {
+export type SummaryRecord = {
   id: string
   job_id: string
   file: string
@@ -155,7 +155,7 @@ export interface SummaryRecord {
   schema_minor: number
 }
 
-export interface SummaryArtifact {
+export type SummaryArtifact = {
   schema: string
   schema_minor: number
   id: string
@@ -235,7 +235,7 @@ export interface SummaryArtifact {
 
 export type SummaryGpuMode = 'auto' | 'off'
 
-export interface SummaryGpuStatus {
+export type SummaryGpuStatus = {
   supported: boolean
   bundled: boolean
   backend: string
@@ -259,26 +259,26 @@ export interface SummaryGpuStatus {
   cancelled: boolean
 }
 
-export interface SummarySettings {
+export type SummarySettings = {
   auto_suggest: boolean
   default_preset: string | null
   detail: SummaryDetail
   gpu: SummaryGpuMode
 }
 
-export interface SummaryCapabilities {
+export type SummaryCapabilities = {
   summary_supported: boolean
   runtime: 'sidecar' | 'missing'
   classifier: 'heuristic' | 'manual_only'
 }
 
-export interface SummaryBusy {
+export type SummaryBusy = {
   kind: 'transcribing' | 'recording' | 'summary'
   file?: string
   job_id?: string
 }
 
-export interface SummaryActive {
+export type SummaryActive = {
   job_id: string
   file: string
   phase: string
@@ -288,7 +288,7 @@ export interface SummaryActive {
   elapsed_sec?: number
 }
 
-export interface SummaryLimits {
+export type SummaryLimits = {
   max_chars: number
   max_seconds: number
   min_free_ram_mb: number
@@ -308,7 +308,7 @@ export type SummaryBlockReason =
   | 'too_short'
   | 'no_text'
 
-export interface SummaryResponse {
+export type SummaryResponse = {
   ok: boolean
   state: SummaryStateName
   source_rev: string
@@ -323,14 +323,14 @@ export interface SummaryResponse {
   block_reason: SummaryBlockReason | null
 }
 
-export interface SummaryPresetsResponse {
+export type SummaryPresetsResponse = {
   ok: boolean
   catalog_version: number
   presets: SummaryPreset[]
   system_prompt_base?: string
 }
 
-export interface SummarySettingsResponse {
+export type SummarySettingsResponse = {
   ok: boolean
   settings: SummarySettings
   presets: SummaryPreset[]
@@ -340,14 +340,14 @@ export interface SummarySettingsResponse {
   gpu: SummaryGpuStatus
 }
 
-export interface SummaryClassifyResponse {
+export type SummaryClassifyResponse = {
   ok: boolean
   classification: SummaryClassification | null
   source_rev: string
   cache_hit?: boolean
 }
 
-export interface SummaryGenerateResponse {
+export type SummaryGenerateResponse = {
   ok: boolean
   job_id?: string
   started?: boolean
@@ -355,12 +355,12 @@ export interface SummaryGenerateResponse {
   summary_id?: string
 }
 
-export interface SummaryCancelResponse {
+export type SummaryCancelResponse = {
   ok: boolean
   cancelled: boolean
 }
 
-export interface SpeakerSample {
+export type SpeakerSample = {
   start: number
   end: number
   dur?: number
@@ -369,20 +369,20 @@ export interface SpeakerSample {
   channel?: number | null
 }
 
-export interface SpeakerCandidate {
+export type SpeakerCandidate = {
   name: string
   similarity?: number
   pack_id?: string
   pack_name?: string
 }
 
-export interface VoiceprintSummary {
+export type VoiceprintSummary = {
   name: string
   samples_count: number
   updated_at?: string
 }
 
-export interface VoicePrototype {
+export type VoicePrototype = {
   id?: string | null
   created_at?: string | null
   duration_sec?: number | null
@@ -390,14 +390,14 @@ export interface VoicePrototype {
   has_snippet?: boolean
 }
 
-export interface VoiceDetail {
+export type VoiceDetail = {
   name?: string | null
   pack_id?: string
   samples_count?: number | null
   prototypes?: VoicePrototype[]
 }
 
-export interface SpeakerInfo {
+export type SpeakerInfo = {
   id?: string
   name: string
   channel?: number | null
@@ -415,13 +415,13 @@ export interface SpeakerInfo {
   total_speech_sec?: number
 }
 
-export interface WordConf {
+export type WordConf = {
   w: string
   conf: number
   needs_review: boolean
 }
 
-export interface Utterance {
+export type Utterance = {
   start: number
   end?: number
   speaker?: string
@@ -431,7 +431,7 @@ export interface Utterance {
   ctc_used?: boolean
 }
 
-export interface TranscriptData {
+export type TranscriptData = {
   filename?: string
   meta?: Record<string, unknown>
   speakers_info?: SpeakerInfo[]
@@ -440,7 +440,7 @@ export interface TranscriptData {
   rev?: string
 }
 
-export interface RecordingItem {
+export type RecordingItem = {
   name: string
   path: string
   is_video: boolean
@@ -489,7 +489,7 @@ export function fmtClockShort(sec: number): string {
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${(s % 60).toFixed(0).padStart(2, '0')}`
 }
 
-export interface FormattedRecDate {
+export type FormattedRecDate = {
   day: string
   time: string
   full: string

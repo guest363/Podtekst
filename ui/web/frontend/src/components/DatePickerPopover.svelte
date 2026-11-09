@@ -2,7 +2,7 @@
 import { onMount } from 'svelte'
 import { formatRangeLabel } from '../lib/api'
 
-interface Props {
+type Props = {
   start: Date | null
   end: Date | null
   onSelect: (start: Date, end: Date, label: string) => void

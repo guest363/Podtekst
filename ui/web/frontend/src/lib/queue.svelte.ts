@@ -1,14 +1,14 @@
 import { readJsonSafe } from './api'
 import { toast } from './toast.svelte.ts'
 
-export interface QueueItem {
+export type QueueItem = {
   position: number
   file: string
   name: string
   engine: string
 }
 
-export interface QueueState {
+export type QueueState = {
   running: boolean
   currentFile: string | null
   items: QueueItem[]

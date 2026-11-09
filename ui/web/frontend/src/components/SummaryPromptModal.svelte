@@ -2,7 +2,7 @@
 import { tick } from 'svelte'
 import type { SummaryPreset } from '../lib/api'
 
-interface Props {
+type Props = {
   open: boolean
   presets: SummaryPreset[]
   initialId?: string

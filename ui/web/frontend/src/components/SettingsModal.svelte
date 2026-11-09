@@ -26,7 +26,7 @@ import { checkUpdate, update } from '../lib/update.svelte.ts'
 import SummarySettingsTab from './SummarySettingsTab.svelte'
 import SystemSettingsTab from './SystemSettingsTab.svelte'
 
-interface Props {
+type Props = {
   inline?: boolean
 }
 let { inline = false }: Props = $props()

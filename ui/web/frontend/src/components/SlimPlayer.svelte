@@ -1,7 +1,7 @@
 <script lang="ts">
 import { fmtClock } from '../lib/api'
 
-interface Props {
+type Props = {
   src: string
   isVideo: boolean
   fileName: string

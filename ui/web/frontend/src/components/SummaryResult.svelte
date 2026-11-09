@@ -3,7 +3,7 @@ import type { SummaryRecord } from '../lib/api'
 import { renderInline } from '../lib/markdown'
 import { summaryDate, summaryDuration, summaryWarnings } from '../lib/summaryUi.ts'
 
-interface Props {
+type Props = {
   record: SummaryRecord
   stale: boolean
   sensitive?: boolean

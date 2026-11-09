@@ -2,7 +2,7 @@ import { readJsonSafe } from './api'
 import { loadSystem } from './system.svelte.ts'
 import { toast } from './toast.svelte.ts'
 
-export interface UpdateAttempt {
+export type UpdateAttempt = {
   from: string
   to: string
   started_at: string

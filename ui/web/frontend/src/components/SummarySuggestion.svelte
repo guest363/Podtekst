@@ -14,7 +14,7 @@ import {
 } from '../lib/summaryUi.ts'
 import { transcript } from '../lib/transcript.svelte.ts'
 
-interface Props {
+type Props = {
   classification: SummaryClassification | null
   canGenerate: boolean
   blockingText: string
