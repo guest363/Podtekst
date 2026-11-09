@@ -112,6 +112,14 @@ impl GigaAM {
             return Ok(String::new());
         }
         let mel = super::features::nemo_mel(samples);
+        self.transcribe_mel_penalized(&mel, blank_penalty)
+    }
+
+    pub fn transcribe_mel_penalized(
+        &mut self,
+        mel: &[Vec<f32>],
+        blank_penalty: f32,
+    ) -> Result<String, String> {
         if mel.is_empty() {
             return Ok(String::new());
         }

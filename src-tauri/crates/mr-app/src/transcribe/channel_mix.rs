@@ -91,6 +91,86 @@ pub(crate) fn mixed_stereo(channels: &[Vec<f32>]) -> Option<usize> {
     Some(0)
 }
 
+const VAD_FRAME: usize = 512;
+const BLEED_PROBE_SEC: usize = 60;
+
+fn vad_envelope(samples: &[f32]) -> Vec<f32> {
+    samples
+        .chunks(VAD_FRAME)
+        .map(|frame| (frame.iter().map(|x| x * x).sum::<f32>() / frame.len().max(1) as f32).sqrt())
+        .collect()
+}
+
+fn window_corr(a: &[f32], b: &[f32], center: usize, other: usize, half: usize) -> f64 {
+    let left = center.min(other).min(half);
+    let right = (a.len().saturating_sub(center + 1))
+        .min(b.len().saturating_sub(other + 1))
+        .min(half);
+    let n = left + right + 1;
+    if n < 4 {
+        return 0.0;
+    }
+    let aa = &a[center - left..=center + right];
+    let bb = &b[other - left..=other + right];
+    let mean_a = aa.iter().map(|&x| x as f64).sum::<f64>() / n as f64;
+    let mean_b = bb.iter().map(|&x| x as f64).sum::<f64>() / n as f64;
+    let mut cov = 0.0;
+    let mut var_a = 0.0;
+    let mut var_b = 0.0;
+    for (&x, &y) in aa.iter().zip(bb) {
+        let dx = x as f64 - mean_a;
+        let dy = y as f64 - mean_b;
+        cov += dx * dy;
+        var_a += dx * dx;
+        var_b += dy * dy;
+    }
+    if var_a < 1e-12 || var_b < 1e-12 {
+        return 0.0;
+    }
+    cov / (var_a.sqrt() * var_b.sqrt())
+}
+
+pub(crate) fn suppress_mic_bleed(mic: &[f32], system: &[f32], vad_probs: &mut [f32]) -> usize {
+    let probe = mic.len().min(system.len()).min(BLEED_PROBE_SEC * 16000);
+    if probe < 16000 * 2 {
+        return 0;
+    }
+    let Some((delay, prominence)) =
+        mr_audio::echo::delay::estimate(&mic[..probe], &system[..probe], 8000)
+    else {
+        return 0;
+    };
+    if prominence < 8.0 {
+        return 0;
+    }
+    let mic_env = vad_envelope(mic);
+    let sys_env = vad_envelope(system);
+    let frames = mic_env.len().min(sys_env.len()).min(vad_probs.len());
+    let delay_frames = delay / VAD_FRAME;
+    let mut suppressed = 0;
+    for frame in 0..frames {
+        if vad_probs[frame] < 0.1 {
+            continue;
+        }
+        let Some(other) = frame.checked_sub(delay_frames) else {
+            continue;
+        };
+        if other >= sys_env.len() {
+            continue;
+        }
+        let mic_level = mic_env[frame];
+        let sys_level = sys_env[other];
+        if sys_level < 0.005 || mic_level < 0.001 || mic_level > sys_level * 0.35 {
+            continue;
+        }
+        if window_corr(&mic_env, &sys_env, frame, other, 10) > 0.7 {
+            vad_probs[frame] = 0.0;
+            suppressed += 1;
+        }
+    }
+    suppressed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,6 +194,63 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    fn chirp_bursts(len: usize, spans: &[(f64, f64)], gain: f32) -> Vec<f32> {
+        let mut phase = 0.0f64;
+        (0..len)
+            .map(|i| {
+                let t = i as f64 / 16000.0;
+                if spans.iter().any(|&(a, b)| t >= a && t < b) {
+                    let freq = 300.0 + 2000.0 * t / 4.0;
+                    phase += std::f64::consts::TAU * freq / 16000.0;
+                    (phase.sin() as f32) * gain
+                } else {
+                    0.0
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn bleed_from_system_is_gated_in_mic_vad() {
+        let len = 16_000 * 4;
+        let spans = [(0.5, 2.0), (2.5, 4.0)];
+        let system = chirp_bursts(len, &spans, 0.2);
+        let delay = 1000usize;
+        let mut mic = vec![0.0f32; delay];
+        mic.extend(system[..system.len() - delay].iter().map(|x| x * 0.1));
+        let mut probs = vec![1.0f32; len.div_ceil(VAD_FRAME)];
+        let suppressed = suppress_mic_bleed(&mic, &system, &mut probs);
+        assert!(suppressed > 0, "пролезание не найдено");
+        let quiet = 20usize;
+        assert_eq!(probs[quiet], 0.0, "дальний спикер остался в микрофоне");
+    }
+
+    #[test]
+    fn double_talk_keeps_mic_speech() {
+        let len = 16_000 * 4;
+        let spans = [(0.5, 4.0)];
+        let system = chirp_bursts(len, &spans, 0.2);
+        let delay = 1000usize;
+        let mut mic = vec![0.0f32; delay];
+        mic.extend(system[..system.len() - delay].iter().map(|x| x * 0.1));
+        let user = bursts(len, &[(1.0, 2.0)], 0.3, 13);
+        for (m, u) in mic.iter_mut().zip(user) {
+            *m += u;
+        }
+        let mut probs = vec![1.0f32; len.div_ceil(VAD_FRAME)];
+        suppress_mic_bleed(&mic, &system, &mut probs);
+        let frame = 16_000 / VAD_FRAME + 2;
+        assert!(probs[frame] > 0.0, "реплика пользователя подавлена");
+    }
+
+    #[test]
+    fn window_corr_boundary_alignment_keeps_exact_lag() {
+        let env_a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let env_b = vec![0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let corr = window_corr(&env_a, &env_b, 3, 5, 5);
+        assert!((corr - 1.0).abs() < 1e-6, "corr: {corr}");
     }
 
     #[test]

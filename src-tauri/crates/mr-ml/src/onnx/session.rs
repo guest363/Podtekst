@@ -71,14 +71,25 @@ impl OrtSession {
         intra_threads: usize,
     ) -> Result<ort::session::builder::SessionBuilder, String> {
         let mut builder = ort::session::Session::builder(env).map_err(|e| e.to_string())?;
+        // Ограничение ORT: при 0 захватывает все ядра и на гибридных CPU
+        // простаивает на энергоэффективных (E) ядрах.
+        let threads = if intra_threads > 0 {
+            intra_threads
+        } else {
+            (std::thread::available_parallelism()
+                .map(|n| n.get() / 2)
+                .unwrap_or(4))
+            .clamp(2, 6)
+        };
         builder = builder
             .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
+            .map_err(|e| e.to_string())?
+            .with_intra_threads(threads)
+            .map_err(|e| e.to_string())?
+            .with_inter_threads(1)
+            .map_err(|e| e.to_string())?
+            .with_memory_pattern(true)
             .map_err(|e| e.to_string())?;
-        if intra_threads > 0 {
-            builder = builder
-                .with_intra_threads(intra_threads)
-                .map_err(|e| e.to_string())?;
-        }
         Ok(builder)
     }
 
@@ -102,6 +113,15 @@ impl OrtSession {
 
     pub fn has_input(&self, name: &str) -> bool {
         self.input_names.iter().any(|n| n == name)
+    }
+
+    // Контракт ONNX: -1 в первой оси означает динамический размер батча.
+    pub fn input_shape(&self, name: &str) -> Option<Vec<i64>> {
+        let input = self.session.inputs().iter().find(|i| i.name() == name)?;
+        match input.dtype() {
+            ort::value::ValueType::Tensor { shape, .. } => Some(shape.to_vec()),
+            _ => None,
+        }
     }
 
     fn tensor_f32(shape: Vec<i64>, data: Vec<f32>) -> Result<DynTensor, String> {

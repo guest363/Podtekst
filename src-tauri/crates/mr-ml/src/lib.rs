@@ -23,6 +23,10 @@ pub const EMBEDDING_DIM: usize = 192;
 /// (фрагменты от 1.5 с); у самой модели в карточке порог 0.365.
 pub const DEFAULT_MATCH_THRESHOLD: f64 = 0.45;
 pub const DEFAULT_MIN_MARGIN: f64 = 0.06;
+// shortcut: 1.8/0.04 — стартовые значения без размеченного набора; перекалибровать на реальных ложных срабатываниях.
+const MIN_COHORT_Z: f64 = 1.8;
+const MIN_COHORT_SIGMA: f64 = 0.04;
+const COHORT_TOP_K: usize = 5;
 /// shortcut: 0.03 — эмпирический пол без опубликованного замера; перепроверить
 /// на размеченном наборе при смене модели.
 const MIN_MATCH_MARGIN_FLOOR: f64 = 0.03;
@@ -223,11 +227,14 @@ pub fn score_speaker_similarity(query: &[f64], profile: &SpeakerProfile) -> f64 
     if q.is_empty() {
         return 0.0;
     }
-    let mut sims: Vec<f64> = profile
+    let mut sims: Vec<(f64, f64)> = profile
         .prototypes
         .iter()
         .filter(|p| p.embedding.len() == q.len())
-        .map(|p| cosine_similarity(&q, &p.embedding))
+        .map(|p| {
+            let quality = (p.duration_sec.min(6.0) * p.quality).max(0.1);
+            (cosine_similarity(&q, &p.embedding), quality)
+        })
         .collect();
     let c_sim = if profile.embedding.len() == q.len() {
         cosine_similarity(&q, &profile.embedding)
@@ -237,13 +244,20 @@ pub fn score_speaker_similarity(query: &[f64], profile: &SpeakerProfile) -> f64 
     if sims.is_empty() {
         return c_sim.max(0.0);
     }
-    sims.sort_by(|a, b| b.total_cmp(a));
-    let best = sims[0];
+    sims.sort_by(|a, b| b.0.total_cmp(&a.0));
     if sims.len() == 1 {
-        return best.max(c_sim);
+        return sims[0].0.max(c_sim);
     }
-    let top2_mean = (sims[0] + sims[1]) / 2.0;
-    (0.70 * best + 0.30 * top2_mean).max(c_sim)
+    const NOMINAL: [f64; 3] = [0.55, 0.30, 0.15];
+    let mut num = 0.0;
+    let mut den = 0.0;
+    for (i, &(similarity, quality)) in sims.iter().take(3).enumerate() {
+        let weight = NOMINAL[i] * quality;
+        num += weight * similarity;
+        den += weight;
+    }
+    let weighted = if den > 0.0 { num / den } else { sims[0].0 };
+    weighted.max(c_sim)
 }
 
 pub fn linear_sum_assignment_max(score: &[Vec<f64>]) -> Vec<(usize, usize)> {
@@ -339,6 +353,27 @@ pub fn linear_sum_assignment_max(score: &[Vec<f64>]) -> Vec<(usize, usize)> {
     pairs
 }
 
+fn cohort_z_score(row: &[f64], candidate: usize, score: f64) -> f64 {
+    let mut cohort: Vec<f64> = row
+        .iter()
+        .enumerate()
+        .filter(|&(index, _)| index != candidate)
+        .map(|(_, &value)| value)
+        .collect();
+    if cohort.len() < 2 {
+        return f64::INFINITY;
+    }
+    cohort.sort_by(|a, b| b.total_cmp(a));
+    cohort.truncate(COHORT_TOP_K);
+    let mean = cohort.iter().sum::<f64>() / cohort.len() as f64;
+    let variance = cohort
+        .iter()
+        .map(|value| (value - mean).powi(2))
+        .sum::<f64>()
+        / cohort.len() as f64;
+    (score - mean) / variance.sqrt().max(MIN_COHORT_SIGMA)
+}
+
 pub fn match_voiceprints_matrix(
     cluster_embeddings: &[Vec<f64>],
     profiles: &[SpeakerProfile],
@@ -404,6 +439,9 @@ pub fn match_voiceprints_matrix(
             && (margin < MIN_MATCH_MARGIN_FLOOR
                 || (margin < min_margin && s < HIGH_CONFIDENCE_THRESHOLD))
         {
+            continue;
+        }
+        if profiles.len() >= 4 && cohort_z_score(&sim[r], c, s) < MIN_COHORT_Z {
             continue;
         }
         results[r].matched = true;
@@ -577,6 +615,97 @@ mod tests {
         } else {
             assert!(res[0].similarity >= 0.78);
         }
+    }
+
+    fn profile(name: &str, v: Vec<f64>) -> SpeakerProfile {
+        SpeakerProfile {
+            name: name.to_string(),
+            pack_id: String::new(),
+            pack_name: String::new(),
+            embedding: v.clone(),
+            samples_count: 1,
+            updated_at: String::new(),
+            prototypes: vec![Prototype {
+                id: "p1".to_string(),
+                embedding: v,
+                duration_sec: 4.0,
+                quality: 1.0,
+                created_at: String::new(),
+                snippet_relpath: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn hub_cluster_is_rejected_by_cohort_z() {
+        let axis = |first: f64, dim: usize| {
+            let mut v = vec![0.0; 8];
+            v[0] = first;
+            v[dim] = (1.0 - first * first).sqrt();
+            v
+        };
+        let profiles = vec![
+            profile("A", axis(0.52, 1)),
+            profile("B", axis(0.45, 2)),
+            profile("C", axis(0.45, 3)),
+            profile("D", axis(0.45, 4)),
+        ];
+        let mut q = vec![0.0; 8];
+        q[0] = 1.0;
+        let res = match_voiceprints_matrix(&[q], &profiles, 0.45, 0.06);
+        assert!(!res[0].matched, "хаб-вектор не должен матчиться: {res:?}");
+        assert!(res[0].candidates.len() >= 2);
+    }
+
+    #[test]
+    fn distinct_voice_passes_cohort_z() {
+        let axis = |first: f64, dim: usize| {
+            let mut v = vec![0.0; 8];
+            v[0] = first;
+            v[dim] = (1.0 - first * first).sqrt();
+            v
+        };
+        let profiles = vec![
+            profile("A", axis(0.9, 1)),
+            profile("B", axis(0.2, 2)),
+            profile("C", axis(0.18, 3)),
+            profile("D", axis(0.16, 4)),
+        ];
+        let mut q = vec![0.0; 8];
+        q[0] = 1.0;
+        let res = match_voiceprints_matrix(&[q], &profiles, 0.45, 0.06);
+        assert_eq!(res[0].name.as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn weighted_top3_uses_prototype_quality() {
+        let good = l2(vec![1.0, 0.0, 0.0, 0.0]);
+        let noisy = l2(vec![0.6, 0.8, 0.0, 0.0]);
+        let mut profile = profile("A", good.clone());
+        profile.prototypes = vec![
+            Prototype {
+                id: "good".to_string(),
+                embedding: good,
+                duration_sec: 6.0,
+                quality: 1.0,
+                created_at: String::new(),
+                snippet_relpath: None,
+            },
+            Prototype {
+                id: "noisy".to_string(),
+                embedding: noisy,
+                duration_sec: 0.5,
+                quality: 0.5,
+                created_at: String::new(),
+                snippet_relpath: None,
+            },
+        ];
+        let query = l2(vec![1.0, 0.0, 0.0, 0.0]);
+        let score = score_speaker_similarity(&query, &profile);
+        assert!(
+            score > 0.9,
+            "качественный прототип должен доминировать: {score}"
+        );
     }
 
     #[test]

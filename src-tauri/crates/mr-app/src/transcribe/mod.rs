@@ -126,7 +126,7 @@ pub(crate) fn extract_utterance_embedding(
     start: f64,
     end: f64,
     channel: Option<i32>,
-) -> Result<Vec<f64>, String> {
+) -> Result<(Vec<f64>, f64, f64), String> {
     memory::check(audio)?;
     if end - start < 0.4 {
         return Err("Фрагмент короче 0.4 с: голос не извлечь".to_string());
@@ -165,14 +165,36 @@ pub(crate) fn extract_utterance_embedding(
         return Err("Фрагмент короче 0.4 с: голос не извлечь".to_string());
     }
     let mut models = ModelsGuard::take()?;
+    let mut clean_samples = samples;
+    if let Some(segmentation) = models.segmentation.as_mut() {
+        if let Ok(seg) = segmentation.segment(&clean_samples) {
+            let clean_len = seg.exclude_overlap(&mut clean_samples, 0);
+            clean_samples.truncate(clean_len);
+        }
+    }
+    if clean_samples.len() < (16000.0 * 0.4) as usize {
+        return Err(
+            "Во фрагменте одновременная речь или мало чистого голоса — выберите другой участок"
+                .to_string(),
+        );
+    }
     let emb = models
         .embed
         .as_mut()
         .ok_or_else(|| {
             "Нет модели голосовых отпечатков. Скачайте её во вкладке «Компоненты»".to_string()
         })?
-        .embed(&samples)?;
-    emb.ok_or_else(|| "Голос не извлечь: тишина или шум".to_string())
+        .embed(&clean_samples)?;
+    let emb = emb.ok_or_else(|| "Голос не извлечь: тишина или шум".to_string())?;
+    let clean_dur = clean_samples.len() as f64 / 16000.0;
+    let rms = (clean_samples.iter().map(|&x| (x * x) as f64).sum::<f64>()
+        / clean_samples.len().max(1) as f64)
+        .sqrt();
+    let quality =
+        ((rms / 0.05).clamp(0.3, 1.2) * (clean_dur / (end - start).max(0.4)).min(1.0) * 1000.0)
+            .round()
+            / 1000.0;
+    Ok((emb, clean_dur, quality))
 }
 
 impl ModelSet {
@@ -447,6 +469,7 @@ pub fn transcribe_file(
         .collect();
 
     let mut channel_grouped: HashMap<usize, Vec<(f64, f64)>> = HashMap::new();
+    let mut channel_vad: HashMap<usize, Vec<f32>> = HashMap::new();
     let channel_count = chan_list.len().max(1) as f64;
     for (ch_i, (ch, label)) in chan_list.iter().enumerate() {
         let samples = &channel_samples[ch];
@@ -462,10 +485,30 @@ pub fn transcribe_file(
                 );
             })
             .map_err(|e| format!("VAD: {e}"))?;
-        let segs = vad_segments_from_probs(&probs, 0.1, 0.25, 0.5);
+        channel_vad.insert(*ch, probs);
+    }
+    if is_stereo {
+        if let (Some(mic), Some(system)) = (channel_samples.get(&0), channel_samples.get(&1)) {
+            if let Some(probs) = channel_vad.get_mut(&0) {
+                let suppressed = channel_mix::suppress_mic_bleed(mic, system, probs);
+                if suppressed > 0 {
+                    on_event(
+                        14,
+                        &format!("Микрофон: подавлено эхо в {suppressed} кадрах"),
+                    );
+                }
+            }
+        }
+    }
+    for (ch_i, (ch, label)) in chan_list.iter().enumerate() {
+        let samples = &channel_samples[ch];
+        let base = 6.0 + 8.0 * ch_i as f64 / channel_count;
+        let span = 8.0 / channel_count;
+        let probs = &channel_vad[ch];
+        let segs = vad_segments_from_probs(probs, 0.25, 0.25, 0.5);
         let grouped = diarize::merge_quiet_short(
             samples,
-            diarize::group_segments(&segs, &probs, MAX_SEGMENT_SEC, SEGMENT_GAP_SEC),
+            diarize::group_segments(&segs, probs, MAX_SEGMENT_SEC, SEGMENT_GAP_SEC),
         );
         on_event(
             (base + span) as u8,
@@ -495,6 +538,7 @@ pub fn transcribe_file(
             let lo = (a * 16000.0) as usize;
             let hi = ((b * 16000.0) as usize).min(samples.len());
             let chunk = &samples[lo..hi];
+            let mel = use_gigaam.then(|| mr_ml::onnx::features::nemo_mel(chunk));
             let text = if use_gigaam {
                 // Тихая речь: жадный RNNT предпочитает blank и теряет слова.
                 // Штраф включаем только для коротких фрагментов с речевой
@@ -509,7 +553,7 @@ pub fn transcribe_file(
                     .gigaam
                     .as_mut()
                     .ok_or("нет GigaAM-модели")?
-                    .transcribe_segment_penalized(chunk, blank_penalty)
+                    .transcribe_mel_penalized(mel.as_deref().unwrap_or(&[]), blank_penalty)
                     .map_err(|e| format!("GigaAM: {e}"))?
             } else {
                 models
@@ -536,7 +580,7 @@ pub fn transcribe_file(
                 if use_gigaam && opts.ctc_enabled {
                     if let Some(ctc) = models.ctc.as_mut() {
                         if let Ok((hyp, times)) =
-                            ctc.transcribe_segment_timed(chunk, &opts.hotwords)
+                            ctc.transcribe_mel_timed(mel.as_deref().unwrap_or(&[]), &opts.hotwords)
                         {
                             if !hyp.words.is_empty() {
                                 let aligned = align_to_reference_timed(
@@ -601,16 +645,19 @@ pub fn transcribe_file(
         let source_utts = channel_utts.remove(ch).unwrap_or_default();
         let segmentation = if models.embed.is_some() && !source_utts.is_empty() {
             on_event(80, "Ищу одновременную речь…");
-            models
-                .segmentation
-                .as_mut()
-                .and_then(|model| match model.segment(samples) {
+            models.segmentation.as_mut().and_then(|model| {
+                let result = match channel_vad.get(ch) {
+                    Some(probs) => model.segment_with_vad(samples, probs),
+                    None => model.segment(samples),
+                };
+                match result {
                     Ok(result) => Some(result),
                     Err(error) => {
                         crate::note!("PyAnnote segmentation недоступна: {error}");
                         None
                     }
-                })
+                }
+            })
         } else {
             None
         };

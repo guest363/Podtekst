@@ -141,8 +141,6 @@ pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
         .collect())
 }
 
-/// Читает только запрошенный интервал WAV 16 кГц: обучение голоса на часовой
-/// записи не должно декодировать весь файл в память ради 3 секунд.
 pub fn decode_wav_range_16k(
     path: &Path,
     start_sec: f64,

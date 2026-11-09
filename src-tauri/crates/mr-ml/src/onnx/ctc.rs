@@ -742,6 +742,14 @@ impl GigaCTC {
             ));
         }
         let mel = super::features::nemo_mel(samples);
+        self.transcribe_mel_timed(&mel, hotwords)
+    }
+
+    pub fn transcribe_mel_timed(
+        &mut self,
+        mel: &[Vec<f32>],
+        hotwords: &[String],
+    ) -> Result<TimedCtcHypothesis, String> {
         if mel.is_empty() {
             return Ok((
                 CtcHypothesis {
@@ -821,7 +829,7 @@ impl GigaCTC {
             &self.hw_cache_ids,
             HOTWORD_BONUS,
         );
-        let duration_sec = samples.len() as f64 / 16000.0;
+        let duration_sec = mel.len() as f64 * 160.0 / 16000.0;
         let frame_sec = duration_sec / frames.len() as f64;
         let times = spans
             .into_iter()

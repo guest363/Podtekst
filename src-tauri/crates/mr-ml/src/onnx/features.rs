@@ -185,21 +185,32 @@ fn reflect_pad(samples: &[f32], pad: usize) -> Vec<f32> {
     out
 }
 
-/// Прямое ДПФ. Только для длин с простым множителем > 5 (в пайплайне таких
-/// нет), чтобы алгоритм оставался точным для любого `fft_size`.
-fn dft(x: &[(f64, f64)]) -> Vec<(f64, f64)> {
-    let n = x.len();
-    (0..n)
-        .map(|k| {
-            x.iter()
-                .enumerate()
-                .fold((0.0f64, 0.0f64), |(re, im), (i, &(xr, xi))| {
-                    let ang = 2.0 * std::f64::consts::PI * (k * i % n) as f64 / n as f64;
-                    let (s, c) = ang.sin_cos();
-                    (re + xr * c + xi * s, im + xi * c - xr * s)
-                })
-        })
-        .collect()
+fn dft_into(
+    src: &[(f64, f64)],
+    stride: usize,
+    n: usize,
+    dst: &mut [(f64, f64)],
+    tw: &[(f64, f64)],
+    top_n: usize,
+) {
+    let step = top_n.is_multiple_of(n).then_some(top_n / n);
+    for k in 0..n {
+        let mut re = 0.0f64;
+        let mut im = 0.0f64;
+        for i in 0..n {
+            let (xr, xi) = src[i * stride];
+            let (c, s) = match step {
+                Some(step) => tw[(k * i * step) % top_n],
+                None => {
+                    let ang = -2.0 * std::f64::consts::PI * (k * i % n) as f64 / n as f64;
+                    ang.sin_cos()
+                }
+            };
+            re += xr * c - xi * s;
+            im += xr * s + xi * c;
+        }
+        dst[k] = (re, im);
+    }
 }
 
 /// Поворотные коэффициенты зависят только от `n`: без кэша каждый кадр
@@ -228,45 +239,94 @@ fn twiddles(n: usize) -> Option<&'static [(f64, f64)]> {
     table.get(&n).map(Vec::as_slice)
 }
 
-/// Смешанное БПФ Кули–Тьюки по множителям 2 и 5 — точное ДПФ для всех
-/// используемых `fft_size` (320, 400, 512) за O(n log n) вместо O(n²).
-/// Наивное ДПФ — O(n²): диаризация длинной записи занимала бы десятки минут.
-fn fft(x: &[(f64, f64)]) -> Vec<(f64, f64)> {
-    let n = x.len();
+#[allow(clippy::too_many_arguments)]
+fn fft_rec(
+    src: &[(f64, f64)],
+    stride: usize,
+    n: usize,
+    dst: &mut [(f64, f64)],
+    scratch: &mut [(f64, f64)],
+    tw: &[(f64, f64)],
+    top_n: usize,
+) {
     if n <= 1 {
-        return x.to_vec();
+        dst[0] = src[0];
+        return;
     }
     let r = if n.is_multiple_of(2) {
         2
     } else if n.is_multiple_of(5) {
         5
     } else {
-        return dft(x);
-    };
-    let Some(tw) = twiddles(n) else {
-        return dft(x);
+        dft_into(src, stride, n, dst, tw, top_n);
+        return;
     };
     let m = n / r;
-    let subs: Vec<Vec<(f64, f64)>> = (0..r)
-        .map(|j| fft(&(0..m).map(|i| x[i * r + j]).collect::<Vec<_>>()))
-        .collect();
-    (0..n)
-        .map(|k| {
-            (0..r).fold((0.0f64, 0.0f64), |(re, im), j| {
-                let (yr, yi) = subs[j][k % m];
-                let (c, s) = tw[j * k % n];
-                (re + yr * c - yi * s, im + yr * s + yi * c)
-            })
-        })
-        .collect()
+    for j in 0..r {
+        fft_rec(
+            &src[j * stride..],
+            stride * r,
+            m,
+            &mut dst[j * m..(j + 1) * m],
+            scratch,
+            tw,
+            top_n,
+        );
+    }
+    let step = top_n / n;
+    for k in 0..n {
+        let mut re = 0.0f64;
+        let mut im = 0.0f64;
+        for j in 0..r {
+            let (yr, yi) = dst[j * m + k % m];
+            let (c, s) = tw[(j * k * step) % top_n];
+            re += yr * c - yi * s;
+            im += yr * s + yi * c;
+        }
+        scratch[k] = (re, im);
+    }
+    dst[..n].copy_from_slice(&scratch[..n]);
 }
 
+fn fft_power_into(
+    frame: &[f64],
+    src: &mut [(f64, f64)],
+    dst: &mut [(f64, f64)],
+    scratch: &mut [(f64, f64)],
+    power: &mut [f64],
+) {
+    let n = frame.len();
+    let Some(tw) = twiddles(n) else {
+        for (k, slot) in power.iter_mut().enumerate().take(n / 2 + 1) {
+            let (mut re, mut im) = (0.0f64, 0.0f64);
+            for (i, &x) in frame.iter().enumerate() {
+                let ang = -2.0 * std::f64::consts::PI * k as f64 * i as f64 / n as f64;
+                let (s, c) = ang.sin_cos();
+                re += x * c;
+                im += x * s;
+            }
+            *slot = re * re + im * im;
+        }
+        return;
+    };
+    for (slot, &x) in src.iter_mut().zip(frame) {
+        *slot = (x, 0.0);
+    }
+    fft_rec(src, 1, n, dst, scratch, tw, n);
+    for k in 0..=n / 2 {
+        power[k] = dst[k].0 * dst[k].0 + dst[k].1 * dst[k].1;
+    }
+}
+
+#[cfg(test)]
 fn fft_power(frame: &[f64]) -> Vec<f64> {
-    fft(&frame.iter().map(|&x| (x, 0.0)).collect::<Vec<_>>())
-        .iter()
-        .take(frame.len() / 2 + 1)
-        .map(|(re, im)| re * re + im * im)
-        .collect()
+    let n = frame.len();
+    let mut src = vec![(0.0, 0.0); n];
+    let mut dst = vec![(0.0, 0.0); n];
+    let mut scratch = vec![(0.0, 0.0); n];
+    let mut power = vec![0.0; n / 2 + 1];
+    fft_power_into(frame, &mut src, &mut dst, &mut scratch, &mut power);
+    power
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -449,9 +509,14 @@ pub fn log_mel_frames(samples: &[f32], p: FrontendParams) -> Vec<Vec<f32>> {
     );
     let n = sig.len();
     let mut frames = Vec::new();
+    let mut frame = vec![0.0f64; p.fft_size];
+    let mut fft_src = vec![(0.0f64, 0.0f64); p.fft_size];
+    let mut fft_dst = vec![(0.0f64, 0.0f64); p.fft_size];
+    let mut fft_scratch = vec![(0.0f64, 0.0f64); p.fft_size];
+    let mut power = vec![0.0f64; p.fft_size / 2 + 1];
     let mut start = 0usize;
     while start + p.win_length <= n {
-        let mut frame = vec![0.0; p.fft_size];
+        frame.fill(0.0);
         if p.kaldi_exact {
             // Порядок kaldi: минус среднее кадра → преэмфазис внутри кадра → окно
             let raw = &sig[start..start + p.win_length];
@@ -470,7 +535,13 @@ pub fn log_mel_frames(samples: &[f32], p: FrontendParams) -> Vec<Vec<f32>> {
         for i in 0..p.win_length {
             frame[i] *= win[i];
         }
-        let power = fft_power(&frame);
+        fft_power_into(
+            &frame,
+            &mut fft_src,
+            &mut fft_dst,
+            &mut fft_scratch,
+            &mut power,
+        );
         let mut mel = vec![0f32; p.n_mels];
         for (m, row) in fb.iter().enumerate() {
             let e: f64 = row.iter().zip(power.iter()).map(|(w, q)| w * q).sum();
@@ -503,14 +574,23 @@ pub fn whisper_mel(samples: &[f32]) -> Vec<Vec<f32>> {
     let n_frames = (1 + (padded.len() - p.win_length) / p.hop) - 1;
     let mut frames = Vec::with_capacity(n_frames);
     let mut global_max = f32::NEG_INFINITY;
+    let mut frame = vec![0.0f64; p.win_length];
+    let mut fft_src = vec![(0.0f64, 0.0f64); p.win_length];
+    let mut fft_dst = vec![(0.0f64, 0.0f64); p.win_length];
+    let mut fft_scratch = vec![(0.0f64, 0.0f64); p.win_length];
+    let mut power = vec![0.0f64; p.win_length / 2 + 1];
     for t in 0..n_frames {
         let start = t * p.hop;
-        let frame: Vec<f64> = padded[start..start + p.win_length]
-            .iter()
-            .zip(win.iter())
-            .map(|(&x, &w)| x as f64 * w)
-            .collect();
-        let power = fft_power(&frame);
+        for i in 0..p.win_length {
+            frame[i] = padded[start + i] as f64 * win[i];
+        }
+        fft_power_into(
+            &frame,
+            &mut fft_src,
+            &mut fft_dst,
+            &mut fft_scratch,
+            &mut power,
+        );
         let mut mel = vec![0f32; p.n_mels];
         for (m, row) in fb.iter().enumerate() {
             let e: f64 = row.iter().zip(power.iter()).map(|(w, q)| w * q).sum();
