@@ -28,7 +28,7 @@ let mediaDur = $state(0)
 // Длительность из списка записей видна сразу, до загрузки метаданных плеером.
 let dur = $derived(mediaDur || durationSec || 0)
 
-export function togglePlay(): void {
+export const togglePlay = (): void => {
   toggle()
 }
 
@@ -64,13 +64,13 @@ $effect(() => {
   return () => cancelAnimationFrame(frame)
 })
 
-function syncTime(): void {
+const syncTime = (): void => {
   if (!media) return
   cur = media.currentTime
   ontime?.(cur)
 }
 
-function toggle(): void {
+const toggle = (): void => {
   if (!media) return
   const all = document.querySelectorAll<HTMLMediaElement>('audio, video')
   for (const m of all) {
@@ -80,7 +80,7 @@ function toggle(): void {
   else media.pause()
 }
 
-function seek(e: MouseEvent): void {
+const seek = (e: MouseEvent): void => {
   const track = e.currentTarget instanceof HTMLElement ? e.currentTarget : null
   if (!track) return
   const rect = track.getBoundingClientRect()

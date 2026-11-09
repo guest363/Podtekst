@@ -34,7 +34,7 @@ let { inline = false }: Props = $props()
 let tab = $state<'record' | 'voices' | 'models' | 'summary' | 'system'>('record')
 let packFileInput: HTMLInputElement | null = $state(null)
 
-function defaultName(devices: DevicesInfo | undefined, id?: string | null): string {
+const defaultName = (devices: DevicesInfo | undefined, id?: string | null): string => {
   if (!id) return ''
   const all = [...(devices?.inputs || []), ...(devices?.system || [])]
   return all.find((device) => device.id === id)?.name || id
@@ -60,7 +60,7 @@ const modelsBadgeLabel = $derived(
   allInstalled ? 'Все готовы' : coreReady ? 'Базовые готовы' : 'Не всё',
 )
 
-async function openModelsTab(): Promise<void> {
+const openModelsTab = async (): Promise<void> => {
   tab = 'models'
 }
 
@@ -86,7 +86,7 @@ on('open-settings', (value) => {
 // дальше состояние обновляет опрос после нажатия «Скачать».
 void loadFfmpeg()
 
-function onWindowKey(e: KeyboardEvent): void {
+const onWindowKey = (e: KeyboardEvent): void => {
   if (!inline && ui.settingsOpen && !ui.donateOpen && e.key === 'Escape') {
     ui.settingsOpen = false
   }

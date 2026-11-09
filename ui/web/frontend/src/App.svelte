@@ -39,7 +39,7 @@ import { checkUpdate, dismissUpdate, openUpdateModal, update } from './lib/updat
 let introOpen = $state(false)
 let introStep = $state<1 | 2 | 3>(1)
 
-function openDiagnostics(): void {
+const openDiagnostics = (): void => {
   selectTab('settings')
   if (system.summary?.status === 'error' || system.summary?.status === 'warn') {
     const hasAudio = system.checks.some(
@@ -109,7 +109,7 @@ const TAB_TITLES: Record<string, string> = {
   settings: 'Настройки',
 }
 
-function closeIntro(): void {
+const closeIntro = (): void => {
   introOpen = false
   introStep = 1
   try {
@@ -117,7 +117,7 @@ function closeIntro(): void {
   } catch {}
 }
 
-function onWindowKey(e: KeyboardEvent): void {
+const onWindowKey = (e: KeyboardEvent): void => {
   if (introOpen && e.key === 'Escape') closeIntro()
 }
 

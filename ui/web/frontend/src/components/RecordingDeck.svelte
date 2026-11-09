@@ -76,7 +76,7 @@ const waveDelays = Array.from({ length: WAVE_BARS_COUNT }, (_, i) => {
 let startTime = 0
 let timerInterval: ReturnType<typeof setInterval> | null = null
 
-function setRecordingState(rec: boolean, initialElapsed = 0): void {
+const setRecordingState = (rec: boolean, initialElapsed = 0): void => {
   isRecording = rec
   if (rec) {
     startTime = Date.now() - initialElapsed * 1000
@@ -96,7 +96,7 @@ function setRecordingState(rec: boolean, initialElapsed = 0): void {
 
 let lastToggleTime = 0
 
-async function toggleRecord(): Promise<void> {
+const toggleRecord = async (): Promise<void> => {
   const now = Date.now()
   if (now - lastToggleTime < 500) return
   lastToggleTime = now
@@ -164,7 +164,7 @@ async function toggleRecord(): Promise<void> {
   }
 }
 
-async function pollLevels(): Promise<void> {
+const pollLevels = async (): Promise<void> => {
   try {
     const r = await fetch('/api/status')
     const d = await readJsonSafe<StatusResponse>(r)
@@ -210,7 +210,7 @@ async function pollLevels(): Promise<void> {
 
 // Хоткей внутри окна: глобальный граб не работает на Wayland при фокусе
 // окна, а в браузере (--web) Ctrl+Shift+R — это hard-reload. Ловим сами.
-function onWindowHotkey(e: KeyboardEvent): void {
+const onWindowHotkey = (e: KeyboardEvent): void => {
   if (e.repeat) return
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'KeyR') {
     e.preventDefault()

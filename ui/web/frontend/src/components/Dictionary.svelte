@@ -27,7 +27,7 @@ const isExactMatch = $derived.by(() => {
   return settings.hotwords.some((x) => x.toLowerCase() === q || x.toLowerCase() === norm)
 })
 
-async function addTerm(): Promise<void> {
+const addTerm = async (): Promise<void> => {
   let t = termInput.trim()
   if (!t) return
 
@@ -48,7 +48,7 @@ async function addTerm(): Promise<void> {
   await saveHotwords([t, ...settings.hotwords], settings.ctcEnabled)
 }
 
-async function removeTerm(t: string): Promise<void> {
+const removeTerm = async (t: string): Promise<void> => {
   await saveHotwords(
     settings.hotwords.filter((x) => x !== t),
     settings.ctcEnabled,

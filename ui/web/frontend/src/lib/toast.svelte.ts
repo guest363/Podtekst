@@ -14,7 +14,7 @@ export type Toast = {
 let nextId = 1
 export const toasts: Toast[] = $state([])
 
-export function toast(msg: string, kind: '' | 'error' = '', sticky = false): number {
+export const toast = (msg: string, kind: '' | 'error' = '', sticky = false): number => {
   const id = nextId++
   toasts.push({ id, msg, kind, sticky, actions: [] })
   if (!sticky) {
@@ -23,7 +23,7 @@ export function toast(msg: string, kind: '' | 'error' = '', sticky = false): num
   return id
 }
 
-export function toastConfirm(msg: string, okLabel: string, onOk: () => void): void {
+export const toastConfirm = (msg: string, okLabel: string, onOk: () => void): void => {
   const id = nextId++
   toasts.push({
     id,
@@ -43,13 +43,13 @@ export function toastConfirm(msg: string, okLabel: string, onOk: () => void): vo
   })
 }
 
-export function dismissToast(id: number): void {
+export const dismissToast = (id: number): void => {
   const i = toasts.findIndex((t) => t.id === id)
   if (i >= 0) toasts.splice(i, 1)
 }
 
 // Копирование с надёжным запасным путём для мобильных браузеров, незащищённых HTTP-контекстов и старых WebView.
-export async function copyText(s: string): Promise<boolean> {
+export const copyText = async (s: string): Promise<boolean> => {
   if (
     window.isSecureContext &&
     typeof navigator !== 'undefined' &&

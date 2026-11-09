@@ -124,15 +124,15 @@ export const update: UpdateState = $state({
   attempt: null,
 })
 
-function str(v: unknown): string {
+const str = (v: unknown): string => {
   return typeof v === 'string' ? v : ''
 }
 
-function num(v: unknown): number {
+const num = (v: unknown): number => {
   return typeof v === 'number' && Number.isFinite(v) ? v : 0
 }
 
-function attemptOf(v: unknown): UpdateAttempt | null {
+const attemptOf = (v: unknown): UpdateAttempt | null => {
   if (!isRecord(v)) return null
   return {
     from: str(v.from),
@@ -143,7 +143,7 @@ function attemptOf(v: unknown): UpdateAttempt | null {
 }
 
 /** Предложение показывается заново только для другой версии: фоновый опрос не сбрасывает «Позже». */
-function syncDismissed(): void {
+const syncDismissed = (): void => {
   if (!update.isNewer) {
     update.dismissed = false
     return
@@ -152,7 +152,7 @@ function syncDismissed(): void {
     update.latest === update.dismissedVersion || update.latest === update.skippedVersion
 }
 
-export async function loadUpdateState(): Promise<void> {
+export const loadUpdateState = async (): Promise<void> => {
   try {
     const d = await readJsonSafe<UpdateStateResponse>(await fetch('/api/update/state'))
     if (d.ok === false) return
@@ -174,7 +174,7 @@ export async function loadUpdateState(): Promise<void> {
   }
 }
 
-export async function checkUpdate(force = false, notify = false): Promise<void> {
+export const checkUpdate = async (force = false, notify = false): Promise<void> => {
   if (update.checking) return
   update.checking = true
   update.error = ''
@@ -237,19 +237,19 @@ export async function checkUpdate(force = false, notify = false): Promise<void> 
 
 let progressTimer: ReturnType<typeof setInterval> | undefined
 
-function stopProgress(): void {
+const stopProgress = (): void => {
   if (progressTimer) {
     clearInterval(progressTimer)
     progressTimer = undefined
   }
 }
 
-function startProgress(): void {
+const startProgress = (): void => {
   stopProgress()
   progressTimer = setInterval(() => void pollProgress(), 1000)
 }
 
-function failApply(d: UpdateStateResponse): void {
+const failApply = (d: UpdateStateResponse): void => {
   update.applying = false
   update.error = str(d.error) || 'Не удалось начать обновление'
   update.errorCode = str(d.error_code)
@@ -260,7 +260,7 @@ function failApply(d: UpdateStateResponse): void {
   toast(update.error, 'error')
 }
 
-async function pollProgress(): Promise<void> {
+const pollProgress = async (): Promise<void> => {
   try {
     const p = await readJsonSafe<UpdateProgressResponse>(await fetch('/api/update/progress'))
     update.pct = num(p.pct)
@@ -285,7 +285,7 @@ async function pollProgress(): Promise<void> {
   }
 }
 
-export async function applyUpdate(): Promise<void> {
+export const applyUpdate = async (): Promise<void> => {
   if (update.applying) return
   stopProgress()
   update.applying = true
@@ -329,13 +329,13 @@ export async function applyUpdate(): Promise<void> {
   startProgress()
 }
 
-export function dismissUpdate(): void {
+export const dismissUpdate = (): void => {
   update.dismissed = true
   update.dismissedVersion = update.latest
   update.modalOpen = false
 }
 
-export async function skipVersion(version: string | null): Promise<void> {
+export const skipVersion = async (version: string | null): Promise<void> => {
   try {
     const d = await readJsonSafe<UpdateStateResponse>(
       await fetch('/api/update/skip', {
@@ -365,12 +365,12 @@ export async function skipVersion(version: string | null): Promise<void> {
   }
 }
 
-export function openUpdateModal(): void {
+export const openUpdateModal = (): void => {
   update.modalOpen = true
   void loadSystem()
   if (!update.latest && !update.checking) void checkUpdate()
 }
 
-export function closeUpdateModal(): void {
+export const closeUpdateModal = (): void => {
   update.modalOpen = false
 }

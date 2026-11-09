@@ -36,7 +36,7 @@ let summaryAvailable = $derived(
     summaryState.blockReason !== 'no_text',
 )
 
-function toggleSpeakers(): void {
+const toggleSpeakers = (): void => {
   speakersOpen = !speakersOpen
   try {
     localStorage.setItem('mr_speakers_open', String(speakersOpen))
@@ -45,7 +45,7 @@ function toggleSpeakers(): void {
   }
 }
 
-function toggleSummaryPanel(): void {
+const toggleSummaryPanel = (): void => {
   summaryOpen = !summaryOpen
   if (summaryOpen) {
     summaryState.expanded = true
@@ -88,7 +88,7 @@ let hasUnmatchedSpeakers = $derived(
 let allSpeakersMatched = $derived(
   Boolean(transcript.speakers?.length && transcript.speakers.every((s) => s.matched)),
 )
-function pluralUtterances(n: number): string {
+const pluralUtterances = (n: number): string => {
   const rem10 = n % 10
   const rem100 = n % 100
   if (rem100 >= 11 && rem100 <= 19) return 'реплик'
@@ -97,12 +97,12 @@ function pluralUtterances(n: number): string {
   return 'реплик'
 }
 
-function getTranscriptMeta(): {
+const getTranscriptMeta = (): {
   title: string
   source: string
   durStr: string
   speakers: string[]
-} {
+} => {
   const filename = baseName(ui.currentTranscriptPath) || 'Встреча'
   const lastUtt = transcript.utterances?.[transcript.utterances.length - 1]
   const durStr = lastUtt?.end ? fmtClock(lastUtt.end) : ''
@@ -141,7 +141,7 @@ function getTranscriptMeta(): {
 
 let transcriptMeta = $derived(getTranscriptMeta())
 
-function buildFullTranscriptMarkdown(): string {
+const buildFullTranscriptMarkdown = (): string => {
   if (!transcript.utterances || transcript.utterances.length === 0) {
     return transcript.markdown?.trim() || ''
   }
@@ -169,7 +169,7 @@ function buildFullTranscriptMarkdown(): string {
   return lines.join('\n').trim()
 }
 
-async function copyAll(): Promise<void> {
+const copyAll = async (): Promise<void> => {
   const txt = buildFullTranscriptMarkdown()
   if (!txt.trim()) {
     toast('Нечего копировать: текст пуст')
@@ -179,7 +179,7 @@ async function copyAll(): Promise<void> {
   else toast('Не удалось скопировать', 'error')
 }
 
-function seekTo(sec: number): void {
+const seekTo = (sec: number): void => {
   const media = document.querySelector<HTMLMediaElement>('#transcriptFullMedia')
   if (media && Number.isFinite(sec)) {
     media.currentTime = Math.max(0, sec)
@@ -189,7 +189,7 @@ function seekTo(sec: number): void {
   }
 }
 
-function requestTranscription(): void {
+const requestTranscription = (): void => {
   const path = ui.currentTranscriptPath
   if (summaryState.generating && summaryState.file === path) {
     toastConfirm(
@@ -205,7 +205,7 @@ function requestTranscription(): void {
   void startTranscription(path)
 }
 
-function goBack(): void {
+const goBack = (): void => {
   document
     .querySelectorAll<HTMLMediaElement>('.transcript-page audio, .transcript-page video')
     .forEach((m) => {
@@ -214,7 +214,7 @@ function goBack(): void {
   closeTranscript()
 }
 
-function onWindowKey(e: KeyboardEvent): void {
+const onWindowKey = (e: KeyboardEvent): void => {
   if (!ui.transcriptOpen) return
   if (e.key === 'Escape') {
     if (isMobile && summaryOpen) {

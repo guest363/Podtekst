@@ -139,7 +139,7 @@ let job: {
   cancelled: boolean
 } | null = null
 
-function classification(): SummaryClassification {
+const classification = (): SummaryClassification => {
   return {
     preset_id: 'meeting',
     confidence: 'high',
@@ -156,7 +156,7 @@ function classification(): SummaryClassification {
   }
 }
 
-function buildMarkdown(preset: SummaryPreset): string {
+const buildMarkdown = (preset: SummaryPreset): string => {
   return [
     '# Итоги встречи',
     '',
@@ -175,7 +175,7 @@ function buildMarkdown(preset: SummaryPreset): string {
   ].join('\n')
 }
 
-function buildRecord(presetId: string, file: string): SummaryRecord {
+const buildRecord = (presetId: string, file: string): SummaryRecord => {
   const preset = PRESETS.find((p) => p.id === presetId) ?? PRESETS[0]
   return {
     id: `mock-summary-${seq}`,
@@ -239,12 +239,12 @@ function buildRecord(presetId: string, file: string): SummaryRecord {
   }
 }
 
-function clearJob(): void {
+const clearJob = (): void => {
   if (job) for (const timer of job.timers) clearTimeout(timer)
   job = null
 }
 
-function emitStage(phase: string, pct: number, chunk?: number, chunks?: number): void {
+const emitStage = (phase: string, pct: number, chunk?: number, chunks?: number): void => {
   if (!job || job.cancelled) return
   job.phase = phase
   job.pct = pct
@@ -258,7 +258,7 @@ function emitStage(phase: string, pct: number, chunk?: number, chunks?: number):
   })
 }
 
-function startJob(file: string, presetId: string): { job_id: string; started: boolean } {
+const startJob = (file: string, presetId: string): { job_id: string; started: boolean } => {
   clearJob()
   seq += 1
   const id = `mock-job-${seq}`
@@ -281,7 +281,7 @@ function startJob(file: string, presetId: string): { job_id: string; started: bo
   return { job_id: id, started: true }
 }
 
-function summaryResponse(_file: string): unknown {
+const summaryResponse = (_file: string): unknown => {
   const active = job
     ? {
         job_id: job.id,
@@ -313,7 +313,7 @@ function summaryResponse(_file: string): unknown {
   }
 }
 
-function parseBody(init?: RequestInit): Record<string, unknown> {
+const parseBody = (init?: RequestInit): Record<string, unknown> => {
   try {
     const parsed: unknown = JSON.parse(String(init?.body || '{}'))
     return isRecord(parsed) ? parsed : {}
@@ -322,7 +322,7 @@ function parseBody(init?: RequestInit): Record<string, unknown> {
   }
 }
 
-export async function request(path: string, init?: RequestInit): Promise<unknown> {
+export const request = async (path: string, init?: RequestInit): Promise<unknown> => {
   const url = new URL(path, 'http://mock.local')
   if (url.pathname === '/api/summary') {
     return summaryResponse(url.searchParams.get('file') || '')

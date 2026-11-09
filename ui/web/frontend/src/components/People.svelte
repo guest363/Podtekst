@@ -40,11 +40,11 @@ let selectedPackName = $derived(
   peopleState.packs.find((p) => p.id === targetPackId)?.name || 'Основной профиль',
 )
 
-function togglePackDropdown(): void {
+const togglePackDropdown = (): void => {
   packDropdownOpen = !packDropdownOpen
 }
 
-function selectPack(id: string): void {
+const selectPack = (id: string): void => {
   targetPackId = id
   packDropdownOpen = false
 }
@@ -62,7 +62,7 @@ $effect(() => {
   }
 })
 
-function startAdd(): void {
+const startAdd = (): void => {
   editingPerson = null
   name = ''
   role = ''
@@ -76,7 +76,7 @@ function startAdd(): void {
   peopleState.voiceDetailName = ''
 }
 
-function startEdit(p: Person): void {
+const startEdit = (p: Person): void => {
   editingPerson = p
   name = p.name || ''
   role = p.role || ''
@@ -88,7 +88,7 @@ function startEdit(p: Person): void {
   if (p.name && hasVoiceprint(p.name)) void loadVoiceDetail(p.name)
 }
 
-function closeForm(): void {
+const closeForm = (): void => {
   formOpen = false
   editingPerson = null
   name = ''
@@ -100,7 +100,7 @@ function closeForm(): void {
   peopleState.voiceDetailName = ''
 }
 
-async function savePerson(): Promise<void> {
+const savePerson = async (): Promise<void> => {
   const cleanName = name.trim()
   if (!cleanName) return
   const cleanRole = role.trim() || 'Участник'
@@ -141,13 +141,13 @@ async function savePerson(): Promise<void> {
 let voiceAudio: HTMLAudioElement | null = $state(null)
 let playingProto = $state('')
 
-function stopVoice(): void {
+const stopVoice = (): void => {
   voiceAudio?.pause()
   voiceAudio = null
   playingProto = ''
 }
 
-function playVoice(packId: string, protoId: string): void {
+const playVoice = (packId: string, protoId: string): void => {
   if (playingProto === protoId) {
     stopVoice()
     return
@@ -169,7 +169,7 @@ function playVoice(packId: string, protoId: string): void {
   })
 }
 
-function fmtVoiceDate(iso: unknown): string {
+const fmtVoiceDate = (iso: unknown): string => {
   if (typeof iso !== 'string' || !iso) return ''
   const t = Date.parse(iso)
   if (Number.isNaN(t)) return ''
@@ -180,7 +180,7 @@ function fmtVoiceDate(iso: unknown): string {
   }
 }
 
-async function removePerson(name: string): Promise<void> {
+const removePerson = async (name: string): Promise<void> => {
   try {
     const r = await fetch('/api/people/remove', {
       method: 'POST',

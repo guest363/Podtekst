@@ -48,11 +48,11 @@ let menuWordInput: HTMLInputElement | null = $state(null)
 let wordMenuEl: HTMLElement | null = $state(null)
 let speakerMenuEl: HTMLElement | null = $state(null)
 
-function fitIntoView(
+const fitIntoView = (
   el: HTMLElement | null,
   pos: { x: number; y: number },
   anchor: { top: number; bottom: number },
-): { x: number; y: number } {
+): { x: number; y: number } => {
   if (!el) return pos
   const r = el.getBoundingClientRect()
   let { x, y } = pos
@@ -97,22 +97,22 @@ $effect(() => {
   if (follow && activeIndex >= 0) scrollActive()
 })
 
-function scrollActive(): void {
+const scrollActive = (): void => {
   doc
     ?.querySelector(`[data-utt="${activeIndex}"]`)
     ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
 }
 
-function disableFollow(): void {
+const disableFollow = (): void => {
   follow = false
 }
 
-async function applyChange(change: {
+const applyChange = async (change: {
   index?: number
   text?: string
   speaker?: string
   old_speaker?: string
-}): Promise<boolean> {
+}): Promise<boolean> => {
   if (!file || saving) return false
   saving = true
   try {
@@ -126,7 +126,7 @@ async function applyChange(change: {
   }
 }
 
-async function startEdit(index: number, point?: { x: number; y: number }): Promise<void> {
+const startEdit = async (index: number, point?: { x: number; y: number }): Promise<void> => {
   if (saving || index < 0 || index >= utterances.length) return
   if (editingIndex >= 0 && editingIndex !== index && !(await saveText(editingIndex, false))) return
   speakerMenu = null
@@ -162,7 +162,7 @@ async function startEdit(index: number, point?: { x: number; y: number }): Promi
   selection?.addRange(range)
 }
 
-async function saveText(index: number, moveNext: boolean): Promise<boolean> {
+const saveText = async (index: number, moveNext: boolean): Promise<boolean> => {
   if (editingIndex !== index || saving) return false
   if (!(await applyChange({ index, text: draft }))) return false
   editingIndex = -1
@@ -174,7 +174,7 @@ async function saveText(index: number, moveNext: boolean): Promise<boolean> {
   return true
 }
 
-function onEditorKey(e: KeyboardEvent, index: number): void {
+const onEditorKey = (e: KeyboardEvent, index: number): void => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     void saveText(index, true)
@@ -186,7 +186,7 @@ function onEditorKey(e: KeyboardEvent, index: number): void {
   }
 }
 
-async function openSpeakerMenu(e: MouseEvent, index: number): Promise<void> {
+const openSpeakerMenu = async (e: MouseEvent, index: number): Promise<void> => {
   if (speakerMenu?.index === index) {
     speakerMenu = null
     return
@@ -209,13 +209,13 @@ async function openSpeakerMenu(e: MouseEvent, index: number): Promise<void> {
   menuInput?.select()
 }
 
-async function renameSpeaker(): Promise<void> {
+const renameSpeaker = async (): Promise<void> => {
   if (!speakerMenu || !renameValue.trim()) return
   if (await applyChange({ old_speaker: menuSpeaker, speaker: renameValue.trim() }))
     speakerMenu = null
 }
 
-async function detachSpeaker(index: number): Promise<void> {
+const detachSpeaker = async (index: number): Promise<void> => {
   if (!file || saving || index < 0 || index >= utterances.length) return
   const allSpeakers = new Set(utterances.map((u) => u.speaker || ''))
   let newName = 'Новый собеседник'
@@ -237,7 +237,7 @@ async function detachSpeaker(index: number): Promise<void> {
   }
 }
 
-async function onUttTextClick(e: MouseEvent, index: number): Promise<void> {
+const onUttTextClick = async (e: MouseEvent, index: number): Promise<void> => {
   const t = e.target instanceof HTMLElement ? e.target.closest<HTMLElement>('[data-w]') : null
   if (t && index >= 0) {
     e.stopPropagation()
@@ -245,7 +245,7 @@ async function onUttTextClick(e: MouseEvent, index: number): Promise<void> {
   }
 }
 
-async function openWordMenu(e: MouseEvent, index: number, word: string): Promise<void> {
+const openWordMenu = async (e: MouseEvent, index: number, word: string): Promise<void> => {
   if (!word) return
   const anchor = e.target instanceof HTMLElement ? e.target.getBoundingClientRect() : new DOMRect()
   const estW = 250
@@ -265,7 +265,7 @@ async function openWordMenu(e: MouseEvent, index: number, word: string): Promise
   menuWordInput?.focus()
 }
 
-async function saveWord(): Promise<void> {
+const saveWord = async (): Promise<void> => {
   if (!wordMenu) return
   const heard = heardValue.trim()
   const correct = correctValue.trim()
@@ -275,7 +275,7 @@ async function saveWord(): Promise<void> {
   if (await addHotword(entry)) wordMenu = null
 }
 
-function onWordMenuKey(e: KeyboardEvent): void {
+const onWordMenuKey = (e: KeyboardEvent): void => {
   if (e.key === 'Escape') {
     e.preventDefault()
     e.stopPropagation()
@@ -286,7 +286,7 @@ function onWordMenuKey(e: KeyboardEvent): void {
   }
 }
 
-function onMenuKey(e: KeyboardEvent): void {
+const onMenuKey = (e: KeyboardEvent): void => {
   if (e.key === 'Escape') {
     e.preventDefault()
     e.stopPropagation()
@@ -297,14 +297,14 @@ function onMenuKey(e: KeyboardEvent): void {
   }
 }
 
-function escapeHtml(s: string): string {
+const escapeHtml = (s: string): string => {
   return String(s).replace(
     /[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c,
   )
 }
 
-function wordsHtml(u: Utterance): string {
+const wordsHtml = (u: Utterance): string => {
   const ws = u.words
   const plain = (u.text || '').split(/\s+/).filter(Boolean)
   if (!ws || ws.length === 0 || ws.length !== plain.length) return escapeHtml(u.text || '')
@@ -320,7 +320,7 @@ function wordsHtml(u: Utterance): string {
     .join(' ')
 }
 
-function inlineMd(s: string): string {
+const inlineMd = (s: string): string => {
   return escapeHtml(s)
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/`([^`]+)`/g, '<code>$1</code>')

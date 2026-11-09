@@ -17,7 +17,7 @@ import { summaryErrorText, summaryPreset } from './summaryUi.ts'
 import { copyText, toast, toastConfirm } from './toast.svelte.ts'
 import { downloadModel, engine, ensureStream } from './transcript.svelte.ts'
 
-export async function saveSummarySettings(patch: Partial<SummarySettings>): Promise<void> {
+export const saveSummarySettings = async (patch: Partial<SummarySettings>): Promise<void> => {
   const d = await apiJson<{ ok: boolean; settings: SummarySettings }>('/api/summary/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -29,12 +29,12 @@ export async function saveSummarySettings(patch: Partial<SummarySettings>): Prom
   }
 }
 
-export async function refreshSummaryGpu(): Promise<void> {
+export const refreshSummaryGpu = async (): Promise<void> => {
   const d = await apiJson<SummaryGpuStatus>('/api/summary/gpu')
   summaryState.gpu = d
 }
 
-export async function installSummaryGpu(): Promise<void> {
+export const installSummaryGpu = async (): Promise<void> => {
   await apiJson('/api/summary/gpu/install', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -43,7 +43,7 @@ export async function installSummaryGpu(): Promise<void> {
   await refreshSummaryGpu()
 }
 
-export async function cancelSummaryGpu(): Promise<void> {
+export const cancelSummaryGpu = async (): Promise<void> => {
   await apiJson('/api/summary/gpu/cancel', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -52,7 +52,7 @@ export async function cancelSummaryGpu(): Promise<void> {
   await refreshSummaryGpu()
 }
 
-export async function removeSummaryGpu(): Promise<void> {
+export const removeSummaryGpu = async (): Promise<void> => {
   const d = await apiJson<SummaryGpuStatus & { ok: boolean }>('/api/summary/gpu/remove', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -61,7 +61,7 @@ export async function removeSummaryGpu(): Promise<void> {
   summaryState.gpu = d
 }
 
-export async function classifySummary(force = false): Promise<void> {
+export const classifySummary = async (force = false): Promise<void> => {
   if (!summaryState.file || summaryState.capabilities?.classifier !== 'heuristic') return
   const d = await apiJson<SummaryClassifyResponse>('/api/summary/classify', {
     method: 'POST',
@@ -72,15 +72,15 @@ export async function classifySummary(force = false): Promise<void> {
   summaryState.sourceRev = d.source_rev || summaryState.sourceRev
 }
 
-function detail(): SummaryDetail {
+const detail = (): SummaryDetail => {
   return summaryState.settings?.detail || 'normal'
 }
 
-function presetFor(id: string): SummaryPreset | null {
+const presetFor = (id: string): SummaryPreset | null => {
   return summaryPreset(id, summaryState.presets)
 }
 
-export async function pickPreset(id: string): Promise<void> {
+export const pickPreset = async (id: string): Promise<void> => {
   summaryState.pendingDowngrade = false
   summaryState.manualChoice = true
   summaryState.chosenPresetId = id
@@ -110,7 +110,7 @@ export async function pickPreset(id: string): Promise<void> {
   await generateSummary(id, { replace: false })
 }
 
-export function confirmSensitive(): void {
+export const confirmSensitive = (): void => {
   const id = summaryState.pendingPresetId
   if (!id) return
   const allowDowngrade = summaryState.pendingDowngrade
@@ -124,14 +124,14 @@ export function confirmSensitive(): void {
   })
 }
 
-export function cancelSensitive(): void {
+export const cancelSensitive = (): void => {
   summaryState.pendingPresetId = ''
   summaryState.pendingDowngrade = false
   summaryState.phase = summaryState.record ? 'result' : 'suggest'
   summaryState.expanded = true
 }
 
-export async function generateSummary(
+export const generateSummary = async (
   presetId: string,
   opts: {
     force?: boolean
@@ -139,7 +139,7 @@ export async function generateSummary(
     replace?: boolean
     allowDowngrade?: boolean
   } = {},
-): Promise<void> {
+): Promise<void> => {
   const file = summaryState.file
   if (!file || summaryState.phase === 'generating') return
   const hardBlock = summaryState.blockReason
@@ -250,7 +250,7 @@ export async function generateSummary(
   }
 }
 
-export async function cancelSummary(): Promise<void> {
+export const cancelSummary = async (): Promise<void> => {
   if (!summaryState.jobId) return
   summaryState.note = 'Останавливаю сборку…'
   try {
@@ -265,7 +265,7 @@ export async function cancelSummary(): Promise<void> {
   }
 }
 
-export async function retrySummary(): Promise<void> {
+export const retrySummary = async (): Promise<void> => {
   if (summaryState.error?.code === 'schema_unsupported') {
     await rebuildInOldFormat()
     return
@@ -298,7 +298,7 @@ export async function retrySummary(): Promise<void> {
 }
 
 /** Новее мажор артефакта: единственный путь замены — явные force + allow_downgrade. */
-export async function rebuildInOldFormat(): Promise<void> {
+export const rebuildInOldFormat = async (): Promise<void> => {
   if (!summaryState.presets.length) await loadSummaryPresets()
   const id =
     summaryState.chosenPresetId ||
@@ -322,7 +322,7 @@ export async function rebuildInOldFormat(): Promise<void> {
   })
 }
 
-export function updateStaleSummary(): void {
+export const updateStaleSummary = (): void => {
   const id = summaryState.record?.preset_id
   if (!id) return
   const preset = presetFor(id)
@@ -334,28 +334,28 @@ export function updateStaleSummary(): void {
   })
 }
 
-export function showPreviousResult(): void {
+export const showPreviousResult = (): void => {
   if (!summaryState.record) return
   summaryState.phase = 'result'
   summaryState.error = null
   summaryState.expanded = true
 }
 
-export function toggleSummary(): void {
+export const toggleSummary = (): void => {
   summaryState.expanded = !summaryState.expanded
 }
 
-export function retryLoad(): void {
+export const retryLoad = (): void => {
   if (summaryState.file) void loadSummary(summaryState.file)
 }
 
-export async function copySummary(): Promise<void> {
+export const copySummary = async (): Promise<void> => {
   if (!summaryState.record) return
   if (await copyText(summaryState.record.markdown)) toast('Итоги скопированы')
   else toast('Не удалось скопировать', 'error')
 }
 
-export async function exportSummary(transcriptMarkdown: string): Promise<void> {
+export const exportSummary = async (transcriptMarkdown: string): Promise<void> => {
   const record = summaryState.record
   if (!record) return
   const stem =
@@ -368,7 +368,7 @@ export async function exportSummary(transcriptMarkdown: string): Promise<void> {
   )
 }
 
-export function downloadSummaryModel(): void {
+export const downloadSummaryModel = (): void => {
   const model = summaryState.model
   if (!model) return
   void downloadModel(model).then((ok) => {
@@ -377,7 +377,7 @@ export function downloadSummaryModel(): void {
   })
 }
 
-export function summaryModelPct(): number | null {
+export const summaryModelPct = (): number | null => {
   const id = summaryState.model?.id
   if (!id) return null
   const pct = engine.downloading[id]

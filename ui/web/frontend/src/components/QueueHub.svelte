@@ -26,7 +26,7 @@ onMount(() => {
   return () => clearInterval(timer)
 })
 
-async function handleFiles(files: FileList | File[]) {
+const handleFiles = async (files: FileList | File[]) => {
   if (!files || files.length === 0) return
   uploading = true
   let count = 0
@@ -58,7 +58,7 @@ async function handleFiles(files: FileList | File[]) {
   }
 }
 
-function onFileInputChange(e: Event) {
+const onFileInputChange = (e: Event) => {
   const input = e.target instanceof HTMLInputElement ? e.target : null
   if (input?.files) {
     void handleFiles(input.files)
@@ -66,7 +66,7 @@ function onFileInputChange(e: Event) {
   }
 }
 
-function onDrop(e: DragEvent) {
+const onDrop = (e: DragEvent) => {
   e.preventDefault()
   isDragOver = false
   if (e.dataTransfer?.files) {

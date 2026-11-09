@@ -62,11 +62,11 @@ $effect(() => {
   }
 })
 
-function openSettings(): void {
+const openSettings = (): void => {
   emit('open-settings', 'summary')
 }
 
-async function retryShort(): Promise<void> {
+const retryShort = async (): Promise<void> => {
   try {
     await saveSummarySettings({ detail: 'short' })
     retrySummary()

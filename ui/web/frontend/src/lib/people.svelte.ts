@@ -33,7 +33,7 @@ export const peopleState: PeopleState = $state({
   voiceDetailName: '',
 })
 
-export async function loadPeople(): Promise<void> {
+export const loadPeople = async (): Promise<void> => {
   try {
     const r = await fetch('/api/people')
     const d = await readJsonSafe<PeopleResponse>(r)
@@ -58,7 +58,7 @@ export async function loadPeople(): Promise<void> {
   } catch {}
 }
 
-export function hasVoiceprint(name: string): boolean {
+export const hasVoiceprint = (name: string): boolean => {
   return peopleState.voiceprints.includes(
     String(name || '')
       .toLowerCase()
@@ -67,7 +67,7 @@ export function hasVoiceprint(name: string): boolean {
 }
 
 // Зачем: один взгляд «у кого сколько голосов», без сырого voiceprints.json.
-export function voiceprintCount(name: string): number | undefined {
+export const voiceprintCount = (name: string): number | undefined => {
   const n =
     peopleState.voiceprintCounts[
       String(name || '')
@@ -77,7 +77,7 @@ export function voiceprintCount(name: string): number | undefined {
   return typeof n === 'number' ? n : undefined
 }
 
-export async function loadVoiceDetail(name: string): Promise<boolean> {
+export const loadVoiceDetail = async (name: string): Promise<boolean> => {
   peopleState.voiceDetail = null
   peopleState.voiceDetailName = name
   try {
@@ -101,11 +101,11 @@ export async function loadVoiceDetail(name: string): Promise<boolean> {
   }
 }
 
-export function snippetUrl(packId: string, protoId: string): string {
+export const snippetUrl = (packId: string, protoId: string): string => {
   return `/api/voicepacks/snippet?pack_id=${encodeURIComponent(packId || '')}&file=${encodeURIComponent(protoId)}.wav`
 }
 
-export async function deleteVoice(name: string): Promise<boolean> {
+export const deleteVoice = async (name: string): Promise<boolean> => {
   const clean = name.trim()
   if (!clean) return false
   try {
@@ -129,11 +129,11 @@ export async function deleteVoice(name: string): Promise<boolean> {
   }
 }
 
-export async function deleteVoiceSample(
+export const deleteVoiceSample = async (
   name: string,
   prototypeId: string,
   packId?: string,
-): Promise<boolean> {
+): Promise<boolean> => {
   try {
     const d = await readJsonSafe<OkResponse>(
       await fetch('/api/voiceprints/delete_sample', {
@@ -156,7 +156,7 @@ export async function deleteVoiceSample(
   }
 }
 
-export async function addPerson(name: string, role: string, packId?: string): Promise<boolean> {
+export const addPerson = async (name: string, role: string, packId?: string): Promise<boolean> => {
   const cleanName = name.trim()
   if (!cleanName) return false
   const cleanRole = role.trim() || 'Участник'
@@ -180,7 +180,7 @@ export async function addPerson(name: string, role: string, packId?: string): Pr
   }
 }
 
-export async function movePerson(name: string, toPackId: string): Promise<boolean> {
+export const movePerson = async (name: string, toPackId: string): Promise<boolean> => {
   const cleanName = name.trim()
   if (!cleanName || !toPackId) return false
   try {

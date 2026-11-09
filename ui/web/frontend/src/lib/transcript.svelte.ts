@@ -82,7 +82,7 @@ export const engine: EngineState = $state({
 let openSeq = 0
 let openAbort: AbortController | null = null
 
-export async function openTranscriptFile(rawPath: string): Promise<void> {
+export const openTranscriptFile = async (rawPath: string): Promise<void> => {
   const seq = ++openSeq
   openAbort?.abort()
   openAbort = new AbortController()
@@ -116,10 +116,10 @@ export async function openTranscriptFile(rawPath: string): Promise<void> {
   transcript.hasText = Boolean(d.markdown?.trim() || transcript.utterances.length > 0)
 }
 
-export async function editTranscript(
+export const editTranscript = async (
   rawPath: string,
   change: { index?: number; text?: string; speaker?: string; old_speaker?: string },
-): Promise<void> {
+): Promise<void> => {
   const r = await fetch('/api/transcript/edit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -135,7 +135,7 @@ export async function editTranscript(
   emit('transcript-edited')
 }
 
-export function emptyHint(): string {
+export const emptyHint = (): string => {
   // Критерий «ядра» — как в downloadAllCoreModels и App.svelte.
   const missingCore = settings.models.filter((m) => isCoreModel(m) && !m.is_installed)
   const base = ui.currentTranscriptIsVideo
@@ -151,14 +151,14 @@ let evtSource: EventSource | null = null
 let finishedAt = 0
 let finishing = false
 
-export function closeStreamIfIdle(): void {
+export const closeStreamIfIdle = (): void => {
   if (!engine.running && !engine.summaryRunning && Object.keys(engine.downloading).length === 0) {
     evtSource?.close()
     evtSource = null
   }
 }
 
-export function ensureStream(): void {
+export const ensureStream = (): void => {
   if (evtSource) return
   if (!engine.running && !engine.summaryRunning && Object.keys(engine.downloading).length === 0)
     return
@@ -188,7 +188,7 @@ export function ensureStream(): void {
 // Итог model-done по id: без него исчезновение прогресса неотличимо от успеха.
 const downloadOutcome: Record<string, boolean> = {}
 
-function handleEngineEvent(e: MessageEvent): void {
+const handleEngineEvent = (e: MessageEvent): void => {
   let evt: EngineEvent
   try {
     evt = JSON.parse(e.data) as EngineEvent // SAFETY: контракт событий движка; поля проверяются по месту
@@ -266,7 +266,7 @@ function handleEngineEvent(e: MessageEvent): void {
   }
 }
 
-function finishEngine(donePath: string): void {
+const finishEngine = (donePath: string): void => {
   if (!engine.running || finishing) return
   finishing = true
   void loadQueue()
@@ -291,7 +291,7 @@ function finishEngine(donePath: string): void {
   }
 }
 
-export async function startTranscription(rawPath: string): Promise<void> {
+export const startTranscription = async (rawPath: string): Promise<void> => {
   try {
     const r = await fetch('/api/transcribe/start', {
       method: 'POST',
@@ -326,11 +326,11 @@ export async function startTranscription(rawPath: string): Promise<void> {
  *  завершить мимо этой страницы (авто-расшифровка после записи, CLI, IPC,
  *  сон телефона). 2 секунды после done игнорируем — флаг ядра снимается
  *  чуть позже самого события, иначе опрос «оживил» бы завершённую задачу. */
-export function syncEngineFromStatus(
+export const syncEngineFromStatus = (
   running: boolean,
   file: string,
   summary?: { active: boolean; file?: string; phase?: string; pct?: number },
-): void {
+): void => {
   if (summary?.active) {
     if (!engine.summaryRunning) {
       engine.summaryPct = 0
@@ -375,7 +375,7 @@ export const downloadingCore: DownloadingCoreState = $state({
   queued: [],
 })
 
-export async function downloadModel(m: ModelInfo): Promise<boolean> {
+export const downloadModel = async (m: ModelInfo): Promise<boolean> => {
   delete downloadOutcome[m.id]
   engine.downloading[m.id] = 0
   ensureStream()
@@ -431,7 +431,7 @@ export async function downloadModel(m: ModelInfo): Promise<boolean> {
   })
 }
 
-export async function downloadAllCoreModels(): Promise<void> {
+export const downloadAllCoreModels = async (): Promise<void> => {
   const core = settings.models.filter((m) => isCoreModel(m) && !m.is_installed)
   if (core.length === 0) return
   downloadingCore.active = true

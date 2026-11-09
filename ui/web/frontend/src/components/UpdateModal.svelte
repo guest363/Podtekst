@@ -83,11 +83,11 @@ const detailRows = $derived.by(() => {
   return rows
 })
 
-function stageText(stage: string): string {
+const stageText = (stage: string): string => {
   return STAGE_LABELS[stage] || 'Обновление'
 }
 
-function progressSize(): string {
+const progressSize = (): string => {
   if (update.total > 0) {
     return ` · ${fmtBytes(update.downloaded) || '0 Б'} из ${fmtBytes(update.total)}`
   }
@@ -95,17 +95,17 @@ function progressSize(): string {
   return ''
 }
 
-function retry(): void {
+const retry = (): void => {
   if (update.stage === 'check') void checkUpdate(true, true)
   else void applyUpdate()
 }
 
-async function copyPullCommand(): Promise<void> {
+const copyPullCommand = async (): Promise<void> => {
   const ok = await copyText('git pull && ./run.sh')
   toast(ok ? 'Команда скопирована' : 'Не удалось скопировать', ok ? '' : 'error')
 }
 
-async function diagnostics(): Promise<void> {
+const diagnostics = async (): Promise<void> => {
   if (diagBusy) return
   diagBusy = true
   try {
@@ -115,7 +115,7 @@ async function diagnostics(): Promise<void> {
   }
 }
 
-function onWindowKey(e: KeyboardEvent): void {
+const onWindowKey = (e: KeyboardEvent): void => {
   if (update.modalOpen && e.key === 'Escape') closeUpdateModal()
 }
 </script>

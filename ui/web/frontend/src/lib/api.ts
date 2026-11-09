@@ -51,14 +51,14 @@ export type ModelInfo = {
  * Файл с совпавшим размером, но битым содержимым считается скачанным:
  * точную проверку делает только SHA-256 при скачивании.
  */
-export function remainingMb(m: ModelInfo): number {
+export const remainingMb = (m: ModelInfo): number => {
   const left = Math.max(0, (m.total_size_bytes || 0) - (m.on_disk_bytes || 0))
   return Math.round(left / 1048576)
 }
 
 /** Whisper и CTC — дополнения: без них распознавание и спикеры работают.
  *  Модель итогов не входит в базовый набор и не влияет на его готовность. */
-export function isCoreModel(m: ModelInfo): boolean {
+export const isCoreModel = (m: ModelInfo): boolean => {
   if (m.kind === 'summary') return false
   const id = m.id.toLowerCase()
   return !id.includes('whisper') && !id.includes('ctc')
@@ -459,28 +459,28 @@ export type RecordingItem = {
   owned?: boolean
 }
 
-export function encPath(p: string): string {
+export const encPath = (p: string): string => {
   return encodeURIComponent(p)
 }
 
-export async function readJsonSafe<T = Record<string, unknown>>(res: Response): Promise<T> {
+export const readJsonSafe = async <T = Record<string, unknown>>(res: Response): Promise<T> => {
   const ct = res.headers.get('content-type') || ''
   if (ct.includes('application/json')) return (await res.json()) as T // SAFETY: контракт endpoint, тип задаёт вызывающая сторона
   const text = await res.text()
   throw new Error(`Сервер вернул HTTP ${res.status}: ${text.slice(0, 160)}`)
 }
 
-export function baseName(p: string): string {
+export const baseName = (p: string): string => {
   return String(p).split(/[\\/]/).pop() ?? ''
 }
 
-export function isVideoPath(p: string): boolean {
+export const isVideoPath = (p: string): boolean => {
   return ['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v'].some((ext) =>
     String(p).toLowerCase().endsWith(ext),
   )
 }
 
-export function fmtClock(sec: number): string {
+export const fmtClock = (sec: number): string => {
   const total = Number.isFinite(sec) && sec > 0 ? sec : 0
   const h = Math.floor(total / 3600)
   const m = Math.floor((total % 3600) / 60)
@@ -490,7 +490,7 @@ export function fmtClock(sec: number): string {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
 }
 
-export function fmtClockShort(sec: number): string {
+export const fmtClockShort = (sec: number): string => {
   const s = Math.max(0, Number(sec) || 0)
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${(s % 60).toFixed(0).padStart(2, '0')}`
 }
@@ -501,7 +501,7 @@ export type FormattedRecDate = {
   full: string
 }
 
-export function parseRecDate(rawDate?: string, rawName?: string): Date | null {
+export const parseRecDate = (rawDate?: string, rawName?: string): Date | null => {
   if (rawDate) {
     const parts = rawDate.trim().split(/[\sT]/)
     if (parts.length >= 1) {
@@ -521,7 +521,7 @@ export function parseRecDate(rawDate?: string, rawName?: string): Date | null {
   return null
 }
 
-export function formatRecDate(rawDate?: string, rawName?: string): FormattedRecDate {
+export const formatRecDate = (rawDate?: string, rawName?: string): FormattedRecDate => {
   let time = ''
   if (rawDate) {
     const parts = rawDate.trim().split(/[\sT]/)
@@ -572,7 +572,7 @@ export function formatRecDate(rawDate?: string, rawName?: string): FormattedRecD
   return { day: 'Запись', time: '', full: 'Запись' }
 }
 
-export function formatRangeLabel(start: Date, end: Date): string {
+export const formatRangeLabel = (start: Date, end: Date): string => {
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   if (start.getTime() === end.getTime()) {
@@ -586,7 +586,7 @@ export function formatRangeLabel(start: Date, end: Date): string {
   return `${fmt(start)}–${fmt(end)}`
 }
 
-export function pluralRecords(n: number): string {
+export const pluralRecords = (n: number): string => {
   const mod10 = n % 10
   const mod100 = n % 100
   if (mod10 === 1 && mod100 !== 11) return 'запись'
@@ -594,7 +594,7 @@ export function pluralRecords(n: number): string {
   return 'записей'
 }
 
-export function displayRecTitle(rawName: string): string {
+export const displayRecTitle = (rawName: string): string => {
   const stem = rawName.replace(/\.[^.]+$/, '')
   if (/^\d{2}[:-]\d{2}(?:-\d{2}[:-]\d{2})?__\d{2}-\d{2}-\d{4}$/.test(stem)) {
     return 'Запись встречи'
@@ -614,7 +614,7 @@ const SPEAKER_PALETTE = [
   '#9d174d',
 ]
 
-function speakerIndex(name: string): number {
+const speakerIndex = (name: string): number => {
   // FNV-1a: стабильно раскладывает имена по палитре без частых совпадений.
   let h = 2166136261
   for (const ch of String(name || '')) {
@@ -624,11 +624,11 @@ function speakerIndex(name: string): number {
   return (h >>> 0) % SPEAKER_PALETTE.length
 }
 
-export function speakerColor(name: string): string {
+export const speakerColor = (name: string): string => {
   return SPEAKER_PALETTE[speakerIndex(name)]
 }
 
-export function speakerTint(_name: string): string {
+export const speakerTint = (_name: string): string => {
   return '#ffffff'
 }
 
@@ -643,7 +643,7 @@ export const isMobile: boolean =
 export const isAndroid: boolean =
   typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
 
-export function pluralSpeakers(n: number): string {
+export const pluralSpeakers = (n: number): string => {
   const mod10 = n % 10
   const mod100 = n % 100
   if (mod10 === 1 && mod100 !== 11) return 'спикер'

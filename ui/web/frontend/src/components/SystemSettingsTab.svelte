@@ -71,13 +71,13 @@ onMount(() => {
   void loadCrashes()
 })
 
-function refresh(): void {
+const refresh = (): void => {
   void loadSystem()
   void loadJournal(20)
   void loadCrashes()
 }
 
-function osText(): string {
+const osText = (): string => {
   const os = snap?.os
   if (!os) return ''
   if (typeof os === 'string') return os
@@ -88,7 +88,7 @@ function osText(): string {
   return [name, os.arch].filter(Boolean).join(' · ')
 }
 
-function diskText(): string {
+const diskText = (): string => {
   if (!freeBytes) return snap?.disk?.path || '—'
   const free = fmtBytes(freeBytes)
   const hours = freeHours > 0 ? ` (~${freeHours} ч)` : ''
@@ -98,19 +98,19 @@ function diskText(): string {
   return `свободно ${free}${hours}`
 }
 
-function memoryText(): string {
+const memoryText = (): string => {
   const available = snap?.memory?.available_bytes
   return available ? `доступно ${fmtBytes(available)}` : '—'
 }
 
-function checkBadge(status: string): string {
+const checkBadge = (status: string): string => {
   if (status === 'ok') return statusBadge('ok', 'Норма')
   if (status === 'warn') return statusBadge('warn', 'Замечание')
   if (status === 'error') return statusBadge('error', 'Ошибка')
   return statusBadge('info', 'Пропущено')
 }
 
-function summaryText(): string {
+const summaryText = (): string => {
   const summary = system.summary
   if (!summary) return ''
   if (summary.warn === 0 && summary.error === 0) {
@@ -121,13 +121,13 @@ function summaryText(): string {
   return parts.join(' · ')
 }
 
-function journalFile(session: JournalSession): string {
+const journalFile = (session: JournalSession): string => {
   if (!session.file) return session.id
   if (typeof session.file === 'string') return session.file.split(/[\\/]/).pop() || session.file
   return session.file.name || session.file.id || session.id
 }
 
-function journalMeta(session: JournalSession): string {
+const journalMeta = (session: JournalSession): string => {
   const parts: string[] = []
   if (session.started_at) parts.push(fmtDateTime(session.started_at))
   if (session.duration_sec) parts.push(fmtClock(session.duration_sec))
@@ -137,7 +137,7 @@ function journalMeta(session: JournalSession): string {
   return parts.join(' · ')
 }
 
-function journalBadge(session: JournalSession): string {
+const journalBadge = (session: JournalSession): string => {
   if (session.status === 'recording') return statusBadge('info', 'Идёт')
   if (session.status === 'ok' || session.status === 'completed' || session.status === 'done') {
     return statusBadge('ok', 'Готова')
@@ -149,7 +149,7 @@ function journalBadge(session: JournalSession): string {
   return statusBadge('info', session.status || 'Без статуса')
 }
 
-function handleFix(fix: CheckFix | null): void {
+const handleFix = (fix: CheckFix | null): void => {
   if (!fix) return
   if (fix.kind === 'open_folder' || fix.kind === 'open_settings') {
     void openTarget(fix.target)
@@ -162,7 +162,7 @@ function handleFix(fix: CheckFix | null): void {
   }
 }
 
-function crashKind(): string {
+const crashKind = (): string => {
   if (!lastCrash) return ''
   return lastCrash.synthetic ? 'Завершение без корректного выхода' : 'Сбой'
 }

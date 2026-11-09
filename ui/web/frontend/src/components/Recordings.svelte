@@ -39,7 +39,7 @@ let activeRec = $state<RecordingItem | null>(null)
 let isPlaying = $state(false)
 let playerRef = $state<{ togglePlay: () => void } | null>(null)
 
-function toggleRecPlay(rec: RecordingItem): void {
+const toggleRecPlay = (rec: RecordingItem): void => {
   if (activeRec?.path === rec.path) {
     playerRef?.togglePlay()
   } else {
@@ -75,11 +75,11 @@ const countWeek = $derived(
   }).length,
 )
 
-function filterByRange(
+const filterByRange = (
   list: RecordingItem[],
   start: Date | null,
   end: Date | null,
-): RecordingItem[] {
+): RecordingItem[] => {
   if (!start && !end) return list
   return list.filter((r) => {
     const d = parseRecDate(r.date, r.name)
@@ -179,7 +179,7 @@ const mainGroups = $derived.by(() => {
   return Array.from(map.values())
 })
 
-function setMainPreset(p: 'today' | 'week' | 'all'): void {
+const setMainPreset = (p: 'today' | 'week' | 'all'): void => {
   mainFilter = p
   mainRangeStart =
     p === 'today' ? today : p === 'week' ? new Date(today.getTime() - 6 * 86400000) : null
@@ -188,7 +188,7 @@ function setMainPreset(p: 'today' | 'week' | 'all'): void {
   mainPickerOpen = false
 }
 
-function onMainRangeSelect(start: Date, end: Date, label: string): void {
+const onMainRangeSelect = (start: Date, end: Date, label: string): void => {
   mainFilter = 'range'
   mainRangeStart = start
   mainRangeEnd = end
@@ -196,11 +196,11 @@ function onMainRangeSelect(start: Date, end: Date, label: string): void {
   mainPickerOpen = false
 }
 
-function clearMainRange(): void {
+const clearMainRange = (): void => {
   setMainPreset('today')
 }
 
-function hasRecsOnDate(d: Date): boolean {
+const hasRecsOnDate = (d: Date): boolean => {
   const t = d.getTime()
   return items.some((r) => {
     const rd = parseRecDate(r.date, r.name)
@@ -218,7 +218,7 @@ onMount(() => {
   }
 })
 
-function onWindowKey(e: KeyboardEvent): void {
+const onWindowKey = (e: KeyboardEvent): void => {
   if (e.key !== 'Escape') return
   if (deleteTarget) {
     deleteTarget = null
@@ -229,7 +229,7 @@ function onWindowKey(e: KeyboardEvent): void {
   }
 }
 
-async function confirmDelete(): Promise<void> {
+const confirmDelete = async (): Promise<void> => {
   if (!deleteTarget || deleting) return
   deleting = true
   if (activeRec?.path === deleteTarget.path) {
@@ -241,24 +241,24 @@ async function confirmDelete(): Promise<void> {
   if (ok) deleteTarget = null
 }
 
-function onDrop(e: DragEvent): void {
+const onDrop = (e: DragEvent): void => {
   e.preventDefault()
   dropCard?.classList.remove('dragover')
   const f = e.dataTransfer?.files?.[0]
   if (f && uploadBtn) void handleFileUpload(f, uploadBtn)
 }
 
-function startRename(rec: RecordingItem): void {
+const startRename = (rec: RecordingItem): void => {
   renaming = rec.path
   renameValue = rec.name.replace(/\.[^.]+$/, '')
 }
 
-function cancelRename(): void {
+const cancelRename = (): void => {
   renaming = ''
   renameValue = ''
 }
 
-async function saveRename(rec: RecordingItem): Promise<void> {
+const saveRename = async (rec: RecordingItem): Promise<void> => {
   const name = renameValue.trim()
   if (!name) {
     toast('Имя не может быть пустым', 'error')

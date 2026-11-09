@@ -17,17 +17,17 @@ const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, n) => {
   return c >>> 0
 })
 
-function crc32(data: Uint8Array): number {
+const crc32 = (data: Uint8Array): number => {
   let crc = 0xffffffff
   for (const byte of data) crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8)
   return (crc ^ 0xffffffff) >>> 0
 }
 
-function le(value: number, bytes: number): Uint8Array {
+const le = (value: number, bytes: number): Uint8Array => {
   return Uint8Array.from({ length: bytes }, (_, i) => (value >>> (i * 8)) & 0xff)
 }
 
-function join(parts: Uint8Array[]): Uint8Array {
+const join = (parts: Uint8Array[]): Uint8Array => {
   const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0))
   let offset = 0
   for (const part of parts) {
@@ -37,7 +37,7 @@ function join(parts: Uint8Array[]): Uint8Array {
   return out
 }
 
-function zip(files: Array<{ name: string; data: Uint8Array }>): Uint8Array {
+const zip = (files: Array<{ name: string; data: Uint8Array }>): Uint8Array => {
   const locals: Uint8Array[] = []
   const centrals: Uint8Array[] = []
   let offset = 0
@@ -99,14 +99,14 @@ function zip(files: Array<{ name: string; data: Uint8Array }>): Uint8Array {
   ])
 }
 
-function xml(value: string): string {
+const xml = (value: string): string => {
   return value.replace(
     /[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c] ?? c,
   )
 }
 
-function runs(text: string, bold = false, color?: string): string {
+const runs = (text: string, bold = false, color?: string): string => {
   const bTag = bold ? '<w:b/>' : ''
   const cTag = color ? `<w:color w:val="${color}"/>` : ''
   const props = bTag || cTag ? `<w:rPr>${bTag}${cTag}</w:rPr>` : ''
@@ -116,11 +116,11 @@ function runs(text: string, bold = false, color?: string): string {
     .join('')}</w:r>`
 }
 
-export function buildDocx(
+export const buildDocx = (
   fileName: string,
   utterances: Utterance[],
   meta?: TranscriptMeta,
-): Uint8Array {
+): Uint8Array => {
   const title = meta?.title || fileName
   const source = meta?.source || fileName
   const dur = meta?.durStr ? ` (${meta.durStr})` : ''
@@ -156,11 +156,11 @@ export function buildDocx(
   ])
 }
 
-async function saveBinary(
+const saveBinary = async (
   defaultName: string,
   bytes: Uint8Array,
   type: { mime: string; description: string; accept: Record<string, string[]> },
-): Promise<void> {
+): Promise<void> => {
   try {
     const res = await fetch(`/api/export/save_dialog?name=${encodeURIComponent(defaultName)}`, {
       method: 'POST',
@@ -233,11 +233,11 @@ async function saveBinary(
   toast(`Файл скачан: ${defaultName}`)
 }
 
-export async function exportDocx(
+export const exportDocx = async (
   fileName: string,
   utterances: Utterance[],
   meta?: TranscriptMeta,
-): Promise<void> {
+): Promise<void> => {
   const bytes = buildDocx(fileName, utterances, meta)
   const defaultName = `${fileName.replace(/\.[^.]+$/, '') || 'Расшифровка'}.docx`
   await saveBinary(defaultName, bytes, {
@@ -249,14 +249,17 @@ export async function exportDocx(
   })
 }
 
-export function buildComposedMarkdown(summaryMarkdown: string, transcriptMarkdown: string): string {
+export const buildComposedMarkdown = (
+  summaryMarkdown: string,
+  transcriptMarkdown: string,
+): string => {
   const summary = String(summaryMarkdown || '').trim()
   const transcript = String(transcriptMarkdown || '').trim()
   if (summary && transcript) return `${summary}\n\n---\n\n${transcript}`
   return summary || transcript
 }
 
-export async function downloadMarkdown(fileName: string, markdown: string): Promise<void> {
+export const downloadMarkdown = async (fileName: string, markdown: string): Promise<void> => {
   const base = fileName.replace(/\.[^.]+$/, '').trim() || 'Итоги и расшифровка'
   const name = `${base}.md`
   const bytes = new TextEncoder().encode(markdown)
@@ -267,6 +270,6 @@ export async function downloadMarkdown(fileName: string, markdown: string): Prom
   })
 }
 
-export function printTranscript(): void {
+export const printTranscript = (): void => {
   window.print()
 }

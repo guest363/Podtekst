@@ -62,7 +62,7 @@ export const settings: SettingsState = $state({
   summaryFeature: null,
 })
 
-export async function loadSummaryFeature(): Promise<void> {
+export const loadSummaryFeature = async (): Promise<void> => {
   if (settings.summaryFeature !== null) return
   try {
     const st = await readJsonSafe<StatusResponse>(await fetch('/api/status'))
@@ -86,14 +86,14 @@ export async function loadSummaryFeature(): Promise<void> {
   }
 }
 
-export async function loadAutoTranscribe(): Promise<void> {
+export const loadAutoTranscribe = async (): Promise<void> => {
   try {
     const d = await readJsonSafe<TranscribeAutoResponse>(await fetch('/api/transcribe/auto'))
     settings.autoTranscribe = d.enabled !== false
   } catch {}
 }
 
-export async function setAutoTranscribe(enabled: boolean): Promise<void> {
+export const setAutoTranscribe = async (enabled: boolean): Promise<void> => {
   settings.autoTranscribe = enabled
   try {
     const d = await readJsonSafe<OkResponse>(
@@ -109,7 +109,7 @@ export async function setAutoTranscribe(enabled: boolean): Promise<void> {
   }
 }
 
-export async function loadRecordMode(): Promise<void> {
+export const loadRecordMode = async (): Promise<void> => {
   if (isMobile) {
     settings.platform = 'android'
     settings.recordMode = 'mix'
@@ -139,11 +139,11 @@ export async function loadRecordMode(): Promise<void> {
   if (!settings.systemAudio) settings.recordMode = 'mix'
 }
 
-export function hasSystemAudio(): boolean {
+export const hasSystemAudio = (): boolean => {
   return settings.systemAudio && !isMobile
 }
 
-export async function setRecordMode(mode: 'split' | 'mix'): Promise<void> {
+export const setRecordMode = async (mode: 'split' | 'mix'): Promise<void> => {
   settings.recordMode = mode
   try {
     await fetch('/api/record/mode', {
@@ -156,7 +156,7 @@ export async function setRecordMode(mode: 'split' | 'mix'): Promise<void> {
   }
 }
 
-export function statusBadge(kind: string, text: string): string {
+export const statusBadge = (kind: string, text: string): string => {
   const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   return `<span class="status-badge ${kind}">${esc}</span>`
 }
@@ -179,7 +179,7 @@ export const ffmpeg: FfmpegState = $state({
   manualUrl: 'https://www.gyan.dev/ffmpeg/builds/',
 })
 
-function applyFfmpegStatus(f: Record<string, unknown> | undefined): void {
+const applyFfmpegStatus = (f: Record<string, unknown> | undefined): void => {
   if (!f || typeof f !== 'object') return
   ffmpeg.known = true
   ffmpeg.available = f.available === true
@@ -189,7 +189,7 @@ function applyFfmpegStatus(f: Record<string, unknown> | undefined): void {
   if (typeof f.manual_url === 'string') ffmpeg.manualUrl = f.manual_url
 }
 
-export async function loadFfmpeg(): Promise<void> {
+export const loadFfmpeg = async (): Promise<void> => {
   try {
     const st = await readJsonSafe<StatusResponse>(await fetch('/api/status'))
     applyFfmpegStatus(st.ffmpeg)
@@ -200,7 +200,7 @@ export async function loadFfmpeg(): Promise<void> {
 
 let ffmpegPoll: ReturnType<typeof setInterval> | undefined
 
-export async function downloadFfmpeg(): Promise<void> {
+export const downloadFfmpeg = async (): Promise<void> => {
   try {
     const r = await fetch('/api/tools/ffmpeg/download', { method: 'POST' })
     const d = await readJsonSafe<OkResponse>(r)
@@ -227,7 +227,7 @@ export async function downloadFfmpeg(): Promise<void> {
   }, 1000)
 }
 
-export async function loadVoicePacks(): Promise<void> {
+export const loadVoicePacks = async (): Promise<void> => {
   try {
     const r = await fetch('/api/voicepacks')
     const d = await readJsonSafe<VoicepacksResponse>(r)
@@ -237,7 +237,7 @@ export async function loadVoicePacks(): Promise<void> {
   }
 }
 
-export async function loadModels(): Promise<void> {
+export const loadModels = async (): Promise<void> => {
   try {
     const r = await fetch('/api/models')
     const d = await readJsonSafe<ModelsResponse>(r)
@@ -247,7 +247,7 @@ export async function loadModels(): Promise<void> {
   }
 }
 
-export async function loadHotwords(): Promise<void> {
+export const loadHotwords = async (): Promise<void> => {
   try {
     const d = await readJsonSafe<HotwordsResponse>(await fetch('/api/hotwords'))
     if (Array.isArray(d.hotwords))
@@ -257,7 +257,7 @@ export async function loadHotwords(): Promise<void> {
   } catch {}
 }
 
-export async function saveHotwords(hotwords: string[], ctcEnabled: boolean): Promise<boolean> {
+export const saveHotwords = async (hotwords: string[], ctcEnabled: boolean): Promise<boolean> => {
   try {
     const d = await readJsonSafe<HotwordsResponse>(
       await fetch('/api/hotwords', {
@@ -282,7 +282,7 @@ export async function saveHotwords(hotwords: string[], ctcEnabled: boolean): Pro
   }
 }
 
-export async function addHotword(term: string): Promise<boolean> {
+export const addHotword = async (term: string): Promise<boolean> => {
   const t = term.trim()
   if (!t) return false
   let cur: string[] = settings.hotwordsLoaded ? [...settings.hotwords] : []
@@ -306,7 +306,7 @@ export async function addHotword(term: string): Promise<boolean> {
   return saveHotwords([...cur, t], settings.ctcEnabled)
 }
 
-export async function togglePack(p: Voicepack): Promise<void> {
+export const togglePack = async (p: Voicepack): Promise<void> => {
   await fetch('/api/voicepacks/toggle', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -316,7 +316,7 @@ export async function togglePack(p: Voicepack): Promise<void> {
   await loadPeople()
 }
 
-export function deletePack(p: Voicepack): void {
+export const deletePack = (p: Voicepack): void => {
   if (p.id === 'default') {
     toast('Базовый пакет удалить нельзя: выключите его или удалите голоса по одному', 'error')
     return
@@ -348,7 +348,7 @@ export function deletePack(p: Voicepack): void {
   )
 }
 
-export async function exportPack(p: Voicepack): Promise<void> {
+export const exportPack = async (p: Voicepack): Promise<void> => {
   try {
     const rr = await fetch('/api/voicepacks/export', {
       method: 'POST',
@@ -365,7 +365,7 @@ export async function exportPack(p: Voicepack): Promise<void> {
   }
 }
 
-export async function importPack(file: File): Promise<boolean> {
+export const importPack = async (file: File): Promise<boolean> => {
   const name = file.name || 'pack.voicepack.zip'
   if (!/\.zip$|\.json$/i.test(name)) {
     toast('Нужен .voicepack.zip или .voicepack.json', 'error')
@@ -392,7 +392,7 @@ export async function importPack(file: File): Promise<boolean> {
   }
 }
 
-export async function createPack(): Promise<void> {
+export const createPack = async (): Promise<void> => {
   const name = settings.newPackName.trim()
   if (!name) {
     toast('Введите название нового пакета')

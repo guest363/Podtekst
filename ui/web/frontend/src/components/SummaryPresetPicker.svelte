@@ -17,7 +17,7 @@ let dialog = $state<HTMLElement | null>(null)
 let pos = $state({ top: 0, left: 0 })
 let previous: HTMLElement | null = null
 
-function place(): void {
+const place = (): void => {
   if (typeof window === 'undefined') return
   const a = anchor?.getBoundingClientRect()
   if (!a) {
@@ -46,7 +46,7 @@ $effect(() => {
   return () => previous?.focus?.()
 })
 
-function onKey(e: KeyboardEvent): void {
+const onKey = (e: KeyboardEvent): void => {
   if (e.key === 'Escape') {
     e.preventDefault()
     e.stopPropagation()

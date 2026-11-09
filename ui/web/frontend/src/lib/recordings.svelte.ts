@@ -16,7 +16,7 @@ export const recordings: RecordingsState = $state({
   items: [],
 })
 
-export async function loadRecordings(): Promise<void> {
+export const loadRecordings = async (): Promise<void> => {
   try {
     const r = await fetch('/api/recordings')
     const d = await readJsonSafe<RecordingsResponse>(r)
@@ -26,7 +26,7 @@ export async function loadRecordings(): Promise<void> {
   }
 }
 
-export async function handleFileUpload(file: File, btn: HTMLButtonElement): Promise<void> {
+export const handleFileUpload = async (file: File, btn: HTMLButtonElement): Promise<void> => {
   if (isMobile && isVideoPath(file.name)) {
     toast(
       'На телефоне видео не поддерживается. Выберите аудиофайл: MP3, WAV, M4A, OGG или FLAC.',
@@ -59,7 +59,7 @@ export async function handleFileUpload(file: File, btn: HTMLButtonElement): Prom
   }
 }
 
-export async function deleteRecording(rec: RecordingItem): Promise<boolean> {
+export const deleteRecording = async (rec: RecordingItem): Promise<boolean> => {
   try {
     const r = await fetch('/api/recordings/delete', {
       method: 'POST',
@@ -80,7 +80,7 @@ export async function deleteRecording(rec: RecordingItem): Promise<boolean> {
   }
 }
 
-export async function extractMp3(rawPath: string): Promise<void> {
+export const extractMp3 = async (rawPath: string): Promise<void> => {
   if (isMobile) {
     toast('Извлечение MP3 из видео недоступно на телефоне', 'error')
     return

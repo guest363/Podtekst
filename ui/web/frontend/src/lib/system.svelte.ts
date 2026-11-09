@@ -266,7 +266,7 @@ export const system: SystemState = $state({
   crashesLoading: false,
 })
 
-export function fmtBytes(n?: number | null): string {
+export const fmtBytes = (n?: number | null): string => {
   const v = Number(n) || 0
   if (v <= 0) return ''
   const units = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ']
@@ -279,7 +279,7 @@ export function fmtBytes(n?: number | null): string {
   return `${x >= 10 ? Math.round(x) : x.toFixed(1).replace(/\.0$/, '')} ${units[i]}`
 }
 
-export function fmtDateTime(raw?: string | null): string {
+export const fmtDateTime = (raw?: string | null): string => {
   if (!raw) return ''
   const d = new Date(raw)
   if (Number.isNaN(d.getTime())) return String(raw)
@@ -287,27 +287,27 @@ export function fmtDateTime(raw?: string | null): string {
   return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-export function crashUnacknowledged(c: CrashItem): boolean {
+export const crashUnacknowledged = (c: CrashItem): boolean => {
   return c.acknowledged !== true && c.acked !== true
 }
 
-export function crashMessage(c: CrashItem): string {
+export const crashMessage = (c: CrashItem): string => {
   return c.message || c.panic?.message || ''
 }
 
-export function crashLocation(c: CrashItem): string {
+export const crashLocation = (c: CrashItem): string => {
   return c.location || c.panic?.location || ''
 }
 
-export function crashVersion(c: CrashItem): string {
+export const crashVersion = (c: CrashItem): string => {
   return c.app_version || c.app?.version || ''
 }
 
-export function crashHasBacktrace(c: CrashItem): boolean {
+export const crashHasBacktrace = (c: CrashItem): boolean => {
   return c.has_backtrace === true || (c.backtrace?.length ?? 0) > 0
 }
 
-export async function loadSystem(): Promise<void> {
+export const loadSystem = async (): Promise<void> => {
   if (system.loading) return
   system.loading = true
   system.error = ''
@@ -327,7 +327,7 @@ export async function loadSystem(): Promise<void> {
   }
 }
 
-export async function runChecks(probeAudio = true): Promise<void> {
+export const runChecks = async (probeAudio = true): Promise<void> => {
   if (system.checksLoading) return
   system.checksLoading = true
   try {
@@ -377,7 +377,7 @@ export async function runChecks(probeAudio = true): Promise<void> {
   }
 }
 
-export async function openTarget(target: string): Promise<void> {
+export const openTarget = async (target: string): Promise<void> => {
   try {
     const d = await readJsonSafe<OkResponse>(
       await fetch('/api/system/open', {
@@ -392,7 +392,7 @@ export async function openTarget(target: string): Promise<void> {
   }
 }
 
-export async function loadJournal(limit = 20): Promise<void> {
+export const loadJournal = async (limit = 20): Promise<void> => {
   try {
     const d = await readJsonSafe<JournalResponse>(await fetch(`/api/journal?limit=${limit}`))
     if (d.ok === false) throw new Error(String(d.error || 'Журнал недоступен'))
@@ -404,7 +404,7 @@ export async function loadJournal(limit = 20): Promise<void> {
   }
 }
 
-export async function loadCrashes(): Promise<void> {
+export const loadCrashes = async (): Promise<void> => {
   if (system.crashesLoading) return
   system.crashesLoading = true
   try {
@@ -420,7 +420,7 @@ export async function loadCrashes(): Promise<void> {
   }
 }
 
-export async function ackCrash(id: string | null = null): Promise<void> {
+export const ackCrash = async (id: string | null = null): Promise<void> => {
   try {
     const d = await readJsonSafe<OkResponse>(
       await fetch('/api/crashes/ack', {
@@ -442,7 +442,7 @@ export async function ackCrash(id: string | null = null): Promise<void> {
   }
 }
 
-export async function collectDiagnostics(): Promise<void> {
+export const collectDiagnostics = async (): Promise<void> => {
   try {
     const d = await readJsonSafe<DiagnosticsResponse>(
       await fetch('/api/diagnostics', { method: 'POST' }),

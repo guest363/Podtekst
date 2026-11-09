@@ -22,7 +22,7 @@ onMount(() => {
   if (system.crashes.length === 0) void loadCrashes()
 })
 
-function summaryText(): string {
+const summaryText = (): string => {
   if (!crash) return ''
   const lines = [`Подтекст ${crashVersion(crash)}`.trim()]
   lines.push(`Сбой: ${fmtDateTime(crash.created_at) || 'без даты'}`)
@@ -35,7 +35,7 @@ function summaryText(): string {
   return lines.join('\n')
 }
 
-async function copySummary(): Promise<void> {
+const copySummary = async (): Promise<void> => {
   const ok = await copyText(summaryText())
   toast(ok ? 'Сводка скопирована' : 'Не удалось скопировать сводку', ok ? '' : 'error')
 }

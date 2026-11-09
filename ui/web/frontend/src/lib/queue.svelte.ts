@@ -31,7 +31,7 @@ export const queueState = $state<QueueState>({
   total: 0,
 })
 
-export async function loadQueue(): Promise<void> {
+export const loadQueue = async (): Promise<void> => {
   try {
     const res = await fetch('/api/transcribe/queue')
     const data = await readJsonSafe<QueueResponse>(res)
@@ -49,7 +49,7 @@ export async function loadQueue(): Promise<void> {
   } catch {}
 }
 
-export async function removeFromQueue(file: string): Promise<boolean> {
+export const removeFromQueue = async (file: string): Promise<boolean> => {
   try {
     const res = await fetch('/api/transcribe/queue/remove', {
       method: 'POST',
@@ -68,7 +68,7 @@ export async function removeFromQueue(file: string): Promise<boolean> {
   return false
 }
 
-export async function clearQueue(): Promise<boolean> {
+export const clearQueue = async (): Promise<boolean> => {
   try {
     const res = await fetch('/api/transcribe/queue/clear', {
       method: 'POST',
@@ -85,15 +85,15 @@ export async function clearQueue(): Promise<boolean> {
   return false
 }
 
-export function isQueued(filePath: string): boolean {
+export const isQueued = (filePath: string): boolean => {
   return queueState.items.some((i) => i.file === filePath)
 }
 
-export function isActive(filePath: string): boolean {
+export const isActive = (filePath: string): boolean => {
   return queueState.running && queueState.currentFile === filePath
 }
 
-export function getPosition(filePath: string): number | null {
+export const getPosition = (filePath: string): number | null => {
   if (isActive(filePath)) return 1
   return queueState.items.find((i) => i.file === filePath)?.position ?? null
 }

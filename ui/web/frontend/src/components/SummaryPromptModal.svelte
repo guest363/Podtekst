@@ -69,7 +69,7 @@ const activeRolePrompt = $derived.by(() => {
   return text.trim()
 })
 
-function onWindowKey(e: KeyboardEvent): void {
+const onWindowKey = (e: KeyboardEvent): void => {
   if (!open) return
   if (e.key === 'Escape') {
     if (selectOpen) {
@@ -81,13 +81,13 @@ function onWindowKey(e: KeyboardEvent): void {
   }
 }
 
-function onBackdropMouseDown(e: MouseEvent): void {
+const onBackdropMouseDown = (e: MouseEvent): void => {
   if (e.target === e.currentTarget) {
     onclose()
   }
 }
 
-function openSelectList(): void {
+const openSelectList = (): void => {
   selectOpen = true
   void tick().then(() => {
     const current = selectList?.querySelector<HTMLElement>('[aria-selected="true"]')
@@ -96,17 +96,17 @@ function openSelectList(): void {
   })
 }
 
-function closeSelect(returnFocus = false): void {
+const closeSelect = (returnFocus = false): void => {
   selectOpen = false
   if (returnFocus) selectTrigger?.focus()
 }
 
-function choosePreset(id: string): void {
+const choosePreset = (id: string): void => {
   activeId = id
   closeSelect(true)
 }
 
-function onSelectKeydown(e: KeyboardEvent): void {
+const onSelectKeydown = (e: KeyboardEvent): void => {
   if (e.key === 'Escape' && selectOpen) {
     e.stopPropagation()
     closeSelect(true)
@@ -129,7 +129,7 @@ function onSelectKeydown(e: KeyboardEvent): void {
   next?.focus()
 }
 
-function onSelectFocusOut(e: FocusEvent): void {
+const onSelectFocusOut = (e: FocusEvent): void => {
   const next = e.relatedTarget instanceof Node ? e.relatedTarget : null
   if (
     selectOpen &&
@@ -139,7 +139,7 @@ function onSelectFocusOut(e: FocusEvent): void {
   }
 }
 
-async function copyPrompt(): Promise<void> {
+const copyPrompt = async (): Promise<void> => {
   const text = showFullPrompt ? activeFullPrompt : activeRolePrompt
   if (!text) return
   try {
@@ -153,7 +153,7 @@ async function copyPrompt(): Promise<void> {
   }
 }
 
-function handleSelect(id: string): void {
+const handleSelect = (id: string): void => {
   onselect?.(id)
   onclose()
 }

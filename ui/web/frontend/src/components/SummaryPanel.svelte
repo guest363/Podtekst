@@ -145,26 +145,26 @@ $effect(() => {
   }
 })
 
-function openPickerAt(e: MouseEvent): void {
+const openPickerAt = (e: MouseEvent): void => {
   pickerAnchor = e.currentTarget instanceof HTMLElement ? e.currentTarget : null
   pickerOpen = true
 }
-function openPicker(): void {
+const openPicker = (): void => {
   pickerAnchor = panelEl
   pickerOpen = true
 }
-function closePicker(): void {
+const closePicker = (): void => {
   pickerOpen = false
 }
-function choose(id: string): void {
+const choose = (id: string): void => {
   pickerOpen = false
   void pickPreset(id)
 }
-function regenerate(): void {
+const regenerate = (): void => {
   const record = summaryState.record
   if (record) void generateSummary(record.preset_id, { force: true })
 }
-function onWindowKey(e: KeyboardEvent): void {
+const onWindowKey = (e: KeyboardEvent): void => {
   if (!visible || e.key !== 'Escape') return
   if (pickerOpen) {
     e.preventDefault()

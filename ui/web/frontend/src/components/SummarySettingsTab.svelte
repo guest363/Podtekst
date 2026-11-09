@@ -103,7 +103,7 @@ const detailInfo = $derived.by(() => {
   }
 })
 
-async function reload(): Promise<void> {
+const reload = async (): Promise<void> => {
   loading = true
   error = ''
   try {
@@ -118,12 +118,12 @@ async function reload(): Promise<void> {
 
 let gpuPoll: ReturnType<typeof setInterval> | null = null
 
-function stopGpuPoll(): void {
+const stopGpuPoll = (): void => {
   if (gpuPoll) clearInterval(gpuPoll)
   gpuPoll = null
 }
 
-function startGpuPoll(): void {
+const startGpuPoll = (): void => {
   stopGpuPoll()
   gpuPoll = setInterval(async () => {
     try {
@@ -143,7 +143,7 @@ onMount(() => {
 
 onDestroy(stopGpuPoll)
 
-async function installGpu(): Promise<void> {
+const installGpu = async (): Promise<void> => {
   if (!gpu || gpu.installing) return
   error = ''
   try {
@@ -157,7 +157,7 @@ async function installGpu(): Promise<void> {
   }
 }
 
-async function cancelGpu(): Promise<void> {
+const cancelGpu = async (): Promise<void> => {
   try {
     await cancelSummaryGpu()
   } catch (e) {
@@ -165,7 +165,7 @@ async function cancelGpu(): Promise<void> {
   }
 }
 
-async function removeGpu(): Promise<void> {
+const removeGpu = async (): Promise<void> => {
   try {
     await removeSummaryGpu()
     toast('GPU-пакет удалён. Итоги работают на CPU.')
@@ -175,7 +175,7 @@ async function removeGpu(): Promise<void> {
   }
 }
 
-function confirmRemoveGpu(): void {
+const confirmRemoveGpu = (): void => {
   toastConfirm(
     'Удалить ускорение GPU? Итоги продолжат работать на CPU.',
     'Удалить',
@@ -183,11 +183,11 @@ function confirmRemoveGpu(): void {
   )
 }
 
-function toggleGpu(): void {
+const toggleGpu = (): void => {
   void save({ gpu: gpuEnabled ? 'off' : 'auto' })
 }
 
-async function save(patch: Partial<SummarySettings>): Promise<void> {
+const save = async (patch: Partial<SummarySettings>): Promise<void> => {
   if (saving) return
   saving = true
   error = ''
@@ -202,13 +202,13 @@ async function save(patch: Partial<SummarySettings>): Promise<void> {
   }
 }
 
-async function download(): Promise<void> {
+const download = async (): Promise<void> => {
   if (!model || modelPct !== null) return
   const ok = await downloadModel(model)
   if (ok) await reload()
 }
 
-function openPresetList(): void {
+const openPresetList = (): void => {
   if (saving) return
   presetOpen = true
   void tick().then(() => {
@@ -218,23 +218,23 @@ function openPresetList(): void {
   })
 }
 
-function closePreset(returnFocus = false): void {
+const closePreset = (returnFocus = false): void => {
   presetOpen = false
   if (returnFocus) presetTrigger?.focus()
 }
 
-function choosePreset(id: string): void {
+const choosePreset = (id: string): void => {
   closePreset(true)
   if (id === defaultPreset) return
   void save({ default_preset: id || null })
 }
 
-function openGuide(presetId?: string): void {
+const openGuide = (presetId?: string): void => {
   guidePresetId = presetId || defaultPreset || summaryState.presets[0]?.id || 'meeting'
   guideOpen = true
 }
 
-function onPresetKeydown(e: KeyboardEvent): void {
+const onPresetKeydown = (e: KeyboardEvent): void => {
   if (e.key === 'Escape' && presetOpen) {
     e.stopPropagation()
     closePreset(true)
@@ -257,7 +257,7 @@ function onPresetKeydown(e: KeyboardEvent): void {
   next?.focus()
 }
 
-function onPresetFocusOut(e: FocusEvent): void {
+const onPresetFocusOut = (e: FocusEvent): void => {
   const next = e.relatedTarget instanceof Node ? e.relatedTarget : null
   if (
     presetOpen &&

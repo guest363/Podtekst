@@ -49,7 +49,7 @@ $effect(() => {
 
 let rootEl: HTMLDivElement | null = $state(null)
 
-function prevMonth(): void {
+const prevMonth = (): void => {
   if (viewMonth === 0) {
     viewMonth = 11
     viewYear -= 1
@@ -58,7 +58,7 @@ function prevMonth(): void {
   }
 }
 
-function nextMonth(): void {
+const nextMonth = (): void => {
   if (viewMonth === 11) {
     viewMonth = 0
     viewYear += 1
@@ -67,7 +67,7 @@ function nextMonth(): void {
   }
 }
 
-function onDayClick(d: Date): void {
+const onDayClick = (d: Date): void => {
   if (!selStart || (selStart && selEnd)) {
     selStart = d
     selEnd = null
@@ -86,7 +86,7 @@ function onDayClick(d: Date): void {
   }
 }
 
-function confirmSingle(): void {
+const confirmSingle = (): void => {
   if (selStart) {
     const e = selEnd ?? selStart
     onSelect(selStart, e, formatRangeLabel(selStart, e))
@@ -106,7 +106,7 @@ const daysGrid = $derived.by(() => {
   return cells
 })
 
-function isSameDay(a: Date | null, b: Date | null): boolean {
+const isSameDay = (a: Date | null, b: Date | null): boolean => {
   if (!a || !b) return false
   return (
     a.getFullYear() === b.getFullYear() &&
@@ -115,11 +115,11 @@ function isSameDay(a: Date | null, b: Date | null): boolean {
   )
 }
 
-function isToday(d: Date): boolean {
+const isToday = (d: Date): boolean => {
   return isSameDay(d, today)
 }
 
-function isInRange(d: Date): boolean {
+const isInRange = (d: Date): boolean => {
   const s = selStart
   const e = selEnd ?? (selStart ? hoverDate : null)
   if (!s || !e) return false
@@ -130,7 +130,7 @@ function isInRange(d: Date): boolean {
 }
 
 onMount(() => {
-  function onPointerDown(e: PointerEvent): void {
+  const onPointerDown = (e: PointerEvent): void => {
     if (rootEl && !(e.target instanceof Node && rootEl.contains(e.target))) {
       // Если был выбран только один день, фиксируем его
       if (selStart && !selEnd) {
@@ -139,7 +139,7 @@ onMount(() => {
       onClose()
     }
   }
-  function onKey(e: KeyboardEvent): void {
+  const onKey = (e: KeyboardEvent): void => {
     if (e.key === 'Escape') {
       e.stopPropagation()
       onClose()

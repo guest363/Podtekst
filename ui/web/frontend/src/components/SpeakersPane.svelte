@@ -82,7 +82,7 @@ let mergedSpeakers = $derived.by((): MergedSpeaker[] => {
 let playingKey = $state('')
 let sampleAudio: HTMLAudioElement | null = null
 
-function stopSample(): void {
+const stopSample = (): void => {
   if (sampleAudio) {
     // Хендлеры глушим до abort: load() без src в части браузеров кидает error.
     sampleAudio.onended = sampleAudio.onerror = null
@@ -97,7 +97,7 @@ function stopSample(): void {
 // Фрагмент играет сразу по клику: без верхнего плеера и без полосы прогресса.
 // WAV-записи (наши, самые большие) нарезает ядро: маленький файл играется с нуля,
 // перемотка по гигабайтному WAV вешает WebView. Прочие форматы — медиафрагмент #t=.
-function toggleSample(key: string, start: number, end: number, channel?: number | null): void {
+const toggleSample = (key: string, start: number, end: number, channel?: number | null): void => {
   if (playingKey === key) {
     stopSample()
     return
@@ -172,14 +172,14 @@ onDestroy(() => {
   sampleAudio = null
 })
 
-async function saveVoiceprint(
+const saveVoiceprint = async (
   oldName: string,
   nameOrInput: string | HTMLInputElement | null,
   embedding: number[] | null | undefined,
   saveBtn: HTMLButtonElement,
   sample?: { start: number; end: number; channel?: number | null },
   targetPackId?: string,
-): Promise<void> {
+): Promise<void> => {
   const finalName = (
     typeof nameOrInput === 'string' ? nameOrInput : nameOrInput?.value.trim() || ''
   ).trim()
@@ -224,7 +224,7 @@ async function saveVoiceprint(
   }
 }
 
-async function unmatchSpeaker(speakerName: string): Promise<void> {
+const unmatchSpeaker = async (speakerName: string): Promise<void> => {
   if (!ui.currentTranscriptPath || !speakerName) return
   try {
     const r = await fetch('/api/transcript/edit', {
@@ -249,11 +249,11 @@ async function unmatchSpeaker(speakerName: string): Promise<void> {
   }
 }
 
-async function detachSample(s: {
+const detachSample = async (s: {
   start: number
   end: number
   channel?: number | null
-}): Promise<void> {
+}): Promise<void> => {
   if (!ui.currentTranscriptPath) return
   const utts = transcript.utterances
   const idx = utts.findIndex(
@@ -291,15 +291,15 @@ async function detachSample(s: {
 let inputValues = $state<Record<string, string>>({})
 let cardPack = $state<Record<string, string>>({})
 
-function getCardValue(key: string, fallback: string): string {
+const getCardValue = (key: string, fallback: string): string => {
   return inputValues[key] ?? fallback
 }
 
-function setCardValue(key: string, val: string): void {
+const setCardValue = (key: string, val: string): void => {
   inputValues[key] = val
 }
 
-function getCardPack(key: string, currentVal?: string): string {
+const getCardPack = (key: string, currentVal?: string): string => {
   if (cardPack[key]) return cardPack[key]
   const val = (currentVal || '').trim().toLowerCase()
   if (val) {
@@ -318,7 +318,7 @@ type DropdownState = {
 let activeDropdown = $state<DropdownState | null>(null)
 let dropdownEl = $state<HTMLElement | null>(null)
 
-async function openDropdownFor(key: string, anchorEl: HTMLElement): Promise<void> {
+const openDropdownFor = async (key: string, anchorEl: HTMLElement): Promise<void> => {
   const card = anchorEl.closest<HTMLElement>('.speaker-card')
   const cardRect = card?.getBoundingClientRect()
   const rect = anchorEl.getBoundingClientRect()
@@ -342,7 +342,7 @@ async function openDropdownFor(key: string, anchorEl: HTMLElement): Promise<void
   }
 }
 
-function closeDropdown(): void {
+const closeDropdown = (): void => {
   activeDropdown = null
 }
 
@@ -386,7 +386,7 @@ let showCreateOption = $derived.by(() => {
   return !inPeople && !inOther
 })
 
-function selectPerson(name: string, packId?: string): void {
+const selectPerson = (name: string, packId?: string): void => {
   if (!activeDropdown) return
   const k = activeDropdown.spkKey
   setCardValue(k, name)
@@ -399,7 +399,7 @@ function selectPerson(name: string, packId?: string): void {
   closeDropdown()
 }
 
-function onInputKey(e: KeyboardEvent, btn: HTMLButtonElement | null): void {
+const onInputKey = (e: KeyboardEvent, btn: HTMLButtonElement | null): void => {
   if (e.key === 'Escape') {
     e.preventDefault()
     closeDropdown()

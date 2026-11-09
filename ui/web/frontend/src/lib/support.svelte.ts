@@ -26,7 +26,7 @@ export const support: SupportState = $state({
   savedMinutes: 0,
 })
 
-export async function loadSupportInfo(): Promise<void> {
+export const loadSupportInfo = async (): Promise<void> => {
   try {
     const r = await fetch('/api/support/info')
     const d = await readJsonSafe<SupportInfoResponse>(r)
@@ -40,7 +40,7 @@ export async function loadSupportInfo(): Promise<void> {
   } catch {}
 }
 
-export async function copyMethod(m: DonateMethod): Promise<void> {
+export const copyMethod = async (m: DonateMethod): Promise<void> => {
   const ok = await copyText(m.url || m.address || '')
   toast(ok ? 'Адрес скопирован' : 'Не удалось скопировать', ok ? '' : 'error')
 }
