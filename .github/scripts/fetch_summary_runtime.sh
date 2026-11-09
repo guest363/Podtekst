@@ -72,24 +72,20 @@ if [ "$TARGET" != "$HOST" ] && [ "$ALLOW_CROSS" != 1 ]; then
 fi
 
 # shellcheck disable=SC2046
-eval "$("$PY" - "$MANIFEST" "$TARGET" <<'PY'
-import json
-import shlex
-import sys
-
+eval "$("$PY" -c '
+import json, shlex, sys
 manifest = json.load(open(sys.argv[1], encoding="utf-8"))
 target = manifest["targets"][sys.argv[2]]
-print(f"TRIPLE={shlex.quote(target['triple'])}")
-print(f"URL={shlex.quote(target['url'])}")
-print(f"SHA256={shlex.quote(target['sha256'])}")
-print(f"ASSET={shlex.quote(target['asset'])}")
-print(f"EXPECTED_BYTES={int(target['installed_bytes'])}")
-print(f"LAUNCHER={shlex.quote(manifest.get('launcher', 'llama-server'))}")
+print("TRIPLE=" + shlex.quote(target["triple"]))
+print("URL=" + shlex.quote(target["url"]))
+print("SHA256=" + shlex.quote(target["sha256"]))
+print("ASSET=" + shlex.quote(target["asset"]))
+print("EXPECTED_BYTES=" + str(int(target["installed_bytes"])))
+print("LAUNCHER=" + shlex.quote(manifest.get("launcher", "llama-server")))
 print("PRUNE=(" + " ".join(shlex.quote(p) for p in target["prune"]) + ")")
 print("LICENSE_FILES=(" + " ".join(shlex.quote(p) for p in target.get("license_files", [])) + ")")
 print("REQUIRED_FLAGS=(" + " ".join(shlex.quote(f) for f in manifest.get("required_flags", [])) + ")")
-PY
-)"
+' "$MANIFEST" "$TARGET")"
 
 [ -n "$DEST" ] || DEST="$ROOT/src-tauri/binaries/runtime/$TRIPLE"
 
@@ -148,18 +144,15 @@ PY
         ;;
 esac
 
-SRC_ROOT="$("$PY" - "$TMP/extract" "$LAUNCHER" <<'PY'
-import os
-import sys
-
+SRC_ROOT="$("$PY" -c '
+import os, sys
 root, launcher = sys.argv[1], sys.argv[2]
 names = {launcher, launcher + ".exe"}
 for dirpath, _dirnames, filenames in os.walk(root):
     if names.intersection(filenames):
         print(dirpath)
         break
-PY
-)"
+' "$TMP/extract" "$LAUNCHER")"
 [ -n "$SRC_ROOT" ] || {
     echo "В архиве нет $LAUNCHER" >&2
     exit 1
@@ -209,10 +202,8 @@ done
 
 cp -f "$ROOT/LICENSES/llama.cpp-LICENSE.txt" "$DEST/llama.cpp-LICENSE.txt"
 
-INSTALLED="$("$PY" - "$DEST" <<'PY'
-import os
-import sys
-
+INSTALLED="$("$PY" -c '
+import os, sys
 total = 0
 for dirpath, _dirnames, filenames in os.walk(sys.argv[1]):
     for name in filenames:
@@ -220,8 +211,7 @@ for dirpath, _dirnames, filenames in os.walk(sys.argv[1]):
         if not os.path.islink(path):
             total += os.path.getsize(path)
 print(total)
-PY
-)"
+' "$DEST")"
 FILES="$("$PY" -c 'import os,sys; print(sum(len(f) for _,_,f in os.walk(sys.argv[1])))' "$DEST")"
 echo "→ Установлено: $FILES файлов, $INSTALLED байт (лимит $LIMIT_BYTES)"
 if [ "$INSTALLED" -gt "$LIMIT_BYTES" ]; then

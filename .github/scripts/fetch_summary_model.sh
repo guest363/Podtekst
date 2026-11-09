@@ -40,20 +40,16 @@ fi
 }
 
 # shellcheck disable=SC2046
-eval "$("$PY" - "$MANIFEST" "$MODEL_ID" <<'PY'
-import json
-import shlex
-import sys
-
+eval "$("$PY" -c '
+import json, shlex, sys
 manifest = json.load(open(sys.argv[1], encoding="utf-8"))
 entry = next(m for m in manifest["models"] if m["id"] == sys.argv[2])
 item = entry["files"][0]
-print(f"MODEL_FILE={shlex.quote(item['filename'])}")
-print(f"MODEL_URL={shlex.quote(item['url_hf'])}")
-print(f"MODEL_SHA256={shlex.quote(item['sha256'])}")
-print(f"MODEL_BYTES={int(item['size_bytes'])}")
-PY
-)"
+print("MODEL_FILE=" + shlex.quote(item["filename"]))
+print("MODEL_URL=" + shlex.quote(item["url_hf"]))
+print("MODEL_SHA256=" + shlex.quote(item["sha256"]))
+print("MODEL_BYTES=" + str(int(item["size_bytes"])))
+' "$MANIFEST" "$MODEL_ID")"
 
 sha256_file() {
     if command -v sha256sum >/dev/null 2>&1; then
