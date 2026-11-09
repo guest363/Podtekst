@@ -1,6 +1,3 @@
-//! Dev-sink: неблокирующий файл, кольцо последних строк и артефакты запуска.
-//! Компилируется только при `debug_assertions`; в release модуля нет.
-
 mod artifacts;
 mod filter;
 mod format;

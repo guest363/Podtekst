@@ -1,9 +1,5 @@
 //! Файл лога для упакованных сборок: у `.app` и NSIS нет консоли, поэтому
 //! `eprintln!` до поддержки не доходит.
-//!
-//! Здесь же живёт dev-sink: структурированные события `log` в отдельный файл,
-//! кольцо последних строк для crash-отчёта и артефакты запуска. Модуль
-//! компилируется только в dev-профиле (`debug_assertions`).
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -14,8 +10,6 @@ use std::sync::{Mutex, OnceLock};
 mod dev;
 #[cfg(not(debug_assertions))]
 mod dev {
-    //! В release dev-логи не существуют: те же вызовы остаются no-op.
-
     pub(crate) fn init_if_enabled() {}
     pub(crate) fn begin_run() -> String {
         String::new()
@@ -247,8 +241,7 @@ fn preview_with(mode: TextMode, text: &str) -> String {
     }
 }
 
-/// Текст в логах по умолчанию — preview ≤ 80 символов; полный текст только
-/// при явном `MR_LOG_TEXT=full` (P12).
+/// P12: полный текст — только при явном `MR_LOG_TEXT=full`.
 pub(crate) fn text_preview(text: &str) -> String {
     preview_with(text_mode(), text)
 }
@@ -267,7 +260,7 @@ fn speaker_token_with(full: bool, name: &str) -> String {
     format!("S{:06x}", fnv1a(name) & 0xff_ffff)
 }
 
-/// Имена спикеров в событиях — только при `MR_LOG_TEXT=full`, иначе хеш.
+/// P12: имена спикеров — только при явном `MR_LOG_TEXT=full`.
 pub(crate) fn speaker_token(name: &str) -> String {
     speaker_token_with(full_text_allowed(), name)
 }
@@ -292,8 +285,7 @@ fn file_token_with(full: bool, path: &Path) -> String {
     }
 }
 
-/// Имя записи в логах по умолчанию заменено хешем; полный путь — только
-/// при `MR_LOG_PATHS=full` (и всё равно с домашним каталогом → `~`).
+/// P12: полный путь — только при явном `MR_LOG_PATHS=full`.
 pub(crate) fn file_token(path: &Path) -> String {
     file_token_with(std::env::var("MR_LOG_PATHS").as_deref() == Ok("full"), path)
 }

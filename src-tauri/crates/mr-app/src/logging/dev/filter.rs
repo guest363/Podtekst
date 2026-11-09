@@ -116,7 +116,6 @@ fn path_mode() -> PathMode {
 }
 
 pub(super) fn dump_mode() -> Option<bool> {
-    // None — выключено, Some(full) — полный дамп, Some(false) — обычный.
     match std::env::var("MR_DIAG_DUMP").as_deref() {
         Ok("0") | Ok("off") => None,
         Ok("full") => Some(true),

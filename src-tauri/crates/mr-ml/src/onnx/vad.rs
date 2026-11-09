@@ -122,7 +122,6 @@ impl SileroVad {
             .map(|(probs, _)| probs)
     }
 
-    /// То же, что `process_all_with`, плюс счётчики решений для dev-логов.
     pub fn process_all_with_stats<F>(
         &mut self,
         samples: &[f32],
