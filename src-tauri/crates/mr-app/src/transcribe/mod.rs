@@ -518,6 +518,7 @@ pub fn transcribe_file(
             let lo = (a * 16000.0) as usize;
             let hi = ((b * 16000.0) as usize).min(samples.len());
             let chunk = &samples[lo..hi];
+            let mel = use_gigaam.then(|| mr_ml::onnx::features::nemo_mel(chunk));
             let text = if use_gigaam {
                 // Тихая речь: жадный RNNT предпочитает blank и теряет слова.
                 // Штраф включаем только для коротких фрагментов с речевой
@@ -532,7 +533,7 @@ pub fn transcribe_file(
                     .gigaam
                     .as_mut()
                     .ok_or("нет GigaAM-модели")?
-                    .transcribe_segment_penalized(chunk, blank_penalty)
+                    .transcribe_mel_penalized(mel.as_deref().unwrap_or(&[]), blank_penalty)
                     .map_err(|e| format!("GigaAM: {e}"))?
             } else {
                 models
@@ -559,7 +560,7 @@ pub fn transcribe_file(
                 if use_gigaam && opts.ctc_enabled {
                     if let Some(ctc) = models.ctc.as_mut() {
                         if let Ok((hyp, times)) =
-                            ctc.transcribe_segment_timed(chunk, &opts.hotwords)
+                            ctc.transcribe_mel_timed(mel.as_deref().unwrap_or(&[]), &opts.hotwords)
                         {
                             if !hyp.words.is_empty() {
                                 let aligned = align_to_reference_timed(

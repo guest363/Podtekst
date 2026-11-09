@@ -112,6 +112,16 @@ impl GigaAM {
             return Ok(String::new());
         }
         let mel = super::features::nemo_mel(samples);
+        self.transcribe_mel_penalized(&mel, blank_penalty)
+    }
+
+    /// Готовая 64-полосная мел-спектрограмма: GigaAM и CTC используют один
+    /// и тот же расчёт, второй проход не должен считать STFT заново.
+    pub fn transcribe_mel_penalized(
+        &mut self,
+        mel: &[Vec<f32>],
+        blank_penalty: f32,
+    ) -> Result<String, String> {
         if mel.is_empty() {
             return Ok(String::new());
         }

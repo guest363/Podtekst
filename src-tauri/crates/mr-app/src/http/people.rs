@@ -511,7 +511,7 @@ fn store_voiceprint(
     sample_start: Option<f64>,
     sample_end: Option<f64>,
     sample_channel: Option<usize>,
-) {
+) -> Result<(), String> {
     let chosen_pack = resolve_target_pack(name, target_pack_id);
     let now = crate::recording::now_secs();
     let now_iso = chrono::Utc::now().to_rfc3339();
@@ -577,6 +577,27 @@ fn store_voiceprint(
                 })
                 .unwrap_or(false)
         });
+        if !duplicate && protos.len() >= 3 {
+            let best = protos
+                .iter()
+                .filter_map(|x| {
+                    x.get("embedding")
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.iter().filter_map(|n| n.as_f64()).collect::<Vec<f64>>())
+                })
+                .map(|v| cosine_similarity(&v, &norm))
+                .fold(-1.0f64, f64::max);
+            if best < 0.30 {
+                drop(_guard);
+                if let (Some(rel), Some(parent)) = (snippet_rel.as_deref(), vp_file.parent()) {
+                    remove_snippet(parent, rel);
+                }
+                return Err(
+                    "Выбранный фрагмент звучит как другой голос или содержит сильный шум"
+                        .to_string(),
+                );
+            }
+        }
         if !duplicate {
             protos.push(json!({
                 "id": new_id,
@@ -629,6 +650,7 @@ fn store_voiceprint(
         }
     }
     ensure_person_in_pack(name, Some("Участник"), &chosen_pack);
+    Ok(())
 }
 
 pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_json::Value) {
@@ -713,7 +735,7 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
             );
             return;
         }
-        store_voiceprint(
+        if let Err(error) = store_voiceprint(
             &name,
             Some(&chosen_pack),
             norm,
@@ -721,7 +743,10 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
             sample_start,
             sample_end,
             sample_channel,
-        );
+        ) {
+            json_response(request, json!({"ok": false, "error": error}), 422);
+            return;
+        }
     }
 
     ensure_person_in_pack(&name, Some("Участник"), &chosen_pack);
@@ -971,7 +996,7 @@ pub(super) fn handle_voiceprint_learn_sample(request: tiny_http::Request, body: 
         .and_then(|v| v.as_str())
         .map(|s| s.trim().to_string());
     let chosen_pack = resolve_target_pack(&name, pack_id.as_deref());
-    store_voiceprint(
+    if let Err(error) = store_voiceprint(
         &name,
         Some(&chosen_pack),
         norm,
@@ -979,7 +1004,10 @@ pub(super) fn handle_voiceprint_learn_sample(request: tiny_http::Request, body: 
         Some(start),
         Some(end),
         channel.map(|c| c.max(0) as usize),
-    );
+    ) {
+        json_response(request, json!({"ok": false, "error": error}), 422);
+        return;
+    }
     ensure_person_in_pack(&name, Some("Участник"), &chosen_pack);
     json_response(
         request,
@@ -1600,8 +1628,8 @@ mod tests {
 
         let name = "Тест-Дрейф";
         for i in 0..15 {
-            let mut v = vec![0.01; EMBEDDING_DIM];
-            v[i] += 1.0;
+            let mut v = vec![1.0; EMBEDDING_DIM];
+            v[i] = 20.0;
             store_voiceprint(
                 name,
                 Some("default"),
@@ -1610,7 +1638,8 @@ mod tests {
                 Some(1.0),
                 Some(3.0),
                 None,
-            );
+            )
+            .expect("прототип сохраняется");
         }
         let vp = load_all_voiceprints()
             .into_iter()
@@ -1650,6 +1679,47 @@ mod tests {
         assert!(safe_snippet_path(&dir, "snippets/a.wav").is_some());
         assert!(safe_snippet_path(&dir, "../a.wav").is_none());
         assert!(safe_snippet_path(&dir, "/etc/passwd").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn voiceprint_outlier_is_rejected() {
+        let _guard = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!(
+            "mr-voiceprint-outlier-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let prev = std::env::var("MEETING_RECORDER_DATA_DIR").ok();
+        std::env::set_var("MEETING_RECORDER_DATA_DIR", &dir);
+        let name = "Тест-Выброс";
+        for i in 0..3 {
+            let mut v = vec![0.0; EMBEDDING_DIM];
+            v[i] = 1.0;
+            store_voiceprint(name, Some("default"), v, "", None, None, None)
+                .expect("свой прототип");
+        }
+        let mut alien = vec![0.0; EMBEDDING_DIM];
+        alien[100] = 1.0;
+        let error = store_voiceprint(name, Some("default"), alien, "", None, None, None)
+            .expect_err("чужой голос должен быть отклонён");
+        assert!(error.contains("другой голос"), "{error}");
+        let vp = load_all_voiceprints()
+            .into_iter()
+            .find(|v| same_name(v.get("name").and_then(|x| x.as_str()).unwrap_or(""), name))
+            .expect("профиль");
+        assert_eq!(vp["prototypes"].as_array().map(Vec::len), Some(3));
+
+        if let Some(p) = prev {
+            std::env::set_var("MEETING_RECORDER_DATA_DIR", p);
+        } else {
+            std::env::remove_var("MEETING_RECORDER_DATA_DIR");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1733,7 +1803,8 @@ mod tests {
                 .map(|i| (i + 1) as f64)
                 .collect::<Vec<_>>(),
         );
-        store_voiceprint(person_name, Some("default"), emb, "", None, None, None);
+        store_voiceprint(person_name, Some("default"), emb, "", None, None, None)
+            .expect("голос сохраняется");
 
         let vps_before = load_all_voiceprints();
         assert!(vps_before.iter().any(|v| same_name(
