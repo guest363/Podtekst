@@ -1,80 +1,78 @@
 <script lang="ts">
-  import { tick } from 'svelte'
-  import { closeTranscript, emit } from '../lib/ui.svelte.ts'
-  import {
-    cancelSensitive,
-    cancelSummary,
-    confirmSensitive,
-    rebuildInOldFormat,
-    retryLoad,
-    retrySummary,
-    saveSummarySettings,
-    showPreviousResult,
-    summaryState,
-  } from '../lib/summary.svelte.ts'
-  import { summaryElapsed } from '../lib/summaryUi.ts'
-  import { toast } from '../lib/toast.svelte.ts'
+import { tick } from 'svelte'
+import {
+  cancelSensitive,
+  cancelSummary,
+  confirmSensitive,
+  rebuildInOldFormat,
+  retryLoad,
+  retrySummary,
+  saveSummarySettings,
+  showPreviousResult,
+  summaryState,
+} from '../lib/summary.svelte.ts'
+import { summaryElapsed } from '../lib/summaryUi.ts'
+import { toast } from '../lib/toast.svelte.ts'
+import { closeTranscript, emit } from '../lib/ui.svelte.ts'
 
-  let confirmHead = $state<HTMLElement | null>(null)
+let confirmHead = $state<HTMLElement | null>(null)
 
-  const runtimeMissing = $derived(summaryState.blockReason === 'runtime_missing')
-  const unsupportedArtifact = $derived(
-    summaryState.phase === 'error'
-      ? summaryState.error?.code === 'schema_unsupported'
-      : summaryState.stateName === 'unsupported',
-  )
-  const hardBlock = $derived(
-    summaryState.blockReason === 'too_short' ||
-      summaryState.blockReason === 'unsupported' ||
-      summaryState.blockReason === 'runtime_missing' ||
-      summaryState.blockReason === 'low_memory',
-  )
-  const blockingText = $derived.by(() => {
-    switch (summaryState.blockReason) {
-      case 'low_memory':
-        return 'Для модели нужно не меньше 12 ГБ ОЗУ и около 6,5 ГБ свободно. Закройте приложения и повторите.'
-      case 'runtime_missing':
-        return 'Локальный движок итогов не установлен. Переустановите приложение из релизной сборки.'
-      case 'too_short':
-        return 'В записи мало текста для итогов.'
-      case 'unsupported':
-        return 'Итоги сохранены в более новом формате. Обновите приложение или соберите заново в старом формате.'
-      default:
-        return ''
-    }
-  })
-  const errorCode = $derived(summaryState.error?.code || '')
-  const shortRetry = $derived(
-    errorCode === 'timeout' ||
-      errorCode === 'output_thin' ||
-      errorCode === 'output_capped',
-  )
-  const settingsRetry = $derived(
-    errorCode === 'runtime_missing' ||
-      errorCode === 'low_memory' ||
-      errorCode === 'oom' ||
-      errorCode === 'model_load' ||
-      shortRetry,
-  )
-
-  $effect(() => {
-    if (summaryState.phase === 'confirm-sensitive') {
-      void tick().then(() => confirmHead?.focus())
-    }
-  })
-
-  function openSettings(): void {
-    emit('open-settings', 'summary')
+const runtimeMissing = $derived(summaryState.blockReason === 'runtime_missing')
+const unsupportedArtifact = $derived(
+  summaryState.phase === 'error'
+    ? summaryState.error?.code === 'schema_unsupported'
+    : summaryState.stateName === 'unsupported',
+)
+const hardBlock = $derived(
+  summaryState.blockReason === 'too_short' ||
+    summaryState.blockReason === 'unsupported' ||
+    summaryState.blockReason === 'runtime_missing' ||
+    summaryState.blockReason === 'low_memory',
+)
+const blockingText = $derived.by(() => {
+  switch (summaryState.blockReason) {
+    case 'low_memory':
+      return 'Для модели нужно не меньше 12 ГБ ОЗУ и около 6,5 ГБ свободно. Закройте приложения и повторите.'
+    case 'runtime_missing':
+      return 'Локальный движок итогов не установлен. Переустановите приложение из релизной сборки.'
+    case 'too_short':
+      return 'В записи мало текста для итогов.'
+    case 'unsupported':
+      return 'Итоги сохранены в более новом формате. Обновите приложение или соберите заново в старом формате.'
+    default:
+      return ''
   }
+})
+const errorCode = $derived(summaryState.error?.code || '')
+const shortRetry = $derived(
+  errorCode === 'timeout' || errorCode === 'output_thin' || errorCode === 'output_capped',
+)
+const settingsRetry = $derived(
+  errorCode === 'runtime_missing' ||
+    errorCode === 'low_memory' ||
+    errorCode === 'oom' ||
+    errorCode === 'model_load' ||
+    shortRetry,
+)
 
-  async function retryShort(): Promise<void> {
-    try {
-      await saveSummarySettings({ detail: 'short' })
-      retrySummary()
-    } catch (e) {
-      toast('Не удалось сохранить подробность: ' + (e as Error).message, 'error')
-    }
+$effect(() => {
+  if (summaryState.phase === 'confirm-sensitive') {
+    void tick().then(() => confirmHead?.focus())
   }
+})
+
+function openSettings(): void {
+  emit('open-settings', 'summary')
+}
+
+async function retryShort(): Promise<void> {
+  try {
+    await saveSummarySettings({ detail: 'short' })
+    retrySummary()
+  } catch (e) {
+    toast('Не удалось сохранить подробность: ' + (e as Error).message, 'error')
+  }
+}
 </script>
 
 {#if summaryState.phase === 'generating'}

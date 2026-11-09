@@ -1,61 +1,59 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
-  import { loadHotwords, saveHotwords, settings } from '../lib/settings.svelte.ts'
-  import { toast } from '../lib/toast.svelte.ts'
+import { onMount } from 'svelte'
+import { loadHotwords, saveHotwords, settings } from '../lib/settings.svelte.ts'
+import { toast } from '../lib/toast.svelte.ts'
 
-  let termInput = $state('')
+let termInput = $state('')
 
-  onMount(() => {
-    if (!settings.hotwordsLoaded) {
-      void loadHotwords()
-    }
-  })
-
-  const filteredHotwords = $derived.by(() => {
-    const q = termInput.trim().toLowerCase()
-    if (!q) return settings.hotwords
-    const norm = q.replace(/\s*(=>|->|=)\s*/, ' => ')
-    return settings.hotwords.filter(
-      (x) => x.toLowerCase().includes(q) || x.toLowerCase().includes(norm),
-    )
-  })
-
-  const isExactMatch = $derived.by(() => {
-    const q = termInput.trim().toLowerCase()
-    if (!q) return false
-    const norm = q.replace(/\s*(=>|->|=)\s*/, ' => ')
-    return settings.hotwords.some(
-      (x) => x.toLowerCase() === q || x.toLowerCase() === norm,
-    )
-  })
-
-  async function addTerm(): Promise<void> {
-    let t = termInput.trim()
-    if (!t) return
-
-    if (t.includes('=')) {
-      t = t.replace(/\s*=>\s*|\s*=\s*/, ' => ')
-    } else if (t.includes('->')) {
-      t = t.replace(/\s*->\s*/, ' => ')
-    }
-    if (settings.hotwords.some((x) => x.toLowerCase() === t.toLowerCase())) {
-      toast(`«${t}» уже в словаре`)
-      return
-    }
-    if (settings.hotwords.length >= 500) {
-      toast('Словарь полон: 500 из 500. Удалите лишнее.', 'error')
-      return
-    }
-    termInput = ''
-    await saveHotwords([t, ...settings.hotwords], settings.ctcEnabled)
+onMount(() => {
+  if (!settings.hotwordsLoaded) {
+    void loadHotwords()
   }
+})
 
-  async function removeTerm(t: string): Promise<void> {
-    await saveHotwords(
-      settings.hotwords.filter((x) => x !== t),
-      settings.ctcEnabled,
-    )
+const filteredHotwords = $derived.by(() => {
+  const q = termInput.trim().toLowerCase()
+  if (!q) return settings.hotwords
+  const norm = q.replace(/\s*(=>|->|=)\s*/, ' => ')
+  return settings.hotwords.filter(
+    (x) => x.toLowerCase().includes(q) || x.toLowerCase().includes(norm),
+  )
+})
+
+const isExactMatch = $derived.by(() => {
+  const q = termInput.trim().toLowerCase()
+  if (!q) return false
+  const norm = q.replace(/\s*(=>|->|=)\s*/, ' => ')
+  return settings.hotwords.some((x) => x.toLowerCase() === q || x.toLowerCase() === norm)
+})
+
+async function addTerm(): Promise<void> {
+  let t = termInput.trim()
+  if (!t) return
+
+  if (t.includes('=')) {
+    t = t.replace(/\s*=>\s*|\s*=\s*/, ' => ')
+  } else if (t.includes('->')) {
+    t = t.replace(/\s*->\s*/, ' => ')
   }
+  if (settings.hotwords.some((x) => x.toLowerCase() === t.toLowerCase())) {
+    toast(`«${t}» уже в словаре`)
+    return
+  }
+  if (settings.hotwords.length >= 500) {
+    toast('Словарь полон: 500 из 500. Удалите лишнее.', 'error')
+    return
+  }
+  termInput = ''
+  await saveHotwords([t, ...settings.hotwords], settings.ctcEnabled)
+}
+
+async function removeTerm(t: string): Promise<void> {
+  await saveHotwords(
+    settings.hotwords.filter((x) => x !== t),
+    settings.ctcEnabled,
+  )
+}
 </script>
 
 <div class="dict-page">

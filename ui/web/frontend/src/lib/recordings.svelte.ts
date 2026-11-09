@@ -1,8 +1,7 @@
-import { encPath, isMobile, readJsonSafe } from './api'
 import type { RecordingItem } from './api'
+import { encPath, isMobile, isVideoPath, readJsonSafe } from './api'
 import { toast } from './toast.svelte.ts'
 import { emit, openTranscript } from './ui.svelte.ts'
-import { isVideoPath } from './api'
 
 export const recordings = $state({
   items: [] as RecordingItem[],
@@ -20,7 +19,10 @@ export async function loadRecordings(): Promise<void> {
 
 export async function handleFileUpload(file: File, btn: HTMLButtonElement): Promise<void> {
   if (isMobile && isVideoPath(file.name)) {
-    toast('На телефоне видео не поддерживается. Выберите аудиофайл: MP3, WAV, M4A, OGG или FLAC.', 'error')
+    toast(
+      'На телефоне видео не поддерживается. Выберите аудиофайл: MP3, WAV, M4A, OGG или FLAC.',
+      'error',
+    )
     return
   }
   const oldText = btn.textContent
@@ -57,11 +59,7 @@ export async function deleteRecording(rec: RecordingItem): Promise<boolean> {
     })
     const d = await readJsonSafe(r)
     if (d.ok) {
-      toast(
-        d.kept
-          ? 'Убрано из приложения — файл остался на диске'
-          : 'Запись удалена',
-      )
+      toast(d.kept ? 'Убрано из приложения — файл остался на диске' : 'Запись удалена')
       emit('recordings-changed')
       return true
     }

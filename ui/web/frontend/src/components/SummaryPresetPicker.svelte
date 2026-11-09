@@ -1,71 +1,71 @@
 <script lang="ts">
-  import { tick } from 'svelte'
-  import type { SummaryPreset } from '../lib/api'
+import { tick } from 'svelte'
+import type { SummaryPreset } from '../lib/api'
 
-  interface Props {
-    open: boolean
-    presets: SummaryPreset[]
-    recommendedId: string
-    currentId: string
-    anchor?: HTMLElement | null
-    onpick: (id: string) => void
-    onclose: () => void
+interface Props {
+  open: boolean
+  presets: SummaryPreset[]
+  recommendedId: string
+  currentId: string
+  anchor?: HTMLElement | null
+  onpick: (id: string) => void
+  onclose: () => void
+}
+let { open, presets, recommendedId, currentId, anchor = null, onpick, onclose }: Props = $props()
+
+let dialog = $state<HTMLElement | null>(null)
+let pos = $state({ top: 0, left: 0 })
+let previous: HTMLElement | null = null
+
+function place(): void {
+  if (typeof window === 'undefined') return
+  const a = anchor?.getBoundingClientRect()
+  if (!a) {
+    pos = { top: 72, left: Math.max(8, window.innerWidth - 368) }
+    return
   }
-  let { open, presets, recommendedId, currentId, anchor = null, onpick, onclose }: Props = $props()
-
-  let dialog = $state<HTMLElement | null>(null)
-  let pos = $state({ top: 0, left: 0 })
-  let previous: HTMLElement | null = null
-
-  function place(): void {
-    if (typeof window === 'undefined') return
-    const a = anchor?.getBoundingClientRect()
-    if (!a) {
-      pos = { top: 72, left: Math.max(8, window.innerWidth - 368) }
-      return
-    }
-    const width = 360
-    const height = 440
-    const left = Math.min(Math.max(8, a.left), Math.max(8, window.innerWidth - width - 8))
-    let top = a.bottom + 8
-    if (top + height > window.innerHeight - 8) {
-      top = Math.max(8, a.top - height - 8)
-    }
-    pos = { top, left }
+  const width = 360
+  const height = 440
+  const left = Math.min(Math.max(8, a.left), Math.max(8, window.innerWidth - width - 8))
+  let top = a.bottom + 8
+  if (top + height > window.innerHeight - 8) {
+    top = Math.max(8, a.top - height - 8)
   }
+  pos = { top, left }
+}
 
-  $effect(() => {
-    if (!open) return
-    previous = document.activeElement as HTMLElement | null
-    place()
-    void tick().then(() => {
-      const current = dialog?.querySelector<HTMLElement>('[data-picker-current="true"]')
-      const first = dialog?.querySelector<HTMLElement>('.summary-picker-item')
-      ;(current || first || dialog)?.focus()
-    })
-    return () => previous?.focus?.()
+$effect(() => {
+  if (!open) return
+  previous = document.activeElement as HTMLElement | null
+  place()
+  void tick().then(() => {
+    const current = dialog?.querySelector<HTMLElement>('[data-picker-current="true"]')
+    const first = dialog?.querySelector<HTMLElement>('.summary-picker-item')
+    ;(current || first || dialog)?.focus()
   })
+  return () => previous?.focus?.()
+})
 
-  function onKey(e: KeyboardEvent): void {
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      e.stopPropagation()
-      onclose()
-      return
-    }
-    if (e.key !== 'Tab' || !dialog) return
-    const items = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled)')]
-    if (items.length === 0) return
-    const first = items[0]
-    const last = items[items.length - 1]
-    if (e.shiftKey && document.activeElement === first) {
-      e.preventDefault()
-      last.focus()
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault()
-      first.focus()
-    }
+function onKey(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    onclose()
+    return
   }
+  if (e.key !== 'Tab' || !dialog) return
+  const items = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled)')]
+  if (items.length === 0) return
+  const first = items[0]
+  const last = items[items.length - 1]
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault()
+    first.focus()
+  }
+}
 </script>
 
 {#if open}

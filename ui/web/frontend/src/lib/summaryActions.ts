@@ -1,4 +1,3 @@
-import { baseName } from './api'
 import type {
   SummaryCancelResponse,
   SummaryClassifyResponse,
@@ -8,13 +7,14 @@ import type {
   SummaryPreset,
   SummarySettings,
 } from './api'
-import { downloadModel, engine, ensureStream } from './transcript.svelte.ts'
-import { copyText, toast, toastConfirm } from './toast.svelte.ts'
+import { baseName } from './api'
 import { buildComposedMarkdown, downloadMarkdown } from './export.ts'
-import { summaryErrorText, summaryPreset } from './summaryUi.ts'
 import { apiJson, isMockMode, SummaryApiError } from './summaryApi.ts'
 import { finishGenerating, loadSummary, loadSummaryPresets, startTicker } from './summaryLoad.ts'
 import { summaryState } from './summaryState.svelte.ts'
+import { summaryErrorText, summaryPreset } from './summaryUi.ts'
+import { copyText, toast, toastConfirm } from './toast.svelte.ts'
+import { downloadModel, engine, ensureStream } from './transcript.svelte.ts'
 
 export async function saveSummarySettings(patch: Partial<SummarySettings>): Promise<void> {
   const d = await apiJson<{ ok: boolean; settings: SummarySettings }>('/api/summary/settings', {
@@ -158,7 +158,11 @@ export async function generateSummary(
   const preset = presetFor(presetId)
   if (!preset) {
     summaryState.phase = 'error'
-    summaryState.error = { code: 'invalid_preset', message: summaryErrorText('invalid_preset'), scope: 'generate' }
+    summaryState.error = {
+      code: 'invalid_preset',
+      message: summaryErrorText('invalid_preset'),
+      scope: 'generate',
+    }
     return
   }
   if (preset.sensitive && !opts.confirmSensitive) {
@@ -352,7 +356,10 @@ export async function copySummary(): Promise<void> {
 export async function exportSummary(transcriptMarkdown: string): Promise<void> {
   const record = summaryState.record
   if (!record) return
-  const stem = baseName(summaryState.file).replace(/\.[^.]+$/, '').trim() || 'Запись'
+  const stem =
+    baseName(summaryState.file)
+      .replace(/\.[^.]+$/, '')
+      .trim() || 'Запись'
   await downloadMarkdown(
     `${stem} — итоги и расшифровка`,
     buildComposedMarkdown(record.markdown, transcriptMarkdown),
@@ -363,7 +370,8 @@ export function downloadSummaryModel(): void {
   const model = summaryState.model
   if (!model) return
   void downloadModel(model).then((ok) => {
-    if (ok && summaryState.file) void loadSummary(summaryState.file, { silent: true, openResult: true })
+    if (ok && summaryState.file)
+      void loadSummary(summaryState.file, { silent: true, openResult: true })
   })
 }
 

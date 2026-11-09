@@ -1,11 +1,10 @@
-import { baseName, encPath, isCoreModel, readJsonSafe } from './api'
 import type { ModelInfo, SpeakerInfo, TranscriptData, Utterance } from './api'
+import { baseName, encPath, isCoreModel, isVideoPath, readJsonSafe } from './api'
+import { loadQueue, queueState } from './queue.svelte.ts'
+import { settings } from './settings.svelte.ts'
+import { summaryStageText } from './summaryUi.ts'
 import { toast } from './toast.svelte.ts'
 import { emit, ui } from './ui.svelte.ts'
-import { settings } from './settings.svelte.ts'
-import { isVideoPath } from './api'
-import { loadQueue, queueState } from './queue.svelte.ts'
-import { summaryStageText } from './summaryUi.ts'
 
 export const transcript = $state({
   speakers: [] as SpeakerInfo[],
@@ -66,7 +65,9 @@ export async function openTranscriptFile(rawPath: string): Promise<void> {
   transcript.speakers = d.speakers_info || []
   transcript.markdown = d.markdown || ''
   transcript.rev = typeof d.rev === 'string' ? d.rev : ''
-  transcript.hasText = Boolean((d.markdown && d.markdown.trim()) || transcript.utterances.length > 0)
+  transcript.hasText = Boolean(
+    (d.markdown && d.markdown.trim()) || transcript.utterances.length > 0,
+  )
 }
 
 export async function editTranscript(
@@ -113,7 +114,8 @@ export function closeStreamIfIdle(): void {
 
 export function ensureStream(): void {
   if (evtSource) return
-  if (!engine.running && !engine.summaryRunning && Object.keys(engine.downloading).length === 0) return
+  if (!engine.running && !engine.summaryRunning && Object.keys(engine.downloading).length === 0)
+    return
   evtSource = new EventSource('/api/transcribe_stream')
   evtSource.onmessage = (e: MessageEvent) => handleEngineEvent(e)
   evtSource.onerror = () => {
@@ -155,15 +157,8 @@ function handleEngineEvent(e: MessageEvent): void {
       }
       engine.summaryRunning = true
       engine.summaryFile = String(evt.file || engine.summaryFile || '')
-      engine.summaryPct = Math.max(
-        engine.summaryPct,
-        Math.min(100, Number(evt.pct) || 0),
-      )
-      engine.summaryMsg = summaryStageText(
-        String(evt.phase || ''),
-        evt.chunk,
-        evt.chunks,
-      )
+      engine.summaryPct = Math.max(engine.summaryPct, Math.min(100, Number(evt.pct) || 0))
+      engine.summaryMsg = summaryStageText(String(evt.phase || ''), evt.chunk, evt.chunks)
     } else if (evt.type === 'summary-done' || evt.type === 'summary-error') {
       engine.summaryRunning = false
       engine.summaryPct = 0
@@ -196,7 +191,8 @@ function handleEngineEvent(e: MessageEvent): void {
       queueState.currentFile = evt.file
     }
     engine.msg = evt.message || 'Обработка…'
-    if (evt.pct !== undefined) engine.pct = Math.max(engine.pct, Math.max(5, Math.min(100, evt.pct)))
+    if (evt.pct !== undefined)
+      engine.pct = Math.max(engine.pct, Math.max(5, Math.min(100, evt.pct)))
   } else if (evt.type === 'segment') {
     engine.msg = `Реплик распознано: ${evt.done || 0} из ${evt.total || 0}`
     if (evt.pct !== undefined) engine.pct = evt.pct
@@ -259,7 +255,11 @@ export async function startTranscription(rawPath: string): Promise<void> {
     const d = await readJsonSafe(r)
     if (!d.ok) throw new Error(d.error || 'движок отклонил запуск')
     if (d.started === false) {
-      toast(d.queued ? `Запись добавлена в очередь (#${d.position})` : 'Эта запись уже расшифровывается')
+      toast(
+        d.queued
+          ? `Запись добавлена в очередь (#${d.position})`
+          : 'Эта запись уже расшифровывается',
+      )
       await loadQueue()
       ensureStream()
       return

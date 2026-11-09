@@ -306,25 +306,27 @@ export async function runChecks(probeAudio = true): Promise<void> {
       status: String(c?.status || 'skip'),
       detail: String(c?.detail || ''),
       hint: String(c?.hint || ''),
-      fix: c?.fix && typeof c.fix === 'object'
-        ? {
-            kind: String(c.fix.kind || ''),
-            target: String(c.fix.target || ''),
-            label: String(c.fix.label || ''),
-          }
-        : null,
+      fix:
+        c?.fix && typeof c.fix === 'object'
+          ? {
+              kind: String(c.fix.kind || ''),
+              target: String(c.fix.target || ''),
+              label: String(c.fix.label || ''),
+            }
+          : null,
       duration_ms: Number(c?.duration_ms) || 0,
     }))
     const s = d.summary
-    system.summary = s && typeof s === 'object'
-      ? {
-          status: String(s.status || ''),
-          ok: Number(s.ok) || 0,
-          warn: Number(s.warn) || 0,
-          error: Number(s.error) || 0,
-          skip: Number(s.skip) || 0,
-        }
-      : null
+    system.summary =
+      s && typeof s === 'object'
+        ? {
+            status: String(s.status || ''),
+            ok: Number(s.ok) || 0,
+            warn: Number(s.warn) || 0,
+            error: Number(s.error) || 0,
+            skip: Number(s.skip) || 0,
+          }
+        : null
     system.checkedAt = String(d.checked_at || '')
   } catch (e) {
     toast('Проверка не выполнилась: ' + (e as Error).message, 'error')
@@ -367,7 +369,8 @@ export async function loadCrashes(): Promise<void> {
     const d = await readJsonSafe(await fetch('/api/crashes'))
     if (d.ok === false) throw new Error(String(d.error || 'Сбои недоступны'))
     system.crashes = (Array.isArray(d.items) ? d.items : []) as CrashItem[]
-    system.unacknowledged = Number(d.unacknowledged) || system.crashes.filter(crashUnacknowledged).length
+    system.unacknowledged =
+      Number(d.unacknowledged) || system.crashes.filter(crashUnacknowledged).length
   } catch (e) {
     toast('Сбои не загрузились: ' + (e as Error).message, 'error')
   } finally {

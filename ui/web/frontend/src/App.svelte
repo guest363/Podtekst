@@ -1,160 +1,154 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
-  import { loadPeople } from './lib/people.svelte.ts'
-  import { loadRecordings, recordings } from './lib/recordings.svelte.ts'
-  import {
-    downloadAllCoreModels,
-    downloadingCore,
-    engine,
-    openTranscriptFile,
-    syncEngineFromStatus,
-  } from './lib/transcript.svelte.ts'
-  import {
-    loadAutoTranscribe,
-    loadModels,
-    loadRecordMode,
-    loadSummaryFeature,
-    loadVoicePacks,
-    settings,
-    statusBadge,
-  } from './lib/settings.svelte.ts'
-  import { loadSupportInfo } from './lib/support.svelte.ts'
-  import { system } from './lib/system.svelte.ts'
-  import { checkUpdate, dismissUpdate, openUpdateModal, update } from './lib/update.svelte.ts'
-  import { emit, initRouting, on, openTranscript, selectTab, ui } from './lib/ui.svelte.ts'
-  import RecordingDeck from './components/RecordingDeck.svelte'
-  import Recordings from './components/Recordings.svelte'
-  import QueueHub from './components/QueueHub.svelte'
-  import People from './components/People.svelte'
-  import Dictionary from './components/Dictionary.svelte'
-  import TranscriptPage from './components/TranscriptPage.svelte'
-  import SettingsModal from './components/SettingsModal.svelte'
-  import DonateModal from './components/DonateModal.svelte'
-  import UpdateModal from './components/UpdateModal.svelte'
-  import CrashBanner from './components/CrashBanner.svelte'
-  import Toasts from './components/Toasts.svelte'
-  import { isMobile, isCoreModel, remainingMb } from './lib/api'
-  import { loadQueue, queueState } from './lib/queue.svelte.ts'
+import { onMount } from 'svelte'
+import CrashBanner from './components/CrashBanner.svelte'
+import Dictionary from './components/Dictionary.svelte'
+import DonateModal from './components/DonateModal.svelte'
+import People from './components/People.svelte'
+import QueueHub from './components/QueueHub.svelte'
+import RecordingDeck from './components/RecordingDeck.svelte'
+import Recordings from './components/Recordings.svelte'
+import SettingsModal from './components/SettingsModal.svelte'
+import Toasts from './components/Toasts.svelte'
+import TranscriptPage from './components/TranscriptPage.svelte'
+import UpdateModal from './components/UpdateModal.svelte'
+import { isCoreModel, isMobile, remainingMb } from './lib/api'
+import { loadPeople } from './lib/people.svelte.ts'
+import { loadQueue, queueState } from './lib/queue.svelte.ts'
+import { loadRecordings, recordings } from './lib/recordings.svelte.ts'
+import {
+  loadAutoTranscribe,
+  loadModels,
+  loadRecordMode,
+  loadSummaryFeature,
+  loadVoicePacks,
+  settings,
+  statusBadge,
+} from './lib/settings.svelte.ts'
+import { loadSupportInfo } from './lib/support.svelte.ts'
+import { system } from './lib/system.svelte.ts'
+import {
+  downloadAllCoreModels,
+  downloadingCore,
+  engine,
+  openTranscriptFile,
+  syncEngineFromStatus,
+} from './lib/transcript.svelte.ts'
+import { emit, initRouting, on, openTranscript, selectTab, ui } from './lib/ui.svelte.ts'
+import { checkUpdate, dismissUpdate, openUpdateModal, update } from './lib/update.svelte.ts'
 
-  let introOpen = $state(false)
-  let introStep = $state<1 | 2 | 3>(1)
+let introOpen = $state(false)
+let introStep = $state<1 | 2 | 3>(1)
 
-  function openDiagnostics(): void {
+function openDiagnostics(): void {
+  selectTab('settings')
+  if (system.summary?.status === 'error' || system.summary?.status === 'warn') {
+    const hasAudio = system.checks.some(
+      (c) =>
+        (c.id.includes('audio') || c.id.includes('mic')) &&
+        (c.status === 'warn' || c.status === 'error'),
+    )
+    const hasModel = system.checks.some(
+      (c) =>
+        (c.id.includes('model') || c.id.includes('vad') || c.id.includes('asr')) &&
+        (c.status === 'warn' || c.status === 'error'),
+    )
+    if (hasAudio) {
+      emit('open-settings', 'record')
+      return
+    }
+    if (hasModel) {
+      emit('open-settings', 'models')
+      return
+    }
+  }
+  emit('open-settings', 'system')
+}
+
+$effect(() => {
+  if (ui.systemOpen) {
+    ui.systemOpen = false
+    openDiagnostics()
+  }
+})
+
+$effect(() => {
+  if (ui.settingsOpen) {
     selectTab('settings')
-    if (system.summary?.status === 'error' || system.summary?.status === 'warn') {
-      const hasAudio = system.checks.some(
-        (c) =>
-          (c.id.includes('audio') || c.id.includes('mic')) &&
-          (c.status === 'warn' || c.status === 'error'),
-      )
-      const hasModel = system.checks.some(
-        (c) =>
-          (c.id.includes('model') || c.id.includes('vad') || c.id.includes('asr')) &&
-          (c.status === 'warn' || c.status === 'error'),
-      )
-      if (hasAudio) {
-        emit('open-settings', 'record')
-        return
-      }
-      if (hasModel) {
-        emit('open-settings', 'models')
-        return
-      }
-    }
-    emit('open-settings', 'system')
+    ui.settingsOpen = false
   }
+})
 
-  $effect(() => {
-    if (ui.systemOpen) {
-      ui.systemOpen = false
-      openDiagnostics()
-    }
-  })
+const coreModels = $derived(settings.models.filter(isCoreModel))
+const coreInstalled = $derived(coreModels.length > 0 && coreModels.every((m) => m.is_installed))
+const anyCoreDownloading = $derived(coreModels.some((m) => engine.downloading[m.id] !== undefined))
+const coreLeftMb = $derived(coreModels.reduce((s, m) => s + remainingMb(m), 0))
+const statusTone = $derived(
+  system.unacknowledged > 0 || system.summary?.status === 'error'
+    ? 'error'
+    : system.summary?.status === 'warn' || system.snapshot?.models?.core_ready === false
+      ? 'warn'
+      : system.snapshot
+        ? 'ok'
+        : 'info',
+)
+const statusLabel = $derived(
+  statusTone === 'error'
+    ? 'Есть проблема'
+    : statusTone === 'warn'
+      ? 'Замечание'
+      : system.snapshot
+        ? 'Всё в порядке'
+        : 'Проверка…',
+)
 
-  $effect(() => {
-    if (ui.settingsOpen) {
-      selectTab('settings')
-      ui.settingsOpen = false
-    }
-  })
+const TAB_TITLES: Record<string, string> = {
+  studio: 'Запись',
+  queue: 'Очередь',
+  people: 'Участники',
+  dict: 'Словарь',
+  settings: 'Настройки',
+}
 
-  const coreModels = $derived(settings.models.filter(isCoreModel))
-  const coreInstalled = $derived(
-    coreModels.length > 0 && coreModels.every((m) => m.is_installed)
-  )
-  const anyCoreDownloading = $derived(
-    coreModels.some((m) => engine.downloading[m.id] !== undefined)
-  )
-  const coreLeftMb = $derived(coreModels.reduce((s, m) => s + remainingMb(m), 0))
-  const statusTone = $derived(
-    system.unacknowledged > 0 || system.summary?.status === 'error'
-      ? 'error'
-      : system.summary?.status === 'warn' || system.snapshot?.models?.core_ready === false
-        ? 'warn'
-        : system.snapshot
-          ? 'ok'
-          : 'info'
-  )
-  const statusLabel = $derived(
-    statusTone === 'error'
-      ? 'Есть проблема'
-      : statusTone === 'warn'
-        ? 'Замечание'
-        : system.snapshot
-          ? 'Всё в порядке'
-          : 'Проверка…'
-  )
+function closeIntro(): void {
+  introOpen = false
+  introStep = 1
+  try {
+    localStorage.setItem('mr_intro_seen', '1')
+  } catch {}
+}
 
-  const TAB_TITLES: Record<string, string> = {
-    studio: 'Запись',
-    queue: 'Очередь',
-    people: 'Участники',
-    dict: 'Словарь',
-    settings: 'Настройки',
-  }
+function onWindowKey(e: KeyboardEvent): void {
+  if (introOpen && e.key === 'Escape') closeIntro()
+}
 
-  function closeIntro(): void {
-    introOpen = false
+onMount(() => {
+  initRouting()
+  if (typeof window !== 'undefined' && !localStorage.getItem('mr_intro_seen')) {
     introStep = 1
-    try {
-      localStorage.setItem('mr_intro_seen', '1')
-    } catch {}
+    introOpen = true
   }
-
-  function onWindowKey(e: KeyboardEvent): void {
-    if (introOpen && e.key === 'Escape') closeIntro()
-  }
-
-  onMount(() => {
-    initRouting()
-    if (typeof window !== 'undefined' && !localStorage.getItem('mr_intro_seen')) {
-      introStep = 1
-      introOpen = true
-    }
-    on('recordings-changed', () => void loadRecordings())
-    on('support-changed', () => void loadSupportInfo())
-    on('models-changed', () => void loadModels())
-    // Привязка/удаление голоса меняет содержимое пакетов — счётчики в «Голосах»
-    // должны перечитаться, а не ждать следующего запуска приложения.
-    on('voiceprints-changed', () => void loadVoicePacks())
-    on('transcript-reload', () => {
-      if (ui.currentTranscriptPath) void openTranscriptFile(ui.currentTranscriptPath)
-    })
-    void Promise.allSettled([
-      loadPeople(),
-      loadRecordings(),
-      loadQueue().then(() =>
-        syncEngineFromStatus(queueState.running, queueState.currentFile || ''),
-      ),
-      loadVoicePacks(),
-      loadModels(),
-      loadRecordMode(),
-      loadAutoTranscribe(),
-      loadSummaryFeature(),
-      loadSupportInfo(),
-      checkUpdate(),
-    ])
+  on('recordings-changed', () => void loadRecordings())
+  on('support-changed', () => void loadSupportInfo())
+  on('models-changed', () => void loadModels())
+  // Привязка/удаление голоса меняет содержимое пакетов — счётчики в «Голосах»
+  // должны перечитаться, а не ждать следующего запуска приложения.
+  on('voiceprints-changed', () => void loadVoicePacks())
+  on('transcript-reload', () => {
+    if (ui.currentTranscriptPath) void openTranscriptFile(ui.currentTranscriptPath)
   })
+  void Promise.allSettled([
+    loadPeople(),
+    loadRecordings(),
+    loadQueue().then(() => syncEngineFromStatus(queueState.running, queueState.currentFile || '')),
+    loadVoicePacks(),
+    loadModels(),
+    loadRecordMode(),
+    loadAutoTranscribe(),
+    loadSummaryFeature(),
+    loadSupportInfo(),
+    checkUpdate(),
+  ])
+})
 </script>
 
 <svelte:window onkeydown={onWindowKey} />

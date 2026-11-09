@@ -15,10 +15,7 @@
     "preset_id": "meeting",
     "confidence": "high",
     "alternatives": [],
-    "signals": [
-      "tasks",
-      "deadlines"
-    ],
+    "signals": ["tasks", "deadlines"],
     "ambiguous": false,
     "style": "multi-party",
     "language": "ru",

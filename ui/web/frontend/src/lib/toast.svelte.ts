@@ -50,7 +50,11 @@ export function dismissToast(id: number): void {
 
 // Копирование с надёжным запасным путём для мобильных браузеров, незащищённых HTTP-контекстов и старых WebView.
 export async function copyText(s: string): Promise<boolean> {
-  if (window.isSecureContext && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+  if (
+    window.isSecureContext &&
+    typeof navigator !== 'undefined' &&
+    navigator.clipboard?.writeText
+  ) {
     try {
       await navigator.clipboard.writeText(s)
       return true

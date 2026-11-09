@@ -1,13 +1,7 @@
 {
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
   "files": {
-    "includes": [
-      "**",
-      "!**/node_modules/**",
-      "!**/.yarn/**",
-      "!**/.svelte-check/**",
-      "!**/public/**"
-    ]
+    "includes": ["**", "!**/node_modules", "!**/.yarn", "!**/.svelte-check", "!**/public"]
   },
   "formatter": {
     "enabled": true,

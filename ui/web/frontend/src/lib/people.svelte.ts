@@ -1,5 +1,5 @@
-import { readJsonSafe } from './api'
 import type { Person, VoiceDetail, Voicepack, VoiceprintSummary } from './api'
+import { readJsonSafe } from './api'
 import { toast } from './toast.svelte.ts'
 
 export const peopleState = $state({
@@ -24,29 +24,38 @@ export async function loadPeople(): Promise<void> {
     if (Array.isArray(d.packs)) {
       peopleState.packs = d.packs as Voicepack[]
     }
-  } catch {
-  }
+  } catch {}
   // Сколько эмбеддингов у каждого: тот же /api/voiceprints, без нового контракта.
   try {
     const r = await fetch('/api/voiceprints')
     const d = await readJsonSafe(r)
     const counts: Record<string, number> = {}
     for (const v of (d.voiceprints || []) as VoiceprintSummary[]) {
-      const key = String(v.name || '').toLowerCase().trim()
+      const key = String(v.name || '')
+        .toLowerCase()
+        .trim()
       if (key) counts[key] = Number(v.samples_count || 1)
     }
     peopleState.voiceprintCounts = counts
-  } catch {
-  }
+  } catch {}
 }
 
 export function hasVoiceprint(name: string): boolean {
-  return peopleState.voiceprints.includes(String(name || '').toLowerCase().trim())
+  return peopleState.voiceprints.includes(
+    String(name || '')
+      .toLowerCase()
+      .trim(),
+  )
 }
 
 // Зачем: один взгляд «у кого сколько голосов», без сырого voiceprints.json.
 export function voiceprintCount(name: string): number | undefined {
-  const n = peopleState.voiceprintCounts[String(name || '').toLowerCase().trim()]
+  const n =
+    peopleState.voiceprintCounts[
+      String(name || '')
+        .toLowerCase()
+        .trim()
+    ]
   return typeof n === 'number' ? n : undefined
 }
 
@@ -54,7 +63,9 @@ export async function loadVoiceDetail(name: string): Promise<boolean> {
   peopleState.voiceDetail = null
   peopleState.voiceDetailName = name
   try {
-    const d = await readJsonSafe(await fetch(`/api/voiceprints/detail?name=${encodeURIComponent(name)}`))
+    const d = await readJsonSafe(
+      await fetch(`/api/voiceprints/detail?name=${encodeURIComponent(name)}`),
+    )
     if (!d.ok) {
       toast(d.error || 'Не удалось загрузить голоса', 'error')
       return false
@@ -100,7 +111,11 @@ export async function deleteVoice(name: string): Promise<boolean> {
   }
 }
 
-export async function deleteVoiceSample(name: string, prototypeId: string, packId?: string): Promise<boolean> {
+export async function deleteVoiceSample(
+  name: string,
+  prototypeId: string,
+  packId?: string,
+): Promise<boolean> {
   try {
     const d = await readJsonSafe(
       await fetch('/api/voiceprints/delete_sample', {

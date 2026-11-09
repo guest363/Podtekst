@@ -47,8 +47,16 @@ const PRESETS: SummaryPreset[] = [
     id: 'psychology',
     label: 'Психологическая сессия',
     short: 'Сессия или доверительный разговор.',
-    caution: 'Это заметки о разговоре, не медицинская консультация и не диагноз. Проверьте формулировки.',
-    sections: ['topics', 'client_words', 'observations', 'agreements', 'next_session', 'open_topics'],
+    caution:
+      'Это заметки о разговоре, не медицинская консультация и не диагноз. Проверьте формулировки.',
+    sections: [
+      'topics',
+      'client_words',
+      'observations',
+      'agreements',
+      'next_session',
+      'open_topics',
+    ],
     sensitive: true,
   },
   {
@@ -87,7 +95,12 @@ const MODEL: SummaryModelInfo = {
   min_system_ram_mb: 12288,
 }
 
-let settings: SummarySettings = { auto_suggest: true, default_preset: null, detail: 'normal', gpu: 'auto' }
+const settings: SummarySettings = {
+  auto_suggest: true,
+  default_preset: null,
+  detail: 'normal',
+  gpu: 'auto',
+}
 const mocks: { gpu: SummaryGpuStatus } = {
   gpu: {
     supported: true,
@@ -115,7 +128,14 @@ const mocks: { gpu: SummaryGpuStatus } = {
 }
 let record: SummaryRecord | null = null
 let seq = 0
-let job: { id: string; file: string; phase: string; pct: number; timers: number[]; cancelled: boolean } | null = null
+let job: {
+  id: string
+  file: string
+  phase: string
+  pct: number
+  timers: number[]
+  cancelled: boolean
+} | null = null
 
 function classification(): SummaryClassification {
   return {
@@ -344,7 +364,12 @@ export async function request(path: string, init?: RequestInit): Promise<unknown
     return { ok: true, ...mocks.gpu }
   }
   if (url.pathname === '/api/summary/classify') {
-    return { ok: true, classification: classification(), source_rev: 'mock-rev-1', cache_hit: false }
+    return {
+      ok: true,
+      classification: classification(),
+      source_rev: 'mock-rev-1',
+      cache_hit: false,
+    }
   }
   if (url.pathname === '/api/summary/generate') {
     const body = parseBody(init)

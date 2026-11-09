@@ -1,179 +1,171 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
-  import { fmtClock, isMobile } from '../lib/api'
-  import { statusBadge } from '../lib/settings.svelte.ts'
-  import { emit } from '../lib/ui.svelte.ts'
-  import { openUpdateModal, update } from '../lib/update.svelte.ts'
-  import {
-    ackCrash,
-    collectDiagnostics,
-    crashHasBacktrace,
-    crashMessage,
-    crashUnacknowledged,
-    crashVersion,
-    fmtBytes,
-    fmtDateTime,
-    loadCrashes,
-    loadJournal,
-    loadSystem,
-    openTarget,
-    runChecks,
-    system,
-  } from '../lib/system.svelte.ts'
-  import type { CheckFix, JournalSession, SystemCheck } from '../lib/system.svelte.ts'
+import { onMount } from 'svelte'
+import { fmtClock, isMobile } from '../lib/api'
+import { statusBadge } from '../lib/settings.svelte.ts'
+import type { CheckFix, JournalSession, SystemCheck } from '../lib/system.svelte.ts'
+import {
+  ackCrash,
+  collectDiagnostics,
+  crashHasBacktrace,
+  crashMessage,
+  crashUnacknowledged,
+  crashVersion,
+  fmtBytes,
+  fmtDateTime,
+  loadCrashes,
+  loadJournal,
+  loadSystem,
+  openTarget,
+  runChecks,
+  system,
+} from '../lib/system.svelte.ts'
+import { emit } from '../lib/ui.svelte.ts'
+import { openUpdateModal, update } from '../lib/update.svelte.ts'
 
-  let journalExpanded = $state(false)
-  let probeAudio = $state(false)
+let journalExpanded = $state(false)
+let probeAudio = $state(false)
 
-  const snap = $derived(system.snapshot)
-  const lastCrash = $derived(system.crashes.find(crashUnacknowledged) ?? null)
-  const problemChecks = $derived(
-    system.checks.filter((check) => check.status === 'warn' || check.status === 'error'),
-  )
-  const visibleJournal = $derived(
-    journalExpanded ? system.journal : system.journal.slice(0, 5),
-  )
-  const unacknowledged = $derived(
-    system.unacknowledged || snap?.crashes?.count || 0,
-  )
-  const journalTotal = $derived(system.journalTotal || snap?.journal?.count || 0)
-  const freeBytes = $derived(snap?.disk?.free_bytes ?? 0)
-  const totalBytes = $derived(snap?.disk?.total_bytes ?? 0)
-  const usedBytes = $derived(totalBytes > freeBytes ? totalBytes - freeBytes : 0)
-  const usedPct = $derived(
-    totalBytes > 0 ? Math.min(100, Math.round((usedBytes / totalBytes) * 100)) : 0,
-  )
-  const freeHours = $derived(freeBytes > 0 ? Math.floor(freeBytes / (450 * 1024 * 1024)) : 0)
+const snap = $derived(system.snapshot)
+const lastCrash = $derived(system.crashes.find(crashUnacknowledged) ?? null)
+const problemChecks = $derived(
+  system.checks.filter((check) => check.status === 'warn' || check.status === 'error'),
+)
+const visibleJournal = $derived(journalExpanded ? system.journal : system.journal.slice(0, 5))
+const unacknowledged = $derived(system.unacknowledged || snap?.crashes?.count || 0)
+const journalTotal = $derived(system.journalTotal || snap?.journal?.count || 0)
+const freeBytes = $derived(snap?.disk?.free_bytes ?? 0)
+const totalBytes = $derived(snap?.disk?.total_bytes ?? 0)
+const usedBytes = $derived(totalBytes > freeBytes ? totalBytes - freeBytes : 0)
+const usedPct = $derived(
+  totalBytes > 0 ? Math.min(100, Math.round((usedBytes / totalBytes) * 100)) : 0,
+)
+const freeHours = $derived(freeBytes > 0 ? Math.floor(freeBytes / (450 * 1024 * 1024)) : 0)
 
-  const overallKind = $derived(
-    unacknowledged > 0 || system.summary?.status === 'error'
-      ? 'error'
-      : system.summary?.status === 'warn'
-        ? 'warn'
-        : system.summary?.status === 'ok' || snap
-          ? 'ok'
-          : 'info',
-  )
-  const overallLabel = $derived(
-    overallKind === 'error'
-      ? 'Есть проблема'
-      : overallKind === 'warn'
-        ? 'Есть замечания'
-        : overallKind === 'ok'
-          ? 'Всё в порядке'
-          : 'Проверки не запускались',
-  )
+const overallKind = $derived(
+  unacknowledged > 0 || system.summary?.status === 'error'
+    ? 'error'
+    : system.summary?.status === 'warn'
+      ? 'warn'
+      : system.summary?.status === 'ok' || snap
+        ? 'ok'
+        : 'info',
+)
+const overallLabel = $derived(
+  overallKind === 'error'
+    ? 'Есть проблема'
+    : overallKind === 'warn'
+      ? 'Есть замечания'
+      : overallKind === 'ok'
+        ? 'Всё в порядке'
+        : 'Проверки не запускались',
+)
 
-  const MODE_LABELS: Record<string, string> = {
-    split: '2 канала · наушники',
-    mix: '1 канал',
+const MODE_LABELS: Record<string, string> = {
+  split: '2 канала · наушники',
+  mix: '1 канал',
+}
+
+onMount(() => {
+  void loadSystem()
+  void loadJournal(20)
+  void loadCrashes()
+})
+
+function refresh(): void {
+  void loadSystem()
+  void loadJournal(20)
+  void loadCrashes()
+}
+
+function osText(): string {
+  const os = snap?.os
+  if (!os) return ''
+  if (typeof os === 'string') return os
+  let name = os.name || os.family || ''
+  if (name === 'macos') name = 'macOS'
+  else if (name === 'windows') name = 'Windows'
+  else if (name === 'linux') name = 'Linux'
+  return [name, os.arch].filter(Boolean).join(' · ')
+}
+
+function diskText(): string {
+  if (!freeBytes) return snap?.disk?.path || '—'
+  const free = fmtBytes(freeBytes)
+  const hours = freeHours > 0 ? ` (~${freeHours} ч)` : ''
+  if (totalBytes > 0) {
+    return `свободно ${free} из ${fmtBytes(totalBytes)}${hours}`
   }
+  return `свободно ${free}${hours}`
+}
 
-  onMount(() => {
-    void loadSystem()
-    void loadJournal(20)
-    void loadCrashes()
-  })
+function memoryText(): string {
+  const available = snap?.memory?.available_bytes
+  return available ? `доступно ${fmtBytes(available)}` : '—'
+}
 
-  function refresh(): void {
-    void loadSystem()
-    void loadJournal(20)
-    void loadCrashes()
+function checkBadge(status: string): string {
+  if (status === 'ok') return statusBadge('ok', 'Норма')
+  if (status === 'warn') return statusBadge('warn', 'Замечание')
+  if (status === 'error') return statusBadge('error', 'Ошибка')
+  return statusBadge('info', 'Пропущено')
+}
+
+function summaryText(): string {
+  const summary = system.summary
+  if (!summary) return ''
+  if (summary.warn === 0 && summary.error === 0) {
+    return `Проверок: ${system.checks.length} · всё в порядке`
   }
+  const parts = [`норма ${summary.ok}`, `замечания ${summary.warn}`, `ошибки ${summary.error}`]
+  if (summary.skip) parts.push(`пропущено ${summary.skip}`)
+  return parts.join(' · ')
+}
 
-  function osText(): string {
-    const os = snap?.os
-    if (!os) return ''
-    if (typeof os === 'string') return os
-    let name = os.name || os.family || ''
-    if (name === 'macos') name = 'macOS'
-    else if (name === 'windows') name = 'Windows'
-    else if (name === 'linux') name = 'Linux'
-    return [name, os.arch].filter(Boolean).join(' · ')
-  }
+function journalFile(session: JournalSession): string {
+  if (!session.file) return session.id
+  if (typeof session.file === 'string') return session.file.split(/[\\/]/).pop() || session.file
+  return session.file.name || session.file.id || session.id
+}
 
-  function diskText(): string {
-    if (!freeBytes) return snap?.disk?.path || '—'
-    const free = fmtBytes(freeBytes)
-    const hours = freeHours > 0 ? ` (~${freeHours} ч)` : ''
-    if (totalBytes > 0) {
-      return `свободно ${free} из ${fmtBytes(totalBytes)}${hours}`
-    }
-    return `свободно ${free}${hours}`
-  }
+function journalMeta(session: JournalSession): string {
+  const parts: string[] = []
+  if (session.started_at) parts.push(fmtDateTime(session.started_at))
+  if (session.duration_sec) parts.push(fmtClock(session.duration_sec))
+  if (session.mode) parts.push(MODE_LABELS[session.mode] || session.mode)
+  if (session.silent) parts.push('тихая запись')
+  if (session.errors?.length) parts.push(`ошибок: ${session.errors.length}`)
+  return parts.join(' · ')
+}
 
-  function memoryText(): string {
-    const available = snap?.memory?.available_bytes
-    return available ? `доступно ${fmtBytes(available)}` : '—'
+function journalBadge(session: JournalSession): string {
+  if (session.status === 'recording') return statusBadge('info', 'Идёт')
+  if (session.status === 'ok' || session.status === 'completed' || session.status === 'done') {
+    return statusBadge('ok', 'Готова')
   }
+  if (session.status === 'interrupted' || session.status === 'aborted') {
+    return statusBadge('warn', 'Прервана')
+  }
+  if (session.status === 'error') return statusBadge('error', 'Ошибка')
+  return statusBadge('info', session.status || 'Без статуса')
+}
 
-  function checkBadge(status: string): string {
-    if (status === 'ok') return statusBadge('ok', 'Норма')
-    if (status === 'warn') return statusBadge('warn', 'Замечание')
-    if (status === 'error') return statusBadge('error', 'Ошибка')
-    return statusBadge('info', 'Пропущено')
+function handleFix(fix: CheckFix | null): void {
+  if (!fix) return
+  if (fix.kind === 'open_folder' || fix.kind === 'open_settings') {
+    void openTarget(fix.target)
+  } else if (fix.kind === 'download_model' || fix.kind === 'download_ffmpeg') {
+    emit('open-settings', 'models')
+  } else if (fix.kind === 'open_update') {
+    openUpdateModal()
+  } else if (fix.kind === 'collect_diagnostics') {
+    void collectDiagnostics()
   }
+}
 
-  function summaryText(): string {
-    const summary = system.summary
-    if (!summary) return ''
-    if (summary.warn === 0 && summary.error === 0) {
-      return `Проверок: ${system.checks.length} · всё в порядке`
-    }
-    const parts = [
-      `норма ${summary.ok}`,
-      `замечания ${summary.warn}`,
-      `ошибки ${summary.error}`,
-    ]
-    if (summary.skip) parts.push(`пропущено ${summary.skip}`)
-    return parts.join(' · ')
-  }
-
-  function journalFile(session: JournalSession): string {
-    if (!session.file) return session.id
-    if (typeof session.file === 'string') return session.file.split(/[\\/]/).pop() || session.file
-    return session.file.name || session.file.id || session.id
-  }
-
-  function journalMeta(session: JournalSession): string {
-    const parts: string[] = []
-    if (session.started_at) parts.push(fmtDateTime(session.started_at))
-    if (session.duration_sec) parts.push(fmtClock(session.duration_sec))
-    if (session.mode) parts.push(MODE_LABELS[session.mode] || session.mode)
-    if (session.silent) parts.push('тихая запись')
-    if (session.errors?.length) parts.push(`ошибок: ${session.errors.length}`)
-    return parts.join(' · ')
-  }
-
-  function journalBadge(session: JournalSession): string {
-    if (session.status === 'recording') return statusBadge('info', 'Идёт')
-    if (session.status === 'ok' || session.status === 'completed' || session.status === 'done') {
-      return statusBadge('ok', 'Готова')
-    }
-    if (session.status === 'interrupted' || session.status === 'aborted') {
-      return statusBadge('warn', 'Прервана')
-    }
-    if (session.status === 'error') return statusBadge('error', 'Ошибка')
-    return statusBadge('info', session.status || 'Без статуса')
-  }
-
-  function handleFix(fix: CheckFix | null): void {
-    if (!fix) return
-    if (fix.kind === 'open_folder' || fix.kind === 'open_settings') {
-      void openTarget(fix.target)
-    } else if (fix.kind === 'download_model' || fix.kind === 'download_ffmpeg') {
-      emit('open-settings', 'models')
-    } else if (fix.kind === 'open_update') {
-      openUpdateModal()
-    } else if (fix.kind === 'collect_diagnostics') {
-      void collectDiagnostics()
-    }
-  }
-
-  function crashKind(): string {
-    if (!lastCrash) return ''
-    return lastCrash.synthetic ? 'Завершение без корректного выхода' : 'Сбой'
-  }
+function crashKind(): string {
+  if (!lastCrash) return ''
+  return lastCrash.synthetic ? 'Завершение без корректного выхода' : 'Сбой'
+}
 </script>
 
 {#snippet checkRow(check: SystemCheck)}

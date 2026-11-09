@@ -1,103 +1,96 @@
 <script lang="ts">
-  import { on, selectTab, ui } from '../lib/ui.svelte.ts'
-  import { downloadModel, engine, ensureStream } from '../lib/transcript.svelte.ts'
-  import {
-    createPack,
-    deletePack,
-    downloadFfmpeg,
-    exportPack,
-    ffmpeg,
-    hasSystemAudio,
-    importPack,
-    loadFfmpeg,
-    loadModels,
-    setAutoTranscribe,
-    setRecordMode,
-    settings,
-    statusBadge,
-    togglePack,
-  } from '../lib/settings.svelte.ts'
-  import { isAndroid, isMobile, remainingMb } from '../lib/api'
-  import type { ModelInfo } from '../lib/api'
-  import { checkUpdate, update } from '../lib/update.svelte.ts'
-  import { peopleState } from '../lib/people.svelte.ts'
-  import SystemSettingsTab from './SystemSettingsTab.svelte'
-  import SummarySettingsTab from './SummarySettingsTab.svelte'
-  import { system, runChecks, openTarget } from '../lib/system.svelte.ts'
-  import type { DevicesInfo } from '../lib/system.svelte.ts'
+import type { ModelInfo } from '../lib/api'
+import { isAndroid, isMobile, remainingMb } from '../lib/api'
+import { peopleState } from '../lib/people.svelte.ts'
+import {
+  createPack,
+  deletePack,
+  downloadFfmpeg,
+  exportPack,
+  ffmpeg,
+  hasSystemAudio,
+  importPack,
+  loadFfmpeg,
+  loadModels,
+  setAutoTranscribe,
+  setRecordMode,
+  settings,
+  statusBadge,
+  togglePack,
+} from '../lib/settings.svelte.ts'
+import type { DevicesInfo } from '../lib/system.svelte.ts'
+import { openTarget, runChecks, system } from '../lib/system.svelte.ts'
+import { downloadModel, engine, ensureStream } from '../lib/transcript.svelte.ts'
+import { on, selectTab, ui } from '../lib/ui.svelte.ts'
+import { checkUpdate, update } from '../lib/update.svelte.ts'
+import SummarySettingsTab from './SummarySettingsTab.svelte'
+import SystemSettingsTab from './SystemSettingsTab.svelte'
 
-  interface Props {
-    inline?: boolean
+interface Props {
+  inline?: boolean
+}
+let { inline = false }: Props = $props()
+
+let tab = $state<'record' | 'voices' | 'models' | 'summary' | 'system'>('record')
+let packFileInput: HTMLInputElement | null = $state(null)
+
+function defaultName(devices: DevicesInfo | undefined, id?: string | null): string {
+  if (!id) return ''
+  const all = [...(devices?.inputs || []), ...(devices?.system || [])]
+  return all.find((device) => device.id === id)?.name || id
+}
+const micName = $derived(
+  defaultName(system.snapshot?.devices, system.snapshot?.devices?.default_input),
+)
+const systemAudio = $derived(system.snapshot?.devices?.has_system_audio === true)
+const systemAudioText = $derived(
+  systemAudio ? 'доступен' : settings.platform === 'macos' ? 'нужен BlackHole' : 'не найден',
+)
+const coreReady = $derived(system.snapshot?.models?.core_ready === true)
+const summaryModels = $derived(settings.models.filter((m) => m.kind === 'summary'))
+const visibleModels = $derived(settings.models.filter((m) => m.kind !== 'summary'))
+const systemModels = $derived(
+  (system.snapshot?.models?.items || []).filter((m) => m.kind !== 'summary'),
+)
+const allInstalled = $derived(
+  Boolean(systemModels.length && systemModels.every((m) => m.is_installed)),
+)
+const modelsBadgeKind = $derived(allInstalled ? 'ok' : coreReady ? 'ok' : 'warn')
+const modelsBadgeLabel = $derived(
+  allInstalled ? 'Все готовы' : coreReady ? 'Базовые готовы' : 'Не всё',
+)
+
+async function openModelsTab(): Promise<void> {
+  tab = 'models'
+}
+
+on('models-changed', () => void loadModels())
+on('open-settings', (value) => {
+  if (value === 'people') {
+    selectTab('people')
+    return
   }
-  let { inline = false }: Props = $props()
-
-  let tab = $state<'record' | 'voices' | 'models' | 'summary' | 'system'>('record')
-  let packFileInput: HTMLInputElement | null = $state(null)
-
-  function defaultName(devices: DevicesInfo | undefined, id?: string | null): string {
-    if (!id) return ''
-    const all = [...(devices?.inputs || []), ...(devices?.system || [])]
-    return all.find((device) => device.id === id)?.name || id
+  if (value === 'dict') {
+    selectTab('dict')
+    return
   }
-  const micName = $derived(defaultName(system.snapshot?.devices, system.snapshot?.devices?.default_input))
-  const systemAudio = $derived(system.snapshot?.devices?.has_system_audio === true)
-  const systemAudioText = $derived(
-    systemAudio
-      ? 'доступен'
-      : settings.platform === 'macos'
-        ? 'нужен BlackHole'
-        : 'не найден',
-  )
-  const coreReady = $derived(system.snapshot?.models?.core_ready === true)
-  const summaryModels = $derived(settings.models.filter((m) => m.kind === 'summary'))
-  const visibleModels = $derived(settings.models.filter((m) => m.kind !== 'summary'))
-  const systemModels = $derived(
-    (system.snapshot?.models?.items || []).filter((m) => m.kind !== 'summary'),
-  )
-  const allInstalled = $derived(
-    Boolean(
-      systemModels.length &&
-      systemModels.every((m) => m.is_installed),
-    ),
-  )
-  const modelsBadgeKind = $derived(
-    allInstalled ? 'ok' : coreReady ? 'ok' : 'warn',
-  )
-  const modelsBadgeLabel = $derived(
-    allInstalled ? 'Все готовы' : coreReady ? 'Базовые готовы' : 'Не всё',
-  )
-
-  async function openModelsTab(): Promise<void> {
-    tab = 'models'
+  if (value === 'record' || value === 'voices' || value === 'models' || value === 'system') {
+    tab = value
   }
-
-  on('models-changed', () => void loadModels())
-  on('open-settings', (value) => {
-    if (value === 'people') {
-      selectTab('people')
-      return
-    }
-    if (value === 'dict') {
-      selectTab('dict')
-      return
-    }
-    if (value === 'record' || value === 'voices' || value === 'models' || value === 'system') {
-      tab = value
-    }
-    if (value === 'summary' && settings.summaryFeature === true && !isAndroid) {
-      tab = 'summary'
-    }
-    ui.settingsOpen = true
-  })
-  // Компонент живёт всё время приложения: одно чтение статуса на старте,
-  // дальше состояние обновляет опрос после нажатия «Скачать».
-  void loadFfmpeg()
-
-  function onWindowKey(e: KeyboardEvent): void {
-    if (!inline && ui.settingsOpen && !ui.donateOpen && e.key === 'Escape') {
-      ui.settingsOpen = false
-    }
+  if (value === 'summary' && settings.summaryFeature === true && !isAndroid) {
+    tab = 'summary'
   }
+  ui.settingsOpen = true
+})
+// Компонент живёт всё время приложения: одно чтение статуса на старте,
+// дальше состояние обновляет опрос после нажатия «Скачать».
+void loadFfmpeg()
+
+function onWindowKey(e: KeyboardEvent): void {
+  if (!inline && ui.settingsOpen && !ui.donateOpen && e.key === 'Escape') {
+    ui.settingsOpen = false
+  }
+}
 </script>
 
 <svelte:window onkeydown={onWindowKey} />

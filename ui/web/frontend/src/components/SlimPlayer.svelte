@@ -1,93 +1,93 @@
 <script lang="ts">
-  import { fmtClock } from '../lib/api'
+import { fmtClock } from '../lib/api'
 
-  interface Props {
-    src: string
-    isVideo: boolean
-    fileName: string
-    mediaId?: string
-    durationSec?: number
-    ontime?: (sec: number) => void
-    autoplay?: boolean
-    playing?: boolean
-  }
-  let {
-    src,
-    isVideo,
-    fileName,
-    mediaId = '',
-    durationSec = 0,
-    ontime,
-    autoplay = false,
-    playing = $bindable(false),
-  }: Props = $props()
+interface Props {
+  src: string
+  isVideo: boolean
+  fileName: string
+  mediaId?: string
+  durationSec?: number
+  ontime?: (sec: number) => void
+  autoplay?: boolean
+  playing?: boolean
+}
+let {
+  src,
+  isVideo,
+  fileName,
+  mediaId = '',
+  durationSec = 0,
+  ontime,
+  autoplay = false,
+  playing = $bindable(false),
+}: Props = $props()
 
-  let media: HTMLMediaElement | null = $state(null)
-  let cur = $state(0)
-  let mediaDur = $state(0)
-  // Длительность из списка записей видна сразу, до загрузки метаданных плеером.
-  let dur = $derived(mediaDur || durationSec || 0)
+let media: HTMLMediaElement | null = $state(null)
+let cur = $state(0)
+let mediaDur = $state(0)
+// Длительность из списка записей видна сразу, до загрузки метаданных плеером.
+let dur = $derived(mediaDur || durationSec || 0)
 
-  export function togglePlay(): void {
-    toggle()
-  }
+export function togglePlay(): void {
+  toggle()
+}
 
-  $effect(() => {
-    if (media && media.getAttribute('src') !== src) {
-      media.src = src
-      media.load()
-      cur = 0
-      mediaDur = 0
-      ontime?.(0)
-      if (autoplay) {
-        media.play().catch(() => {})
-      }
-    }
-  })
-
-  $effect(() => {
-    if (media && autoplay && media.paused && media.currentTime === 0) {
+$effect(() => {
+  if (media && media.getAttribute('src') !== src) {
+    media.src = src
+    media.load()
+    cur = 0
+    mediaDur = 0
+    ontime?.(0)
+    if (autoplay) {
       media.play().catch(() => {})
     }
-  })
+  }
+})
 
-  $effect(() => {
-    if (!playing || !media) return
-    let frame = 0
-    const tick = () => {
-      if (!media) return
-      cur = media.currentTime
-      ontime?.(cur)
-      frame = requestAnimationFrame(tick)
-    }
-    frame = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(frame)
-  })
+$effect(() => {
+  if (media && autoplay && media.paused && media.currentTime === 0) {
+    media.play().catch(() => {})
+  }
+})
 
-  function syncTime(): void {
+$effect(() => {
+  if (!playing || !media) return
+  let frame = 0
+  const tick = () => {
     if (!media) return
     cur = media.currentTime
     ontime?.(cur)
+    frame = requestAnimationFrame(tick)
   }
+  frame = requestAnimationFrame(tick)
+  return () => cancelAnimationFrame(frame)
+})
 
-  function toggle(): void {
-    if (!media) return
-    const all = Array.from(document.querySelectorAll('audio, video')) as HTMLMediaElement[]
-    for (const m of all) {
-      if (m !== media && !m.paused) m.pause()
-    }
-    if (media.paused) media.play().catch(() => {})
-    else media.pause()
-  }
+function syncTime(): void {
+  if (!media) return
+  cur = media.currentTime
+  ontime?.(cur)
+}
 
-  function seek(e: MouseEvent): void {
-    const track = e.currentTarget as HTMLElement
-    const rect = track.getBoundingClientRect()
-    const ratio = (e.clientX - rect.left) / Math.max(1, rect.width)
-    if (media && isFinite(media.duration) && media.duration > 0) {
-      media.currentTime = Math.max(0, Math.min(media.duration, ratio * media.duration))
-    }
+function toggle(): void {
+  if (!media) return
+  const all = Array.from(document.querySelectorAll('audio, video')) as HTMLMediaElement[]
+  for (const m of all) {
+    if (m !== media && !m.paused) m.pause()
   }
+  if (media.paused) media.play().catch(() => {})
+  else media.pause()
+}
+
+function seek(e: MouseEvent): void {
+  const track = e.currentTarget as HTMLElement
+  const rect = track.getBoundingClientRect()
+  const ratio = (e.clientX - rect.left) / Math.max(1, rect.width)
+  if (media && isFinite(media.duration) && media.duration > 0) {
+    media.currentTime = Math.max(0, Math.min(media.duration, ratio * media.duration))
+  }
+}
 </script>
 
 <div class="slim-player">

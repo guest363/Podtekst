@@ -1,9 +1,4 @@
-import type {
-  Confidence,
-  SummaryClassification,
-  SummaryPreset,
-  SummaryRecord,
-} from './api'
+import type { Confidence, SummaryClassification, SummaryPreset, SummaryRecord } from './api'
 
 const PRESET_PHRASE: Record<string, string> = {
   meeting: 'рабочую встречу',
@@ -149,12 +144,14 @@ const ERROR_TEXT: Record<string, string> = {
   recording_active: 'Идёт запись. Итоги можно собрать после её окончания.',
   stale_source: 'Расшифровка изменилась. Итоги не сохранены. Повторите.',
   classifier_manual_only: 'Рекомендация отключена: недостаточно проверенных данных.',
-  low_memory: 'Для модели нужно не меньше 12 ГБ ОЗУ и около 6,5 ГБ свободно. Закройте приложения и повторите.',
+  low_memory:
+    'Для модели нужно не меньше 12 ГБ ОЗУ и около 6,5 ГБ свободно. Закройте приложения и повторите.',
   too_short: 'В записи мало текста для итогов.',
   no_text: 'В расшифровке нет текста.',
   schema_unsupported: 'Эта версия не поддерживает формат итогов. Обновите приложение.',
   model_missing: 'Модель итогов не скачана.',
-  runtime_missing: 'Локальный движок итогов не установлен. Переустановите приложение из релизной сборки.',
+  runtime_missing:
+    'Локальный движок итогов не установлен. Переустановите приложение из релизной сборки.',
   summary_disabled: 'Итоги отключены в этой сборке.',
   summary_unsupported: 'Итоги на этом устройстве не поддерживаются.',
   gpu_unsupported: 'Ускорение GPU на этой платформе не поддерживается.',
@@ -166,7 +163,8 @@ const ERROR_TEXT: Record<string, string> = {
   gpu_download_failed: 'Не удалось скачать GPU-пакет. Проверьте сеть и повторите.',
   gpu_sha_mismatch: 'Файл GPU-пакета повреждён. Повторите скачивание.',
   gpu_extract_failed: 'Не удалось распаковать GPU-пакет. Повторите скачивание.',
-  gpu_probe_failed: 'GPU-пакет установлен, но Vulkan-устройство не найдено. Итоги продолжат работать на CPU.',
+  gpu_probe_failed:
+    'GPU-пакет установлен, но Vulkan-устройство не найдено. Итоги продолжат работать на CPU.',
   gpu_cancelled: 'Скачивание отменено.',
   gpu_internal: 'Не удалось установить GPU-пакет. Повторите.',
   gpu_remove_failed: 'Не удалось удалить GPU-пакет. Закройте приложение и повторите.',

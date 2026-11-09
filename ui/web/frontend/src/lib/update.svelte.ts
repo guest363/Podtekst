@@ -100,9 +100,7 @@ export async function checkUpdate(force = false, notify = false): Promise<void> 
   update.error = ''
   try {
     await loadUpdateState()
-    const d = await readJsonSafe(
-      await fetch(`/api/update/check${force ? '?force=1' : ''}`),
-    )
+    const d = await readJsonSafe(await fetch(`/api/update/check${force ? '?force=1' : ''}`))
     if (str(d.current)) update.current = str(d.current)
     if (typeof d.self_update === 'boolean') update.selfUpdate = d.self_update
     if (str(d.install_mode)) update.installMode = str(d.install_mode)

@@ -58,7 +58,14 @@ export function isCoreModel(m: ModelInfo): boolean {
   return !id.includes('whisper') && !id.includes('ctc')
 }
 
-export type SummaryPhase = 'idle' | 'loading' | 'suggest' | 'confirm-sensitive' | 'generating' | 'result' | 'error'
+export type SummaryPhase =
+  | 'idle'
+  | 'loading'
+  | 'suggest'
+  | 'confirm-sensitive'
+  | 'generating'
+  | 'result'
+  | 'error'
 export type SummaryStateName = 'missing' | 'fresh' | 'stale' | 'unsupported' | 'corrupt'
 export type Confidence = 'high' | 'medium' | 'low'
 export type SummaryDetail = 'short' | 'normal' | 'long'
@@ -468,10 +475,10 @@ export function isVideoPath(p: string): boolean {
 }
 
 export function fmtClock(sec: number): string {
-  if (!isFinite(sec) || sec < 0) sec = 0
-  const h = Math.floor(sec / 3600)
-  const m = Math.floor((sec % 3600) / 60)
-  const s = Math.floor(sec % 60)
+  const total = Number.isFinite(sec) && sec > 0 ? sec : 0
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = Math.floor(total % 60)
   const mm = String(m).padStart(2, '0')
   const ss = String(s).padStart(2, '0')
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
@@ -515,7 +522,7 @@ export function formatRecDate(rawDate?: string, rawName?: string): FormattedRecD
     if (parts.length >= 2) time = parts[1].slice(0, 5)
   }
   if (!time) {
-    const m = String(rawName).match(/(\d{2})[:\-](\d{2})/)
+    const m = String(rawName).match(/(\d{2})[:-](\d{2})/)
     if (m) time = `${m[1]}:${m[2]}`
   }
 
@@ -533,8 +540,18 @@ export function formatRecDate(rawDate?: string, rawName?: string): FormattedRecD
       day = 'Вчера'
     } else {
       const months = [
-        'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
-        'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+        'января',
+        'февраля',
+        'марта',
+        'апреля',
+        'мая',
+        'июня',
+        'июля',
+        'августа',
+        'сентября',
+        'октября',
+        'ноября',
+        'декабря',
       ]
       const d = itemDate.getDate()
       const m = itemDate.getMonth()
@@ -573,7 +590,7 @@ export function pluralRecords(n: number): string {
 
 export function displayRecTitle(rawName: string): string {
   const stem = rawName.replace(/\.[^.]+$/, '')
-  if (/^\d{2}[:\-]\d{2}(?:-\d{2}[:\-]\d{2})?__\d{2}-\d{2}-\d{4}$/.test(stem)) {
+  if (/^\d{2}[:-]\d{2}(?:-\d{2}[:-]\d{2})?__\d{2}-\d{2}-\d{4}$/.test(stem)) {
     return 'Запись встречи'
   }
   return stem

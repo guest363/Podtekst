@@ -25,8 +25,7 @@ export async function loadSupportInfo(): Promise<void> {
     const stats = d.stats || {}
     support.transcribedCount = Number(stats.transcribed_count) || 0
     support.savedMinutes = Number(stats.total_saved_minutes) || 0
-  } catch {
-  }
+  } catch {}
 }
 
 export async function copyMethod(m: DonateMethod): Promise<void> {

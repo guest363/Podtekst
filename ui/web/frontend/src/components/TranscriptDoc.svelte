@@ -1,407 +1,432 @@
 <script lang="ts">
-  import { tick } from 'svelte'
-  import { fmtClockShort, speakerColor, speakerTint } from '../lib/api'
-  import type { SpeakerInfo, Utterance } from '../lib/api'
-  import { editTranscript } from '../lib/transcript.svelte.ts'
-  import { addHotword } from '../lib/settings.svelte.ts'
-  import { toast } from '../lib/toast.svelte.ts'
+import { tick } from 'svelte'
+import type { SpeakerInfo, Utterance } from '../lib/api'
+import { fmtClockShort, speakerColor, speakerTint } from '../lib/api'
+import { addHotword } from '../lib/settings.svelte.ts'
+import { toast } from '../lib/toast.svelte.ts'
+import { editTranscript } from '../lib/transcript.svelte.ts'
 
-  interface Props {
-    utterances: Utterance[]
-    markdown: string
-    file?: string
-    speakers?: SpeakerInfo[]
-    currentTime?: number
-    meta?: {
-      title: string
-      source: string
-      durStr?: string
-      speakers?: string[]
-    }
-    onseek?: (sec: number) => void
+interface Props {
+  utterances: Utterance[]
+  markdown: string
+  file?: string
+  speakers?: SpeakerInfo[]
+  currentTime?: number
+  meta?: {
+    title: string
+    source: string
+    durStr?: string
+    speakers?: string[]
   }
-  let { utterances, markdown, file = '', speakers = [], currentTime = 0, meta, onseek }: Props = $props()
+  onseek?: (sec: number) => void
+}
+let {
+  utterances,
+  markdown,
+  file = '',
+  speakers = [],
+  currentTime = 0,
+  meta,
+  onseek,
+}: Props = $props()
 
-  let search = $state('')
-  let follow = $state(true)
-  let doc: HTMLElement | null = $state(null)
-  let editingIndex = $state(-1)
-  let draft = $state('')
-  let editor: HTMLElement | null = $state(null)
-  let saving = $state(false)
-  let speakerMenu = $state<{ index: number; x: number; y: number } | null>(null)
-  let renameValue = $state('')
-  let menuInput: HTMLInputElement | null = $state(null)
-  let wordMenu = $state<{ index: number; word: string; x: number; y: number } | null>(null)
-  let heardValue = $state('')
-  let correctValue = $state('')
-  let menuWordInput: HTMLInputElement | null = $state(null)
-  let wordMenuEl: HTMLElement | null = $state(null)
-  let speakerMenuEl: HTMLElement | null = $state(null)
+let search = $state('')
+let follow = $state(true)
+let doc: HTMLElement | null = $state(null)
+let editingIndex = $state(-1)
+let draft = $state('')
+let editor: HTMLElement | null = $state(null)
+let saving = $state(false)
+let speakerMenu = $state<{ index: number; x: number; y: number } | null>(null)
+let renameValue = $state('')
+let menuInput: HTMLInputElement | null = $state(null)
+let wordMenu = $state<{ index: number; word: string; x: number; y: number } | null>(null)
+let heardValue = $state('')
+let correctValue = $state('')
+let menuWordInput: HTMLInputElement | null = $state(null)
+let wordMenuEl: HTMLElement | null = $state(null)
+let speakerMenuEl: HTMLElement | null = $state(null)
 
-  function fitIntoView(
-    el: HTMLElement | null,
-    pos: { x: number; y: number },
-    anchor: { top: number; bottom: number },
-  ): { x: number; y: number } {
-    if (!el) return pos
-    const r = el.getBoundingClientRect()
-    let { x, y } = pos
-    if (r.right > window.innerWidth - 8) x = Math.max(8, x - (r.right - (window.innerWidth - 8)))
-    if (r.bottom > window.innerHeight - 8) {
-      const above = anchor.top - r.height - 6
-      y = above >= 8 ? above : Math.max(8, window.innerHeight - r.height - 8)
-    }
-    return { x, y }
+function fitIntoView(
+  el: HTMLElement | null,
+  pos: { x: number; y: number },
+  anchor: { top: number; bottom: number },
+): { x: number; y: number } {
+  if (!el) return pos
+  const r = el.getBoundingClientRect()
+  let { x, y } = pos
+  if (r.right > window.innerWidth - 8) x = Math.max(8, x - (r.right - (window.innerWidth - 8)))
+  if (r.bottom > window.innerHeight - 8) {
+    const above = anchor.top - r.height - 6
+    y = above >= 8 ? above : Math.max(8, window.innerHeight - r.height - 8)
   }
-  let menuSpeaker = $derived(speakerMenu ? utterances[speakerMenu.index]?.speaker || 'Спикер' : '')
-  let activeIndex = $derived.by(() => {
-    if (currentTime <= 0 || !utterances.length) return -1
-    // При одновременной речи и перекрытиях каналов выбираем реплику,
-    // начавшуюся позже всех (наибольший start <= currentTime).
-    let bestIdx = -1
-    let bestStart = -1
-    for (let i = 0; i < utterances.length; i++) {
-      const u = utterances[i]
-      const end = u.end ?? utterances[i + 1]?.start ?? Infinity
-      if (currentTime >= u.start && currentTime <= end) {
-        if (u.start >= bestStart) {
-          bestStart = u.start
-          bestIdx = i
-        }
+  return { x, y }
+}
+let menuSpeaker = $derived(speakerMenu ? utterances[speakerMenu.index]?.speaker || 'Спикер' : '')
+let activeIndex = $derived.by(() => {
+  if (currentTime <= 0 || !utterances.length) return -1
+  // При одновременной речи и перекрытиях каналов выбираем реплику,
+  // начавшуюся позже всех (наибольший start <= currentTime).
+  let bestIdx = -1
+  let bestStart = -1
+  for (let i = 0; i < utterances.length; i++) {
+    const u = utterances[i]
+    const end = u.end ?? utterances[i + 1]?.start ?? Number.POSITIVE_INFINITY
+    if (currentTime >= u.start && currentTime <= end) {
+      if (u.start >= bestStart) {
+        bestStart = u.start
+        bestIdx = i
       }
     }
-    if (bestIdx >= 0) return bestIdx
-
-    // В коротких паузах между репликами держим последнюю отзвучавшую (до 1.5 с)
-    for (let i = utterances.length - 1; i >= 0; i--) {
-      const u = utterances[i]
-      const end = u.end ?? u.start
-      if (currentTime >= end && currentTime - end <= 1.5) {
-        return i
-      }
-    }
-    return -1
-  })
-
-  $effect(() => {
-    if (follow && activeIndex >= 0) scrollActive()
-  })
-
-  function scrollActive(): void {
-    doc?.querySelector(`[data-utt="${activeIndex}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }
+  if (bestIdx >= 0) return bestIdx
 
-  function disableFollow(): void {
-    follow = false
-  }
-
-  async function applyChange(change: { index?: number; text?: string; speaker?: string; old_speaker?: string }): Promise<boolean> {
-    if (!file || saving) return false
-    saving = true
-    try {
-      await editTranscript(file, change)
-      return true
-    } catch (e) {
-      toast('Не удалось сохранить правку: ' + (e as Error).message, 'error')
-      return false
-    } finally {
-      saving = false
+  // В коротких паузах между репликами держим последнюю отзвучавшую (до 1.5 с)
+  for (let i = utterances.length - 1; i >= 0; i--) {
+    const u = utterances[i]
+    const end = u.end ?? u.start
+    if (currentTime >= end && currentTime - end <= 1.5) {
+      return i
     }
   }
+  return -1
+})
 
-  async function startEdit(index: number, point?: { x: number; y: number }): Promise<void> {
-    if (saving || index < 0 || index >= utterances.length) return
-    if (editingIndex >= 0 && editingIndex !== index && !(await saveText(editingIndex, false))) return
-    speakerMenu = null
-    editingIndex = index
-    draft = utterances[index].text || ''
-    await tick()
-    if (!editor) return
-    editor.focus({ preventScroll: true })
+$effect(() => {
+  if (follow && activeIndex >= 0) scrollActive()
+})
 
-    let range: Range | null = null
-    const d = document as Document & {
-      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
-      caretRangeFromPoint?: (x: number, y: number) => Range | null
-    }
-    if (point && d.caretPositionFromPoint) {
-      const pos = d.caretPositionFromPoint(point.x, point.y)
-      if (pos) {
-        range = document.createRange()
-        range.setStart(pos.offsetNode, pos.offset)
-      }
-    } else if (point && d.caretRangeFromPoint) {
-      range = d.caretRangeFromPoint(point.x, point.y)
-    }
-    if (!range) {
-      range = document.createRange()
-      range.selectNodeContents(editor)
-      range.collapse(!point)
-    } else {
-      range.collapse(true)
-    }
-    const selection = window.getSelection()
-    selection?.removeAllRanges()
-    selection?.addRange(range)
-  }
+function scrollActive(): void {
+  doc
+    ?.querySelector(`[data-utt="${activeIndex}"]`)
+    ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
 
-  async function saveText(index: number, moveNext: boolean): Promise<boolean> {
-    if (editingIndex !== index || saving) return false
-    if (!(await applyChange({ index, text: draft }))) return false
-    editingIndex = -1
-    const next = utterances[index + 1]
-    const query = search.trim().toLowerCase()
-    const nextMatches = next && `${next.speaker || ''} ${next.text || ''}`.toLowerCase().includes(query)
-    if (moveNext && next && (!query || nextMatches)) await startEdit(index + 1)
+function disableFollow(): void {
+  follow = false
+}
+
+async function applyChange(change: {
+  index?: number
+  text?: string
+  speaker?: string
+  old_speaker?: string
+}): Promise<boolean> {
+  if (!file || saving) return false
+  saving = true
+  try {
+    await editTranscript(file, change)
     return true
+  } catch (e) {
+    toast('Не удалось сохранить правку: ' + (e as Error).message, 'error')
+    return false
+  } finally {
+    saving = false
   }
+}
 
-  function onEditorKey(e: KeyboardEvent, index: number): void {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      void saveText(index, true)
-    } else if (e.key === 'Escape') {
-      e.preventDefault()
-      e.stopPropagation()
-      draft = utterances[index]?.text || ''
-      editingIndex = -1
-    }
+async function startEdit(index: number, point?: { x: number; y: number }): Promise<void> {
+  if (saving || index < 0 || index >= utterances.length) return
+  if (editingIndex >= 0 && editingIndex !== index && !(await saveText(editingIndex, false))) return
+  speakerMenu = null
+  editingIndex = index
+  draft = utterances[index].text || ''
+  await tick()
+  if (!editor) return
+  editor.focus({ preventScroll: true })
+
+  let range: Range | null = null
+  const d = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
+    caretRangeFromPoint?: (x: number, y: number) => Range | null
   }
+  if (point && d.caretPositionFromPoint) {
+    const pos = d.caretPositionFromPoint(point.x, point.y)
+    if (pos) {
+      range = document.createRange()
+      range.setStart(pos.offsetNode, pos.offset)
+    }
+  } else if (point && d.caretRangeFromPoint) {
+    range = d.caretRangeFromPoint(point.x, point.y)
+  }
+  if (!range) {
+    range = document.createRange()
+    range.selectNodeContents(editor)
+    range.collapse(!point)
+  } else {
+    range.collapse(true)
+  }
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+}
 
-  async function openSpeakerMenu(e: MouseEvent, index: number): Promise<void> {
-    if (speakerMenu?.index === index) {
-      speakerMenu = null
-      return
-    }
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    const estW = 270
-    speakerMenu = {
-      index,
-      x: Math.max(8, Math.min(rect.left, window.innerWidth - estW - 8)),
-      y: rect.bottom + 6,
-    }
-    renameValue = utterances[index]?.speaker || 'Спикер'
+async function saveText(index: number, moveNext: boolean): Promise<boolean> {
+  if (editingIndex !== index || saving) return false
+  if (!(await applyChange({ index, text: draft }))) return false
+  editingIndex = -1
+  const next = utterances[index + 1]
+  const query = search.trim().toLowerCase()
+  const nextMatches =
+    next && `${next.speaker || ''} ${next.text || ''}`.toLowerCase().includes(query)
+  if (moveNext && next && (!query || nextMatches)) await startEdit(index + 1)
+  return true
+}
+
+function onEditorKey(e: KeyboardEvent, index: number): void {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    void saveText(index, true)
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    draft = utterances[index]?.text || ''
+    editingIndex = -1
+  }
+}
+
+async function openSpeakerMenu(e: MouseEvent, index: number): Promise<void> {
+  if (speakerMenu?.index === index) {
+    speakerMenu = null
+    return
+  }
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  const estW = 270
+  speakerMenu = {
+    index,
+    x: Math.max(8, Math.min(rect.left, window.innerWidth - estW - 8)),
+    y: rect.bottom + 6,
+  }
+  renameValue = utterances[index]?.speaker || 'Спикер'
+  await tick()
+  if (speakerMenu) {
+    const fitted = fitIntoView(speakerMenuEl, { x: speakerMenu.x, y: speakerMenu.y }, rect)
+    speakerMenu = { ...speakerMenu, ...fitted }
+  }
+  menuInput?.focus()
+  menuInput?.select()
+}
+
+async function renameSpeaker(): Promise<void> {
+  if (!speakerMenu || !renameValue.trim()) return
+  if (await applyChange({ old_speaker: menuSpeaker, speaker: renameValue.trim() }))
+    speakerMenu = null
+}
+
+async function detachSpeaker(index: number): Promise<void> {
+  if (!file || saving || index < 0 || index >= utterances.length) return
+  const allSpeakers = new Set(utterances.map((u) => u.speaker || ''))
+  let newName = 'Новый собеседник'
+  if (allSpeakers.has(newName)) {
+    let num = 2
+    while (allSpeakers.has(`Новый собеседник ${num}`)) num += 1
+    newName = `Новый собеседник ${num}`
+  }
+  if (await applyChange({ index, speaker: newName })) {
+    toast(`Реплика вынесена в карточку «${newName}»`)
     await tick()
-    if (speakerMenu) {
-      const fitted = fitIntoView(speakerMenuEl, { x: speakerMenu.x, y: speakerMenu.y }, rect)
-      speakerMenu = { ...speakerMenu, ...fitted }
-    }
-    menuInput?.focus()
-    menuInput?.select()
+    const cards = Array.from(document.querySelectorAll<HTMLElement>('.speaker-card'))
+    const targetCard =
+      cards.find((c) => c.querySelector('.speaker-name')?.textContent?.includes(newName)) ||
+      document.querySelector<HTMLElement>('.speaker-card:not(.matched)')
+    const input = targetCard?.querySelector<HTMLInputElement>('.assign-name-input')
+    input?.focus()
+    targetCard?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }
+}
 
-  async function renameSpeaker(): Promise<void> {
-    if (!speakerMenu || !renameValue.trim()) return
-    if (await applyChange({ old_speaker: menuSpeaker, speaker: renameValue.trim() })) speakerMenu = null
+async function onUttTextClick(e: MouseEvent, index: number): Promise<void> {
+  const t = (e.target as HTMLElement).closest?.('[data-w]') as HTMLElement | null
+  if (t && index >= 0) {
+    e.stopPropagation()
+    await openWordMenu(e, index, t.dataset.w || '')
   }
+}
 
-  async function detachSpeaker(index: number): Promise<void> {
-    if (!file || saving || index < 0 || index >= utterances.length) return
-    const allSpeakers = new Set(utterances.map((u) => u.speaker || ''))
-    let newName = 'Новый собеседник'
-    if (allSpeakers.has(newName)) {
-      let num = 2
-      while (allSpeakers.has(`Новый собеседник ${num}`)) num += 1
-      newName = `Новый собеседник ${num}`
-    }
-    if (await applyChange({ index, speaker: newName })) {
-      toast(`Реплика вынесена в карточку «${newName}»`)
-      await tick()
-      const cards = Array.from(document.querySelectorAll<HTMLElement>('.speaker-card'))
-      const targetCard =
-        cards.find((c) => c.querySelector('.speaker-name')?.textContent?.includes(newName)) ||
-        document.querySelector<HTMLElement>('.speaker-card:not(.matched)')
-      const input = targetCard?.querySelector<HTMLInputElement>('.assign-name-input')
-      input?.focus()
-      targetCard?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-    }
+async function openWordMenu(e: MouseEvent, index: number, word: string): Promise<void> {
+  if (!word) return
+  const anchor = (e.target as HTMLElement).getBoundingClientRect()
+  const estW = 250
+  wordMenu = {
+    index,
+    word,
+    x: Math.max(8, Math.min(anchor.left, window.innerWidth - estW - 8)),
+    y: anchor.bottom + 6,
   }
-
-  async function onUttTextClick(e: MouseEvent, index: number): Promise<void> {
-    const t = (e.target as HTMLElement).closest?.('[data-w]') as HTMLElement | null
-    if (t && index >= 0) {
-      e.stopPropagation()
-      await openWordMenu(e, index, t.dataset.w || '')
-    }
+  heardValue = word
+  correctValue = ''
+  await tick()
+  if (wordMenu) {
+    const fitted = fitIntoView(wordMenuEl, { x: wordMenu.x, y: wordMenu.y }, anchor)
+    wordMenu = { ...wordMenu, ...fitted }
   }
+  menuWordInput?.focus()
+}
 
-  async function openWordMenu(e: MouseEvent, index: number, word: string): Promise<void> {
-    if (!word) return
-    const anchor = (e.target as HTMLElement).getBoundingClientRect()
-    const estW = 250
-    wordMenu = {
+async function saveWord(): Promise<void> {
+  if (!wordMenu) return
+  const heard = heardValue.trim()
+  const correct = correctValue.trim()
+  if (!heard) return
+  const entry =
+    correct && correct.toLowerCase() !== heard.toLowerCase() ? `${heard} => ${correct}` : heard
+  if (await addHotword(entry)) wordMenu = null
+}
+
+function onWordMenuKey(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    wordMenu = null
+  } else if (e.key === 'Enter' && e.target instanceof HTMLInputElement) {
+    e.preventDefault()
+    void saveWord()
+  }
+}
+
+function onMenuKey(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    speakerMenu = null
+  } else if (e.key === 'Enter') {
+    e.preventDefault()
+    void renameSpeaker()
+  }
+}
+
+function escapeHtml(s: string): string {
+  return String(s).replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c,
+  )
+}
+
+function wordsHtml(u: Utterance): string {
+  const ws = u.words
+  const plain = (u.text || '').split(/\s+/).filter(Boolean)
+  if (!ws || ws.length === 0 || ws.length !== plain.length) return escapeHtml(u.text || '')
+  return ws
+    .map((w) => {
+      const cls = w.needs_review ? 'w low' : 'w'
+      const conf = typeof w.conf === 'number' ? w.conf.toFixed(2) : '?'
+      const title = w.needs_review
+        ? `Уверенность ${conf} — клик: добавить в словарь`
+        : 'Клик: добавить в словарь'
+      return `<span class="${cls}" data-w="${escapeHtml(w.w)}" title="${escapeHtml(title)}">${escapeHtml(w.w)}</span>`
+    })
+    .join(' ')
+}
+
+function inlineMd(s: string): string {
+  return escapeHtml(s)
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(
+      /\[([^\]]+)\]\((https?:[^)]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener">$1</a>',
+    )
+}
+
+interface Block {
+  kind: 'utt'
+  time: string
+  speaker: string
+  html: string
+  search: string
+  sec: number
+  index: number
+}
+
+interface Raw {
+  kind: 'h1' | 'h2' | 'h3' | 'p' | 'hr' | 'ul'
+  text?: string
+  items?: string[]
+}
+
+// Структурированные блоки: utterances — источник истины, иначе лёгкий разбор md.
+let blocks = $derived.by((): (Block | Raw)[] => {
+  if (utterances.length > 0) {
+    return utterances.map((u, index) => ({
+      kind: 'utt' as const,
+      time: fmtClockShort(u.start),
+      speaker: u.speaker || 'Спикер',
+      html: wordsHtml(u),
+      search: `${fmtClockShort(u.start)} ${u.speaker || ''} ${u.text || ''}`.toLowerCase(),
+      sec: u.start,
       index,
-      word,
-      x: Math.max(8, Math.min(anchor.left, window.innerWidth - estW - 8)),
-      y: anchor.bottom + 6,
-    }
-    heardValue = word
-    correctValue = ''
-    await tick()
-    if (wordMenu) {
-      const fitted = fitIntoView(wordMenuEl, { x: wordMenu.x, y: wordMenu.y }, anchor)
-      wordMenu = { ...wordMenu, ...fitted }
-    }
-    menuWordInput?.focus()
+    }))
   }
-
-  async function saveWord(): Promise<void> {
-    if (!wordMenu) return
-    const heard = heardValue.trim()
-    const correct = correctValue.trim()
-    if (!heard) return
-    const entry = correct && correct.toLowerCase() !== heard.toLowerCase() ? `${heard} => ${correct}` : heard
-    if (await addHotword(entry)) wordMenu = null
-  }
-
-  function onWordMenuKey(e: KeyboardEvent): void {
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      e.stopPropagation()
-      wordMenu = null
-    } else if (e.key === 'Enter' && e.target instanceof HTMLInputElement) {
-      e.preventDefault()
-      void saveWord()
+  const out: (Block | Raw)[] = []
+  let list: string[] | null = null
+  const flush = () => {
+    if (list) {
+      out.push({ kind: 'ul', items: list })
+      list = null
     }
   }
-
-  function onMenuKey(e: KeyboardEvent): void {
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      e.stopPropagation()
-      speakerMenu = null
-    } else if (e.key === 'Enter') {
-      e.preventDefault()
-      void renameSpeaker()
-    }
-  }
-
-  function escapeHtml(s: string): string {
-    return String(s).replace(/[&<>"']/g, (c) => (({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c))
-  }
-
-  function wordsHtml(u: Utterance): string {
-    const ws = u.words
-    const plain = (u.text || '').split(/\s+/).filter(Boolean)
-    if (!ws || ws.length === 0 || ws.length !== plain.length) return escapeHtml(u.text || '')
-    return ws
-      .map((w) => {
-        const cls = w.needs_review ? 'w low' : 'w'
-        const conf = typeof w.conf === 'number' ? w.conf.toFixed(2) : '?'
-        const title = w.needs_review
-          ? `Уверенность ${conf} — клик: добавить в словарь`
-          : `Клик: добавить в словарь`
-        return `<span class="${cls}" data-w="${escapeHtml(w.w)}" title="${escapeHtml(title)}">${escapeHtml(w.w)}</span>`
-      })
-      .join(' ')
-  }
-
-  function inlineMd(s: string): string {
-    return escapeHtml(s)
-      .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
-      .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-  }
-
-  interface Block {
-    kind: 'utt'
-    time: string
-    speaker: string
-    html: string
-    search: string
-    sec: number
-    index: number
-  }
-
-  interface Raw {
-    kind: 'h1' | 'h2' | 'h3' | 'p' | 'hr' | 'ul'
-    text?: string
-    items?: string[]
-  }
-
-  // Структурированные блоки: utterances — источник истины, иначе лёгкий разбор md.
-  let blocks = $derived.by((): (Block | Raw)[] => {
-    if (utterances.length > 0) {
-      return utterances.map((u, index) => ({
-        kind: 'utt' as const,
-        time: fmtClockShort(u.start),
-        speaker: u.speaker || 'Спикер',
-        html: wordsHtml(u),
-        search: `${fmtClockShort(u.start)} ${u.speaker || ''} ${u.text || ''}`.toLowerCase(),
-        sec: u.start,
-        index,
-      }))
-    }
-    const out: (Block | Raw)[] = []
-    let list: string[] | null = null
-    const flush = () => {
-      if (list) {
-        out.push({ kind: 'ul', items: list })
-        list = null
-      }
-    }
-    for (const line of String(markdown).split('\n')) {
-      const t = line.trim()
-      if (!t) {
-        flush()
-        continue
-      }
-      if (t === '---') {
-        flush()
-        out.push({ kind: 'hr' })
-        continue
-      }
-      if (t.startsWith('### ')) {
-        flush()
-        out.push({ kind: 'h3', text: t.slice(4) })
-        continue
-      }
-      if (t.startsWith('## ')) {
-        flush()
-        out.push({ kind: 'h2', text: t.slice(3) })
-        continue
-      }
-      if (t.startsWith('# ')) {
-        flush()
-        out.push({ kind: 'h1', text: t.slice(2) })
-        continue
-      }
-      const m = t.match(/^\*\*\[([^\]]+)\]\s+([^:]+):\*\*\s?(.*)$/)
-      if (m) {
-        flush()
-        const p = m[1].split(':').map(Number)
-        const sec = p.length === 2 ? p[0] * 60 + p[1] : p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : 0
-        out.push({
-          kind: 'utt',
-          time: `[${m[1]}]`,
-          speaker: m[2],
-          html: inlineMd(m[3]),
-          search: `${m[1]} ${m[2]} ${m[3]}`.toLowerCase(),
-          sec,
-          index: -1,
-        } as Block)
-        continue
-      }
-      const li = t.match(/^[-*]\s+(.*)$/)
-      if (li) {
-        ;(list ??= []).push(li[1])
-        continue
-      }
+  for (const line of String(markdown).split('\n')) {
+    const t = line.trim()
+    if (!t) {
       flush()
-      const isMeta = /^\*\*.+\*\*$/.test(t)
-      out.push({ kind: 'p', text: t, items: isMeta ? ['meta'] : [] })
+      continue
+    }
+    if (t === '---') {
+      flush()
+      out.push({ kind: 'hr' })
+      continue
+    }
+    if (t.startsWith('### ')) {
+      flush()
+      out.push({ kind: 'h3', text: t.slice(4) })
+      continue
+    }
+    if (t.startsWith('## ')) {
+      flush()
+      out.push({ kind: 'h2', text: t.slice(3) })
+      continue
+    }
+    if (t.startsWith('# ')) {
+      flush()
+      out.push({ kind: 'h1', text: t.slice(2) })
+      continue
+    }
+    const m = t.match(/^\*\*\[([^\]]+)\]\s+([^:]+):\*\*\s?(.*)$/)
+    if (m) {
+      flush()
+      const p = m[1].split(':').map(Number)
+      const sec =
+        p.length === 2 ? p[0] * 60 + p[1] : p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : 0
+      out.push({
+        kind: 'utt',
+        time: `[${m[1]}]`,
+        speaker: m[2],
+        html: inlineMd(m[3]),
+        search: `${m[1]} ${m[2]} ${m[3]}`.toLowerCase(),
+        sec,
+        index: -1,
+      } as Block)
+      continue
+    }
+    const li = t.match(/^[-*]\s+(.*)$/)
+    if (li) {
+      list ??= []
+      list.push(li[1])
+      continue
     }
     flush()
-    return out
-  })
+    const isMeta = /^\*\*.+\*\*$/.test(t)
+    out.push({ kind: 'p', text: t, items: isMeta ? ['meta'] : [] })
+  }
+  flush()
+  return out
+})
 
-  let q = $derived(search.trim().toLowerCase())
-  let uttTotal = $derived(blocks.filter((b) => b.kind === 'utt').length)
-  let hitCount = $derived(
-    q ? blocks.filter((b) => b.kind === 'utt' && (b as Block).search.includes(q)).length : 0,
-  )
-
+let q = $derived(search.trim().toLowerCase())
+let uttTotal = $derived(blocks.filter((b) => b.kind === 'utt').length)
+let hitCount = $derived(
+  q ? blocks.filter((b) => b.kind === 'utt' && (b as Block).search.includes(q)).length : 0,
+)
 </script>
 
 <svelte:window onwheel={disableFollow} ontouchstart={disableFollow} onkeydown={disableFollow} />

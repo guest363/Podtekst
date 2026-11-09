@@ -3,8 +3,8 @@ import { defineConfig } from 'vite'
 
 const isMobilePlatform = Boolean(
   process.env.TAURI_ENV_PLATFORM === 'android' ||
-  process.env.TAURI_ENV_PLATFORM === 'ios' ||
-  process.env.MOBILE === '1',
+    process.env.TAURI_ENV_PLATFORM === 'ios' ||
+    process.env.MOBILE === '1',
 )
 
 // Локальное окно Tauri: та же раздача, что раньше (диск → вшитый fallback в Rust).

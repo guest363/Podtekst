@@ -1,57 +1,53 @@
 <script lang="ts">
-  import type { SummaryClassification } from '../lib/api'
-  import {
-    downloadSummaryModel,
-    pickPreset,
-    summaryModelPct,
-    summaryState,
-  } from '../lib/summary.svelte.ts'
-  import { transcript } from '../lib/transcript.svelte.ts'
-  import {
-    summaryConfidenceText,
-    summaryPreset,
-    summaryRecommendation,
-    summarySignals,
-  } from '../lib/summaryUi.ts'
+import type { SummaryClassification } from '../lib/api'
+import {
+  downloadSummaryModel,
+  pickPreset,
+  summaryModelPct,
+  summaryState,
+} from '../lib/summary.svelte.ts'
+import {
+  summaryConfidenceText,
+  summaryPreset,
+  summaryRecommendation,
+  summarySignals,
+} from '../lib/summaryUi.ts'
+import { transcript } from '../lib/transcript.svelte.ts'
 
-  interface Props {
-    classification: SummaryClassification | null
-    canGenerate: boolean
-    blockingText: string
-    onopenpickerat: (e: MouseEvent) => void
-  }
-  let { classification, canGenerate, blockingText, onopenpickerat }: Props = $props()
+interface Props {
+  classification: SummaryClassification | null
+  canGenerate: boolean
+  blockingText: string
+  onopenpickerat: (e: MouseEvent) => void
+}
+let { classification, canGenerate, blockingText, onopenpickerat }: Props = $props()
 
-  const manualOnly = $derived(summaryState.capabilities?.classifier === 'manual_only')
-  const recommendation = $derived(summaryRecommendation(classification, summaryState.presets))
-  const signals = $derived(classification ? summarySignals(classification.signals) : [])
-  const primaryId = $derived(
-    summaryState.chosenPresetId ||
-      classification?.preset_id ||
-      summaryState.settings?.default_preset ||
-      '',
-  )
-  const primaryPreset = $derived(summaryPreset(primaryId, summaryState.presets))
-  const modelMissing = $derived(
-    summaryState.blockReason === 'model_missing' ||
-      summaryState.blockReason === 'model_download' ||
-      summaryState.model?.is_installed === false,
-  )
-  const modelPct = $derived(summaryModelPct())
-  const modelSizeGb = $derived(
-    ((summaryState.model?.total_size_bytes || 2497281120) / 1073741824).toFixed(1).replace('.', ','),
-  )
-  const sourceChars = $derived(
-    transcript.utterances.reduce((n, u) => n + (u.text?.trim().length || 0), 0) ||
-      transcript.markdown.trim().length,
-  )
-  const shortSource = $derived(
-    Boolean(
-      summaryState.limits &&
-        sourceChars > 0 &&
-        sourceChars < summaryState.limits.warn_chars,
-    ),
-  )
+const manualOnly = $derived(summaryState.capabilities?.classifier === 'manual_only')
+const recommendation = $derived(summaryRecommendation(classification, summaryState.presets))
+const signals = $derived(classification ? summarySignals(classification.signals) : [])
+const primaryId = $derived(
+  summaryState.chosenPresetId ||
+    classification?.preset_id ||
+    summaryState.settings?.default_preset ||
+    '',
+)
+const primaryPreset = $derived(summaryPreset(primaryId, summaryState.presets))
+const modelMissing = $derived(
+  summaryState.blockReason === 'model_missing' ||
+    summaryState.blockReason === 'model_download' ||
+    summaryState.model?.is_installed === false,
+)
+const modelPct = $derived(summaryModelPct())
+const modelSizeGb = $derived(
+  ((summaryState.model?.total_size_bytes || 2497281120) / 1073741824).toFixed(1).replace('.', ','),
+)
+const sourceChars = $derived(
+  transcript.utterances.reduce((n, u) => n + (u.text?.trim().length || 0), 0) ||
+    transcript.markdown.trim().length,
+)
+const shortSource = $derived(
+  Boolean(summaryState.limits && sourceChars > 0 && sourceChars < summaryState.limits.warn_chars),
+)
 </script>
 
 <div class="summary-suggest">

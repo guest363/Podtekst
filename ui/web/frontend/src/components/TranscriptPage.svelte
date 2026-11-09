@@ -1,224 +1,231 @@
 <script lang="ts">
-  import { baseName, fmtClock, fmtClockShort, isAndroid, isMobile, pluralSpeakers } from '../lib/api'
-  import { copyText, toast, toastConfirm } from '../lib/toast.svelte.ts'
-  import { closeTranscript, ui } from '../lib/ui.svelte.ts'
-  import { emptyHint, engine, openTranscriptFile, startTranscription, transcript } from '../lib/transcript.svelte.ts'
-  import { cancelSummary, summaryState } from '../lib/summary.svelte.ts'
-  import { isQueued } from '../lib/queue.svelte.ts'
-  import { extractMp3 } from '../lib/recordings.svelte.ts'
-  import { peopleState } from '../lib/people.svelte.ts'
-  import { exportDocx, printTranscript } from '../lib/export.ts'
-  import { settings } from '../lib/settings.svelte.ts'
-  import SlimPlayer from './SlimPlayer.svelte'
-  import SpeakersPane from './SpeakersPane.svelte'
-  import TranscriptDoc from './TranscriptDoc.svelte'
-  import SummaryPanel from './SummaryPanel.svelte'
+import { baseName, fmtClock, fmtClockShort, isAndroid, isMobile, pluralSpeakers } from '../lib/api'
+import { exportDocx, printTranscript } from '../lib/export.ts'
+import { peopleState } from '../lib/people.svelte.ts'
+import { isQueued } from '../lib/queue.svelte.ts'
+import { extractMp3 } from '../lib/recordings.svelte.ts'
+import { settings } from '../lib/settings.svelte.ts'
+import { cancelSummary, summaryState } from '../lib/summary.svelte.ts'
+import { copyText, toast, toastConfirm } from '../lib/toast.svelte.ts'
+import {
+  emptyHint,
+  engine,
+  openTranscriptFile,
+  startTranscription,
+  transcript,
+} from '../lib/transcript.svelte.ts'
+import { closeTranscript, ui } from '../lib/ui.svelte.ts'
+import SlimPlayer from './SlimPlayer.svelte'
+import SpeakersPane from './SpeakersPane.svelte'
+import SummaryPanel from './SummaryPanel.svelte'
+import TranscriptDoc from './TranscriptDoc.svelte'
 
-  let speakersOpen = $state(
-    typeof localStorage !== 'undefined'
-      ? localStorage.getItem('mr_speakers_open') !== 'false'
-      : true,
-  )
+let speakersOpen = $state(
+  typeof localStorage !== 'undefined' ? localStorage.getItem('mr_speakers_open') !== 'false' : true,
+)
 
-  let summaryOpen = $state(
-    typeof localStorage !== 'undefined'
-      ? localStorage.getItem('mr_summary_open') === 'true'
-      : false,
-  )
+let summaryOpen = $state(
+  typeof localStorage !== 'undefined' ? localStorage.getItem('mr_summary_open') === 'true' : false,
+)
 
-  let summaryAvailable = $derived(
-    !isAndroid &&
-      settings.summaryFeature !== false &&
-      transcript.hasText &&
-      summaryState.capabilities?.summary_supported !== false &&
-      summaryState.blockReason !== 'no_text',
-  )
+let summaryAvailable = $derived(
+  !isAndroid &&
+    settings.summaryFeature !== false &&
+    transcript.hasText &&
+    summaryState.capabilities?.summary_supported !== false &&
+    summaryState.blockReason !== 'no_text',
+)
 
-  function toggleSpeakers(): void {
-    speakersOpen = !speakersOpen
-    try {
-      localStorage.setItem('mr_speakers_open', String(speakersOpen))
-    } catch {
-      /* ignore */
+function toggleSpeakers(): void {
+  speakersOpen = !speakersOpen
+  try {
+    localStorage.setItem('mr_speakers_open', String(speakersOpen))
+  } catch {
+    /* ignore */
+  }
+}
+
+function toggleSummaryPanel(): void {
+  summaryOpen = !summaryOpen
+  if (summaryOpen) {
+    summaryState.expanded = true
+  }
+  try {
+    localStorage.setItem('mr_summary_open', String(summaryOpen))
+  } catch {
+    /* ignore */
+  }
+}
+
+let videoExpanded = $state(false)
+let playbackTime = $state(0)
+
+let thisRunning = $derived(engine.running && engine.file === ui.currentTranscriptPath)
+let otherRunning = $derived(engine.running && engine.file !== ui.currentTranscriptPath)
+
+$effect(() => {
+  if (ui.transcriptOpen && ui.currentTranscriptPath) {
+    videoExpanded = false
+    playbackTime = 0
+    void openTranscriptFile(ui.currentTranscriptPath)
+  }
+})
+
+$effect(() => {
+  if (
+    ui.transcriptOpen &&
+    ((summaryState.generating && summaryState.file === ui.currentTranscriptPath) ||
+      (engine.summaryRunning && engine.summaryFile === ui.currentTranscriptPath))
+  ) {
+    summaryOpen = true
+    summaryState.expanded = true
+  }
+})
+
+let hasUnmatchedSpeakers = $derived(
+  Boolean(transcript.speakers?.length && transcript.speakers.some((s) => !s.matched)),
+)
+let allSpeakersMatched = $derived(
+  Boolean(transcript.speakers?.length && transcript.speakers.every((s) => s.matched)),
+)
+function pluralUtterances(n: number): string {
+  const rem10 = n % 10
+  const rem100 = n % 100
+  if (rem100 >= 11 && rem100 <= 19) return 'реплик'
+  if (rem10 === 1) return 'реплика'
+  if (rem10 >= 2 && rem10 <= 4) return 'реплики'
+  return 'реплик'
+}
+
+function getTranscriptMeta(): {
+  title: string
+  source: string
+  durStr: string
+  speakers: string[]
+} {
+  const filename = baseName(ui.currentTranscriptPath) || 'Встреча'
+  const lastUtt = transcript.utterances?.[transcript.utterances.length - 1]
+  const durStr = lastUtt && lastUtt.end ? fmtClock(lastUtt.end) : ''
+
+  const speakerMap = new Map<string, { name: string; role?: string }>()
+  for (const u of transcript.utterances || []) {
+    const name = (u.speaker || 'Спикер').trim()
+    if (!name || speakerMap.has(name)) continue
+    const person = peopleState.list.find((p) => p.name.toLowerCase() === name.toLowerCase())
+    speakerMap.set(name, {
+      name,
+      role: person?.role?.trim() || undefined,
+    })
+  }
+
+  const isGeneric = (n: string) => /^(участник|собеседник|спикер)\s*\d*$/i.test(n)
+  const identified: string[] = []
+  const generic: string[] = []
+
+  for (const [name, info] of speakerMap.entries()) {
+    const label = info.role ? `${info.name} (${info.role})` : info.name
+    if (info.role || !isGeneric(name)) {
+      identified.push(label)
+    } else {
+      generic.push(label)
     }
   }
 
-  function toggleSummaryPanel(): void {
-    summaryOpen = !summaryOpen
-    if (summaryOpen) {
-      summaryState.expanded = true
-    }
-    try {
-      localStorage.setItem('mr_summary_open', String(summaryOpen))
-    } catch {
-      /* ignore */
-    }
+  return {
+    title: filename,
+    source: filename,
+    durStr,
+    speakers: [...identified, ...generic],
+  }
+}
+
+let transcriptMeta = $derived(getTranscriptMeta())
+
+function buildFullTranscriptMarkdown(): string {
+  if (!transcript.utterances || transcript.utterances.length === 0) {
+    return transcript.markdown?.trim() || ''
   }
 
-  let videoExpanded = $state(false)
-  let playbackTime = $state(0)
+  const meta = transcriptMeta
+  const lines: string[] = []
+  lines.push(`# Расшифровка встречи: ${meta.title}`)
+  lines.push('')
+  lines.push(`**Источник:** \`${meta.source}\`${meta.durStr ? ` (${meta.durStr})` : ''}`)
+  if (meta.speakers.length > 0) {
+    lines.push(`**Спикеры:** ${meta.speakers.join(', ')}`)
+  }
+  lines.push('')
+  lines.push('---')
+  lines.push('')
 
-  let thisRunning = $derived(engine.running && engine.file === ui.currentTranscriptPath)
-  let otherRunning = $derived(engine.running && engine.file !== ui.currentTranscriptPath)
+  for (const u of transcript.utterances) {
+    const time = fmtClockShort(u.start)
+    const speaker = u.speaker || 'Спикер'
+    const text = (u.text || '').trim()
+    lines.push(`**[${time}] ${speaker}:** ${text}`)
+    lines.push('')
+  }
 
-  $effect(() => {
-    if (ui.transcriptOpen && ui.currentTranscriptPath) {
-      videoExpanded = false
-      playbackTime = 0
-      void openTranscriptFile(ui.currentTranscriptPath)
+  return lines.join('\n').trim()
+}
+
+async function copyAll(): Promise<void> {
+  const txt = buildFullTranscriptMarkdown()
+  if (!txt.trim()) {
+    toast('Нечего копировать: текст пуст')
+    return
+  }
+  if (await copyText(txt)) toast('Текст скопирован')
+  else toast('Не удалось скопировать', 'error')
+}
+
+function seekTo(sec: number): void {
+  const media = document.getElementById('transcriptFullMedia') as HTMLMediaElement | null
+  if (media && isFinite(sec)) {
+    media.currentTime = Math.max(0, sec)
+    if (media.paused) {
+      void media.play().catch(() => {})
     }
+  }
+}
+
+function requestTranscription(): void {
+  const path = ui.currentTranscriptPath
+  if (summaryState.generating && summaryState.file === path) {
+    toastConfirm(
+      'Идёт сборка итогов. Начать расшифровку заново? Итоги будут остановлены.',
+      'Начать',
+      () => {
+        void cancelSummary()
+        void startTranscription(path)
+      },
+    )
+    return
+  }
+  void startTranscription(path)
+}
+
+function goBack(): void {
+  document.querySelectorAll('.transcript-page audio, .transcript-page video').forEach((m) => {
+    ;(m as HTMLMediaElement).pause()
   })
+  closeTranscript()
+}
 
-  $effect(() => {
-    if (
-      ui.transcriptOpen &&
-      ((summaryState.generating && summaryState.file === ui.currentTranscriptPath) ||
-        (engine.summaryRunning && engine.summaryFile === ui.currentTranscriptPath))
-    ) {
-      summaryOpen = true
-      summaryState.expanded = true
-    }
-  })
-
-  let hasUnmatchedSpeakers = $derived(
-    Boolean(transcript.speakers?.length && transcript.speakers.some((s) => !s.matched)),
-  )
-  let allSpeakersMatched = $derived(
-    Boolean(transcript.speakers?.length && transcript.speakers.every((s) => s.matched)),
-  )
-  function pluralUtterances(n: number): string {
-    const rem10 = n % 10
-    const rem100 = n % 100
-    if (rem100 >= 11 && rem100 <= 19) return 'реплик'
-    if (rem10 === 1) return 'реплика'
-    if (rem10 >= 2 && rem10 <= 4) return 'реплики'
-    return 'реплик'
-  }
-
-  function getTranscriptMeta(): { title: string; source: string; durStr: string; speakers: string[] } {
-    const filename = baseName(ui.currentTranscriptPath) || 'Встреча'
-    const lastUtt = transcript.utterances?.[transcript.utterances.length - 1]
-    const durStr = lastUtt && lastUtt.end ? fmtClock(lastUtt.end) : ''
-
-    const speakerMap = new Map<string, { name: string; role?: string }>()
-    for (const u of transcript.utterances || []) {
-      const name = (u.speaker || 'Спикер').trim()
-      if (!name || speakerMap.has(name)) continue
-      const person = peopleState.list.find((p) => p.name.toLowerCase() === name.toLowerCase())
-      speakerMap.set(name, {
-        name,
-        role: person?.role?.trim() || undefined,
-      })
-    }
-
-    const isGeneric = (n: string) => /^(участник|собеседник|спикер)\s*\d*$/i.test(n)
-    const identified: string[] = []
-    const generic: string[] = []
-
-    for (const [name, info] of speakerMap.entries()) {
-      const label = info.role ? `${info.name} (${info.role})` : info.name
-      if (info.role || !isGeneric(name)) {
-        identified.push(label)
-      } else {
-        generic.push(label)
-      }
-    }
-
-    return {
-      title: filename,
-      source: filename,
-      durStr,
-      speakers: [...identified, ...generic],
+function onWindowKey(e: KeyboardEvent): void {
+  if (!ui.transcriptOpen) return
+  if (e.key === 'Escape') {
+    if (isMobile && summaryOpen) {
+      summaryOpen = false
+      e.stopPropagation()
+    } else if (isMobile && speakersOpen) {
+      speakersOpen = false
+      e.stopPropagation()
+    } else {
+      goBack()
     }
   }
-
-  let transcriptMeta = $derived(getTranscriptMeta())
-
-  function buildFullTranscriptMarkdown(): string {
-    if (!transcript.utterances || transcript.utterances.length === 0) {
-      return transcript.markdown?.trim() || ''
-    }
-
-    const meta = transcriptMeta
-    const lines: string[] = []
-    lines.push(`# Расшифровка встречи: ${meta.title}`)
-    lines.push('')
-    lines.push(`**Источник:** \`${meta.source}\`${meta.durStr ? ` (${meta.durStr})` : ''}`)
-    if (meta.speakers.length > 0) {
-      lines.push(`**Спикеры:** ${meta.speakers.join(', ')}`)
-    }
-    lines.push('')
-    lines.push('---')
-    lines.push('')
-
-    for (const u of transcript.utterances) {
-      const time = fmtClockShort(u.start)
-      const speaker = u.speaker || 'Спикер'
-      const text = (u.text || '').trim()
-      lines.push(`**[${time}] ${speaker}:** ${text}`)
-      lines.push('')
-    }
-
-    return lines.join('\n').trim()
-  }
-
-  async function copyAll(): Promise<void> {
-    const txt = buildFullTranscriptMarkdown()
-    if (!txt.trim()) {
-      toast('Нечего копировать: текст пуст')
-      return
-    }
-    if (await copyText(txt)) toast('Текст скопирован')
-    else toast('Не удалось скопировать', 'error')
-  }
-
-  function seekTo(sec: number): void {
-    const media = document.getElementById('transcriptFullMedia') as HTMLMediaElement | null
-    if (media && isFinite(sec)) {
-      media.currentTime = Math.max(0, sec)
-      if (media.paused) {
-        void media.play().catch(() => {})
-      }
-    }
-  }
-
-  function requestTranscription(): void {
-    const path = ui.currentTranscriptPath
-    if (summaryState.generating && summaryState.file === path) {
-      toastConfirm(
-        'Идёт сборка итогов. Начать расшифровку заново? Итоги будут остановлены.',
-        'Начать',
-        () => {
-          void cancelSummary()
-          void startTranscription(path)
-        },
-      )
-      return
-    }
-    void startTranscription(path)
-  }
-
-  function goBack(): void {
-    document
-      .querySelectorAll('.transcript-page audio, .transcript-page video')
-      .forEach((m) => (m as HTMLMediaElement).pause())
-    closeTranscript()
-  }
-
-  function onWindowKey(e: KeyboardEvent): void {
-    if (!ui.transcriptOpen) return
-    if (e.key === 'Escape') {
-      if (isMobile && summaryOpen) {
-        summaryOpen = false
-        e.stopPropagation()
-      } else if (isMobile && speakersOpen) {
-        speakersOpen = false
-        e.stopPropagation()
-      } else {
-        goBack()
-      }
-    }
-  }
+}
 </script>
 
 <svelte:window onkeydown={onWindowKey} />

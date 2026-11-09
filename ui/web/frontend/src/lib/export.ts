@@ -1,5 +1,5 @@
-import { fmtClockShort } from './api'
 import type { Utterance } from './api'
+import { fmtClockShort } from './api'
 import { toast } from './toast.svelte.ts'
 
 export interface TranscriptMeta {
@@ -44,39 +44,82 @@ function zip(files: Array<{ name: string; data: Uint8Array }>): Uint8Array {
     const name = encoder.encode(file.name)
     const crc = crc32(file.data)
     const local = join([
-      le(0x04034b50, 4), le(20, 2), le(0x800, 2), le(0, 2), le(0, 2), le(0x21, 2),
-      le(crc, 4), le(file.data.length, 4), le(file.data.length, 4), le(name.length, 2), le(0, 2),
-      name, file.data,
+      le(0x04034b50, 4),
+      le(20, 2),
+      le(0x800, 2),
+      le(0, 2),
+      le(0, 2),
+      le(0x21, 2),
+      le(crc, 4),
+      le(file.data.length, 4),
+      le(file.data.length, 4),
+      le(name.length, 2),
+      le(0, 2),
+      name,
+      file.data,
     ])
     locals.push(local)
-    centrals.push(join([
-      le(0x02014b50, 4), le(20, 2), le(20, 2), le(0x800, 2), le(0, 2), le(0, 2), le(0x21, 2),
-      le(crc, 4), le(file.data.length, 4), le(file.data.length, 4), le(name.length, 2),
-      le(0, 2), le(0, 2), le(0, 2), le(0, 2), le(0, 4), le(offset, 4), name,
-    ]))
+    centrals.push(
+      join([
+        le(0x02014b50, 4),
+        le(20, 2),
+        le(20, 2),
+        le(0x800, 2),
+        le(0, 2),
+        le(0, 2),
+        le(0x21, 2),
+        le(crc, 4),
+        le(file.data.length, 4),
+        le(file.data.length, 4),
+        le(name.length, 2),
+        le(0, 2),
+        le(0, 2),
+        le(0, 2),
+        le(0, 2),
+        le(0, 4),
+        le(offset, 4),
+        name,
+      ]),
+    )
     offset += local.length
   }
   const central = join(centrals)
   return join([
     ...locals,
     central,
-    le(0x06054b50, 4), le(0, 2), le(0, 2), le(files.length, 2), le(files.length, 2),
-    le(central.length, 4), le(offset, 4), le(0, 2),
+    le(0x06054b50, 4),
+    le(0, 2),
+    le(0, 2),
+    le(files.length, 2),
+    le(files.length, 2),
+    le(central.length, 4),
+    le(offset, 4),
+    le(0, 2),
   ])
 }
 
 function xml(value: string): string {
-  return value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c] ?? c)
+  return value.replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c] ?? c,
+  )
 }
 
 function runs(text: string, bold = false, color?: string): string {
   const bTag = bold ? '<w:b/>' : ''
   const cTag = color ? `<w:color w:val="${color}"/>` : ''
   const props = bTag || cTag ? `<w:rPr>${bTag}${cTag}</w:rPr>` : ''
-  return `<w:r>${props}${text.split('\n').map((line, i) => `${i ? '<w:br/>' : ''}<w:t xml:space="preserve">${xml(line)}</w:t>`).join('')}</w:r>`
+  return `<w:r>${props}${text
+    .split('\n')
+    .map((line, i) => `${i ? '<w:br/>' : ''}<w:t xml:space="preserve">${xml(line)}</w:t>`)
+    .join('')}</w:r>`
 }
 
-export function buildDocx(fileName: string, utterances: Utterance[], meta?: TranscriptMeta): Uint8Array {
+export function buildDocx(
+  fileName: string,
+  utterances: Utterance[],
+  meta?: TranscriptMeta,
+): Uint8Array {
   const title = meta?.title || fileName
   const source = meta?.source || fileName
   const dur = meta?.durStr ? ` (${meta.durStr})` : ''
@@ -220,7 +263,6 @@ export async function downloadMarkdown(fileName: string, markdown: string): Prom
     accept: { 'text/markdown': ['.md'], 'text/plain': ['.md'] },
   })
 }
-
 
 export function printTranscript(): void {
   window.print()

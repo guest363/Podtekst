@@ -1,43 +1,39 @@
 <script lang="ts">
-  import type { SummaryRecord } from '../lib/api'
-  import { renderInline } from '../lib/markdown'
-  import {
-    summaryDate,
-    summaryDuration,
-    summaryWarnings,
-  } from '../lib/summaryUi.ts'
+import type { SummaryRecord } from '../lib/api'
+import { renderInline } from '../lib/markdown'
+import { summaryDate, summaryDuration, summaryWarnings } from '../lib/summaryUi.ts'
 
-  interface Props {
-    record: SummaryRecord
-    stale: boolean
-    sensitive?: boolean
-    caution?: string
-    regenerateDisabled?: boolean
-    onregenerate: () => void
-    onupdate: () => void
-    onchange: (e: MouseEvent) => void
-    oncopy: () => void
-    onexport: () => void
-  }
-  let {
-    record,
-    stale,
-    sensitive = false,
-    caution = '',
-    regenerateDisabled = false,
-    onregenerate,
-    onupdate,
-    onchange,
-    oncopy,
-    onexport,
-  }: Props = $props()
+interface Props {
+  record: SummaryRecord
+  stale: boolean
+  sensitive?: boolean
+  caution?: string
+  regenerateDisabled?: boolean
+  onregenerate: () => void
+  onupdate: () => void
+  onchange: (e: MouseEvent) => void
+  oncopy: () => void
+  onexport: () => void
+}
+let {
+  record,
+  stale,
+  sensitive = false,
+  caution = '',
+  regenerateDisabled = false,
+  onregenerate,
+  onupdate,
+  onchange,
+  oncopy,
+  onexport,
+}: Props = $props()
 
-  let warnings = $derived(summaryWarnings(record))
-  const english = $derived(
-    record.output_language ? record.output_language === 'en' : record.language === 'en',
-  )
-  const noAssignee = $derived(english ? 'unassigned' : 'не назначен')
-  const noDeadline = $derived(english ? 'deadline not stated' : 'срок не назван')
+let warnings = $derived(summaryWarnings(record))
+const english = $derived(
+  record.output_language ? record.output_language === 'en' : record.language === 'en',
+)
+const noAssignee = $derived(english ? 'unassigned' : 'не назначен')
+const noDeadline = $derived(english ? 'deadline not stated' : 'срок не назван')
 </script>
 
 <div class="summary-result" data-summary-result>

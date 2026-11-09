@@ -1,7 +1,7 @@
-import { isMobile, readJsonSafe } from './api'
 import type { ModelInfo, Voicepack } from './api'
-import { toast, toastConfirm } from './toast.svelte.ts'
+import { isMobile, readJsonSafe } from './api'
 import { loadPeople } from './people.svelte.ts'
+import { toast, toastConfirm } from './toast.svelte.ts'
 
 export const settings = $state({
   packs: [] as Voicepack[],
@@ -46,8 +46,7 @@ export async function loadAutoTranscribe(): Promise<void> {
   try {
     const d = await readJsonSafe(await fetch('/api/transcribe/auto'))
     settings.autoTranscribe = d.enabled !== false
-  } catch {
-  }
+  } catch {}
 }
 
 export async function setAutoTranscribe(enabled: boolean): Promise<void> {
@@ -91,8 +90,7 @@ export async function loadRecordMode(): Promise<void> {
       await setRecordMode('split')
       toast('Включили 2 канала: теперь слышны собеседники. Вернуть можно в настройках')
     }
-  } catch {
-  }
+  } catch {}
   // Без второго канала split недоступен: бэкенд пишет моно.
   if (!settings.systemAudio) settings.recordMode = 'mix'
 }
@@ -199,11 +197,11 @@ export async function loadModels(): Promise<void> {
 export async function loadHotwords(): Promise<void> {
   try {
     const d = await readJsonSafe(await fetch('/api/hotwords'))
-    if (Array.isArray(d.hotwords)) settings.hotwords = d.hotwords.filter((x: unknown) => typeof x === 'string')
+    if (Array.isArray(d.hotwords))
+      settings.hotwords = d.hotwords.filter((x: unknown) => typeof x === 'string')
     if (typeof d.ctc_enabled === 'boolean') settings.ctcEnabled = d.ctc_enabled
     settings.hotwordsLoaded = true
-  } catch {
-  }
+  } catch {}
 }
 
 export async function saveHotwords(hotwords: string[], ctcEnabled: boolean): Promise<boolean> {
@@ -239,8 +237,7 @@ export async function addHotword(term: string): Promise<boolean> {
       if (Array.isArray(d.hotwords)) cur = d.hotwords.filter((x: unknown) => typeof x === 'string')
       if (typeof d.ctc_enabled === 'boolean') settings.ctcEnabled = d.ctc_enabled
       settings.hotwordsLoaded = true
-    } catch {
-    }
+    } catch {}
   }
   if (cur.some((x) => x.toLowerCase() === t.toLowerCase())) {
     toast(`«${t}» уже в словаре`)
@@ -303,7 +300,10 @@ export async function exportPack(p: Voicepack): Promise<void> {
       body: JSON.stringify({ pack_id: p.id }),
     })
     const dd = await readJsonSafe(rr)
-    toast(dd.ok ? `Пакет экспортирован: ${dd.path}` : dd.error || 'Ошибка экспорта', dd.ok ? '' : 'error')
+    toast(
+      dd.ok ? `Пакет экспортирован: ${dd.path}` : dd.error || 'Ошибка экспорта',
+      dd.ok ? '' : 'error',
+    )
   } catch (e) {
     toast('Ошибка экспорта: ' + (e as Error).message, 'error')
   }

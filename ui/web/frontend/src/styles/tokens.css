@@ -24,14 +24,19 @@
   --shadow-deck: 0 4px 20px -4px rgba(15, 30, 51, 0.08);
   --shadow-modal: 0 20px 48px -12px rgba(15, 30, 51, 0.2);
   --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
-  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", monospace;
+  --font-sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', monospace;
 }
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
 
-[hidden] { display: none !important; }
-
+[hidden] {
+  display: none !important;
+}
 
 body {
   background: var(--bg-canvas);
