@@ -6,6 +6,7 @@ Svelte 5 + TypeScript + Vite. Исходники - `src/`, прод-сборка
 ```bash
 corepack enable
 yarn install --immutable
+yarn lint    # Biome: формат, линт, импорты
 yarn check   # svelte-check + tsc
 yarn build   # сборка в ../static
 ```

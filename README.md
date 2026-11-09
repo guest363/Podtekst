@@ -243,7 +243,7 @@ cargo test --workspace --locked --manifest-path src-tauri/Cargo.toml
 cargo clippy --workspace --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
 
 # Проверка типов и сборка фронтенда
-cd ui/web/frontend && yarn install --immutable && yarn check && yarn build
+cd ui/web/frontend && yarn install --immutable && yarn lint && yarn check && yarn build
 ```
 
 Подробное описание архитектуры, внутренних крейтов и правил разработки находится в [AGENTS.md](AGENTS.md). Правила участия в разработке - в [CONTRIBUTING.md](CONTRIBUTING.md).

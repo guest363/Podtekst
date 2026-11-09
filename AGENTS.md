@@ -32,7 +32,7 @@ cargo test -p mr-ml --features onnx --test onnx_real -- --nocapture  # Живо�
 cargo clippy --workspace --all-targets --manifest-path src-tauri/Cargo.toml  # Ноль предупреждений - обязательно
 cargo clippy -p mr-app --features tauri-ui --all-targets --manifest-path src-tauri/Cargo.toml  # Нативное окно/трей (таури_shell.rs компилируется только так)
 cargo build --release -p mr-app --manifest-path src-tauri/Cargo.toml
-cd ui/web/frontend && yarn check && yarn build  # Фронт: типы (svelte-check) + прод-сборка в ui/web/static
+cd ui/web/frontend && yarn lint && yarn check && yarn build  # Фронт: Biome + типы + прод-сборка в ui/web/static
 ```
 
 Переменные окружения для тестов/запуска:
@@ -92,6 +92,9 @@ cd ui/web/frontend && yarn check && yarn build  # Фронт: типы (svelte-c
   Исходящий трафик: скачивание открытых весов моделей, проверка последнего релиза
   на GitHub и - по явному согласию - загрузка подписанного обновления (без аудио и идентификаторов).
   Автоустановка обновлений без действия пользователя не выполняется.
+- **Стиль фронтенда.** Svelte/TS-код проверяется Biome (`yarn lint`), правила — в
+  `ui/web/frontend/AGENTS.md`: `type` вместо `interface`, `const`-стрелки, `import type`,
+  без `any` и лишних `as`, kebab-case имён файлов.
 
 ---
 
