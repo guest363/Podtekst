@@ -5,6 +5,7 @@ import { emit, ui } from './ui.svelte.ts'
 import { settings } from './settings.svelte.ts'
 import { isVideoPath } from './api'
 import { loadQueue, queueState } from './queue.svelte.ts'
+import { summaryStageText } from './summaryUi.ts'
 
 export const transcript = $state({
   speakers: [] as SpeakerInfo[],
@@ -25,6 +26,9 @@ export const engine = $state({
   file: '',
   msg: 'Обработка…',
   pct: 0,
+  summaryFile: '',
+  summaryMsg: '',
+  summaryPct: 0,
   downloading: {} as Record<string, number>,
 })
 
@@ -144,6 +148,28 @@ function handleEngineEvent(e: MessageEvent): void {
     return
   }
   if (typeof evt.type === 'string' && evt.type.startsWith('summary-')) {
+    if (evt.type === 'summary-stage') {
+      if (!engine.summaryRunning) {
+        engine.summaryPct = 0
+        engine.summaryMsg = 'Собираю итоги…'
+      }
+      engine.summaryRunning = true
+      engine.summaryFile = String(evt.file || engine.summaryFile || '')
+      engine.summaryPct = Math.max(
+        engine.summaryPct,
+        Math.min(100, Number(evt.pct) || 0),
+      )
+      engine.summaryMsg = summaryStageText(
+        String(evt.phase || ''),
+        evt.chunk,
+        evt.chunks,
+      )
+    } else if (evt.type === 'summary-done' || evt.type === 'summary-error') {
+      engine.summaryRunning = false
+      engine.summaryPct = 0
+      engine.summaryMsg = ''
+      engine.summaryFile = ''
+    }
     emit('summary-event', evt)
     // Слушатель итогов снимает engine.summaryRunning синхронно; после
     // терминального события поток можно закрыть, если больше никто не работает.
@@ -257,15 +283,29 @@ export async function startTranscription(rawPath: string): Promise<void> {
 export function syncEngineFromStatus(
   running: boolean,
   file: string,
-  summary?: { active: boolean; file?: string },
+  summary?: { active: boolean; file?: string; phase?: string; pct?: number },
 ): void {
   if (summary && summary.active) {
+    if (!engine.summaryRunning) {
+      engine.summaryPct = 0
+      engine.summaryMsg = 'Собираю итоги…'
+    }
     engine.summaryRunning = true
+    if (summary.file) engine.summaryFile = summary.file
+    if (summary.pct !== undefined) {
+      engine.summaryPct = Math.max(engine.summaryPct, Math.min(100, summary.pct))
+    }
+    if (summary.phase) {
+      engine.summaryMsg = summaryStageText(summary.phase)
+    }
     ensureStream()
   } else if (summary && !summary.active && engine.summaryRunning) {
     // Задача могла завершиться, пока SSE был потерян. Итоговый экран
     // обновится при следующем GET /api/summary.
     engine.summaryRunning = false
+    engine.summaryPct = 0
+    engine.summaryMsg = ''
+    engine.summaryFile = ''
     closeStreamIfIdle()
   }
   if (running && !engine.running) {

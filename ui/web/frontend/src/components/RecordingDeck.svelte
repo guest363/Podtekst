@@ -25,6 +25,16 @@
   let micDb = $derived(micRms > 0.001 ? Math.max(-60, Math.round(20 * Math.log10(micRms))) : -60)
   let sysDb = $derived(sysRms > 0.001 ? Math.max(-60, Math.round(20 * Math.log10(sysRms))) : -60)
 
+  let busyRunning = $derived(engine.running || engine.summaryRunning)
+  let busyPct = $derived(engine.running ? engine.pct : engine.summaryPct)
+  let busyMsg = $derived(
+    engine.running ? engine.msg : (engine.summaryMsg || 'Собираю итоги…'),
+  )
+  let busyLabel = $derived(engine.running ? 'Ход расшифровки' : 'Ход сборки итогов')
+  let busyAria = $derived(
+    engine.running ? 'Прогресс расшифровки' : 'Прогресс сборки итогов',
+  )
+
   const hotkeyLabel = /Mac/i.test(navigator.userAgent) ? 'Cmd+Shift+R' : 'Ctrl+Shift+R'
 
   const WAVE_BARS_COUNT = 44
@@ -131,6 +141,8 @@
       syncEngineFromStatus(!!d.transcribing, String(d.transcribing_file || ''), {
         active: d.summarizing === true,
         file: String(d.summarizing_file || ''),
+        phase: String(d.summary_phase || ''),
+        pct: Number(d.summary_pct) || 0,
       })
       if (typeof d.screen_recording === 'boolean') {
         screenRecorder.active = d.screen_recording
@@ -198,6 +210,10 @@
             {screenRecorder.active ? 'Идёт запись экрана и звука' : 'Идёт запись встречи'}
           {:else if engine.running}
             Расшифровка {engine.pct}%{engine.file ? ` · ${baseName(engine.file)}` : ''}
+          {:else if engine.summaryRunning}
+            Сборка итогов {engine.summaryPct}%{engine.summaryFile
+              ? ` · ${baseName(engine.summaryFile)}`
+              : ''}
           {:else if Object.keys(engine.downloading).length > 0}
             {@const activeId = Object.keys(engine.downloading)[0]}
             {@const activePct = engine.downloading[activeId]}
@@ -276,19 +292,19 @@
       </div>
     </div>
 
-    {#if engine.running}
-      <div class="deck-transcribe" aria-label="Ход расшифровки">
+    {#if busyRunning}
+      <div class="deck-transcribe" aria-label={busyLabel}>
         <div
           class="progress-track"
           role="progressbar"
-          aria-valuenow={engine.pct}
+          aria-valuenow={busyPct}
           aria-valuemin="0"
           aria-valuemax="100"
-          aria-label="Прогресс расшифровки"
+          aria-label={busyAria}
         >
-          <div class="vu-bar" style={`width: ${engine.pct}%`}></div>
+          <div class="vu-bar" style={`width: ${busyPct}%`}></div>
         </div>
-        <div class="deck-transcribe-msg">{engine.msg}</div>
+        <div class="deck-transcribe-msg">{busyMsg}</div>
       </div>
     {/if}
 

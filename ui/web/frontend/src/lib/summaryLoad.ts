@@ -37,6 +37,9 @@ export function startTicker(): void {
 export function finishGenerating(): void {
   summaryState.generating = false
   engine.summaryRunning = false
+  engine.summaryPct = 0
+  engine.summaryMsg = ''
+  engine.summaryFile = ''
   stopTicker()
   if (!isMockMode()) closeStreamIfIdle()
 }
@@ -96,6 +99,9 @@ function applyResponse(d: SummaryResponse, opts: { openResult?: boolean }): void
     summaryState.pct = Math.max(0, Math.min(100, Number(d.active.pct) || 0))
     summaryState.elapsedSec = Math.max(0, Number(d.active.elapsed_sec) || 0)
     engine.summaryRunning = true
+    engine.summaryPct = summaryState.pct
+    engine.summaryMsg = summaryState.stage
+    engine.summaryFile = summaryState.jobFile
     if (!isMockMode()) ensureStream()
     startTicker()
     return
@@ -108,6 +114,9 @@ function applyResponse(d: SummaryResponse, opts: { openResult?: boolean }): void
     summaryState.jobFile = d.active.file || ''
     stopTicker()
     engine.summaryRunning = true
+    engine.summaryPct = Math.max(0, Math.min(100, Number(d.active.pct) || 0))
+    engine.summaryMsg = summaryStageText(d.active.phase, d.active.chunk, d.active.chunks)
+    engine.summaryFile = d.active.file || ''
     if (!isMockMode()) ensureStream()
   } else {
     finishGenerating()

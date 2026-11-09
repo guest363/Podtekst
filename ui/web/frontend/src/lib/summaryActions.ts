@@ -169,6 +169,9 @@ export async function generateSummary(
   summaryState.pct = 0
   summaryState.elapsedSec = 0
   engine.summaryRunning = true
+  engine.summaryPct = 0
+  engine.summaryMsg = 'Собираю итоги…'
+  engine.summaryFile = file
   if (!isMockMode()) ensureStream()
   startTicker()
 
