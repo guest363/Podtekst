@@ -7,6 +7,13 @@ use mr_ml::{cosine_similarity, linear_sum_assignment_max, weighted_centroid};
 
 use super::Utterance;
 
+#[derive(Debug, Clone, Copy)]
+pub(super) struct SpeakerSpan {
+    pub start: f64,
+    pub end: f64,
+    pub label: usize,
+}
+
 /// Венгерский алгоритм внутри каждого окна не даёт двум локальным спикерам
 /// занять один глобальный кластер. При нехватке кластеров создаётся новый,
 /// если это разрешено явным ограничением `max_speakers`.
@@ -18,7 +25,7 @@ pub(super) fn apply(
     quals: &[f64],
     label_of: &mut HashMap<usize, usize>,
     max_speakers: usize,
-) {
+) -> Vec<SpeakerSpan> {
     let mut members: HashMap<usize, Vec<usize>> = HashMap::new();
     for (&index, &label) in label_of.iter() {
         if embs.get(index).is_some_and(Option::is_some) {
@@ -40,9 +47,10 @@ pub(super) fn apply(
         })
         .collect();
     if globals.is_empty() {
-        return;
+        return vec![];
     }
     let mut next_label = globals.keys().max().map_or(0, |label| label + 1);
+    let mut spans = Vec::new();
     let mut votes: HashMap<usize, HashMap<usize, f64>> = HashMap::new();
     let mut cooccur: HashMap<(usize, usize), f64> = HashMap::new();
     let starts: Vec<f64> = utterances.iter().map(|u| u.start).collect();
@@ -180,6 +188,7 @@ pub(super) fn apply(
                 }
             }
         }
+        collect_spans(window, &assignment, &mut spans);
         for (index, local, weight) in frame_weights {
             if let Some(&global) = assignment.get(&local) {
                 *votes.entry(index).or_default().entry(global).or_default() += weight;
@@ -197,6 +206,119 @@ pub(super) fn apply(
     );
     for (index, label) in labels {
         label_of.insert(index, label);
+    }
+    aggregate_spans(&spans)
+}
+
+/// Окна перекрываются, а локальные метки шумят. Голосуем покадрово и
+/// оставляем только устойчивые отрезки: иначе короткие ошибки PyAnnote
+/// рвут реплику на десятки кусков.
+fn aggregate_spans(spans: &[SpeakerSpan]) -> Vec<SpeakerSpan> {
+    let frame_sec = FRAME_SAMPLES as f64 / 16000.0;
+    let frames = spans
+        .iter()
+        .map(|s| (s.end / frame_sec).ceil() as usize)
+        .max()
+        .unwrap_or(0);
+    if frames == 0 {
+        return vec![];
+    }
+    let mut votes: Vec<HashMap<usize, f32>> = vec![HashMap::new(); frames];
+    for span in spans {
+        let start = ((span.start / frame_sec).floor() as usize).min(frames);
+        let end = ((span.end / frame_sec).ceil() as usize).min(frames);
+        for frame in &mut votes[start..end] {
+            *frame.entry(span.label).or_default() += 1.0;
+        }
+    }
+    let best: Vec<Option<usize>> = votes
+        .iter()
+        .map(|frame| {
+            frame
+                .iter()
+                .max_by(|a, b| a.1.total_cmp(b.1).then_with(|| b.0.cmp(a.0)))
+                .map(|(&label, _)| label)
+        })
+        .collect();
+    let min_frames = ((1.0 / frame_sec).round() as usize).max(1);
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < best.len() {
+        let Some(label) = best[i] else {
+            i += 1;
+            continue;
+        };
+        let start = i;
+        i += 1;
+        while i < best.len() && best[i] == Some(label) {
+            i += 1;
+        }
+        if i - start >= min_frames {
+            out.push(SpeakerSpan {
+                start: start as f64 * frame_sec,
+                end: i as f64 * frame_sec,
+                label,
+            });
+        }
+    }
+    out
+}
+
+/// Для overlap берём входящий голос: именно он начинает новую реплику.
+fn frame_local(classes: &[u8], index: usize) -> Option<usize> {
+    match classes.get(index).copied()? {
+        1..=3 => Some(classes[index] as usize - 1),
+        4..=6 => {
+            let pair = match classes[index] {
+                4 => (0, 1),
+                5 => (0, 2),
+                _ => (1, 2),
+            };
+            let next = classes[index + 1..]
+                .iter()
+                .find(|&&c| (1..=3).contains(&c))
+                .map(|&c| c as usize - 1);
+            let prev = classes[..index]
+                .iter()
+                .rev()
+                .find(|&&c| (1..=3).contains(&c))
+                .map(|&c| c as usize - 1);
+            next.filter(|local| *local == pair.0 || *local == pair.1)
+                .or_else(|| prev.filter(|local| *local == pair.0 || *local == pair.1))
+        }
+        _ => None,
+    }
+}
+
+fn collect_spans(
+    window: &mr_ml::onnx::segmentation::SegmentationWindow,
+    assignment: &HashMap<usize, usize>,
+    out: &mut Vec<SpeakerSpan>,
+) {
+    let mut i = 0;
+    while i < window.classes.len() {
+        let Some(local) = frame_local(&window.classes, i) else {
+            i += 1;
+            continue;
+        };
+        let Some(&label) = assignment.get(&local) else {
+            i += 1;
+            continue;
+        };
+        let start = i;
+        i += 1;
+        while i < window.classes.len()
+            && frame_local(&window.classes, i) == Some(local)
+            && assignment.get(&local) == Some(&label)
+        {
+            i += 1;
+        }
+        let to_sec = |frame: usize| (window.start_sample + frame * FRAME_SAMPLES) as f64 / 16000.0;
+        out.push(SpeakerSpan {
+            start: to_sec(start),
+            end: to_sec(i),
+            label,
+        });
     }
 }
 
@@ -279,6 +401,15 @@ mod tests {
     }
 
     #[test]
+    fn overlap_frame_goes_to_incoming_speaker() {
+        let mut classes = vec![1u8; 10];
+        classes.extend(vec![4u8; 5]);
+        classes.extend(vec![2u8; 10]);
+        assert_eq!(frame_local(&classes, 12), Some(1));
+        assert_eq!(frame_local(&classes, 2), Some(0));
+    }
+
+    #[test]
     fn simultaneous_local_speakers_get_distinct_global_clusters() {
         let mut classes = vec![1; 296];
         classes.extend(vec![2; 293]);
@@ -292,7 +423,7 @@ mod tests {
         let utterances = vec![utterance(0.0, 5.0), utterance(5.0, 10.0)];
         let embs = vec![Some(vec![1.0, 0.0]), Some(vec![0.0, 1.0])];
         let mut labels = [(0, 0), (1, 0)].into_iter().collect();
-        apply(
+        let spans = apply(
             &segmentation,
             &utterances,
             &embs,
@@ -302,6 +433,8 @@ mod tests {
             2,
         );
         assert_ne!(labels[&0], labels[&1]);
+        assert!(spans.iter().any(|s| s.label == labels[&0]));
+        assert!(spans.iter().any(|s| s.label == labels[&1]));
     }
 
     #[test]

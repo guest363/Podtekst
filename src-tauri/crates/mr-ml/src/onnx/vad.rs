@@ -5,6 +5,27 @@ use super::session::OrtSession;
 pub const VAD_WINDOW: usize = 512;
 pub const VAD_CONTEXT: usize = 64;
 const STATE_DIMS: [usize; 3] = [2, 1, 128];
+// ~0.5 с тишины прогоняем через модель, чтобы LSTM и контекст перешли
+// в состояние тишины; дальше inference пропускаем до полного сброса.
+const SILENT_INFERENCE_WINDOWS: usize = 16;
+const SILENT_RESET_WINDOWS: usize = 32;
+
+#[derive(Debug, PartialEq)]
+enum SilenceAction {
+    Process,
+    Skip,
+    Reset,
+}
+
+fn silence_action(silent_run: usize) -> SilenceAction {
+    if silent_run <= SILENT_INFERENCE_WINDOWS {
+        SilenceAction::Process
+    } else if silent_run == SILENT_RESET_WINDOWS {
+        SilenceAction::Reset
+    } else {
+        SilenceAction::Skip
+    }
+}
 
 pub struct SileroVad {
     session: OrtSession,
@@ -99,10 +120,14 @@ impl SileroVad {
             let peak = chunk.iter().fold(0.0f32, |acc, x| acc.max(x.abs()));
             if peak < 1e-4 {
                 silent_run += 1;
-                // Короткую паузу не сбрасываем: Silero терял бы контекст
-                // начала следующей фразы. Сброс — только после ~1 с тишины.
-                if silent_run == 32 {
-                    self.reset();
+                match silence_action(silent_run) {
+                    SilenceAction::Process => {
+                        // Вероятность известной цифровой тишины не нужна,
+                        // но прогон обновляет state и context модели.
+                        self.process_window(chunk)?;
+                    }
+                    SilenceAction::Reset => self.reset(),
+                    SilenceAction::Skip => {}
                 }
                 probs.push(0.0);
             } else {
@@ -164,6 +189,24 @@ pub fn vad_segments_from_probs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn silence_updates_state_before_skipping() {
+        assert_eq!(silence_action(1), SilenceAction::Process);
+        assert_eq!(
+            silence_action(SILENT_INFERENCE_WINDOWS),
+            SilenceAction::Process
+        );
+        assert_eq!(
+            silence_action(SILENT_INFERENCE_WINDOWS + 1),
+            SilenceAction::Skip
+        );
+        assert_eq!(silence_action(SILENT_RESET_WINDOWS), SilenceAction::Reset);
+        assert_eq!(
+            silence_action(SILENT_RESET_WINDOWS + 1),
+            SilenceAction::Skip
+        );
+    }
 
     #[test]
     fn segments_hysteresis() {

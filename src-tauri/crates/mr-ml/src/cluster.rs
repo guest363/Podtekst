@@ -53,6 +53,7 @@ pub fn agglomerative(
     }
     let mut distances = DistanceMatrix::new(embeddings);
     let mut active = vec![true; n];
+    let mut sizes = vec![1usize; n];
     let mut active_count = n;
     let mut chain = Vec::with_capacity(n);
     let mut merges = Vec::with_capacity(n - 1);
@@ -70,12 +71,16 @@ pub fn agglomerative(
             let merge_distance = distances.get(a, b);
             chain.pop();
             chain.pop();
+            // Average linkage: шумные короткие реплики одного голоса не
+            // разваливают кластер из-за одной дальней пары, как при complete.
+            let (wa, wb) = (sizes[a] as f64, sizes[b] as f64);
             for (c, &is_active) in active.iter().enumerate() {
                 if is_active && c != a && c != b {
-                    let d = distances.get(a, c).max(distances.get(b, c));
+                    let d = (distances.get(a, c) * wa + distances.get(b, c) * wb) / (wa + wb);
                     distances.set(a, c, d);
                 }
             }
+            sizes[a] += sizes[b];
             active[b] = false;
             active_count -= 1;
             merges.push((merge_distance, a, b));
@@ -194,38 +199,28 @@ mod tests {
     }
 
     #[allow(clippy::needless_range_loop)]
-    fn naive_complete(embeddings: &[Vec<f64>], k: usize) -> Vec<usize> {
+    fn naive_average(embeddings: &[Vec<f64>], k: usize) -> Vec<usize> {
         let n = embeddings.len();
         let mut clusters: Vec<Vec<usize>> = (0..n).map(|i| vec![i]).collect();
-        let mut distances = vec![vec![0.0; n]; n];
-        for i in 0..n {
-            for j in (i + 1)..n {
-                distances[i][j] = 1.0 - cosine_similarity(&embeddings[i], &embeddings[j]);
-                distances[j][i] = distances[i][j];
-            }
-        }
         while clusters.len() > k {
             let m = clusters.len();
             let (mut a, mut b, mut best) = (0, 1, f64::INFINITY);
             for i in 0..m {
                 for j in (i + 1)..m {
-                    if distances[i][j] < best {
-                        (a, b, best) = (i, j, distances[i][j]);
+                    let mut sum = 0.0;
+                    for &x in &clusters[i] {
+                        for &y in &clusters[j] {
+                            sum += 1.0 - cosine_similarity(&embeddings[x], &embeddings[y]);
+                        }
                     }
-                }
-            }
-            for c in 0..m {
-                if c != a && c != b {
-                    distances[a][c] = distances[a][c].max(distances[b][c]);
-                    distances[c][a] = distances[a][c];
+                    let distance = sum / (clusters[i].len() * clusters[j].len()) as f64;
+                    if distance < best {
+                        (a, b, best) = (i, j, distance);
+                    }
                 }
             }
             let members = clusters.remove(b);
             clusters[a].extend(members);
-            distances.remove(b);
-            for row in &mut distances {
-                row.remove(b);
-            }
         }
         let mut labels = vec![0; n];
         for (label, members) in clusters.iter().enumerate() {
@@ -237,7 +232,7 @@ mod tests {
     }
 
     #[test]
-    fn chain_matches_naive_complete_linkage() {
+    fn chain_matches_naive_average_linkage() {
         let embs = vec![
             vec![1.0, 0.0, 0.0],
             vec![0.95, 0.1, 0.05],
@@ -249,7 +244,7 @@ mod tests {
         ];
         for k in 1..=embs.len() {
             let actual = agglomerative(&embs, f64::INFINITY, Some(k));
-            let expected = naive_complete(&embs, k);
+            let expected = naive_average(&embs, k);
             for i in 0..embs.len() {
                 for j in 0..embs.len() {
                     assert_eq!(
@@ -260,6 +255,27 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn average_linkage_keeps_noisy_fragments_of_one_voice_together() {
+        // ±35° вокруг центра: complete linkage разрывает кластер по паре
+        // с расстоянием 0.66, average — нет (после слияния 0.42).
+        let at = |deg: f64| vec![deg.to_radians().cos(), deg.to_radians().sin()];
+        let embs = vec![
+            at(0.0),
+            at(35.0),
+            at(-35.0),
+            at(180.0),
+            at(145.0),
+            at(215.0),
+        ];
+        let labels = agglomerative(&embs, 0.52, None);
+        assert_eq!(labels[0], labels[1]);
+        assert_eq!(labels[0], labels[2]);
+        assert_eq!(labels[3], labels[4]);
+        assert_eq!(labels[3], labels[5]);
+        assert_ne!(labels[0], labels[3]);
     }
 
     #[test]

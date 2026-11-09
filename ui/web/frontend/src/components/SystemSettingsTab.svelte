@@ -65,7 +65,7 @@
   )
 
   const MODE_LABELS: Record<string, string> = {
-    split: '2 канала',
+    split: '2 канала · наушники',
     mix: '1 канал',
   }
 

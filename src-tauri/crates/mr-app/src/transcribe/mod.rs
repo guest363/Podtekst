@@ -1,3 +1,4 @@
+mod channel_mix;
 pub mod diarize;
 pub mod events;
 pub mod memory;
@@ -14,7 +15,7 @@ use mr_audio::decode::{decode_to_channels_16k_auto, is_video_path};
 use mr_packs as packs;
 
 use mr_ml::hotwords::{sanitize_hotwords, DEFAULT_CONFIDENCE_THRESHOLD};
-use mr_ml::onnx::ctc::{align_to_reference, GigaCTC};
+use mr_ml::onnx::ctc::{align_to_reference_timed, GigaCTC};
 use mr_ml::onnx::embed::EmbeddingExtractor;
 use mr_ml::onnx::rnnt::GigaAM;
 use mr_ml::onnx::segmentation::SegmentationModel;
@@ -191,6 +192,10 @@ pub struct WordConf {
     pub w: String,
     pub conf: f64,
     pub needs_review: bool,
+    #[serde(default)]
+    pub start_sec: f64,
+    #[serde(default)]
+    pub end_sec: f64,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -347,7 +352,7 @@ pub fn transcribe_file(
     if channels.is_empty() || channels.iter().all(|c| c.is_empty()) {
         return Err("Файл не содержит аудиодорожки".to_string());
     }
-    let channels = if video && !crate::media_registry::load_registry().is_owned(audio_path) {
+    let mut channels = if video && !crate::media_registry::load_registry().is_owned(audio_path) {
         let n = channels.iter().map(|c| c.len()).max().unwrap_or(0);
         let mut mono = vec![0.0f32; n];
         for ch in &channels {
@@ -359,6 +364,15 @@ pub fn transcribe_file(
     } else {
         channels
     };
+    let mixed_channels = channel_mix::mixed_stereo(&channels);
+    if let Some(pick) = mixed_channels {
+        on_event(
+            6,
+            "Каналы дублируют одну и ту же речь — обрабатываю один канал",
+        );
+        let chosen = channels.remove(pick);
+        channels = vec![chosen];
+    }
     let is_stereo = channels.len() >= 2;
     let duration_sec = channels
         .first()
@@ -393,7 +407,12 @@ pub fn transcribe_file(
                 (0usize, opts.speaker_left.clone()),
                 (1, opts.speaker_right.clone()),
             ],
-            "раздельные каналы записи (микрофон / система)",
+            "раздельные каналы записи (микрофон / система, наушники)",
+        )
+    } else if mixed_channels.is_some() {
+        (
+            vec![(0usize, opts.speaker_left.clone())],
+            "общий микс (каналы дублируют речь, оставлен микрофон)",
         )
     } else {
         (vec![(0usize, opts.speaker_right.clone())], "общая запись")
@@ -497,11 +516,14 @@ pub fn transcribe_file(
                 let mut final_text = text;
                 if use_gigaam && opts.ctc_enabled {
                     if let Some(ctc) = models.ctc.as_mut() {
-                        if let Ok(hyp) = ctc.transcribe_segment(chunk, &opts.hotwords) {
+                        if let Ok((hyp, times)) =
+                            ctc.transcribe_segment_timed(chunk, &opts.hotwords)
+                        {
                             if !hyp.words.is_empty() {
-                                let aligned = align_to_reference(
+                                let aligned = align_to_reference_timed(
                                     &final_text,
                                     &hyp,
+                                    &times,
                                     &opts.hotwords,
                                     DEFAULT_CONFIDENCE_THRESHOLD,
                                 );
@@ -516,6 +538,16 @@ pub fn transcribe_file(
                                         w: w.text,
                                         conf: (w.confidence * 1000.0).round() / 1000.0,
                                         needs_review: w.needs_review,
+                                        start_sec: if w.end_sec > w.start_sec {
+                                            a + w.start_sec
+                                        } else {
+                                            0.0
+                                        },
+                                        end_sec: if w.end_sec > w.start_sec {
+                                            a + w.end_sec
+                                        } else {
+                                            0.0
+                                        },
                                     })
                                     .collect();
                                 ctc_used = true;
@@ -537,6 +569,7 @@ pub fn transcribe_file(
                 });
             }
         }
+        diarize::move_boundary_words(&mut utts);
         channel_utts.insert(*ch, utts);
     }
 
@@ -564,7 +597,7 @@ pub fn transcribe_file(
         };
         // В стерео каналы уже разделены по голосам, а дробление по паузам
         // даёт лишние короткие эмбеддинги и перекластеризацию.
-        let mut diar_utts = if is_stereo {
+        let mut diar_utts = if is_stereo || mixed_channels.is_some() {
             source_utts.clone()
         } else {
             on_event(80, "Делю речь на паузы для спикеров…");
@@ -672,7 +705,7 @@ pub fn transcribe_file(
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
     let method = if is_stereo {
-        "Микрофон и система (модели: VAD, GigaAM, векторы голосов)".to_string()
+        "Микрофон и система, наушники (модели: VAD, GigaAM, векторы голосов)".to_string()
     } else {
         speaker_method.to_string() + " + разделение голосов"
     };
