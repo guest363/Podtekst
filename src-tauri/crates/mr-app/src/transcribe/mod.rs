@@ -487,7 +487,6 @@ pub fn transcribe_file(
             .map_err(|e| format!("VAD: {e}"))?;
         channel_vad.insert(*ch, probs);
     }
-    // Защита от ложных спикеров при пролезании системного звука в микрофон наушников.
     if is_stereo {
         if let (Some(mic), Some(system)) = (channel_samples.get(&0), channel_samples.get(&1)) {
             if let Some(probs) = channel_vad.get_mut(&0) {

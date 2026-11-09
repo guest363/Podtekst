@@ -23,10 +23,7 @@ pub const EMBEDDING_DIM: usize = 192;
 /// (фрагменты от 1.5 с); у самой модели в карточке порог 0.365.
 pub const DEFAULT_MATCH_THRESHOLD: f64 = 0.45;
 pub const DEFAULT_MIN_MARGIN: f64 = 0.06;
-/// Хаб-вектор даёт умеренное сходство сразу со всеми профилями: без
-/// нормализации по когорте он проходит обычный порог. shortcut: 1.8/0.04 —
-/// стартовые значения без размеченного набора; перекалибровать на реальных
-/// ложных срабатываниях.
+// shortcut: 1.8/0.04 — стартовые значения без размеченного набора; перекалибровать на реальных ложных срабатываниях.
 const MIN_COHORT_Z: f64 = 1.8;
 const MIN_COHORT_SIGMA: f64 = 0.04;
 const COHORT_TOP_K: usize = 5;
@@ -251,8 +248,6 @@ pub fn score_speaker_similarity(query: &[f64], profile: &SpeakerProfile) -> f64 
     if sims.len() == 1 {
         return sims[0].0.max(c_sim);
     }
-    // Случайный прототип не должен тянуть профиль к чужому голосу;
-    // качество образца задаёт его вклад.
     const NOMINAL: [f64; 3] = [0.55, 0.30, 0.15];
     let mut num = 0.0;
     let mut den = 0.0;

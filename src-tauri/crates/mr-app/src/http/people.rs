@@ -465,8 +465,6 @@ fn prototype_duration(start: Option<f64>, end: Option<f64>) -> f64 {
     }
 }
 
-// Скользящее среднее помнит вытесненные образцы и после десятка сохранений
-// перестаёт соответствовать массиву prototypes: центроид пересчитывается по ним.
 fn prototypes_centroid(protos: &[serde_json::Value]) -> (Vec<f64>, usize) {
     let (vecs, weights): (Vec<Vec<f64>>, Vec<f64>) = protos
         .iter()

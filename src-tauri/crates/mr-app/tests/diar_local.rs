@@ -5,9 +5,6 @@
 //!   cargo test -p mr-app --test diar_local \
 //!   --manifest-path src-tauri/Cargo.toml -- --ignored --nocapture
 //! ```
-//!
-//! `cases.json` может содержать `expected_turns` (эталон для DER) и
-//! `max_rtf`; без них проверяются только число спикеров и хеш.
 
 #![cfg(feature = "onnx")]
 
@@ -73,7 +70,6 @@ fn dominant<'a>(intervals: &[(&'a str, f64, f64)], start: f64, end: f64) -> Opti
     best.map(|(speaker, _)| speaker)
 }
 
-// Нарезка интервалов по всем границам реплик исключает зависимость от шага сетки.
 fn compute_der(hyp: &[TranscriptUtterance], reference: &[Turn], collar_sec: f64) -> DerMetrics {
     let hyp_intervals: Vec<(&str, f64, f64)> = hyp
         .iter()

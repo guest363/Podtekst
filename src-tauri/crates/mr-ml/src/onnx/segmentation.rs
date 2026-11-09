@@ -95,7 +95,6 @@ impl SegmentationModel {
         self.segment_impl(samples, None)
     }
 
-    /// Экономия вычислений: пропуск окон без речи по ранее вычисленному VAD.
     pub fn segment_with_vad(
         &mut self,
         samples: &[f32],
@@ -198,8 +197,6 @@ impl SegmentationModel {
         let outputs = match self.session.run_f32(inputs) {
             Ok(outputs) => outputs,
             Err(_) if batch.len() > 1 => {
-                // Защита от сбоя: если граф ONNX отклонил объявленный динамический
-                // батч, переходим в последовательный режим.
                 for &(start, valid) in batch {
                     self.run_windows(samples, &[(start, valid)], sums, overlaps, counts, windows)?;
                 }

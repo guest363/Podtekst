@@ -130,8 +130,6 @@ fn window_corr(a: &[f32], b: &[f32], center: usize, other: usize, half: usize) -
     cov / (var_a.sqrt() * var_b.sqrt())
 }
 
-// Без фильтрации AEC: при одновременной речи (double-talk) энергия микрофона
-// выше пролезания, поэтому гейт подавляет только чистое эхо.
 pub(crate) fn suppress_mic_bleed(mic: &[f32], system: &[f32], vad_probs: &mut [f32]) -> usize {
     let probe = mic.len().min(system.len()).min(BLEED_PROBE_SEC * 16000);
     if probe < 16000 * 2 {
@@ -162,8 +160,6 @@ pub(crate) fn suppress_mic_bleed(mic: &[f32], system: &[f32], vad_probs: &mut [f
         }
         let mic_level = mic_env[frame];
         let sys_level = sys_env[other];
-        // Пролезание тише системного канала; собственная речь пользователя
-        // поднимает уровень микрофона и проходит гейт.
         if sys_level < 0.005 || mic_level < 0.001 || mic_level > sys_level * 0.35 {
             continue;
         }

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use super::Utterance;
+use super::{Utterance, WordConf};
 
 #[derive(Debug)]
 struct DiarSegment {
@@ -170,6 +170,87 @@ impl DiarIntervalTree {
     }
 }
 
+pub(crate) fn resolve_word_bounds(
+    words: &[&str],
+    raw_words: &[WordConf],
+    utt_start: f64,
+    utt_end: f64,
+) -> Vec<(f64, f64)> {
+    let word_count = words.len();
+    if word_count == 0 {
+        return Vec::new();
+    }
+    let timed: Vec<Option<(f64, f64)>> = (0..word_count)
+        .map(|i| {
+            raw_words
+                .get(i)
+                .filter(|w| w.end_sec > w.start_sec)
+                .map(|w| (w.start_sec, w.end_sec))
+        })
+        .collect();
+
+    if timed.iter().any(Option::is_some) {
+        let mut resolved: Vec<(f64, f64)> = vec![(0.0, 0.0); word_count];
+        let mut i = 0;
+        while i < word_count {
+            if let Some(span) = timed[i] {
+                resolved[i] = span;
+                i += 1;
+            } else {
+                let start_idx = i;
+                while i < word_count && timed[i].is_none() {
+                    i += 1;
+                }
+                let end_idx = i;
+                let left = if start_idx > 0 {
+                    resolved[start_idx - 1].1
+                } else {
+                    utt_start
+                };
+                let right = if end_idx < word_count {
+                    timed[end_idx].expect("завершается на Some").0
+                } else {
+                    utt_end
+                };
+                let count = (end_idx - start_idx) as f64;
+                let span_len = (right - left).max(0.02 * count);
+                let weights: Vec<f64> = (start_idx..end_idx)
+                    .map(|k| words[k].chars().count() as f64 + 1.0)
+                    .collect();
+                let tot_w: f64 = weights.iter().sum::<f64>().max(f64::EPSILON);
+                let mut cur = left;
+                for (w_i, &w) in weights.iter().enumerate() {
+                    let k = start_idx + w_i;
+                    let dur = span_len * w / tot_w;
+                    resolved[k] = (cur, cur + dur);
+                    cur += dur;
+                }
+            }
+        }
+        resolved
+    } else {
+        let weights: Vec<f64> = words
+            .iter()
+            .map(|word| word.chars().count() as f64 + 1.0)
+            .collect();
+        let total: f64 = weights.iter().sum::<f64>().max(f64::EPSILON);
+        let step = ((utt_end - utt_start) / word_count as f64).min(0.02);
+        let mut bounds = Vec::with_capacity(word_count + 1);
+        bounds.push(utt_start);
+        let mut passed = 0.0;
+        for (i, weight) in weights.iter().take(word_count - 1).enumerate() {
+            passed += weight;
+            let raw = utt_start + (utt_end - utt_start) * passed / total;
+            let previous = *bounds.last().unwrap_or(&utt_start);
+            let upper = (utt_end - (word_count - 1 - i) as f64 * step).max(utt_start);
+            let lower = (previous + step).min(upper);
+            bounds.push(raw.clamp(lower, upper));
+        }
+        bounds.push(utt_end);
+        bounds.windows(2).map(|w| (w[0], w[1])).collect()
+    }
+}
+
 pub(crate) fn split_utterance_by_word_speakers(
     utterance: &Utterance,
     tree: &DiarIntervalTree,
@@ -188,18 +269,9 @@ pub(crate) fn split_utterance_by_word_speakers(
                 .map(|w| (w.start_sec, w.end_sec))
         })
         .collect();
-    // Точные границы CTC лучше пропорции по символам; без них остаётся
-    // прежний fallback с привязкой к паузам диаризации.
-    let bounds: Vec<(f64, f64)> = if timed.iter().all(Option::is_some) {
-        timed
-            .into_iter()
-            .map(|span| {
-                let (start, end) = span.expect("проверено all");
-                let start = start.clamp(utterance.start, utterance.end);
-                let end = end.clamp(start, utterance.end);
-                (start, end)
-            })
-            .collect()
+
+    let bounds: Vec<(f64, f64)> = if timed.iter().any(Option::is_some) {
+        resolve_word_bounds(&words, &utterance.words, utterance.start, utterance.end)
     } else {
         let weights: Vec<f64> = words
             .iter()
@@ -232,18 +304,16 @@ pub(crate) fn split_utterance_by_word_speakers(
         let (speaker, silhouette) = tree
             .assign_dominant_speaker(start, end)
             .unwrap_or_else(|| (utterance.speaker.clone(), utterance.silhouette));
-        assigned.push((
-            word,
-            start,
-            end,
-            speaker,
-            silhouette,
-            utterance.words.get(i).cloned(),
-        ));
+        let mut wc = utterance.words.get(i).cloned();
+        if let Some(ref mut w) = wc {
+            if w.end_sec <= w.start_sec {
+                w.start_sec = (start * 1000.0).round() / 1000.0;
+                w.end_sec = (end * 1000.0).round() / 1000.0;
+            }
+        }
+        assigned.push((word, start, end, speaker, silhouette, wc));
     }
 
-    // Одиночное слово от шумного кадра не создает спикера, но короткий ответ
-    // после паузы или точки — самостоятельная реплика другого человека.
     let mut i = 0;
     while i < assigned.len() {
         let start = i;
@@ -498,5 +568,29 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].text, source.text);
         assert_eq!(out[0].speaker, source.speaker);
+    }
+
+    #[test]
+    fn partial_ctc_interpolates_missing_and_keeps_boundary_speaker() {
+        let tree = DiarIntervalTree::new(&[utt(0.0, 3.0, "A", "a"), utt(3.0, 6.0, "B", "b")]);
+        let mut source = utt(0.0, 6.0, "unknown", "первое второе третье четвертое");
+        source.words = vec![
+            timed_word("первое", 0.5, 1.2),
+            WordConf {
+                w: "второе".to_string(),
+                conf: 0.0,
+                needs_review: true,
+                start_sec: 0.0,
+                end_sec: 0.0,
+            },
+            timed_word("третье", 2.2, 2.8),
+            timed_word("четвертое", 3.2, 3.8),
+        ];
+        let out = split_utterance_by_word_speakers(&source, &tree);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].text, "первое второе третье");
+        assert_eq!(out[0].speaker, "A");
+        assert_eq!(out[1].text, "четвертое");
+        assert_eq!(out[1].speaker, "B");
     }
 }

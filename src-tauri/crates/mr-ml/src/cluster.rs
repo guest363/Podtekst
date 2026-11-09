@@ -44,7 +44,6 @@ pub fn agglomerative(
     agglomerative_weighted(embeddings, &weights, &[], distance_threshold, n_clusters)
 }
 
-/// Взвешивание предотвращает смещение центроида длинного монолога коротким шумным фрагментом.
 pub fn agglomerative_weighted(
     embeddings: &[Vec<f64>],
     weights: &[f64],

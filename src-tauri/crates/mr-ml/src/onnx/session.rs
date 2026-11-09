@@ -115,7 +115,7 @@ impl OrtSession {
         self.input_names.iter().any(|n| n == name)
     }
 
-    /// Контракт ONNX: -1 в первой оси означает динамический размер батча.
+    // Контракт ONNX: -1 в первой оси означает динамический размер батча.
     pub fn input_shape(&self, name: &str) -> Option<Vec<i64>> {
         let input = self.session.inputs().iter().find(|i| i.name() == name)?;
         match input.dtype() {

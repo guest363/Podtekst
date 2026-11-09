@@ -185,7 +185,6 @@ fn reflect_pad(samples: &[f32], pad: usize) -> Vec<f32> {
     out
 }
 
-// Запасной путь для длин с простыми множителями > 5: сохраняет точность для любого fft_size.
 fn dft_into(
     src: &[(f64, f64)],
     stride: usize,
@@ -240,7 +239,6 @@ fn twiddles(n: usize) -> Option<&'static [(f64, f64)]> {
     table.get(&n).map(Vec::as_slice)
 }
 
-// Множители 2 и 5 покрывают fft_size моделей (320, 400, 512) за O(n log n) без аллокаций.
 #[allow(clippy::too_many_arguments)]
 fn fft_rec(
     src: &[(f64, f64)],

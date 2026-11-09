@@ -141,7 +141,6 @@ pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
         .collect())
 }
 
-/// Защита от декодирования длинного файла в память ради секундного фрагмента.
 pub fn decode_wav_range_16k(
     path: &Path,
     start_sec: f64,

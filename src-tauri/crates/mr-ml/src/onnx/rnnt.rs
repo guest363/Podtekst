@@ -115,7 +115,6 @@ impl GigaAM {
         self.transcribe_mel_penalized(&mel, blank_penalty)
     }
 
-    /// Исключает повторный расчёт STFT: GigaAM и CTC используют одну мел-спектрограмму.
     pub fn transcribe_mel_penalized(
         &mut self,
         mel: &[Vec<f32>],
