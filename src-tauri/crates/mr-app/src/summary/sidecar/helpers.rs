@@ -75,6 +75,7 @@ pub(super) fn build_args(
     threads: u32,
     n_ctx: u32,
     gpu_layers: u32,
+    gpu_device: Option<u32>,
 ) -> Vec<String> {
     let mut args = vec![
         "--model".to_string(),
@@ -115,6 +116,9 @@ pub(super) fn build_args(
         MODEL_ID.to_string(),
     ];
     if gpu_layers > 0 {
+        if let Some(index) = gpu_device {
+            args.extend(["--device".to_string(), format!("Vulkan{index}")]);
+        }
         // При нехватке VRAM llama.cpp сам снизит число слоёв вместо падения.
         args.extend(["--fit".to_string(), "on".to_string()]);
     }
@@ -214,6 +218,7 @@ mod tests {
             6,
             8192,
             0,
+            None,
         );
         for flag in [
             "--jinja",
@@ -269,6 +274,7 @@ mod tests {
             8,
             16384,
             99,
+            Some(1),
         );
         let ngl = args
             .iter()
@@ -276,6 +282,7 @@ mod tests {
             .expect("нет --n-gpu-layers");
         assert_eq!(args[ngl + 1], "99");
         assert!(args.windows(2).any(|w| w == ["--fit", "on"]));
+        assert!(args.windows(2).any(|w| w == ["--device", "Vulkan1"]));
     }
 
     #[test]

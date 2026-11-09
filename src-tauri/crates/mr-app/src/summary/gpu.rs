@@ -107,17 +107,72 @@ fn stage(pct: u8, text: &str) {
     }
 }
 
-fn parse_device(text: &str) -> Option<String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Device {
+    index: u32,
+    name: String,
+    free_mb: u64,
+}
+
+fn parse_devices(text: &str) -> Vec<Device> {
+    let mut devices = Vec::new();
     for line in text.lines() {
         let line = line.trim();
-        if let Some(rest) = line.strip_prefix("Vulkan0:") {
-            return Some(rest.trim().to_string());
-        }
         if line.contains("Metal") {
-            return Some("Metal".to_string());
+            devices.push(Device {
+                index: 0,
+                name: "Metal".to_string(),
+                free_mb: u64::MAX,
+            });
+            continue;
         }
+        let Some(rest) = line.strip_prefix("Vulkan") else {
+            continue;
+        };
+        let Some((index, rest)) = rest.split_once(':') else {
+            continue;
+        };
+        let Ok(index) = index.trim().parse::<u32>() else {
+            continue;
+        };
+        let free_mb = rest
+            .rsplit_once(" MiB free")
+            .and_then(|(before, _)| {
+                before
+                    .rsplit(|c: char| !c.is_ascii_digit())
+                    .next()
+                    .and_then(|n| n.parse().ok())
+            })
+            .unwrap_or(0);
+        let name = rest
+            .rsplit_once('(')
+            .map(|(name, _)| name)
+            .unwrap_or(rest)
+            .trim()
+            .to_string();
+        devices.push(Device {
+            index,
+            name,
+            free_mb,
+        });
     }
-    None
+    devices
+}
+
+/// На гибридном ноутбуке `Vulkan0` часто встроенная графика. Предпочитаем
+/// дискретную карту, иначе — максимум свободной памяти.
+fn choose_device(devices: &[Device]) -> Option<&Device> {
+    let discrete = |name: &str| {
+        let name = name.to_ascii_lowercase();
+        ["nvidia", "geforce", "rtx", "radeon", "amd", "arc"]
+            .iter()
+            .any(|needle| name.contains(needle))
+    };
+    devices
+        .iter()
+        .filter(|d| discrete(&d.name))
+        .max_by_key(|d| d.free_mb)
+        .or_else(|| devices.iter().max_by_key(|d| d.free_mb))
 }
 
 /// Установленный и проверенный Vulkan-backend. Возвращает CPU-runtime,
@@ -125,6 +180,7 @@ fn parse_device(text: &str) -> Option<String> {
 pub struct GpuRuntime {
     pub runtime: RuntimeInfo,
     pub backend: Option<PathBuf>,
+    pub device_index: Option<u32>,
 }
 
 pub fn installed_runtime() -> Option<GpuRuntime> {
@@ -134,9 +190,10 @@ pub fn installed_runtime() -> Option<GpuRuntime> {
     let info = runtime_locator::locate().ok()?;
     if bundled() {
         let devices = runtime_locator::list_devices(&info.exe, &info.dir).ok()?;
-        return parse_device(&devices).map(|_| GpuRuntime {
+        return choose_device(&parse_devices(&devices)).map(|_| GpuRuntime {
             runtime: info.clone(),
             backend: None,
+            device_index: None,
         });
     }
     let pack = pack_for_target()?;
@@ -148,11 +205,12 @@ pub fn installed_runtime() -> Option<GpuRuntime> {
     if !library.is_file() {
         return None;
     }
-    let devices =
+    let text =
         runtime_locator::list_devices_with_backend(&info.exe, &info.dir, Some(&library)).ok()?;
-    parse_device(&devices).map(|_| GpuRuntime {
+    choose_device(&parse_devices(&text)).map(|device| GpuRuntime {
         runtime: info.clone(),
         backend: Some(library),
+        device_index: Some(device.index),
     })
 }
 
@@ -504,7 +562,7 @@ fn install_worker(pack: &Pack, cancel: &AtomicBool) -> Result<(), InstallError> 
         .map_err(|e| InstallError::Probe(format!("CPU runtime: {e:?}")))?;
     let devices = runtime_locator::list_devices_with_backend(&info.exe, &info.dir, Some(&library))
         .map_err(|e| InstallError::Probe(format!("--list-devices: {e:?}")))?;
-    let device = parse_device(&devices);
+    let device = choose_device(&parse_devices(&devices)).map(|d| d.name.clone());
     stage(97, "Устанавливаю…");
     let state = PackState {
         build: manifest().build.clone(),
@@ -553,13 +611,17 @@ mod tests {
     }
 
     #[test]
-    fn device_line_is_parsed() {
-        let text = "Available devices:\n  Vulkan0: Intel(R) Iris(R) Xe Graphics (123 MiB)\n";
+    fn device_lines_are_parsed_and_discrete_is_preferred() {
+        let text = "Available devices:\n  Vulkan0: Intel(R) Iris(R) Xe Graphics (23859 MiB, 13809 MiB free)\n  Vulkan1: NVIDIA GeForce RTX 4060 (8188 MiB, 7000 MiB free)\n";
+        let devices = parse_devices(text);
+        assert_eq!(devices.len(), 2);
+        assert_eq!(devices[0].index, 0);
+        assert_eq!(devices[1].free_mb, 7000);
+        assert_eq!(choose_device(&devices).map(|d| d.index), Some(1));
         assert_eq!(
-            parse_device(text).as_deref(),
-            Some("Intel(R) Iris(R) Xe Graphics (123 MiB)")
+            choose_device(&parse_devices("Available devices:\n  (none)\n")),
+            None
         );
-        assert_eq!(parse_device("Available devices:\n  (none)\n"), None);
     }
 
     #[test]

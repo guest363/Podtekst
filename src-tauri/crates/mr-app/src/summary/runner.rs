@@ -51,15 +51,22 @@ pub(super) fn run_pipeline(
             } else {
                 None
             };
-            let (runtime, gpu_layers, gpu_backend, fallback) = match gpu {
-                Some(gpu) => (gpu.runtime, 99, gpu.backend, Some(cpu.clone())),
-                None => (cpu.clone(), 0, None, None),
+            let (runtime, gpu_layers, gpu_device, gpu_backend, fallback) = match gpu {
+                Some(gpu) => (
+                    gpu.runtime,
+                    99,
+                    gpu.device_index,
+                    gpu.backend,
+                    Some(cpu.clone()),
+                ),
+                None => (cpu.clone(), 0, None, None, None),
             };
             Box::new(sidecar::SidecarBackend::new(
                 &runtime,
                 spec.model_sha.clone(),
                 threads,
                 gpu_layers,
+                gpu_device,
                 gpu_backend,
                 fallback,
             ))

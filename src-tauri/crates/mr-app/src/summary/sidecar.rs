@@ -31,6 +31,7 @@ struct SidecarState {
     port: u16,
     model_sha: String,
     gpu_layers: u32,
+    gpu_device: Option<u32>,
     gpu_backend: Option<PathBuf>,
     token: String,
     token_path: PathBuf,
@@ -138,6 +139,7 @@ pub struct SidecarBackend {
     model_sha: String,
     threads: u32,
     gpu_layers: u32,
+    gpu_device: Option<u32>,
     gpu_backend: Option<PathBuf>,
     load_ms: u64,
 }
@@ -148,6 +150,7 @@ impl SidecarBackend {
         model_sha: String,
         threads: u32,
         gpu_layers: u32,
+        gpu_device: Option<u32>,
         gpu_backend: Option<PathBuf>,
         fallback: Option<RuntimeInfo>,
     ) -> Self {
@@ -157,6 +160,7 @@ impl SidecarBackend {
             model_sha,
             threads,
             gpu_layers,
+            gpu_device,
             gpu_backend,
             load_ms: 0,
         }
@@ -175,6 +179,7 @@ impl SidecarBackend {
                 crate::note!("summary: GPU load failed, CPU fallback: {error:?}");
                 self.runtime = self.fallback.take().expect("fallback checked");
                 self.gpu_layers = 0;
+                self.gpu_device = None;
                 self.gpu_backend = None;
                 self.load_ms = 0;
                 self.ensure_loaded_once(req, cancel)
@@ -196,6 +201,7 @@ impl SidecarBackend {
                 alive
                     && state.model_sha == self.model_sha
                     && state.gpu_layers == self.gpu_layers
+                    && state.gpu_device == self.gpu_device
                     && state.gpu_backend == self.gpu_backend
                     && health_ok(state.port, &state.token)
                     && props_ok(state.port, &state.token, &req.model_path, req.n_ctx)
@@ -222,6 +228,7 @@ impl SidecarBackend {
             req.threads,
             req.n_ctx,
             self.gpu_layers,
+            self.gpu_device,
         );
         let mut cmd = Command::new(&self.runtime.exe);
         cmd.args(&args)
@@ -278,6 +285,7 @@ impl SidecarBackend {
             port,
             model_sha: self.model_sha.clone(),
             gpu_layers: self.gpu_layers,
+            gpu_device: self.gpu_device,
             gpu_backend: self.gpu_backend.clone(),
             token,
             token_path,
@@ -425,6 +433,7 @@ impl SummaryBackend for SidecarBackend {
                 kill_current();
                 self.runtime = self.fallback.take().expect("fallback checked");
                 self.gpu_layers = 0;
+                self.gpu_device = None;
                 self.gpu_backend = None;
                 self.load_ms = 0;
                 self.run_generate(req, cancel, on_event)
@@ -518,6 +527,7 @@ pub(super) fn install_test_child(program: &str, args: &[&str]) -> u32 {
         port: 1,
         model_sha: "test".to_string(),
         gpu_layers: 0,
+        gpu_device: None,
         gpu_backend: None,
         token: "test".to_string(),
         token_path,
