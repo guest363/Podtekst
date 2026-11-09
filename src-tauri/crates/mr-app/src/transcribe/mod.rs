@@ -5,10 +5,10 @@ pub mod diarize;
 pub mod document;
 pub mod events;
 pub mod memory;
+pub(crate) mod refine;
 pub mod report;
 mod speaker_assignment;
 mod word_speakers;
-pub mod refine;
 
 use std::path::PathBuf;
 

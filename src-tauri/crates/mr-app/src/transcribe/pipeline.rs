@@ -288,7 +288,7 @@ fn transcribe_file_inner(
         .into_iter()
         .enumerate()
         .filter(|(i, _)| chan_list.iter().any(|(ch, _)| ch == i))
-        .map(|(i, c)| (i, mr_audio::dsp::normalize_speech(&c)))
+        .map(|(i, c)| (i, mr_audio::dsp::normalize_speech(c)))
         .collect();
 
     let (channel_vad, channel_grouped) = vad::run(

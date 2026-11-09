@@ -8,6 +8,7 @@ import { toast } from './toast.svelte.ts'
 import { emit, ui } from './ui.svelte.ts'
 
 type TranscriptEditResponse = OkResponse & TranscriptData
+type TranscriptRefineResponse = TranscriptEditResponse & { failed_batches?: number }
 type TranscribeStartResponse = OkResponse & {
   started?: boolean
   queued?: boolean
@@ -139,6 +140,7 @@ export const editTranscript = async (
 
 export const refineCurrentTranscript = async (rawPath: string): Promise<void> => {
   if (transcript.refining) return
+  const target = rawPath
   transcript.refining = true
   try {
     const r = await fetch('/api/transcript/refine', {
@@ -146,15 +148,20 @@ export const refineCurrentTranscript = async (rawPath: string): Promise<void> =>
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ file: rawPath }),
     })
-    const d = await readJsonSafe<TranscriptEditResponse>(r)
+    const d = await readJsonSafe<TranscriptRefineResponse>(r)
     if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`)
+    if (ui.currentTranscriptPath !== target) return
     transcript.utterances = d.utterances || []
     transcript.speakers = d.speakers_info || []
     transcript.markdown = d.markdown || ''
     transcript.rev = typeof d.rev === 'string' ? d.rev : transcript.rev
     transcript.hasText = Boolean(transcript.markdown.trim() || transcript.utterances.length)
     emit('transcript-edited')
-    toast('Реплики успешно восстановлены')
+    if (d.failed_batches) {
+      toast(`Реплики восстановлены не полностью: ${d.failed_batches} частей осталось без изменений`)
+    } else {
+      toast('Реплики успешно восстановлены')
+    }
   } catch (e) {
     toast(`Ошибка реставрации: ${errText(e)}`, 'error')
   } finally {

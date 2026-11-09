@@ -3,10 +3,22 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::{report, Utterance};
+use super::{document, report, Utterance};
 use crate::config::save_dir;
 use crate::fsutil::write_atomic;
 use crate::http::media::inside_save_dir;
+
+const PASSPORT_SYSTEM: &str = "Ты стенографист. По началу записи определи ключевых участников (имена и роли, если они звучат) и ключевые термины или сущности.";
+
+const REFINE_SYSTEM: &str = r#"Ты эксперт-стенографист. Отреставрируй реплики, записанные на удалённый микрофон в помещении.
+Контекст встречи:
+{passport}
+
+Правила:
+1. Исправь фонетические искажения слов по смыслу (названия учреждений, термины, фамилии, числительные). Не выдумывай новых фактов и сохраняй каждое сказанное слово как можно ближе к оригиналу.
+2. Если внутри одной реплики говорят разные участники, раздели её на отдельные реплики со своими метками времени.
+3. Сохраняй существующие метки спикеров; используй роль (например, «Судья» или «Представитель») только если она прямо следует из контекста.
+4. Верни строго валидный JSON-массив без комментариев: [{"start": 0.0, "end": 0.0, "speaker": "...", "text": "..."}]"#;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RefinedUtt {
@@ -37,6 +49,11 @@ pub fn refine_transcript_file(file: &str) -> Result<Value, (u16, String)> {
         return Err((400, "В расшифровке нет реплик для реставрации.".to_string()));
     }
 
+    let previous_info = data["meta"]["speakers_info"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
     let intro_text: String = original_utts
         .iter()
         .take(15)
@@ -44,61 +61,46 @@ pub fn refine_transcript_file(file: &str) -> Result<Value, (u16, String)> {
         .collect::<Vec<_>>()
         .join("\n");
 
-    let passport_prompt = format!(
-        "<|im_start|>system\nТы стенографист. Проанализируй начало записи и извлеки ключевых участников и сущности (суд, дело, банк, суммы).\n<|im_end|>\n<|im_start|>user\nНачало встречи:\n{}\n\nКратко перечисли участников (имена и роли: судья, истец, ответчик, представитель) и ключевые термины/сущности.<|im_end|>\n<|im_start|>assistant\n",
-        intro_text
-    );
+    let passport_user = format!("Начало встречи:\n{intro_text}");
 
-    let passport = crate::summary::run_raw_prompt(&passport_prompt, 256, 0.2)
-        .unwrap_or_else(|_| "Судебное заседание или деловая встреча.".to_string());
+    const BATCH_SIZE: usize = 20;
+    let total_batches = original_utts.len().div_ceil(BATCH_SIZE);
+    let (refined_utts, failed_batches) = crate::summary::run_prompts_session(|run| {
+        let passport = run(PASSPORT_SYSTEM, &passport_user, 256, 0.2)
+            .unwrap_or_else(|_| "деловая или официальная встреча".to_string());
+        let refine_system = REFINE_SYSTEM.replace("{passport}", passport.trim());
+        let mut failed = 0usize;
+        let mut refined: Vec<Utterance> = Vec::with_capacity(original_utts.len());
 
-    const BATCH_SIZE: usize = 12;
-    let mut refined_utts: Vec<Utterance> = Vec::with_capacity(original_utts.len());
+        for chunk in original_utts.chunks(BATCH_SIZE) {
+            let chunk_json = serde_json::to_string_pretty(&chunk.iter().map(|u| {
+                json!({
+                    "start": u.start,
+                    "end": u.end,
+                    "speaker": u.speaker,
+                    "text": u.text
+                })
+            }).collect::<Vec<_>>()).unwrap_or_default();
 
-    for chunk in original_utts.chunks(BATCH_SIZE) {
-        let chunk_json = serde_json::to_string_pretty(&chunk.iter().map(|u| {
-            json!({
-                "start": u.start,
-                "end": u.end,
-                "speaker": u.speaker,
-                "text": u.text
-            })
-        }).collect::<Vec<_>>()).unwrap_or_default();
-
-        let refine_prompt = format!(
-            "<|im_start|>system\nТы эксперт-стенографист. Твоя задача — отреставрировать реплики, записанные на удалённый микрофон в помещении.\nКонтекст встречи:\n{}\n\nПравила:\n1. Исправь фонетические искажения слов по смыслу контекста встречи (названия учреждений, термины, фамилии, числительные). НЕ выдумывай новых фактов, сохраняй каждое сказанное слово максимально близко к оригиналу!\n2. Если внутри одной реплики говорят разные участники (например, один задаёт вопрос, а другой отвечает «Ваша честь»), раздели на две отдельные реплики со своими метками времени.\n3. Укажи правильного спикера для каждой реплики (Судья, Истец, Представитель истца, Представитель ответчика и т.д.).\n4. Верни СТРОГО валидный JSON-массив без комментариев: [ {{\"start\": ..., \"end\": ..., \"speaker\": \"...\", \"text\": \"...\"}} ]\n<|im_end|>\n<|im_start|>user\nРеплики для реставрации:\n{}\n<|im_end|>\n<|im_start|>assistant\n[",
-            passport.trim(),
-            chunk_json
-        );
-
-        let mut batch_refined = false;
-        if let Ok(response) = crate::summary::run_raw_prompt(&refine_prompt, 2048, 0.2) {
-            let full_json = format!("[{response}");
-            let parsed = parse_json_array(&full_json);
-            if let Some(items) = parsed {
-                if !items.is_empty() {
-                    for item in items {
-                        refined_utts.push(Utterance {
-                            start: item.start,
-                            end: item.end,
-                            speaker: item.speaker,
-                            channel: None,
-                            text: item.text,
-                            words: Vec::new(),
-                            diarized: true,
-                            silhouette: 0.0,
-                            ctc_used: false,
-                        });
-                    }
-                    batch_refined = true;
+            let batch = run(&refine_system, &chunk_json, 2048, 0.2)
+                .ok()
+                .and_then(|response| parse_json_array(&response))
+                .and_then(|items| map_refined(chunk, items));
+            match batch {
+                Some(items) if !items.is_empty() => refined.extend(items),
+                _ => {
+                    failed += 1;
+                    refined.extend_from_slice(chunk);
                 }
             }
         }
 
-        if !batch_refined {
-            refined_utts.extend_from_slice(chunk);
+        if failed == total_batches {
+            return Err("Модель не смогла восстановить ни одной реплики. Проверьте, что рантайм Qwen установлен, и повторите попытку.".to_string());
         }
-    }
+        Ok((refined, failed))
+    })
+    .map_err(|error| (503, error))?;
 
     let utts_val = serde_json::to_value(&refined_utts).map_err(|e| (500, e.to_string()))?;
     data["utterances"] = utts_val.clone();
@@ -106,11 +108,13 @@ pub fn refine_transcript_file(file: &str) -> Result<Value, (u16, String)> {
     let mut unique_speakers: Vec<String> = refined_utts.iter().map(|u| u.speaker.clone()).collect();
     unique_speakers.sort();
     unique_speakers.dedup();
-    data["meta"]["speakers"] = json!(unique_speakers);
 
-    let mut speakers_info: Vec<Value> = Vec::new();
+    let mut speakers_info: Vec<Value> = Vec::with_capacity(unique_speakers.len());
     for spk_name in &unique_speakers {
-        let matching: Vec<&Utterance> = refined_utts.iter().filter(|u| &u.speaker == spk_name).collect();
+        let matching: Vec<&Utterance> = refined_utts
+            .iter()
+            .filter(|u| &u.speaker == spk_name)
+            .collect();
         let count = matching.len();
         let speech: f64 = matching.iter().map(|u| (u.end - u.start).max(0.0)).sum();
         let samples: Vec<Value> = matching
@@ -127,15 +131,54 @@ pub fn refine_transcript_file(file: &str) -> Result<Value, (u16, String)> {
                 })
             })
             .collect();
-        speakers_info.push(json!({
-            "name": spk_name,
-            "utterances_count": count,
-            "total_speech_sec": speech,
-            "samples": samples,
-            "matched": false,
-        }));
+        // Имя могло сохраниться: не теряем привязку к голосовому отпечатку.
+        let old = previous_info
+            .iter()
+            .find(|p| p["name"].as_str() == Some(spk_name.as_str()));
+        let mut info = old
+            .filter(|p| p.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({"name": spk_name}));
+        if let Some(object) = info.as_object_mut() {
+            object.insert("name".to_string(), json!(spk_name));
+            object.insert("utterances_count".to_string(), json!(count));
+            object.insert("total_speech_sec".to_string(), json!(speech));
+            object.insert("samples".to_string(), json!(samples));
+        }
+        speakers_info.push(info);
     }
-    data["meta"]["speakers_info"] = json!(speakers_info);
+
+    let meta = data
+        .get_mut("meta")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| (400, "В расшифровке нет метаданных.".to_string()))?;
+    meta.insert("speakers".to_string(), json!(unique_speakers));
+    meta.insert("speakers_info".to_string(), json!(speakers_info));
+    if let Some(engine) = meta
+        .get("engine")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    {
+        if !engine.contains("Qwen") {
+            meta.insert(
+                "engine".to_string(),
+                json!(format!("{engine} + Qwen-реставрация")),
+            );
+        }
+    }
+
+    if let Some(stats) = data.get_mut("stats").and_then(Value::as_object_mut) {
+        let words = refined_utts
+            .iter()
+            .map(|u| u.text.split_whitespace().count())
+            .sum::<usize>();
+        stats.insert("segments".to_string(), json!(refined_utts.len()));
+        stats.insert("words".to_string(), json!(words));
+        stats.insert(
+            "speech_sec".to_string(),
+            json!((document::unique_speech_sec(&refined_utts) * 10.0).round() / 10.0),
+        );
+    }
 
     let markdown = report::build_markdown(&data["meta"], &refined_utts);
     let text = report::build_text(&refined_utts);
@@ -144,6 +187,19 @@ pub fn refine_transcript_file(file: &str) -> Result<Value, (u16, String)> {
         .map(|items| mr_summarize::artifact::source_rev(&items));
 
     let json_str = serde_json::to_string_pretty(&data).map_err(|e| (500, e.to_string()))?;
+
+    if std::fs::read_to_string(&json_path).ok().as_deref() != Some(source.as_str()) {
+        return Err((
+            409,
+            "Файл расшифровки изменился во время реставрации. Откройте его заново.".to_string(),
+        ));
+    }
+    let backup = json_path.with_file_name(format!(
+        "{}.bak",
+        json_path.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    write_atomic(&backup, source.as_bytes())
+        .map_err(|e| (500, format!("Не удалось сохранить резервную копию: {e}")))?;
 
     for (path, contents) in [
         (&json_path, json_str),
@@ -160,18 +216,63 @@ pub fn refine_transcript_file(file: &str) -> Result<Value, (u16, String)> {
         "speakers_info": data["meta"]["speakers_info"],
         "markdown": markdown,
         "rev": rev,
+        "failed_batches": failed_batches,
     }))
 }
 
 fn parse_json_array(raw: &str) -> Option<Vec<RefinedUtt>> {
-    let text = raw.trim();
-    let start_idx = text.find('[')?;
-    let end_idx = text.rfind(']')?;
-    if end_idx <= start_idx {
-        return None;
+    let start = raw.find('[')?;
+    let mut deserializer = serde_json::Deserializer::from_str(&raw[start..]);
+    Vec::<RefinedUtt>::deserialize(&mut deserializer).ok()
+}
+
+fn map_refined(chunk: &[Utterance], items: Vec<RefinedUtt>) -> Option<Vec<Utterance>> {
+    let start = chunk.iter().map(|u| u.start).fold(f64::INFINITY, f64::min);
+    let end = chunk
+        .iter()
+        .map(|u| u.end)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        let text = item.text.trim();
+        let speaker = item.speaker.trim();
+        if !item.start.is_finite()
+            || !item.end.is_finite()
+            || item.start < start - 0.5
+            || item.end > end + 0.5
+            || item.end < item.start
+            || text.is_empty()
+            || speaker.is_empty()
+        {
+            return None;
+        }
+        let clamped_start = item.start.clamp(start, end);
+        let clamped_end = item.end.clamp(clamped_start, end);
+        out.push(Utterance {
+            start: clamped_start,
+            end: clamped_end,
+            speaker: speaker.to_string(),
+            channel: channel_at(chunk, clamped_start),
+            text: text.to_string(),
+            words: Vec::new(),
+            diarized: true,
+            silhouette: 0.0,
+            ctc_used: false,
+        });
     }
-    let slice = &text[start_idx..=end_idx];
-    serde_json::from_str::<Vec<RefinedUtt>>(slice).ok()
+    Some(out)
+}
+
+fn channel_at(chunk: &[Utterance], at: f64) -> Option<i32> {
+    chunk
+        .iter()
+        .find(|u| at >= u.start && at < u.end)
+        .or_else(|| {
+            chunk
+                .iter()
+                .min_by(|a, b| (a.start - at).abs().total_cmp(&(b.start - at).abs()))
+        })
+        .and_then(|u| u.channel)
 }
 
 fn resolve_paths(file: &str) -> Result<(PathBuf, PathBuf, PathBuf), (u16, String)> {
@@ -206,4 +307,53 @@ fn resolve_paths(file: &str) -> Result<(PathBuf, PathBuf, PathBuf), (u16, String
     let md_path = parent.join(format!("{stem}.md"));
     let txt_path = parent.join(format!("{stem}.txt"));
     Ok((json_path, md_path, txt_path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn utt(start: f64, end: f64, channel: Option<i32>) -> Utterance {
+        Utterance {
+            start,
+            end,
+            speaker: "Спикер 1".to_string(),
+            channel,
+            text: "привет".to_string(),
+            words: Vec::new(),
+            diarized: true,
+            silhouette: 0.0,
+            ctc_used: false,
+        }
+    }
+
+    fn item(start: f64, end: f64, speaker: &str, text: &str) -> RefinedUtt {
+        RefinedUtt {
+            start,
+            end,
+            speaker: speaker.to_string(),
+            text: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn parse_array_ignores_trailing_prose() {
+        let parsed = parse_json_array(
+            "Вот результат:\n[{\"start\":0.0,\"end\":1.0,\"speaker\":\"A\",\"text\":\"x\"}]\nГотово.",
+        )
+        .expect("массив должен разобраться");
+        assert_eq!(parsed.len(), 1);
+    }
+
+    #[test]
+    fn map_keeps_channel_and_rejects_bad_items() {
+        let chunk = vec![utt(0.0, 2.0, Some(1))];
+        let mapped = map_refined(&chunk, vec![item(0.2, 1.0, "Спикер 1", "тест")])
+            .expect("валидная реплика");
+        assert_eq!(mapped[0].channel, Some(1));
+
+        assert!(map_refined(&chunk, vec![item(1.0, 3.0, "Спикер 1", "тест")]).is_none());
+        assert!(map_refined(&chunk, vec![item(0.2, 1.0, "", "тест")]).is_none());
+        assert!(map_refined(&chunk, vec![item(f64::NAN, 1.0, "Спикер 1", "тест")]).is_none());
+    }
 }

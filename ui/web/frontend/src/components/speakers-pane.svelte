@@ -12,8 +12,7 @@ import {
 } from '../lib/api'
 import { errText } from '../lib/guards.ts'
 import { loadPeople, peopleState } from '../lib/people.svelte.ts'
-import { settings } from '../lib/settings.svelte.ts'
-import { summaryState } from '../lib/summary.svelte.ts'
+import { refineAvailable } from '../lib/summary.svelte.ts'
 import { toast, toastConfirm } from '../lib/toast.svelte.ts'
 import {
   editTranscript,
@@ -29,13 +28,6 @@ type Props = {
 let { speakers }: Props = $props()
 
 type MergedSpeaker = Omit<SpeakerInfo, 'samples'> & { key: string; samples: SpeakerSample[] }
-
-const qwenInstalled = $derived(
-  Boolean(
-    summaryState.model?.is_installed ||
-    settings.models.find((m) => m.kind === 'summary')?.is_installed,
-  ),
-)
 
 // Один человек — одна карточка: кластеры с одинаковым именем (микрофон/система)
 // объединяем, семплы склеиваем без дублей.
@@ -468,9 +460,9 @@ const onInputKey = (e: KeyboardEvent, btn: HTMLButtonElement | null): void => {
         <button
           type="button"
           class="btn-secondary btn-sm btn-speakers-refine"
-          disabled={!qwenInstalled || transcript.refining || engine.running || engine.summaryRunning}
-          title={!qwenInstalled
-            ? 'Требуется модель «Итоги (Qwen)» (скачайте в Настройки → Итоги)'
+          disabled={!refineAvailable() || transcript.refining || engine.running || engine.summaryRunning}
+          title={!refineAvailable()
+            ? 'Нужна модель «Итоги (Qwen)» и включённая поддержка итогов'
             : transcript.refining
               ? 'Идёт реставрация реплик через локальную модель Qwen…'
               : 'Исправить искажённые слова и восстановить спикеров через локальную модель Qwen'}

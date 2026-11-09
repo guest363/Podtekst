@@ -843,6 +843,22 @@ fn log_cluster_summary(
     );
 }
 
+const IMPURE_CLUSTER_MIN_MEMBERS: usize = 3;
+// Порог эмпирический: выше него в кластере смешаны голоса и профиль доверять нельзя.
+const IMPURE_CLUSTER_MAX_DISTANCE: f64 = 0.35;
+
+fn cluster_is_impure(members: &[&Vec<f64>], centroid: &[f64]) -> bool {
+    if members.len() < IMPURE_CLUSTER_MIN_MEMBERS {
+        return false;
+    }
+    let avg_dist = members
+        .iter()
+        .map(|vector| 1.0 - mr_ml::cosine_similarity(vector, centroid))
+        .sum::<f64>()
+        / members.len() as f64;
+    avg_dist > IMPURE_CLUSTER_MAX_DISTANCE
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn diarize_channel(
     samples: &[f32],
@@ -1218,21 +1234,9 @@ pub(crate) fn diarize_channel(
                 .filter(|(_, &l)| l == c)
                 .map(|(&i, _)| i)
                 .collect();
-            let member_embs: Vec<&Vec<f64>> = members
-                .iter()
-                .filter_map(|&i| embs[i].as_ref())
-                .collect();
-            let impure = if member_embs.len() >= 3 {
-                let centroid = &ordered_centroids[k];
-                let avg_dist = member_embs
-                    .iter()
-                    .map(|v| 1.0 - mr_ml::cosine_similarity(v, centroid))
-                    .sum::<f64>()
-                    / member_embs.len() as f64;
-                avg_dist > 0.35
-            } else {
-                false
-            };
+            let member_embs: Vec<&Vec<f64>> =
+                members.iter().filter_map(|&i| embs[i].as_ref()).collect();
+            let impure = cluster_is_impure(&member_embs, &ordered_centroids[k]);
             if !impure {
                 cluster_name.insert(c, m_name);
                 if let Some(pid) = &matches[k].pack_id {
@@ -1245,7 +1249,7 @@ pub(crate) fn diarize_channel(
                 log::info!(
                     target: "diar",
                     cluster = c,
-                    profile = m_name,
+                    profile = crate::logging::speaker_token(&m_name),
                     members = member_embs.len();
                     "ev=diar.voiceprint.rejected_impure_cluster"
                 );
@@ -2425,11 +2429,11 @@ pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::{
-        cannot_link_pairs, dedupe_cross_channel, fill_labels_by_time, group_segments,
-        merge_quiet_short, merge_tiny_clusters, merge_utterances, move_boundary_words,
-        profile_anchors, read_profiles_file, reconcile_channels, refresh_speaker_stats,
-        short_join_threshold, speaker_change_cuts, split_at_pauses, split_utterance_by_bounds,
-        split_words_by_bounds, switch_penalty, SpeakerInfo, Utterance,
+        cannot_link_pairs, cluster_is_impure, dedupe_cross_channel, fill_labels_by_time,
+        group_segments, merge_quiet_short, merge_tiny_clusters, merge_utterances,
+        move_boundary_words, profile_anchors, read_profiles_file, reconcile_channels,
+        refresh_speaker_stats, short_join_threshold, speaker_change_cuts, split_at_pauses,
+        split_utterance_by_bounds, split_words_by_bounds, switch_penalty, SpeakerInfo, Utterance,
     };
     use crate::transcribe::WordConf;
 
@@ -3424,5 +3428,20 @@ mod tests {
             2,
             "конфликт кандидатов должен блокировать слияние"
         );
+    }
+
+    #[test]
+    fn impure_cluster_needs_three_members_and_distance() {
+        let a = vec![1.0, 0.0];
+        let b = vec![1.0, 0.0];
+        let centroid = vec![1.0, 0.0];
+        assert!(!cluster_is_impure(&[&a, &b], &centroid));
+
+        let far = vec![0.0, 1.0];
+        let far2 = vec![0.0, 1.0];
+        assert!(cluster_is_impure(&[&a, &far, &far2], &centroid));
+
+        let close = vec![0.99, 0.01];
+        assert!(!cluster_is_impure(&[&a, &b, &close], &centroid));
     }
 }

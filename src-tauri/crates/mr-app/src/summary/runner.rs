@@ -45,31 +45,10 @@ pub(super) fn run_pipeline(
     } else {
         #[cfg(not(target_os = "android"))]
         {
-            let cpu = super::runtime_locator::locate().map_err(|_| SummaryJobError::ModelLoad)?;
-            let gpu = if super::config::load().gpu == super::config::GpuMode::Auto {
-                super::gpu::installed_runtime()
-            } else {
-                None
-            };
-            let (runtime, gpu_layers, gpu_device, gpu_backend, fallback) = match gpu {
-                Some(gpu) => (
-                    gpu.runtime,
-                    99,
-                    gpu.device_index,
-                    gpu.backend,
-                    Some(cpu.clone()),
-                ),
-                None => (cpu.clone(), 0, None, None, None),
-            };
-            Box::new(sidecar::SidecarBackend::new(
-                &runtime,
-                spec.model_sha.clone(),
-                threads,
-                gpu_layers,
-                gpu_device,
-                gpu_backend,
-                fallback,
-            ))
+            Box::new(
+                open_backend(spec.model_sha.clone(), threads)
+                    .map_err(|_| SummaryJobError::ModelLoad)?,
+            )
         }
         #[cfg(target_os = "android")]
         {
@@ -161,9 +140,7 @@ fn stage(job: &Arc<Job>, event: BackendEvent) {
 }
 
 #[cfg(not(target_os = "android"))]
-pub fn run_raw_prompt(prompt: &str, max_tokens: u32, temperature: f32) -> Result<String, String> {
-    let path = super::catalog::model_path().ok_or_else(|| "Модель Qwen не установлена".to_string())?;
-    let sha = super::catalog::verified_model_sha(&path).ok_or_else(|| "Не удалось проверить хэш модели".to_string())?;
+fn open_backend(model_sha: String, threads: u32) -> Result<sidecar::SidecarBackend, String> {
     let cpu = super::runtime_locator::locate().map_err(|e| format!("Runtime не найден: {e:?}"))?;
     let gpu = if super::config::load().gpu == super::config::GpuMode::Auto {
         super::gpu::installed_runtime()
@@ -171,47 +148,77 @@ pub fn run_raw_prompt(prompt: &str, max_tokens: u32, temperature: f32) -> Result
         None
     };
     let (runtime, gpu_layers, gpu_device, gpu_backend, fallback) = match gpu {
-        Some(gpu) => (gpu.runtime, 99, gpu.device_index, gpu.backend, Some(cpu.clone())),
+        Some(gpu) => (
+            gpu.runtime,
+            99,
+            gpu.device_index,
+            gpu.backend,
+            Some(cpu.clone()),
+        ),
         None => (cpu.clone(), 0, None, None, None),
     };
-    let threads = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
-        .clamp(1, 8) as u32;
-    let mut backend = sidecar::SidecarBackend::new(
+    Ok(sidecar::SidecarBackend::new(
         &runtime,
-        sha,
+        model_sha,
         threads,
         gpu_layers,
         gpu_device,
         gpu_backend,
         fallback,
-    );
+    ))
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn run_prompts_session<F, R>(f: F) -> Result<R, String>
+where
+    F: FnOnce(&mut dyn FnMut(&str, &str, u32, f32) -> Result<String, String>) -> Result<R, String>,
+{
+    let path =
+        super::catalog::model_path().ok_or_else(|| "Модель Qwen не установлена".to_string())?;
+    let sha = super::catalog::verified_model_sha(&path)
+        .ok_or_else(|| "Не удалось проверить хэш модели".to_string())?;
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .clamp(1, 8) as u32;
+    let mut backend = open_backend(sha, threads)?;
     let cancel = super::backend::CancelToken::default();
-    let req = super::backend::GenerateRequest {
-        model_path: path,
-        system: String::new(),
-        prompt: prompt.to_string(),
-        max_tokens,
-        temperature: temperature as f64,
-        top_p: 0.9,
-        repeat_penalty: 1.1,
-        seed: 42,
-        n_ctx: super::config::CONTEXT_TOKENS,
-        threads,
-        stop: vec![],
-    };
-    let mut noop = |_| {};
-    let text = backend
-        .generate(&req, &cancel, &mut noop)
-        .map_err(|e| format!("Ошибка генерации: {e:?}"))?;
-    backend.shutdown();
+
+    let mut runner =
+        |system: &str, prompt: &str, max_tokens: u32, temperature: f32| -> Result<String, String> {
+            let req = super::backend::GenerateRequest {
+                model_path: path.clone(),
+                system: system.to_string(),
+                prompt: prompt.to_string(),
+                max_tokens,
+                temperature: temperature as f64,
+                top_p: 0.9,
+                repeat_penalty: 1.1,
+                seed: 42,
+                n_ctx: super::config::CONTEXT_TOKENS,
+                threads,
+                stop: vec![],
+            };
+            let mut on_event = |event: BackendEvent| {
+                if event.phase == Phase::Generate {
+                    sidecar::touch();
+                }
+            };
+            backend
+                .generate(&req, &cancel, &mut on_event)
+                .map_err(|e| format!("Ошибка генерации: {e:?}"))
+        };
+
+    // Idle-таймер ставим до работы: иначе ошибка оставит sidecar без присмотра.
     sidecar::arm_idle_monitor();
-    Ok(text)
+    f(&mut runner)
 }
 
 #[cfg(target_os = "android")]
-pub fn run_raw_prompt(_prompt: &str, _max_tokens: u32, _temperature: f32) -> Result<String, String> {
+pub fn run_prompts_session<F, R>(_f: F) -> Result<R, String>
+where
+    F: FnOnce(&mut dyn FnMut(&str, &str, u32, f32) -> Result<String, String>) -> Result<R, String>,
+{
     Err("Генерация недоступна на Android".to_string())
 }
 

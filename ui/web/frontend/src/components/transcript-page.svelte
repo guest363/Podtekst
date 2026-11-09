@@ -5,7 +5,7 @@ import { peopleState } from '../lib/people.svelte.ts'
 import { isQueued } from '../lib/queue.svelte.ts'
 import { extractMp3 } from '../lib/recordings.svelte.ts'
 import { settings } from '../lib/settings.svelte.ts'
-import { cancelSummary, summaryState } from '../lib/summary.svelte.ts'
+import { cancelSummary, refineAvailable, summaryState } from '../lib/summary.svelte.ts'
 import { copyText, toast, toastConfirm } from '../lib/toast.svelte.ts'
 import {
   emptyHint,
@@ -35,13 +35,6 @@ let summaryAvailable = $derived(
     transcript.hasText &&
     summaryState.capabilities?.summary_supported !== false &&
     summaryState.blockReason !== 'no_text',
-)
-
-let qwenInstalled = $derived(
-  Boolean(
-    summaryState.model?.is_installed ||
-    settings.models.find((m) => m.kind === 'summary')?.is_installed,
-  ),
 )
 
 const toggleSpeakers = (): void => {
@@ -320,10 +313,10 @@ const onWindowKey = (e: KeyboardEvent): void => {
         {#if !isAndroid}
           <button
             class="btn-secondary btn-sm btn-refine-toggle {transcript.refining ? 'active' : ''}"
-            disabled={!qwenInstalled || transcript.refining || thisRunning || otherRunning || engine.summaryRunning || !transcript.hasText}
+            disabled={!refineAvailable() || transcript.refining || thisRunning || otherRunning || engine.summaryRunning || !transcript.hasText}
             aria-label="ИИ-реставрация реплик через Qwen"
-            title={!qwenInstalled
-              ? 'Требуется модель «Итоги (Qwen)» (скачайте в Настройки → Итоги)'
+            title={!refineAvailable()
+              ? 'Нужна модель «Итоги (Qwen)» и включённая поддержка итогов'
               : transcript.refining
                 ? 'Идёт реставрация реплик через локальную модель Qwen…'
                 : 'Исправить искажённые слова и восстановить спикеров через локальную модель Qwen'}

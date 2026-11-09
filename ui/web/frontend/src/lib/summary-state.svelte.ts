@@ -12,6 +12,7 @@ import type {
   SummarySettings,
   SummaryStateName,
 } from './api'
+import { settings } from './settings.svelte.ts'
 
 type SummaryState = {
   file: string
@@ -78,3 +79,11 @@ export const summaryState: SummaryState = $state({
   capabilities: null,
   limits: null,
 })
+
+export const refineAvailable = (): boolean =>
+  settings.summaryFeature !== false &&
+  summaryState.capabilities?.summary_supported !== false &&
+  Boolean(
+    summaryState.model?.is_installed ||
+      settings.models.find((m) => m.kind === 'summary')?.is_installed,
+  )
