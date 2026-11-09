@@ -568,7 +568,10 @@ pub fn whisper_mel(samples: &[f32]) -> Vec<Vec<f32>> {
     let normalized_buf: Vec<f32>;
     let samples: &[f32] = if peak > NOISE_FLOOR && (peak - TARGET_PEAK).abs() > 0.05 {
         let scale = TARGET_PEAK / peak;
-        normalized_buf = samples.iter().map(|&x| (x * scale).clamp(-1.0, 1.0)).collect();
+        normalized_buf = samples
+            .iter()
+            .map(|&x| (x * scale).clamp(-1.0, 1.0))
+            .collect();
         &normalized_buf
     } else {
         samples
@@ -626,7 +629,10 @@ pub fn nemo_mel(samples: &[f32]) -> Vec<Vec<f32>> {
     let peak = samples.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
     if peak > NOISE_FLOOR && (peak - TARGET_PEAK).abs() > 0.05 {
         let scale = TARGET_PEAK / peak;
-        let norm: Vec<f32> = samples.iter().map(|&x| (x * scale).clamp(-1.0, 1.0)).collect();
+        let norm: Vec<f32> = samples
+            .iter()
+            .map(|&x| (x * scale).clamp(-1.0, 1.0))
+            .collect();
         log_mel_frames(&norm, GIGAAM_FRONTEND)
     } else {
         log_mel_frames(samples, GIGAAM_FRONTEND)

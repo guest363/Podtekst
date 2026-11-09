@@ -113,9 +113,11 @@ mod tests {
             .map(|i| 0.005 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 16000.0).sin())
             .collect();
         agc_rms_16k(&mut quiet);
-        let out_rms =
-            (quiet[8000..24000].iter().map(|&x| x * x).sum::<f32>() / 16000.0).sqrt();
-        assert!(out_rms > 0.03, "Тихий сигнал должен быть усилен AGC (out_rms={out_rms})");
+        let out_rms = (quiet[8000..24000].iter().map(|&x| x * x).sum::<f32>() / 16000.0).sqrt();
+        assert!(
+            out_rms > 0.03,
+            "Тихий сигнал должен быть усилен AGC (out_rms={out_rms})"
+        );
         assert!(quiet.iter().all(|&x| x.abs() <= 1.0));
     }
 

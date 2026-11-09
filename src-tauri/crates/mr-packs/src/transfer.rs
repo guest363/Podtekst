@@ -420,14 +420,7 @@ fn profile_key(profile: &Value) -> Option<String> {
 fn merge_voiceprints(target_dir: &Path, new_vp: &Value, embedding_space: &str) -> Result<()> {
     let vp_file = target_dir.join("voiceprints.json");
     let existing: Value = match fs::read_to_string(&vp_file) {
-        Ok(text) => serde_json::from_str(&text).unwrap_or_else(|_| {
-            // Битый файл: каркас v3 лучше паники, но след остаётся в консоли.
-            eprintln!(
-                "предупреждение: битый {} заменён пустым v3",
-                vp_file.display()
-            );
-            super::voiceprints_v3(vec![], embedding_space)
-        }),
+        Ok(text) => serde_json::from_str(&text)?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             super::voiceprints_v3(vec![], embedding_space)
         }
@@ -557,6 +550,20 @@ mod tests {
         assert_eq!(profiles.len(), 2);
         let kept = profiles.iter().find(|p| p["name"] == "Профиль A").unwrap();
         assert_eq!(kept["embedding"][0].as_f64(), Some(1.0));
+    }
+
+    #[test]
+    fn merge_voiceprints_errors_on_corrupted_existing() {
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (_g, app) = tmp_app("corrupt-vp");
+        let target = crate::packs_root_dir(&app).join("default");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("voiceprints.json"), "не json").unwrap();
+        assert!(merge_voiceprints(&target, &json!({}), "s").is_err());
+        assert_eq!(
+            std::fs::read_to_string(target.join("voiceprints.json")).unwrap(),
+            "не json"
+        );
     }
 
     #[test]
