@@ -127,11 +127,7 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
         );
         speakers_info.extend(infos);
         let tree = word_speakers::DiarIntervalTree::new(&diar_utts);
-        for utterance in &source_utts {
-            all_utts.extend(word_speakers::split_utterance_by_word_speakers(
-                utterance, &tree,
-            ));
-        }
+        all_utts.extend(document_utterances(&source_utts, &tree));
     }
     // Один и тот же голос в микрофоне и системе — одна карточка, а не два
     // разных «Участник N» / «Собеседник N». Дубли эха схлопываем до одной фразы.
@@ -183,4 +179,48 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
         s
     };
     (speakers_info, merged, speakers)
+}
+
+/// Пустые VAD-группы участвуют только в диаризации: в документ они не идут.
+fn document_utterances(
+    source_utts: &[Utterance],
+    tree: &word_speakers::DiarIntervalTree,
+) -> Vec<Utterance> {
+    source_utts
+        .iter()
+        .filter(|utterance| !utterance.text.trim().is_empty())
+        .flat_map(|utterance| word_speakers::split_utterance_by_word_speakers(utterance, tree))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn utterance(start: f64, end: f64, text: &str) -> Utterance {
+        Utterance {
+            start,
+            end,
+            speaker: "Собеседник".to_string(),
+            channel: Some(0),
+            text: text.to_string(),
+            diarized: false,
+            silhouette: 0.0,
+            words: Vec::new(),
+            ctc_used: false,
+        }
+    }
+
+    #[test]
+    fn textless_vad_group_reaches_diarization_but_not_document() {
+        let source = vec![utterance(0.0, 2.0, "раз два"), utterance(2.0, 5.0, "")];
+        let samples = vec![0.1f32; 16000 * 6];
+        let diar_utts = diarize::split_at_pauses(&samples, &source);
+        assert!(diar_utts.iter().any(|u| u.text.is_empty()));
+        let tree = word_speakers::DiarIntervalTree::new(&diar_utts);
+
+        let doc_utts = document_utterances(&source, &tree);
+        assert!(!doc_utts.is_empty());
+        assert!(doc_utts.iter().all(|u| !u.text.is_empty()));
+    }
 }
