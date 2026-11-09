@@ -59,25 +59,7 @@ pub(super) fn run_pipeline(
             return Err(SummaryJobError::ModelLoad);
         }
     };
-    let mut on_event = |event: BackendEvent| {
-        let (phase, pct, chunk, chunks) = match event.phase {
-            Phase::Load => ("load", 2, None, None),
-            Phase::Prepare => ("prepare", 8, None, None),
-            Phase::Generate => {
-                let total = event.tokens_total.max(1);
-                let pct = 10 + (event.tokens_done.min(total) * 80 / total) as u8;
-                ("generate", pct.min(90), None, None)
-            }
-            Phase::Map => {
-                let total = event.tokens_total.max(1);
-                let pct = 10 + (event.tokens_done.min(total) * 75 / total) as u8;
-                ("map", pct.min(85), Some(event.tokens_done + 1), Some(total))
-            }
-            Phase::Reduce => ("reduce", 88, None, None),
-            Phase::Verify => ("verify", 92, None, None),
-        };
-        stage(job, phase, pct, chunk, chunks);
-    };
+    let mut on_event = |event: BackendEvent| stage(job, event);
     let cancel = job.cancel.clone();
     let result = pipeline::run(spec, backend.as_mut(), &cancel, &mut on_event);
     backend.shutdown();
@@ -102,9 +84,44 @@ pub(super) fn cancel_sidecar(job: &Arc<Job>) {
     let _ = job;
 }
 
-fn stage(job: &Arc<Job>, phase: &'static str, pct: u8, chunk: Option<u32>, chunks: Option<u32>) {
+fn stage_progress(
+    current_phase: &'static str,
+    current_pct: u8,
+    current_chunk: Option<u32>,
+    current_chunks: Option<u32>,
+    event: BackendEvent,
+) -> (&'static str, u8, Option<u32>, Option<u32>) {
+    match event.phase {
+        Phase::Load => ("load", 2, None, None),
+        Phase::Prepare => ("prepare", 8, None, None),
+        Phase::Generate => {
+            let total = event.tokens_total.max(1);
+            let done = event.tokens_done.min(total);
+            let sub = (done * 80 / total) as u8;
+            // Второй проход (reduce/repair) идёт уже после 88/92%; не
+            // откатываем шкалу назад, а двигаем её в хвосте фазы.
+            match current_phase {
+                "map" => ("map", current_pct, current_chunk, current_chunks),
+                "reduce" => ("reduce", 88 + sub / 20, None, None),
+                "verify" => ("verify", 92 + sub / 20, None, None),
+                _ => ("generate", 10 + sub, None, None),
+            }
+        }
+        Phase::Map => {
+            let total = event.tokens_total.max(1);
+            let pct = 10 + (event.tokens_done.min(total) * 75 / total) as u8;
+            ("map", pct.min(85), Some(event.tokens_done + 1), Some(total))
+        }
+        Phase::Reduce => ("reduce", 88, None, None),
+        Phase::Verify => ("verify", 92, None, None),
+    }
+}
+
+fn stage(job: &Arc<Job>, event: BackendEvent) {
     job.touch_progress();
     let mut state = job.state.lock().unwrap_or_else(|e| e.into_inner());
+    let (phase, pct, chunk, chunks) =
+        stage_progress(state.phase, state.pct, state.chunk, state.chunks, event);
     if pct <= state.pct && state.phase == phase {
         return;
     }
@@ -123,4 +140,45 @@ fn stage(job: &Arc<Job>, phase: &'static str, pct: u8, chunk: Option<u32>, chunk
     });
     drop(state);
     emit_event(event);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(phase: Phase, done: u32, total: u32) -> BackendEvent {
+        BackendEvent {
+            phase,
+            tokens_done: done,
+            tokens_total: total,
+        }
+    }
+
+    #[test]
+    fn generate_after_reduce_moves_tail() {
+        let (phase, pct, _, _) =
+            stage_progress("reduce", 88, None, None, event(Phase::Generate, 40, 80));
+        assert_eq!((phase, pct), ("reduce", 90));
+    }
+
+    #[test]
+    fn generate_after_verify_moves_tail() {
+        let (phase, pct, _, _) =
+            stage_progress("verify", 92, None, None, event(Phase::Generate, 40, 80));
+        assert_eq!((phase, pct), ("verify", 94));
+    }
+
+    #[test]
+    fn generate_during_map_keeps_map_and_chunk() {
+        let (phase, pct, chunk, chunks) =
+            stage_progress("map", 55, Some(2), Some(4), event(Phase::Generate, 40, 80));
+        assert_eq!((phase, pct, chunk, chunks), ("map", 55, Some(2), Some(4)));
+    }
+
+    #[test]
+    fn first_generate_uses_main_scale() {
+        let (phase, pct, _, _) =
+            stage_progress("prepare", 8, None, None, event(Phase::Generate, 40, 80));
+        assert_eq!((phase, pct), ("generate", 50));
+    }
 }
