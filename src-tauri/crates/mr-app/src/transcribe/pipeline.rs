@@ -282,13 +282,13 @@ fn transcribe_file_inner(
         (vec![(0usize, opts.speaker_right.clone())], "общая запись")
     };
 
-    // Нормализуем громкость через DSP AGC: выравнивает удалённые тихие голоса
-    // (например, зал суда) до стандартного уровня ASR и отсекает инфразвук.
+    // Каналы отдаём как есть: `channels` больше нигде не нужен, поэтому
+    // раскладываем его по индексам без копий (иначе длинная запись занимала
+    // вдвое больше памяти).
     let channel_samples: HashMap<usize, Vec<f32>> = channels
         .into_iter()
         .enumerate()
         .filter(|(i, _)| chan_list.iter().any(|(ch, _)| ch == i))
-        .map(|(i, c)| (i, mr_audio::dsp::normalize_speech(c)))
         .collect();
 
     let (channel_vad, channel_grouped) = vad::run(
