@@ -43,7 +43,7 @@ libc.workspace = true
 
 # JNI-мост для системного меню «Поделиться» отчётом диагностики.
 [target.'cfg(target_os = "android")'.dependencies]
-jni = "0.21"
+jni = "0.22"
 
 # Нативный D-Bus (GNOME Shell Screencast) вместо внешнего интерпретатора python3-dbus.
 [target.'cfg(target_os = "linux")'.dependencies]
