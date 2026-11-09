@@ -18,11 +18,58 @@ pub(super) fn handle_transcript_edit(request: tiny_http::Request, body: Value) {
 
 fn edit_transcript(body: &Value) -> Result<Value, (u16, String)> {
     let (json_path, md_path, txt_path) = transcript_paths(body)?;
-    let source = std::fs::read_to_string(&json_path)
-        .map_err(|_| (404, "Расшифровка не найдена".to_string()))?;
-    let mut data: Value = serde_json::from_str(&source)
-        .map_err(|_| (400, "Файл .transcript.json повреждён".to_string()))?;
+    let source = std::fs::read_to_string(&json_path).map_err(|error| {
+        log::warn!(
+            target: "json",
+            path = crate::logging::file_token(&json_path),
+            error = error.to_string();
+            "ev=json.load"
+        );
+        (404, "Расшифровка не найдена".to_string())
+    })?;
+    let mut data: Value = serde_json::from_str(&source).map_err(|error| {
+        log::warn!(
+            target: "json",
+            path = crate::logging::file_token(&json_path),
+            error = error.to_string();
+            "ev=json.load"
+        );
+        (400, "Файл .transcript.json повреждён".to_string())
+    })?;
+    let utts_before = data["utterances"]
+        .as_array()
+        .map(|items| items.len())
+        .unwrap_or(0);
     apply_edit(&mut data, body).map_err(|e| (400, e))?;
+    log::info!(
+        target: "json",
+        file = crate::logging::file_token(&json_path),
+        op = if body.get("old_speaker").is_some() { "rename" } else { "edit" },
+        index = body.get("index").and_then(|v| v.as_u64()).map(|v| v as i64).unwrap_or(-1),
+        speaker_id = crate::logging::speaker_token(
+            body.get("speaker").and_then(|v| v.as_str()).unwrap_or("")
+        ),
+        text_chars = body.get("text").and_then(|v| v.as_str()).map(|t| t.chars().count()).unwrap_or(0),
+        utts_before = utts_before,
+        utts_after = data["utterances"].as_array().map(|items| items.len()).unwrap_or(0);
+        "ev=json.edit"
+    );
+    if cfg!(debug_assertions) {
+        if let Ok(doc) =
+            serde_json::from_value::<crate::transcribe::document::TranscriptDoc>(data.clone())
+        {
+            for violation in crate::transcribe::document::validate(&doc).iter().take(20) {
+                log::warn!(
+                    target: "json",
+                    i = violation.index.map(|value| value as i64).unwrap_or(-1),
+                    field = violation.field,
+                    value = violation.value.clone(),
+                    rule = violation.rule;
+                    "ev=json.check"
+                );
+            }
+        }
+    }
 
     let utterances: Vec<Utterance> = serde_json::from_value(data["utterances"].clone())
         .map_err(|e| (400, format!("Некорректные реплики: {e}")))?;

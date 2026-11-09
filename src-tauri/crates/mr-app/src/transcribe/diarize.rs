@@ -14,8 +14,11 @@ pub(crate) fn group_segments(
     probs: &[f32],
     max_dur: f32,
     gap: f32,
+    ch: i32,
 ) -> Vec<(f32, f32)> {
     let win_sec = mr_ml::onnx::vad::VAD_WINDOW as f32 / 16000.0;
+    let input_segments = segments.len();
+    let mut cuts = 0usize;
     let mut norm: Vec<(f32, f32)> = Vec::new();
     for &(s, e) in segments {
         if e - s <= max_dur {
@@ -41,6 +44,15 @@ pub(crate) fn group_segments(
                 .map(|i| i as f32 * win_sec)
                 .filter(|&cut| cut > a && cut <= window_end)
                 .unwrap_or(window_end);
+            cuts += 1;
+            log::trace!(
+                target: "vad",
+                ch = ch,
+                at_sec = cut,
+                p = probs.get((cut / win_sec) as usize).copied().unwrap_or(0.0),
+                window_end_sec = window_end;
+                "ev=vad.group.cut"
+            );
             norm.push((a, cut));
             a = cut;
         }
@@ -56,12 +68,24 @@ pub(crate) fn group_segments(
         }
         grouped.push((s, e));
     }
+    log::debug!(
+        target: "vad",
+        ch = ch,
+        in_segs = input_segments,
+        out_groups = grouped.len(),
+        cuts = cuts;
+        "ev=vad.group"
+    );
     grouped
 }
 
 /// Склейка тихих коротких фрагментов через более длинную паузу:
 /// по отдельности ASR теряет тихую короткую речь. Громкую и длинную речь не трогаем.
-pub(crate) fn merge_quiet_short(samples: &[f32], groups: Vec<(f32, f32)>) -> Vec<(f32, f32)> {
+pub(crate) fn merge_quiet_short(
+    samples: &[f32],
+    groups: Vec<(f32, f32)>,
+    ch: i32,
+) -> Vec<(f32, f32)> {
     const SHORT_SEC: f32 = 2.0;
     const MAX_MERGED_SEC: f32 = 12.0;
     const QUIET_RMS: f32 = 0.02;
@@ -76,16 +100,29 @@ pub(crate) fn merge_quiet_short(samples: &[f32], groups: Vec<(f32, f32)>) -> Vec
         (s.iter().map(|x| x * x).sum::<f32>() / s.len() as f32).sqrt()
     };
     let mut out: Vec<(f32, f32)> = Vec::new();
+    let mut merged = 0usize;
     for (s, e) in groups {
         if let Some(last) = out.last_mut() {
             let gap = s - last.1;
             let incoming_short = e - s <= SHORT_SEC;
+            let rms_a = rms(last.0, last.1);
+            let rms_b = rms(s, e);
             if incoming_short
                 && (0.0..=MAX_GAP_SEC).contains(&gap)
                 && e - last.0 <= MAX_MERGED_SEC
-                && rms(last.0, last.1) < QUIET_RMS
-                && rms(s, e) < QUIET_RMS
+                && rms_a < QUIET_RMS
+                && rms_b < QUIET_RMS
             {
+                log::debug!(
+                    target: "vad",
+                    ch = ch,
+                    merged = merged + 1,
+                    gap_sec = gap,
+                    rms_a = rms_a,
+                    rms_b = rms_b;
+                    "ev=vad.merge_quiet"
+                );
+                merged += 1;
                 last.1 = e;
                 continue;
             }
@@ -138,32 +175,72 @@ fn pick_samples(utterances: &[Utterance], max_samples: usize) -> Vec<Sample> {
 /// и битые размерности. Профили без центроида, но с прототипами, собираются
 /// из прототипов: иначе старый/импортированный пакет молча выпадает из матчинга.
 pub(crate) fn read_profiles_file(file: &std::path::Path) -> Vec<SpeakerProfile> {
+    let path = crate::logging::file_token(file);
     let text = match std::fs::read_to_string(file) {
         Ok(t) => t,
-        Err(_) => return vec![],
+        Err(error) => {
+            if file.exists() {
+                log::warn!(
+                    target: "diar",
+                    file = path,
+                    reason = "read",
+                    error = error.to_string();
+                    "ev=diar.profile.load"
+                );
+            }
+            return vec![];
+        }
     };
     let v: serde_json::Value = match serde_json::from_str(&text) {
         Ok(v) => v,
-        Err(_) => return vec![],
-    };
-    if let Some(space) = v.get("embedding_space").and_then(|x| x.as_str()) {
-        if space != mr_ml::EMBEDDING_SPACE {
+        Err(error) => {
+            log::warn!(
+                target: "diar",
+                file = path,
+                reason = "json",
+                error = error.to_string();
+                "ev=diar.profile.load"
+            );
             return vec![];
         }
+    };
+    let space = v
+        .get("embedding_space")
+        .and_then(|x| x.as_str())
+        .unwrap_or(mr_ml::EMBEDDING_SPACE);
+    if space != mr_ml::EMBEDDING_SPACE {
+        log::warn!(
+            target: "diar",
+            file = path,
+            reason = "embedding_space",
+            space = space;
+            "ev=diar.profile.load"
+        );
+        return vec![];
     }
     let arr = if let Some(a) = v.get("profiles").and_then(|x| x.as_array()) {
         a.clone()
     } else if let Some(a) = v.as_array() {
         a.clone()
     } else {
+        log::warn!(
+            target: "diar",
+            file = path,
+            reason = "no_profiles";
+            "ev=diar.profile.load"
+        );
         return vec![];
     };
+    let total = arr.len();
+    let mut dropped = 0usize;
     let mut out = vec![];
     for p in arr {
         let Ok(mut prof) = serde_json::from_value::<SpeakerProfile>(p) else {
+            dropped += 1;
             continue;
         };
         if prof.name.trim().is_empty() {
+            dropped += 1;
             continue;
         }
         prof.prototypes
@@ -186,7 +263,20 @@ pub(crate) fn read_profiles_file(file: &std::path::Path) -> Vec<SpeakerProfile> 
             && prof.embedding.iter().any(|x| x.abs() > 1e-12)
         {
             out.push(prof);
+        } else {
+            dropped += 1;
         }
+    }
+    if dropped > 0 {
+        log::warn!(
+            target: "diar",
+            file = path,
+            reason = "invalid_profiles",
+            kept = out.len(),
+            dropped = dropped,
+            total = total;
+            "ev=diar.profile.load"
+        );
     }
     out
 }
@@ -205,17 +295,35 @@ pub(crate) fn load_profiles() -> Vec<SpeakerProfile> {
             "Основной профиль".to_string(),
         ));
     }
-    if let Ok(active) = packs::get_active_packs(&app) {
-        for dir in active {
-            let pid = dir
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let pname = packs::get_pack_manifest(&app, &pid)
-                .map(|m| m.name)
-                .unwrap_or_else(|_| pid.clone());
-            files.push((dir.join("voiceprints.json"), pid, pname));
+    match packs::get_active_packs(&app) {
+        Ok(active) => {
+            for dir in active {
+                let pid = dir
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let pname = match packs::get_pack_manifest(&app, &pid) {
+                    Ok(manifest) => manifest.name,
+                    Err(error) => {
+                        log::warn!(
+                            target: "diar",
+                            file = pid.clone(),
+                            reason = "pack_manifest",
+                            error = error.to_string();
+                            "ev=diar.profile.load"
+                        );
+                        pid.clone()
+                    }
+                };
+                files.push((dir.join("voiceprints.json"), pid, pname));
+            }
         }
+        Err(error) => log::warn!(
+            target: "diar",
+            reason = "active_packs",
+            error = error.to_string();
+            "ev=diar.profile.load"
+        ),
     }
     let mut by_name: HashMap<String, SpeakerProfile> = HashMap::new();
     for (f, pid, pname) in files {
@@ -303,6 +411,14 @@ fn merge_tiny_clusters(vecs: &[Vec<f64>], labels: &mut [usize], weights: &[f64],
             protected.insert(small);
             continue;
         }
+        log::debug!(
+            target: "diar",
+            from = small,
+            to = best.0,
+            similarity = best.1,
+            n = totals.get(&small).copied().unwrap_or(0.0);
+            "ev=diar.merge_tiny"
+        );
         for l in labels.iter_mut() {
             if *l == small {
                 *l = best.0;
@@ -589,7 +705,30 @@ fn build_acoust_units(
                     .unwrap_or(chunk.len());
                 if clean_len >= (SR * MIN_UNIT_SEC) as usize {
                     let clean = &chunk[..clean_len];
-                    if let Ok(Some(embedding)) = ext.embed(clean) {
+                    let started = std::time::Instant::now();
+                    let result = ext.embed(clean);
+                    if log::log_enabled!(target: "diar", log::Level::Trace) {
+                        let (outcome, dim, norm) = match &result {
+                            Ok(Some(embedding)) => (
+                                "ok",
+                                embedding.len(),
+                                embedding.iter().map(|x| x * x).sum::<f64>().sqrt(),
+                            ),
+                            Ok(None) => ("none", 0, 0.0),
+                            Err(_) => ("error", 0, 0.0),
+                        };
+                        log::trace!(
+                            target: "diar",
+                            unit = index,
+                            dur_sec = clean_len as f64 / SR,
+                            dim = dim,
+                            norm = norm,
+                            result = outcome,
+                            elapsed_ms = started.elapsed().as_millis() as u64;
+                            "ev=diar.embed"
+                        );
+                    }
+                    if let Ok(Some(embedding)) = result {
                         units.push(AcoustUnit {
                             utterance: index,
                             start,
@@ -636,6 +775,74 @@ fn fill_unit_labels_by_time(units: &[AcoustUnit], label_of: &mut HashMap<usize, 
     }
 }
 
+fn log_cluster_summary(
+    ch: i32,
+    k_req: Option<usize>,
+    vecs: &[Vec<f64>],
+    labels: &[usize],
+    cannot_link: usize,
+) {
+    if !cfg!(debug_assertions) || vecs.is_empty() || labels.is_empty() {
+        return;
+    }
+    let mut ids: Vec<usize> = labels.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    let silhouette = if ids.len() > 1 {
+        let scores = mr_ml::cluster::silhouette_scores(vecs, labels);
+        scores.iter().sum::<f64>() / scores.len() as f64
+    } else {
+        0.0
+    };
+    let centroids: Vec<Vec<f64>> = ids
+        .iter()
+        .filter_map(|&label| {
+            let members: Vec<usize> = labels
+                .iter()
+                .enumerate()
+                .filter(|(_, &value)| value == label)
+                .map(|(index, _)| index)
+                .collect();
+            if members.is_empty() {
+                return None;
+            }
+            let points: Vec<Vec<f64>> = members.iter().map(|&i| vecs[i].clone()).collect();
+            let weights = vec![1.0; points.len()];
+            Some(mr_ml::weighted_centroid(&points, &weights))
+        })
+        .collect();
+    let mut distances = Vec::new();
+    for i in 0..centroids.len() {
+        for j in (i + 1)..centroids.len() {
+            distances.push(1.0 - mr_ml::cosine_similarity(&centroids[i], &centroids[j]));
+        }
+    }
+    let (dist_min, dist_mean, dist_max) = if distances.is_empty() {
+        (0.0, 0.0, 0.0)
+    } else {
+        let min = distances.iter().copied().fold(f64::INFINITY, f64::min);
+        let max = distances.iter().copied().fold(0.0f64, f64::max);
+        (
+            min,
+            distances.iter().sum::<f64>() / distances.len() as f64,
+            max,
+        )
+    };
+    log::info!(
+        target: "diar",
+        ch = ch,
+        n = labels.len(),
+        k_req = k_req.unwrap_or(0),
+        k = ids.len(),
+        silhouette = silhouette,
+        dist_min = dist_min,
+        dist_mean = dist_mean,
+        dist_max = dist_max,
+        cannot_link = cannot_link;
+        "ev=diar.cluster"
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn diarize_channel(
     samples: &[f32],
@@ -655,6 +862,17 @@ pub(crate) fn diarize_channel(
     if n == 0 {
         return vec![];
     }
+    let ch = channel_idx.unwrap_or(-1);
+    log::debug!(
+        target: "diar",
+        ch = ch,
+        utts = n,
+        embed = extractor.is_some(),
+        segmentation = segmentation.is_some(),
+        min_spk = min_speakers,
+        max_spk = max_speakers;
+        "ev=diar.start"
+    );
     let mut embs: Vec<Option<Vec<f64>>> = vec![None; n];
     let mut durs: Vec<f64> = utterances
         .iter()
@@ -690,6 +908,21 @@ pub(crate) fn diarize_channel(
     if core_units.is_empty() {
         core_units = (0..units.len()).collect();
     }
+    let (dur_min, dur_max) = core_units
+        .iter()
+        .fold((f64::INFINITY, 0.0f64), |(min, max), &index| {
+            (min.min(units[index].dur), max.max(units[index].dur))
+        });
+    log::debug!(
+        target: "diar",
+        ch = ch,
+        utts = n,
+        units = units.len(),
+        core_units = core_units.len(),
+        dur_min = if dur_min.is_finite() { dur_min } else { 0.0 },
+        dur_max = dur_max;
+        "ev=diar.units"
+    );
     let core_vecs: Vec<Vec<f64>> = core_units
         .iter()
         .map(|&index| units[index].embedding.clone())
@@ -746,6 +979,14 @@ pub(crate) fn diarize_channel(
         uniq.sort();
         uniq.dedup();
         if max_speakers > 0 && uniq.len() > max_speakers {
+            log::debug!(
+                target: "diar",
+                ch = ch,
+                before = uniq.len(),
+                after = max_speakers,
+                max_spk = max_speakers;
+                "ev=diar.max_speakers"
+            );
             core_labels = agglomerative_weighted(
                 &core_vecs,
                 &core_weights,
@@ -754,6 +995,14 @@ pub(crate) fn diarize_channel(
                 Some(max_speakers),
             );
         } else if min_speakers > 1 && uniq.len() < min_speakers && core_vecs.len() >= min_speakers {
+            log::debug!(
+                target: "diar",
+                ch = ch,
+                before = uniq.len(),
+                after = min_speakers,
+                min_spk = min_speakers;
+                "ev=diar.max_speakers"
+            );
             core_labels = agglomerative_weighted(
                 &core_vecs,
                 &core_weights,
@@ -763,6 +1012,7 @@ pub(crate) fn diarize_channel(
             );
         }
     }
+    log_cluster_summary(ch, k, &core_vecs, &core_labels, constraints.len());
     on_event(88, "Голоса разделены по спикерам");
     let mut unit_label: HashMap<usize, usize> = core_units
         .iter()
@@ -795,13 +1045,31 @@ pub(crate) fn diarize_channel(
             continue;
         }
         let mut best = (f64::NEG_INFINITY, 0usize);
+        let mut second = (f64::NEG_INFINITY, 0usize);
         for (&label, centroid) in unit_centroids.iter() {
             let score = cosine_similarity(&unit.embedding, centroid);
             if score > best.0 {
+                second = best;
                 best = (score, label);
+            } else if score > second.0 {
+                second = (score, label);
             }
         }
-        if best.0 >= short_join_threshold(unit.dur) {
+        let threshold = short_join_threshold(unit.dur);
+        log::debug!(
+            target: "diar",
+            ch = ch,
+            i = index,
+            top1_id = best.1 as i64,
+            top1_sim = best.0,
+            top2_id = second.1 as i64,
+            top2_sim = if second.0.is_finite() { second.0 } else { 0.0 },
+            margin = if second.0.is_finite() { best.0 - second.0 } else { best.0 },
+            threshold = threshold,
+            matched = best.0 >= threshold;
+            "ev=diar.assign"
+        );
+        if best.0 >= threshold {
             unit_label.insert(index, best.1);
             unit_centroids = recompute_units(&unit_label);
         }
@@ -1299,6 +1567,7 @@ pub(crate) fn reconcile_channels(infos: &mut Vec<SpeakerInfo>, utterances: &mut 
     if n < 2 {
         return;
     }
+    let speakers_before = n;
     let by_name: HashMap<&str, Vec<&Utterance>> = {
         let mut map: HashMap<&str, Vec<&Utterance>> = HashMap::new();
         for u in utterances.iter() {
@@ -1380,10 +1649,22 @@ pub(crate) fn reconcile_channels(infos: &mut Vec<SpeakerInfo>, utterances: &mut 
     roots.sort_unstable();
     let mut out = Vec::with_capacity(groups.len());
     let mut names: HashMap<String, String> = HashMap::new();
+    let mut merged_count = 0usize;
+    let mut cross_channel = 0usize;
     for root in roots {
         let members = groups.remove(&root).unwrap_or_default();
         if members.is_empty() {
             continue;
+        }
+        if members.len() > 1 {
+            merged_count += members.len() - 1;
+            let mut channels = HashSet::new();
+            for &member in &members {
+                channels.insert(infos[member].channel);
+            }
+            if channels.len() > 1 {
+                cross_channel += 1;
+            }
         }
         // Приоритет имени: узнанный профиль → системный канал → больше речи.
         let primary = members
@@ -1492,6 +1773,14 @@ pub(crate) fn reconcile_channels(infos: &mut Vec<SpeakerInfo>, utterances: &mut 
         merged.candidates.sort_by(|a, b| b.1.total_cmp(&a.1));
         out.push(merged);
     }
+    log::info!(
+        target: "diar",
+        speakers_before = speakers_before,
+        speakers_after = out.len(),
+        merged = merged_count,
+        cross_channel = cross_channel;
+        "ev=diar.reconcile"
+    );
     *infos = out;
     for u in utterances.iter_mut() {
         if let Some(name) = names.get(&u.speaker) {
@@ -1552,6 +1841,7 @@ fn better_utterance(a: &Utterance, b: &Utterance) -> bool {
 
 /// Одна и та же фраза, попавшая в оба канала (эхо), остаётся в одном виде.
 pub(crate) fn dedupe_cross_channel(utterances: &mut Vec<Utterance>) {
+    let before = utterances.len();
     if utterances.len() < 2 {
         return;
     }
@@ -1594,11 +1884,19 @@ pub(crate) fn dedupe_cross_channel(utterances: &mut Vec<Utterance>) {
         idx += 1;
         k
     });
+    log::info!(
+        target: "diar",
+        utts_before = before,
+        utts_after = utterances.len(),
+        dropped = before - utterances.len();
+        "ev=diar.dedupe"
+    );
 }
 
 /// Склейка соседних реплик одного спикера. Перекрывающиеся дубли не
 /// складываются в «два раза одно и то же», а заменяются лучшим вариантом.
 pub(crate) fn merge_utterances(utterances: Vec<Utterance>) -> Vec<Utterance> {
+    let before = utterances.len();
     let mut merged: Vec<Utterance> = Vec::with_capacity(utterances.len());
     for u in utterances {
         if let Some(last) = merged.last_mut() {
@@ -1659,6 +1957,13 @@ pub(crate) fn merge_utterances(utterances: Vec<Utterance>) -> Vec<Utterance> {
         }
         merged.push(u);
     }
+    log::debug!(
+        target: "diar",
+        before = before,
+        after = merged.len(),
+        merged = before - merged.len();
+        "ev=diar.merge_utts"
+    );
     merged
 }
 
@@ -1681,6 +1986,18 @@ pub(crate) fn refresh_speaker_stats(infos: &mut Vec<SpeakerInfo>, utterances: &[
         }
     }
     infos.retain(|s| s.utterances_count > 0);
+    for info in infos.iter() {
+        log::info!(
+            target: "diar",
+            speaker_id = crate::logging::speaker_token(&info.name),
+            utts = info.utterances_count,
+            speech_sec = info.total_speech_sec,
+            silhouette = info.silhouette,
+            similarity = info.similarity,
+            matched = info.matched;
+            "ev=diar.stats"
+        );
+    }
 }
 
 /// Разбивает длинные реплики в моно по естественным паузам тишины (RMS по окнам 20 мс,
@@ -1891,10 +2208,28 @@ pub(crate) fn split_long_by_speaker_change(
             t += step;
         }
         if wins.len() < 3 {
+            log::debug!(
+                target: "diar",
+                i = index,
+                dur_sec = dur,
+                windows = wins.len(),
+                cuts = 0,
+                reason = "too_few_windows";
+                "ev=diar.split"
+            );
             out.push(u);
             continue;
         }
         let cuts = speaker_change_cuts(u.start, u.end, &wins);
+        log::debug!(
+            target: "diar",
+            i = index,
+            dur_sec = dur,
+            windows = wins.len(),
+            cuts = cuts.len(),
+            reason = if cuts.is_empty() { "no_change" } else { "split" };
+            "ev=diar.split"
+        );
         if cuts.is_empty() {
             out.push(u);
             continue;
@@ -2133,13 +2468,13 @@ mod tests {
         let mut probs = vec![0.9f32; 188];
         probs[31] = 0.0;
         probs[94] = 0.1;
-        let out = group_segments(&[(0.0, 6.0)], &probs, 4.0, 0.5);
+        let out = group_segments(&[(0.0, 6.0)], &probs, 4.0, 0.5, 0);
         assert_eq!(out.len(), 2);
         assert!((out[0].1 - 94.0 * 0.032).abs() < 1e-5);
         assert_eq!(out[1].0, out[0].1);
         assert!(out.iter().all(|(s, e)| e - s <= 4.0));
 
-        let fallback = group_segments(&[(0.0, 6.0)], &[], 4.0, 0.5);
+        let fallback = group_segments(&[(0.0, 6.0)], &[], 4.0, 0.5, 0);
         assert_eq!(fallback, vec![(0.0, 3.0), (3.0, 6.0)]);
     }
 
@@ -2408,7 +2743,7 @@ mod tests {
             (8.0, 9.0),
             (10.0, 13.0),
         ];
-        let out = merge_quiet_short(&samples, groups);
+        let out = merge_quiet_short(&samples, groups, 0);
         assert_eq!(out, vec![(0.0, 5.0), (6.0, 7.0), (8.0, 9.0), (10.0, 13.0)]);
     }
 
@@ -2418,7 +2753,7 @@ mod tests {
         let groups: Vec<(f32, f32)> = (0..8)
             .map(|i| (i as f32 * 2.0, i as f32 * 2.0 + 1.0))
             .collect();
-        let out = merge_quiet_short(&samples, groups);
+        let out = merge_quiet_short(&samples, groups, 0);
         assert_eq!(out.len(), 2);
         assert!(out[0].1 - out[0].0 <= 12.0);
     }

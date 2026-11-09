@@ -24,6 +24,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 chrono.workspace = true
 clap.workspace = true
+log = { workspace = true, features = ["release_max_level_off"] }
 tiny_http.workspace = true
 fs2.workspace = true
 hound.workspace = true

@@ -83,14 +83,22 @@ struct Cli {
     macos_selftest: bool,
     #[arg(long, help = "Собрать отчёт диагностики и выйти")]
     diagnostics: bool,
+    #[arg(long, help = "Добавить в отчёт хвост dev-логов (только dev-сборка)")]
+    with_dev_logs: bool,
 }
 
 const DEFAULT_HTTP_PORT: u16 = 8765;
 
+/// Быстрый выход теряет хвост dev-лога, если не сбросить очередь writer-потока.
+pub(crate) fn exit_now(code: i32) -> ! {
+    logging::flush();
+    std::process::exit(code)
+}
+
 fn print_ipc(resp: &str) {
     println!("{resp}");
     if resp.starts_with("ERROR:") {
-        std::process::exit(1);
+        exit_now(1);
     }
 }
 
@@ -117,12 +125,15 @@ pub(crate) fn opener_url(url: &str) {
     tauri::mobile_entry_point
 )]
 pub fn mobile_main() {
+    logging::init();
+    crash::install_hook();
     let state = Arc::new(Mutex::new(recording::RecordingState::default()));
     cleanup_stale_files();
     summary::init();
     let code = tauri_shell::run_tauri_window(state, DEFAULT_HTTP_PORT, true);
     summary::shutdown();
-    std::process::exit(code);
+    logging::shutdown();
+    exit_now(code);
 }
 
 #[doc(hidden)]
@@ -196,17 +207,18 @@ pub fn run_cli() {
     logging::init();
     crash::install_hook();
     if cli.diagnostics {
-        match diagnostics::collect() {
+        match diagnostics::collect(cli.with_dev_logs) {
             Ok(path) => println!("{}", path.display()),
             Err(e) => {
                 crate::note!("Отчёт диагностики не собрался: {e}");
-                std::process::exit(1);
+                exit_now(1);
             }
         }
+        logging::flush();
         return;
     }
     if cli.macos_selftest {
-        std::process::exit(macos_selftest());
+        exit_now(macos_selftest());
     }
 
     // Повторная регистрация в tauri-сетапе: на мобильных env папки данных
@@ -242,18 +254,18 @@ pub fn run_cli() {
                         "speech_sec": rep.speech_sec, "duration_sec": rep.duration_sec,
                         "speaker_method": rep.speaker_method})
                 );
-                std::process::exit(0);
+                exit_now(0);
             }
             Err(e) => {
                 println!("{}", serde_json::json!({"type": "error", "message": e}));
-                std::process::exit(1);
+                exit_now(1);
             }
         }
     }
     #[cfg(not(feature = "onnx"))]
     if cli.transcribe.is_some() {
         crate::note!("Пересоберите с --features onnx для локальной расшифровки");
-        std::process::exit(2);
+        exit_now(2);
     }
 
     if cli.autostart_on {
@@ -300,7 +312,7 @@ pub fn run_cli() {
             return;
         }
         crate::note!("Не удалось остановить запись: запущенное приложение не найдено.");
-        std::process::exit(1);
+        exit_now(1);
     }
     if cli.show || cli.hide || cli.quit {
         let cmd = if cli.show {
@@ -329,7 +341,7 @@ pub fn run_cli() {
         && !cli.stop
     {
         crate::note!("Сборка без нативного окна (tauri-ui). Запустите ./run.sh --build");
-        std::process::exit(1);
+        exit_now(1);
     }
 
     // Повторный клик по иконке (запуск без флагов) поднимает уже работающее окно,
@@ -350,7 +362,7 @@ pub fn run_cli() {
                 crate::note!(
                     "Подтекст уже запущен без окна ({resp}). Завершите фоновый экземпляр и запустите снова."
                 );
-                std::process::exit(1);
+                exit_now(1);
             }
             None => {}
         }
@@ -395,7 +407,7 @@ pub fn run_cli() {
         Ok(f) => f,
         Err(e) => {
             crate::note!("Подтекст уже запущен (lock {}): {e}", lock_path.display());
-            std::process::exit(1);
+            exit_now(1);
         }
     };
     cleanup_stale_files();
@@ -423,8 +435,9 @@ pub fn run_cli() {
         let visible = cli.show || !cli.tray;
         let code = tauri_shell::run_tauri_window(state.clone(), cli.port, visible);
         summary::shutdown();
+        logging::shutdown();
         if code != 0 {
-            std::process::exit(code);
+            exit_now(code);
         }
         crash::mark_clean();
         return;
@@ -438,6 +451,7 @@ pub fn run_cli() {
         });
     }
     run_http_server(state, cli.port);
+    logging::shutdown();
     crash::mark_clean();
 }
 

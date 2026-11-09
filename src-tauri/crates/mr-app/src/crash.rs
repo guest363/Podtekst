@@ -121,8 +121,17 @@ fn build_record(
         "panic": panic,
         "backtrace": backtrace.into_iter().take(MAX_BACKTRACE_FRAMES).collect::<Vec<_>>(),
         "log_tail": log_tail(),
+        "dev_log_tail": dev_log_tail(),
         "run": run,
     })
+}
+
+fn dev_log_tail() -> String {
+    let lines = crate::logging::recent_lines(200);
+    if lines.is_empty() {
+        return String::new();
+    }
+    privacy::redact_text(&lines.join("\n"))
 }
 
 fn app_info() -> Value {
@@ -256,6 +265,13 @@ fn fit_bytes(record: &Value) -> Option<Vec<u8>> {
     if let Some(tail) = tail {
         trimmed["log_tail"] = json!(tail);
     }
+    let dev_tail = trimmed
+        .get("dev_log_tail")
+        .and_then(Value::as_str)
+        .map(|text| truncate(text, 32 * 1024));
+    if let Some(tail) = dev_tail {
+        trimmed["dev_log_tail"] = json!(tail);
+    }
     if let Ok(bytes) = serde_json::to_vec(&trimmed) {
         if bytes.len() <= MAX_FILE_BYTES {
             return Some(bytes);
@@ -263,6 +279,7 @@ fn fit_bytes(record: &Value) -> Option<Vec<u8>> {
     }
     trimmed["backtrace"] = json!([]);
     trimmed["log_tail"] = json!("");
+    trimmed["dev_log_tail"] = json!("");
     for chars in [4096usize, 1024, 256, 0] {
         let message = trimmed
             .get("panic")

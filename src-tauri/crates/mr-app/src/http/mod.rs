@@ -791,7 +791,7 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 (tiny_http::Method::Post, "/api/diagnostics") => {
                     let mut body = Vec::new();
                     let _ = request.as_reader().read_to_end(&mut body);
-                    match crate::diagnostics::collect() {
+                    match crate::diagnostics::collect(false) {
                         Ok(path) => {
                             let shared = crate::diagnostics::share(&path);
                             json_response(

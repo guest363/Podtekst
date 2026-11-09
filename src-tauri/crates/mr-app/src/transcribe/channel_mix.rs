@@ -47,21 +47,41 @@ fn correlation(a: &[f32], b: &[f32]) -> f64 {
     cov / (var_a.sqrt() * var_b.sqrt())
 }
 
+/// Метрики решения «каналы дублируют речь»: без них не видно, какой порог
+/// свернул стерео в моно.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct MixStats {
+    pub len: usize,
+    pub corr: f64,
+    pub containment: f64,
+    pub jaccard: f64,
+    pub th0: f32,
+    pub th1: f32,
+    pub chosen: Option<usize>,
+}
+
+#[cfg(test)]
 pub(crate) fn mixed_stereo(channels: &[Vec<f32>]) -> Option<usize> {
+    mixed_stereo_with_stats(channels).0
+}
+
+pub(crate) fn mixed_stereo_with_stats(channels: &[Vec<f32>]) -> (Option<usize>, MixStats) {
+    let mut stats = MixStats::default();
     if channels.len() != 2 {
-        return None;
+        return (None, stats);
     }
     let len = channels[0].len().min(channels[1].len());
+    stats.len = len;
     if len < FRAME_SAMPLES * 6 {
-        return None;
+        return (None, stats);
     }
     let env0 = smooth(&envelope(&channels[0][..len]));
     let env1 = smooth(&envelope(&channels[1][..len]));
-    let corr = correlation(&env0, &env1);
-    let th0 = (percentile(&env0, 0.9) * 0.2).max(0.005);
-    let th1 = (percentile(&env1, 0.9) * 0.2).max(0.005);
-    let active0: Vec<bool> = env0.iter().map(|&x| x > th0).collect();
-    let active1: Vec<bool> = env1.iter().map(|&x| x > th1).collect();
+    stats.corr = correlation(&env0, &env1);
+    stats.th0 = (percentile(&env0, 0.9) * 0.2).max(0.005);
+    stats.th1 = (percentile(&env1, 0.9) * 0.2).max(0.005);
+    let active0: Vec<bool> = env0.iter().map(|&x| x > stats.th0).collect();
+    let active1: Vec<bool> = env1.iter().map(|&x| x > stats.th1).collect();
     let overlap = active0
         .iter()
         .zip(&active1)
@@ -72,23 +92,24 @@ pub(crate) fn mixed_stereo(channels: &[Vec<f32>]) -> Option<usize> {
     let min_active = active_count0.min(active_count1);
     let max_active = active_count0.max(active_count1);
     if min_active < active0.len() / 20 || min_active * 5 < max_active * 4 {
-        return None;
+        return (None, stats);
     }
-    let containment = overlap as f64 / min_active as f64;
+    stats.containment = overlap as f64 / min_active as f64;
     let union =
         active0.iter().filter(|&&a| a).count() + active1.iter().filter(|&&b| b).count() - overlap;
-    let jaccard = overlap as f64 / union.max(1) as f64;
+    stats.jaccard = overlap as f64 / union.max(1) as f64;
     // Высокий Jaccard означает, что почти вся речь есть в обоих каналах.
     // Для реального split с наушниками локальный и удалённый голоса
     // чередуются, поэтому пересечение активности заметно ниже.
     // shortcut: 0.70/0.85/0.75 — стартовые пороги без размеченного набора;
     // откалибровать на записях в наушниках и с колонками.
-    if corr < 0.70 || containment < 0.85 || jaccard < 0.75 {
-        return None;
+    if stats.corr < 0.70 || stats.containment < 0.85 || stats.jaccard < 0.75 {
+        return (None, stats);
     }
     // Канал 0 — микрофон: он слышит комнату и остаётся основным источником.
     // Системный канал при дубле — обработанный loopback той же речи.
-    Some(0)
+    stats.chosen = Some(0);
+    (Some(0), stats)
 }
 
 const VAD_FRAME: usize = 512;
@@ -130,22 +151,45 @@ fn window_corr(a: &[f32], b: &[f32], center: usize, other: usize, half: usize) -
     cov / (var_a.sqrt() * var_b.sqrt())
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct BleedStats {
+    pub delay: usize,
+    pub prominence: f32,
+    pub suppressed: usize,
+    pub frames: usize,
+    pub probe_sec: f64,
+}
+
+#[cfg(test)]
 pub(crate) fn suppress_mic_bleed(mic: &[f32], system: &[f32], vad_probs: &mut [f32]) -> usize {
+    suppress_mic_bleed_with_stats(mic, system, vad_probs).suppressed
+}
+
+pub(crate) fn suppress_mic_bleed_with_stats(
+    mic: &[f32],
+    system: &[f32],
+    vad_probs: &mut [f32],
+) -> BleedStats {
+    let mut stats = BleedStats::default();
     let probe = mic.len().min(system.len()).min(BLEED_PROBE_SEC * 16000);
+    stats.probe_sec = probe as f64 / 16000.0;
     if probe < 16000 * 2 {
-        return 0;
+        return stats;
     }
     let Some((delay, prominence)) =
         mr_audio::echo::delay::estimate(&mic[..probe], &system[..probe], 8000)
     else {
-        return 0;
+        return stats;
     };
+    stats.delay = delay;
+    stats.prominence = prominence;
     if prominence < 8.0 {
-        return 0;
+        return stats;
     }
     let mic_env = vad_envelope(mic);
     let sys_env = vad_envelope(system);
     let frames = mic_env.len().min(sys_env.len()).min(vad_probs.len());
+    stats.frames = frames;
     let delay_frames = delay / VAD_FRAME;
     let mut suppressed = 0;
     for frame in 0..frames {
@@ -168,7 +212,8 @@ pub(crate) fn suppress_mic_bleed(mic: &[f32], system: &[f32], vad_probs: &mut [f
             suppressed += 1;
         }
     }
-    suppressed
+    stats.suppressed = suppressed;
+    stats
 }
 
 #[cfg(test)]
@@ -263,6 +308,38 @@ mod tests {
             .map(|x| x * 0.8)
             .collect();
         assert_eq!(mixed_stereo(&[a, b]), Some(0));
+    }
+
+    #[test]
+    fn mix_stats_explain_decision() {
+        let len = 16_000 * 8;
+        let spans = [(0.0, 2.0), (2.5, 4.0), (5.0, 7.5)];
+        let a = bursts(len, &spans, 0.2, 11);
+        let b = bursts(len, &spans, 0.3, 12);
+        let (chosen, stats) = mixed_stereo_with_stats(&[a, b]);
+        assert_eq!(chosen, Some(0));
+        assert!(stats.corr >= 0.7 && stats.containment >= 0.85 && stats.jaccard >= 0.75);
+        assert_eq!(stats.chosen, Some(0));
+
+        let (chosen, stats) = mixed_stereo_with_stats(&[vec![0.0; 100], vec![0.0; 100]]);
+        assert!(chosen.is_none());
+        assert_eq!(stats.len, 100);
+    }
+
+    #[test]
+    fn bleed_stats_carry_delay_and_prominence() {
+        let len = 16_000 * 4;
+        let spans = [(0.5, 2.0), (2.5, 4.0)];
+        let system = chirp_bursts(len, &spans, 0.2);
+        let delay = 1000usize;
+        let mut mic = vec![0.0f32; delay];
+        mic.extend(system[..system.len() - delay].iter().map(|x| x * 0.1));
+        let mut probs = vec![1.0f32; len.div_ceil(VAD_FRAME)];
+        let stats = suppress_mic_bleed_with_stats(&mic, &system, &mut probs);
+        assert!(stats.suppressed > 0);
+        assert_eq!(stats.delay, delay);
+        assert!(stats.prominence >= 8.0);
+        assert!(stats.probe_sec > 3.0);
     }
 
     #[test]

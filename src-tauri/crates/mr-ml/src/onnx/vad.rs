@@ -27,6 +27,17 @@ fn silence_action(silent_run: usize) -> SilenceAction {
     }
 }
 
+/// Счётчики решения VAD: без них не видно, почему модель «не увидела» речь —
+/// цифровая тишина, сброс состояния LSTM или реальный низкий порог.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VadRunStats {
+    pub windows: usize,
+    pub silent_skip: usize,
+    pub silent_infer: usize,
+    pub resets: usize,
+    pub non_finite: usize,
+}
+
 pub struct SileroVad {
     session: OrtSession,
     state: Vec<f32>,
@@ -103,11 +114,20 @@ impl SileroVad {
     /// То же с прогрессом и пропуском цифровой тишины. На Android один
     /// inference на окно 32 мс — главный тормоз часовых записей; окна полной
     /// тишины не отправляем в ONNX, а сразу считаем неречевыми.
-    pub fn process_all_with<F>(
+    pub fn process_all_with<F>(&mut self, samples: &[f32], progress: F) -> Result<Vec<f32>, String>
+    where
+        F: FnMut(usize, usize),
+    {
+        self.process_all_with_stats(samples, progress)
+            .map(|(probs, _)| probs)
+    }
+
+    /// То же, что `process_all_with`, плюс счётчики решений для dev-логов.
+    pub fn process_all_with_stats<F>(
         &mut self,
         samples: &[f32],
         mut progress: F,
-    ) -> Result<Vec<f32>, String>
+    ) -> Result<(Vec<f32>, VadRunStats), String>
     where
         F: FnMut(usize, usize),
     {
@@ -116,6 +136,10 @@ impl SileroVad {
         let total = chunks.len();
         let mut probs = Vec::with_capacity(total);
         let mut silent_run = 0usize;
+        let mut stats = VadRunStats {
+            windows: total,
+            ..VadRunStats::default()
+        };
         for (i, chunk) in chunks.into_iter().enumerate() {
             let peak = chunk.iter().fold(0.0f32, |acc, x| acc.max(x.abs()));
             if peak < 1e-4 {
@@ -125,20 +149,28 @@ impl SileroVad {
                         // Вероятность известной цифровой тишины не нужна,
                         // но прогон обновляет state и context модели.
                         self.process_window(chunk)?;
+                        stats.silent_infer += 1;
                     }
-                    SilenceAction::Reset => self.reset(),
-                    SilenceAction::Skip => {}
+                    SilenceAction::Reset => {
+                        self.reset();
+                        stats.resets += 1;
+                    }
+                    SilenceAction::Skip => stats.silent_skip += 1,
                 }
                 probs.push(0.0);
             } else {
                 silent_run = 0;
-                probs.push(self.process_window(chunk)?);
+                let probability = self.process_window(chunk)?;
+                if !probability.is_finite() {
+                    stats.non_finite += 1;
+                }
+                probs.push(probability);
             }
             if i % 256 == 0 || i + 1 == total {
                 progress(i + 1, total);
             }
         }
-        Ok(probs)
+        Ok((probs, stats))
     }
 }
 

@@ -175,6 +175,7 @@ impl CaptureStream {
                 let _ = worker.join();
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                log::warn!(target: "audio", timeout_sec = 3; "ev=audio.capture.timeout");
                 eprintln!("Поток захвата не завершился за 3 с: отсоединён");
             }
         }
@@ -276,6 +277,14 @@ pub fn system_audio_permission() -> bool {
 /// Микрофон обязателен: без него запись не имеет смысла. Системный звук —
 /// best effort: если устройство недоступно, запись идёт без него.
 pub fn start_capture(req: &CaptureRequest) -> Result<CaptureSession> {
+    // Имена устройств — пользовательские данные: в лог идут только флаги.
+    log::debug!(
+        target: "audio",
+        mic = req.mic.is_some(),
+        system = req.system.is_some(),
+        rate = req.rate;
+        "ev=audio.capture.start"
+    );
     let mut session = CaptureSession::default();
     let mic = start_stream(
         StreamKind::Microphone,
@@ -289,6 +298,12 @@ pub fn start_capture(req: &CaptureRequest) -> Result<CaptureSession> {
             match start_stream(StreamKind::System, Some(system), &req.system_path, req.rate) {
                 Ok(s) => session.system = Some(s),
                 Err(e) => {
+                    log::warn!(
+                        target: "audio",
+                        reason = "system_unavailable",
+                        error = e.to_string();
+                        "ev=audio.capture"
+                    );
                     // Системный звук — необязательный: пишем тишину в правый канал.
                     eprintln!("Системный звук недоступен: {e}");
                     session.system_error = Some(e.to_string());

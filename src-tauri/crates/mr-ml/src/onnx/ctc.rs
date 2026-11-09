@@ -812,10 +812,12 @@ impl GigaCTC {
                 }
             }
             if !hw_skipped.is_empty() {
-                eprintln!(
-                    "CTC: мимо вокаба ({}) — бонус их не подхватит: {}",
-                    hw_skipped.len(),
-                    hw_skipped.join(", ")
+                // Сами термины — пользовательские данные: логируем только счётчик.
+                log::warn!(
+                    target: "asr",
+                    skipped = hw_skipped.len(),
+                    applied = hw_ids.len();
+                    "ev=asr.ctc.hotwords_skipped"
                 );
             }
             self.hw_cache_key = hotwords.to_vec();

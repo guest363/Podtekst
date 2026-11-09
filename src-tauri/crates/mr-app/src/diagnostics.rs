@@ -61,22 +61,22 @@ pub(crate) fn share(path: &Path) -> bool {
     }
 }
 
-pub(crate) fn collect() -> Result<PathBuf, String> {
-    collect_into(&output_dir())
+pub(crate) fn collect(with_dev_logs: bool) -> Result<PathBuf, String> {
+    collect_into(&output_dir(), with_dev_logs)
 }
 
-pub(crate) fn collect_into(dir: &Path) -> Result<PathBuf, String> {
+pub(crate) fn collect_into(dir: &Path, with_dev_logs: bool) -> Result<PathBuf, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("Не создана папка отчёта: {e}"))?;
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let path = dir.join(format!("podtekst-diagnostics-{stamp}.zip"));
-    write_zip(&path, &report_files())?;
+    write_zip(&path, &report_files(with_dev_logs))?;
     Ok(path)
 }
 
-fn report_files() -> Vec<(&'static str, String)> {
+fn report_files(with_dev_logs: bool) -> Vec<(&'static str, String)> {
     let report = crate::system::snapshot_for_report();
     let mut files = vec![
         ("system.json", pretty(report.clone())),
@@ -92,6 +92,12 @@ fn report_files() -> Vec<(&'static str, String)> {
     ];
     if let Some(crash) = crate::crash::latest() {
         files.push(("crashes/latest.json", redact_text(&pretty(crash))));
+    }
+    // P12: dev-логи попадают в экспорт только по явному флагу и только
+    // хвостом из кольца, уже без имён файлов и полного текста.
+    if with_dev_logs && crate::logging::dev_logs_enabled() {
+        let tail = crate::logging::recent_lines(200).join("\n");
+        files.push(("logs/dev.log", redact_text(&tail)));
     }
     files.push(("README.txt", readme().to_string()));
     files
@@ -147,6 +153,8 @@ fn readme() -> &'static str {
      В архиве нет аудио, расшифровок, голосовых отпечатков и контактов.\n\
      Домашний каталог в путях заменён на ~, имена устройств скрыты,\n\
      имена файлов в журнале заменены на recording-<id>.\n\
+     Dev-логи попадают только по явному --with-dev-logs и только хвостом\n\
+     последних 200 строк.\n\
      Перед отправкой просмотрите logs/app.log: фрагменты текста могут\n\
      попасть в сообщения об ошибках.\n"
 }

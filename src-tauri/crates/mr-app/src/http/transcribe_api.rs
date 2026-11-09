@@ -40,19 +40,56 @@ pub(super) fn serve_transcript(request: tiny_http::Request, query: &str) {
     let mut meta = serde_json::json!({});
     let mut speakers_info = serde_json::json!([]);
     let mut utterances = serde_json::json!([]);
-    if let Ok(text) = std::fs::read_to_string(&json_p) {
-        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&text) {
-            meta = data.get("meta").cloned().unwrap_or(json!({}));
+    #[cfg(feature = "onnx")]
+    match crate::transcribe::document::read_transcript(&json_p) {
+        Ok(doc) => {
+            meta = serde_json::to_value(&doc.meta).unwrap_or_else(|_| json!({}));
             speakers_info = meta.get("speakers_info").cloned().unwrap_or(json!([]));
             // Полный список реплик без лимита: обрезка «первые 200» теряла
             // хвост длинных встреч в UI.
-            utterances = data.get("utterances").cloned().unwrap_or(json!([]));
+            utterances = serde_json::to_value(&doc.utterances).unwrap_or_else(|_| json!([]));
+        }
+        Err(crate::transcribe::document::TranscriptError::NotFound(_)) => {
+            log::warn!(
+                target: "json",
+                path = crate::logging::file_token(&json_p),
+                reason = "not_found";
+                "ev=json.load"
+            );
+        }
+        Err(_) => {}
+    }
+    // Сборка без onnx не содержит конвейера и его формата: UI всё равно
+    // должен показывать уже готовые расшифровки.
+    #[cfg(not(feature = "onnx"))]
+    if let Ok(text) = std::fs::read_to_string(&json_p) {
+        match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(data) => {
+                meta = data.get("meta").cloned().unwrap_or(json!({}));
+                speakers_info = meta.get("speakers_info").cloned().unwrap_or(json!([]));
+                utterances = data.get("utterances").cloned().unwrap_or(json!([]));
+            }
+            Err(error) => log::warn!(
+                target: "json",
+                path = crate::logging::file_token(&json_p),
+                error = error.to_string();
+                "ev=json.load"
+            ),
         }
     }
     let md_text = std::fs::read_to_string(&md_p).unwrap_or_default();
     let rev = serde_json::from_value::<Vec<mr_summarize::Utterance>>(utterances.clone())
         .ok()
         .map(|items| mr_summarize::artifact::source_rev(&items));
+    log::debug!(
+        target: "json",
+        file = crate::logging::file_token(&p),
+        utts = utterances.as_array().map(|items| items.len()).unwrap_or(0),
+        bytes = std::fs::metadata(&json_p).map(|m| m.len()).unwrap_or(0),
+        meta_keys = meta.as_object().map(|map| map.len()).unwrap_or(0),
+        rev = rev.clone().unwrap_or_default();
+        "ev=json.response"
+    );
     json_response(
         request,
         json!({

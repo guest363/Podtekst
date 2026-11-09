@@ -134,11 +134,20 @@ pub fn load(paths: &Paths, current_rev: &str) -> Loaded {
             artifact: None,
         };
     };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return Loaded {
-            state: State::Corrupt,
-            artifact: None,
-        };
+    let value = match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(value) => value,
+        Err(error) => {
+            log::warn!(
+                target: "json",
+                path = crate::logging::file_token(&paths.json),
+                error = error.to_string();
+                "ev=json.load"
+            );
+            return Loaded {
+                state: State::Corrupt,
+                artifact: None,
+            };
+        }
     };
     let schema = value
         .get("schema")
@@ -178,8 +187,17 @@ pub fn inspect(paths: &Paths) -> State {
     let Ok(text) = std::fs::read_to_string(&paths.json) else {
         return State::Missing;
     };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return State::Corrupt;
+    let value = match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(value) => value,
+        Err(error) => {
+            log::warn!(
+                target: "json",
+                path = crate::logging::file_token(&paths.json),
+                error = error.to_string();
+                "ev=json.load"
+            );
+            return State::Corrupt;
+        }
     };
     let schema = value
         .get("schema")

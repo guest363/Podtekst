@@ -89,38 +89,58 @@ fn speakers_count_cached(path: &Path, len: u64, mtime: u64) -> u64 {
         len,
         mtime,
         || {
-            std::fs::read_to_string(path)
-                .ok()
-                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-                .map(|d| {
-                    let meta = d.get("meta");
-                    let count = meta
-                        .and_then(|m| m.get("speakers_info"))
+            let text = match std::fs::read_to_string(path) {
+                Ok(text) => text,
+                Err(error) => {
+                    if error.kind() != std::io::ErrorKind::NotFound {
+                        log::warn!(
+                            target: "json",
+                            path = crate::logging::file_token(path),
+                            error = error.to_string();
+                            "ev=json.load"
+                        );
+                    }
+                    return 0.0;
+                }
+            };
+            let data: serde_json::Value = match serde_json::from_str(&text) {
+                Ok(value) => value,
+                Err(error) => {
+                    log::warn!(
+                        target: "json",
+                        path = crate::logging::file_token(path),
+                        error = error.to_string();
+                        "ev=json.load"
+                    );
+                    return 0.0;
+                }
+            };
+            let meta = data.get("meta");
+            let count = meta
+                .and_then(|m| m.get("speakers_info"))
+                .and_then(|s| s.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0)
+                .max(
+                    meta.and_then(|m| m.get("speakers"))
                         .and_then(|s| s.as_array())
                         .map(|a| a.len())
-                        .unwrap_or(0)
-                        .max(
-                            meta.and_then(|m| m.get("speakers"))
-                                .and_then(|s| s.as_array())
-                                .map(|a| a.len())
-                                .unwrap_or(0),
-                        );
-                    if count > 0 {
-                        count
-                    } else {
-                        d.get("utterances")
-                            .and_then(|u| u.as_array())
-                            .map(|arr| {
-                                let set: std::collections::HashSet<_> = arr
-                                    .iter()
-                                    .filter_map(|x| x.get("speaker").and_then(|s| s.as_str()))
-                                    .collect();
-                                set.len()
-                            })
-                            .unwrap_or(0)
-                    }
-                })
-                .unwrap_or(0) as f64
+                        .unwrap_or(0),
+                );
+            if count > 0 {
+                count as f64
+            } else {
+                data.get("utterances")
+                    .and_then(|u| u.as_array())
+                    .map(|arr| {
+                        let set: std::collections::HashSet<_> = arr
+                            .iter()
+                            .filter_map(|x| x.get("speaker").and_then(|s| s.as_str()))
+                            .collect();
+                        set.len()
+                    })
+                    .unwrap_or(0) as f64
+            }
         },
     ) as u64
 }

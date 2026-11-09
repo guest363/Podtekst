@@ -28,11 +28,33 @@ fn external_people_path() -> PathBuf {
 }
 
 pub(super) fn load_external_people() -> Vec<serde_json::Value> {
-    std::fs::read_to_string(external_people_path())
-        .ok()
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        .and_then(|v| v.as_array().cloned())
-        .unwrap_or_default()
+    let path = external_people_path();
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) => {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                log::warn!(
+                    target: "json",
+                    path = crate::logging::file_token(&path),
+                    error = error.to_string();
+                    "ev=json.load"
+                );
+            }
+            return Vec::new();
+        }
+    };
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(value) => value.as_array().cloned().unwrap_or_default(),
+        Err(error) => {
+            log::warn!(
+                target: "json",
+                path = crate::logging::file_token(&path),
+                error = error.to_string();
+                "ev=json.load"
+            );
+            Vec::new()
+        }
+    }
 }
 
 pub(super) fn save_external_people(list: &[serde_json::Value]) {
@@ -76,11 +98,21 @@ pub(crate) fn migrate_voiceprints_v3() {
     files.dedup();
     for file in files {
         let _guard = lock_voiceprints();
-        let Ok(text) = std::fs::read_to_string(&file) else {
-            continue;
+        let text = match std::fs::read_to_string(&file) {
+            Ok(text) => text,
+            Err(_) => continue,
         };
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
-            continue;
+        let v = match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(value) => value,
+            Err(error) => {
+                log::warn!(
+                    target: "json",
+                    path = crate::logging::file_token(&file),
+                    error = error.to_string();
+                    "ev=json.load"
+                );
+                continue;
+            }
         };
         let profiles = parse_profiles(&v);
         let n_before = profiles.len();
@@ -116,8 +148,32 @@ pub(crate) fn migrate_voiceprints_v3() {
 }
 
 pub(super) fn read_people_list(path: &Path) -> Option<Vec<serde_json::Value>> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) => {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                log::warn!(
+                    target: "json",
+                    path = crate::logging::file_token(path),
+                    error = error.to_string();
+                    "ev=json.load"
+                );
+            }
+            return None;
+        }
+    };
+    let v: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(error) => {
+            log::warn!(
+                target: "json",
+                path = crate::logging::file_token(path),
+                error = error.to_string();
+                "ev=json.load"
+            );
+            return None;
+        }
+    };
     if let Some(arr) = v.as_array() {
         return Some(arr.clone());
     }
@@ -537,20 +593,41 @@ fn store_voiceprint(
     );
 
     let _guard = lock_voiceprints();
-    let mut profiles: Vec<serde_json::Value> = std::fs::read_to_string(&vp_file)
-        .ok()
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        .map(|v| {
-            if v.get("embedding_space")
-                .and_then(|x| x.as_str())
-                .is_some_and(|s| s != EMBEDDING_SPACE)
-            {
-                vec![]
-            } else {
-                parse_profiles(&v)
+    let mut profiles: Vec<serde_json::Value> = match std::fs::read_to_string(&vp_file) {
+        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(value) => {
+                if value
+                    .get("embedding_space")
+                    .and_then(|x| x.as_str())
+                    .is_some_and(|s| s != EMBEDDING_SPACE)
+                {
+                    vec![]
+                } else {
+                    parse_profiles(&value)
+                }
             }
-        })
-        .unwrap_or_default();
+            Err(error) => {
+                log::warn!(
+                    target: "json",
+                    path = crate::logging::file_token(&vp_file),
+                    error = error.to_string();
+                    "ev=json.load"
+                );
+                vec![]
+            }
+        },
+        Err(error) => {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                log::warn!(
+                    target: "json",
+                    path = crate::logging::file_token(&vp_file),
+                    error = error.to_string();
+                    "ev=json.load"
+                );
+            }
+            vec![]
+        }
+    };
     profiles.retain(voiceprint_usable);
     let duration_sec = prototype_duration(sample.start, sample.end);
     let quality_val = sample.quality.unwrap_or(1.0).clamp(0.1, 2.0);
@@ -961,12 +1038,31 @@ pub(super) fn handle_voiceprint_learn_sample(request: tiny_http::Request, body: 
         .map(|p| p.to_path_buf())
         .unwrap_or_else(save_dir)
         .join(format!("{stem}.transcript.json"));
-    let data: serde_json::Value = match std::fs::read_to_string(&json_p)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-    {
-        Some(v) => v,
-        None => {
+    let data: serde_json::Value = match std::fs::read_to_string(&json_p) {
+        Ok(text) => match serde_json::from_str(&text) {
+            Ok(value) => value,
+            Err(error) => {
+                log::warn!(
+                    target: "json",
+                    path = crate::logging::file_token(&json_p),
+                    error = error.to_string();
+                    "ev=json.load"
+                );
+                json_response(
+                    request,
+                    json!({"ok": false, "error": "Расшифровка не найдена"}),
+                    404,
+                );
+                return;
+            }
+        },
+        Err(error) => {
+            log::warn!(
+                target: "json",
+                path = crate::logging::file_token(&json_p),
+                error = error.to_string();
+                "ev=json.load"
+            );
             json_response(
                 request,
                 json!({"ok": false, "error": "Расшифровка не найдена"}),

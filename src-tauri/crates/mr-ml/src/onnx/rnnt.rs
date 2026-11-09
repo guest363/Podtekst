@@ -17,6 +17,15 @@ pub const BLANK_ID: i64 = 1024;
 
 pub type DecoderState = (Vec<f32>, Vec<f32>, Vec<f32>);
 
+/// Метрики последнего декодирования: blank-доля объясняет пустой текст
+/// на тихой речи без отдельного прогона модели.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DecodeStats {
+    pub frames: usize,
+    pub tokens: usize,
+    pub blank: usize,
+}
+
 pub struct GigaAM {
     enc: OrtSession,
     dec: OrtSession,
@@ -24,6 +33,7 @@ pub struct GigaAM {
     enc_input: String,
     enc_output: String,
     vocab: Vec<String>,
+    last_stats: DecodeStats,
 }
 
 impl GigaAM {
@@ -63,7 +73,12 @@ impl GigaAM {
             enc_input,
             enc_output,
             vocab,
+            last_stats: DecodeStats::default(),
         })
+    }
+
+    pub fn last_stats(&self) -> DecodeStats {
+        self.last_stats
     }
 
     fn joint_logits(&mut self, enc_frame: &[f32], dec_vec: &[f32]) -> Result<Vec<f32>, String> {
@@ -120,6 +135,7 @@ impl GigaAM {
         mel: &[Vec<f32>],
         blank_penalty: f32,
     ) -> Result<String, String> {
+        self.last_stats = DecodeStats::default();
         if mel.is_empty() {
             return Ok(String::new());
         }
@@ -186,6 +202,11 @@ impl GigaAM {
                 c = nc;
             }
         }
+        self.last_stats = DecodeStats {
+            frames,
+            tokens: ids.len(),
+            blank: frames.saturating_sub(ids.len()),
+        };
         Ok(decode_pieces(&ids, &self.vocab))
     }
 }

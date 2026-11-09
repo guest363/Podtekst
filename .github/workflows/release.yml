@@ -70,6 +70,24 @@ jobs:
           fi
           python3 .github/scripts/updater_manifest.py --root . --tag "$TAG" --check-only "${extra[@]}"
 
+  # Release-гейт dev-логов: стандартная release-сборка не должна содержать
+  # маркер PODTEKST_DEV_LOGS_V1 (debug_assertions=false, dev-модуль не компилируется).
+  no-dev-logs:
+    needs: meta
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Build release headless
+        run: cargo build --release -p mr-app --locked --manifest-path src-tauri/Cargo.toml
+      - name: Ensure no dev-log marker
+        run: ./scripts/check-no-dev-logs.sh src-tauri/target/release/podtekst
+
   # --- Tauri v2 bundles (окно + трей; нужен системный WebView) ---
   build-tauri:
     needs: meta
@@ -903,7 +921,7 @@ jobs:
           path: dist/*
 
   publish:
-    needs: [meta, manifest, real-summary, smoke-linux, smoke-macos, smoke-windows, smoke-android]
+    needs: [meta, manifest, real-summary, no-dev-logs, smoke-linux, smoke-macos, smoke-windows, smoke-android]
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     permissions:

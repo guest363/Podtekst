@@ -28,7 +28,24 @@ pub(crate) fn check(path: &Path) -> Result<(), String> {
     let Some((duration, channels)) = mr_audio::decode::media_info(path) else {
         return Ok(());
     };
-    check_peak(peak_bytes(duration, channels), available_bytes())
+    let need = peak_bytes(duration, channels);
+    let available = available_bytes();
+    log::debug!(
+        target: "run",
+        avail_mb = available.map(|bytes| bytes / (1024 * 1024)),
+        need_mb = need / (1024 * 1024),
+        dur_sec = duration,
+        channels = channels,
+        decision = if available.is_some_and(|available| fits(need, available)) {
+            "ok"
+        } else if available.is_some() {
+            "refuse"
+        } else {
+            "unknown"
+        };
+        "ev=memory.check"
+    );
+    check_peak(need, available)
 }
 
 fn check_peak(need: u64, available: Option<u64>) -> Result<(), String> {

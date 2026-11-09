@@ -26,6 +26,7 @@ pub struct OrtSession {
     session: ort::session::Session,
     pub input_names: Vec<String>,
     pub output_names: Vec<String>,
+    label: String,
 }
 
 impl OrtSession {
@@ -34,15 +35,32 @@ impl OrtSession {
     /// пробует аппаратный ускоритель; недоступен драйвер или библиотека —
     /// прозрачно возвращается к CPU.
     pub fn load(path: &Path, intra_threads: usize) -> Result<Self, String> {
+        let started = std::time::Instant::now();
         let env = global_env()?;
         #[cfg(any(feature = "ort-cuda", feature = "ort-directml", feature = "ort-coreml"))]
         match Self::accelerated(&env, path, intra_threads) {
             Ok(session) => return Ok(session),
-            Err(e) => eprintln!("GPU-провайдер недоступен, работаем на CPU: {e}"),
+            Err(e) => log::warn!(
+                target: "model",
+                file = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                error = e.to_string();
+                "ev=model.gpu_fallback"
+            ),
         }
         let mut builder = Self::base_builder(&env, intra_threads)?;
         let session = builder.commit_from_file(path).map_err(|e| e.to_string())?;
-        Ok(Self::from_session(session))
+        let loaded = Self::from_session(session, path);
+        log::info!(
+            target: "model",
+            file = loaded.label.clone(),
+            bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            inputs = format!("{:?}", loaded.input_names),
+            outputs = format!("{:?}", loaded.output_names),
+            threads = intra_threads;
+            "ev=model.load"
+        );
+        Ok(loaded)
     }
 
     #[cfg(any(feature = "ort-cuda", feature = "ort-directml", feature = "ort-coreml"))]
@@ -63,7 +81,7 @@ impl OrtSession {
             .with_execution_providers(eps)
             .map_err(|e| e.to_string())?;
         let session = builder.commit_from_file(path).map_err(|e| e.to_string())?;
-        Ok(Self::from_session(session))
+        Ok(Self::from_session(session, path))
     }
 
     fn base_builder(
@@ -93,7 +111,7 @@ impl OrtSession {
         Ok(builder)
     }
 
-    fn from_session(session: ort::session::Session) -> Self {
+    fn from_session(session: ort::session::Session, path: &Path) -> Self {
         let input_names = session
             .inputs()
             .iter()
@@ -108,6 +126,10 @@ impl OrtSession {
             session,
             input_names,
             output_names,
+            label: path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
         }
     }
 
@@ -178,7 +200,16 @@ impl OrtSession {
             names.push(name);
         }
         let map: HashMap<&str, DynTensor> = names.iter().map(|n| n.as_str()).zip(tensors).collect();
-        let outputs = self.session.run(map).map_err(|e| e.to_string())?;
+        let outputs = self.session.run(map).map_err(|error| {
+            log::error!(
+                target: "model",
+                model = self.label,
+                inputs = format!("{names:?}"),
+                error = error.to_string();
+                "ev=model.infer_error"
+            );
+            error.to_string()
+        })?;
         Self::collect_outputs(&self.output_names, outputs)
     }
 
@@ -212,7 +243,16 @@ impl OrtSession {
             names.push(name);
         }
         let map: HashMap<&str, DynTensor> = names.iter().map(|n| n.as_str()).zip(tensors).collect();
-        let outputs = self.session.run(map).map_err(|e| e.to_string())?;
+        let outputs = self.session.run(map).map_err(|error| {
+            log::error!(
+                target: "model",
+                model = self.label,
+                inputs = format!("{names:?}"),
+                error = error.to_string();
+                "ev=model.infer_error"
+            );
+            error.to_string()
+        })?;
         Self::collect_outputs(&self.output_names, outputs)
     }
 

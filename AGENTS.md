@@ -16,6 +16,7 @@
 # Запуск (первый запуск сам соберёт релизный бинарник)
 ./run.sh                  # Нативное окно Tauri (WebView) + HTTP API http://127.0.0.1:8765
 ./run.sh --web            # Только HTTP API + автооткрытие браузера (без окна, лёгкая сборка)
+./run.sh --dev            # dev-opt профиль: dev-логи и артефакты распознавания
 ./run.sh --tray           # Нативное окно скрыто, только трей (Tauri)
 ./run.sh --toggle         # Переключить запись (старт / стоп через IPC)
 ./run.sh --start          # Начать запись через IPC
@@ -103,6 +104,7 @@ cd ui/web/frontend && yarn lint && yarn check && yarn build  # Фронт: Biome
 | Задача / Домен | Куда смотреть |
 |---|---|
 | Доменные термины (Turn, Voiceprint, Cluster, Person, VAD) | `CONTEXT.md` |
+| Dev-логи, артефакты запуска, разбор сбоев | `docs/dev-logging.md` |
 | Регламент работы с ИИ (Track 1 / Track 2), верификация | `docs/ai/workflow.md` |
 | Мобильная версия (Android AAudio, Foreground Service) | `ANDROID.md` |
 | ML-инференс, ONNX, Silero, GigaAM, Whisper, эмбеддинги | `src-tauri/crates/mr-ml/AGENTS.md` |

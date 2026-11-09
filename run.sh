@@ -28,9 +28,16 @@ trap on_error ERR
 CLEAN_ARGS=()
 WANT_BUILD=0
 WANT_WEB=0
+WANT_DEV=0
+WANT_CLI=0
 for a in "$@"; do
     if [ "$a" = "--build" ] || [ "$a" = "--rebuild" ]; then
         WANT_BUILD=1
+    elif [ "$a" = "--dev" ]; then
+        WANT_DEV=1
+    elif [ "$a" = "--transcribe" ]; then
+        WANT_CLI=1
+        CLEAN_ARGS+=("$a")
     elif [ "$a" = "--web" ] || [ "$a" = "--browser" ]; then
         WANT_WEB=1
         CLEAN_ARGS+=("$a")
@@ -42,12 +49,29 @@ done
 if [ "$WANT_WEB" = 1 ]; then
     FEATS=""
     SUFFIX="-web"
+elif [ "$WANT_DEV" = 1 ] && [ "$WANT_CLI" = 1 ]; then
+    # CLI-путь не требует WebView: отдельная цель, чтобы не перезаписать
+    # оконный бинарник сборкой без tauri-ui.
+    FEATS=""
+    SUFFIX=""
 else
     FEATS="--features tauri-ui"
     SUFFIX=""
 fi
 
-BIN="$SCRIPT_DIR/src-tauri/target/release/podtekst$SUFFIX"
+if [ "$WANT_DEV" = 1 ]; then
+    if [ "$WANT_CLI" = 1 ]; then
+        TARGET_DIR="target/dev-cli"
+    else
+        TARGET_DIR="target/dev$SUFFIX"
+    fi
+    BIN="$SCRIPT_DIR/src-tauri/$TARGET_DIR/dev-opt/podtekst"
+    export MR_LOG="${MR_LOG:-info,vad=debug,asr=debug,diar=debug,json=debug}"
+    export MR_DIAG_DUMP="${MR_DIAG_DUMP:-1}"
+else
+    TARGET_DIR=""
+    BIN="$SCRIPT_DIR/src-tauri/target/release/podtekst$SUFFIX"
+fi
 UI_MARKER="PODTEKST_TAURI_UI_BUILD_V1"
 
 # Сборка нужна ТОЛЬКО если бинарник отсутствует, изменились исходники или передан явный флаг --build / --rebuild.
@@ -70,7 +94,7 @@ elif [ -n "$(find "$SCRIPT_DIR/src-tauri/crates"/*/src "$SCRIPT_DIR/src-tauri/Ca
     NEEDS_RUST_BUILD=1
 elif [ "$NEEDS_FRONT_BUILD" = 1 ]; then
     NEEDS_RUST_BUILD=1
-elif [ "$WANT_WEB" = 0 ] && ! grep -aq "$UI_MARKER" "$BIN" 2>/dev/null; then
+elif [ "$WANT_WEB" = 0 ] && [ "$WANT_CLI" = 0 ] && ! grep -aq "$UI_MARKER" "$BIN" 2>/dev/null; then
     NEEDS_RUST_BUILD=1
 fi
 
@@ -135,15 +159,20 @@ if [ "$NEEDS_RUST_BUILD" = 1 ]; then
         fi
     else
         echo "→ Сборка podtekst (Rust)…"
-        if [ "$WANT_WEB" = 1 ]; then
+        if [ "$WANT_DEV" = 1 ]; then
+            # shellcheck disable=SC2086
+            (cd "$SCRIPT_DIR/src-tauri" && CARGO_TARGET_DIR="$TARGET_DIR" cargo build --profile dev-opt -p mr-app $FEATS)
+        elif [ "$WANT_WEB" = 1 ]; then
             (cd "$SCRIPT_DIR/src-tauri" && CARGO_TARGET_DIR=target/web cargo build --release -p mr-app)
             cp "$SCRIPT_DIR/src-tauri/target/web/release/podtekst" "$BIN"
         else
             # shellcheck disable=SC2086
             (cd "$SCRIPT_DIR/src-tauri" && cargo build --release -p mr-app $FEATS)
         fi
-        mkdir -p "$SCRIPT_DIR/dist"
-        cp "$BIN" "$SCRIPT_DIR/dist/podtekst-linux$SUFFIX"
+        if [ "$WANT_DEV" = 0 ]; then
+            mkdir -p "$SCRIPT_DIR/dist"
+            cp "$BIN" "$SCRIPT_DIR/dist/podtekst-linux$SUFFIX"
+        fi
     fi
 fi
 
@@ -158,6 +187,13 @@ fi
 # macOS: ad-hoc подпись даёт TCC стабильную личность для доступа к микрофону.
 if [ "$(uname -s)" = "Darwin" ] && [ -f "$BIN" ]; then
     codesign --force --sign - "$BIN" 2>/dev/null || true
+fi
+
+if [ "$WANT_DEV" = 1 ]; then
+    DATA_DIR="${PODTEKST_DATA_DIR:-${MEETING_RECORDER_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/podtekst}}"
+    echo "dev-режим: MR_LOG=$MR_LOG MR_DIAG_DUMP=$MR_DIAG_DUMP"
+    echo "  события: $DATA_DIR/logs/dev/dev-*.log"
+    echo "  артефакты: $DATA_DIR/logs/dev-runs/"
 fi
 
 exec "$BIN" "${CLEAN_ARGS[@]}"
