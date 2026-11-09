@@ -44,9 +44,7 @@ pub fn agglomerative(
     agglomerative_weighted(embeddings, &weights, &[], distance_threshold, n_clusters)
 }
 
-/// Average linkage с весами сегментов и запретом прямого слияния пар
-/// `cannot_link`. Вес — длительность чистого фрагмента × качество: короткий
-/// шумный кусок не должен перетягивать центроид длинного монолога.
+/// Взвешивание предотвращает смещение центроида длинного монолога коротким шумным фрагментом.
 pub fn agglomerative_weighted(
     embeddings: &[Vec<f64>],
     weights: &[f64],

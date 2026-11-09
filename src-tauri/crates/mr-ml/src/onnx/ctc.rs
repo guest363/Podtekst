@@ -745,8 +745,7 @@ impl GigaCTC {
         self.transcribe_mel_timed(&mel, hotwords)
     }
 
-    /// Готовая мел-спектрограмма после GigaAM: второй проход не считает
-    /// STFT повторно.
+    /// Исключает повторный расчёт STFT: использует готовую мел-спектрограмму GigaAM.
     pub fn transcribe_mel_timed(
         &mut self,
         mel: &[Vec<f32>],

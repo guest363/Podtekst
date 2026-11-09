@@ -251,8 +251,8 @@ pub fn score_speaker_similarity(query: &[f64], profile: &SpeakerProfile) -> f64 
     if sims.len() == 1 {
         return sims[0].0.max(c_sim);
     }
-    // Взвешенный top-3: один случайный прототип не должен тянуть профиль
-    // к чужому голосу, а качество образца задаёт его вклад.
+    // Случайный прототип не должен тянуть профиль к чужому голосу;
+    // качество образца задаёт его вклад.
     const NOMINAL: [f64; 3] = [0.55, 0.30, 0.15];
     let mut num = 0.0;
     let mut den = 0.0;
@@ -358,8 +358,6 @@ pub fn linear_sum_assignment_max(score: &[Vec<f64>]) -> Vec<(usize, usize)> {
     pairs
 }
 
-/// Z-скор относительно ближайших чужих профилей. score — сходство с
-/// кандидатом; когорта — top-K остальных профилей этого же кластера.
 fn cohort_z_score(row: &[f64], candidate: usize, score: f64) -> f64 {
     let mut cohort: Vec<f64> = row
         .iter()

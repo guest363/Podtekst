@@ -102,16 +102,16 @@ fn vad_envelope(samples: &[f32]) -> Vec<f32> {
 }
 
 fn window_corr(a: &[f32], b: &[f32], center: usize, other: usize, half: usize) -> f64 {
-    let lo = center.saturating_sub(half);
-    let hi = (center + half).min(a.len());
-    let olo = other.saturating_sub(half);
-    let ohi = (other + half).min(b.len());
-    let n = (hi - lo).min(ohi - olo);
+    let left = center.min(other).min(half);
+    let right = (a.len().saturating_sub(center + 1))
+        .min(b.len().saturating_sub(other + 1))
+        .min(half);
+    let n = left + right + 1;
     if n < 4 {
         return 0.0;
     }
-    let aa = &a[lo..lo + n];
-    let bb = &b[olo..olo + n];
+    let aa = &a[center - left..=center + right];
+    let bb = &b[other - left..=other + right];
     let mean_a = aa.iter().map(|&x| x as f64).sum::<f64>() / n as f64;
     let mean_b = bb.iter().map(|&x| x as f64).sum::<f64>() / n as f64;
     let mut cov = 0.0;
@@ -130,9 +130,8 @@ fn window_corr(a: &[f32], b: &[f32], center: usize, other: usize, half: usize) -
     cov / (var_a.sqrt() * var_b.sqrt())
 }
 
-/// Гасит VAD микрофона там, где слышно только запаздывающий системный канал.
-/// Это не AEC: звук не фильтруется, поэтому при одновременной речи (double-talk)
-/// энергия микрофона выше пролезания и реплика сохраняется.
+// Без фильтрации AEC: при одновременной речи (double-talk) энергия микрофона
+// выше пролезания, поэтому гейт подавляет только чистое эхо.
 pub(crate) fn suppress_mic_bleed(mic: &[f32], system: &[f32], vad_probs: &mut [f32]) -> usize {
     let probe = mic.len().min(system.len()).min(BLEED_PROBE_SEC * 16000);
     if probe < 16000 * 2 {
@@ -240,7 +239,6 @@ mod tests {
         let delay = 1000usize;
         let mut mic = vec![0.0f32; delay];
         mic.extend(system[..system.len() - delay].iter().map(|x| x * 0.1));
-        // Пользователь перебивает собеседника: микрофон громче пролезания.
         let user = bursts(len, &[(1.0, 2.0)], 0.3, 13);
         for (m, u) in mic.iter_mut().zip(user) {
             *m += u;
@@ -249,6 +247,14 @@ mod tests {
         suppress_mic_bleed(&mic, &system, &mut probs);
         let frame = 16_000 / VAD_FRAME + 2;
         assert!(probs[frame] > 0.0, "реплика пользователя подавлена");
+    }
+
+    #[test]
+    fn window_corr_boundary_alignment_keeps_exact_lag() {
+        let env_a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let env_b = vec![0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let corr = window_corr(&env_a, &env_b, 3, 5, 5);
+        assert!((corr - 1.0).abs() < 1e-6, "corr: {corr}");
     }
 
     #[test]

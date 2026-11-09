@@ -95,7 +95,7 @@ impl SegmentationModel {
         self.segment_impl(samples, None)
     }
 
-    /// VAD уже посчитан конвейером: окна без речи не гоняем через PyAnnote.
+    /// Экономия вычислений: пропуск окон без речи по ранее вычисленному VAD.
     pub fn segment_with_vad(
         &mut self,
         samples: &[f32],
@@ -165,6 +165,7 @@ impl SegmentationModel {
                 &mut windows,
             )?;
         }
+        windows.sort_by_key(|w| w.start_sample);
         let frames = sums
             .iter()
             .zip(&overlaps)
@@ -197,9 +198,8 @@ impl SegmentationModel {
         let outputs = match self.session.run_f32(inputs) {
             Ok(outputs) => outputs,
             Err(_) if batch.len() > 1 => {
-                // Модель объявила динамический батч, но конкретный граф его
-                // не принял. Падать в последовательный режим, а не терять
-                // диаризацию целиком.
+                // Защита от сбоя: если граф ONNX отклонил объявленный динамический
+                // батч, переходим в последовательный режим.
                 for &(start, valid) in batch {
                     self.run_windows(samples, &[(start, valid)], sums, overlaps, counts, windows)?;
                 }

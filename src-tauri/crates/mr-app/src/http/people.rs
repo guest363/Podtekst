@@ -465,9 +465,8 @@ fn prototype_duration(start: Option<f64>, end: Option<f64>) -> f64 {
     }
 }
 
-/// Центроид профиля — только по актуальным прототипам: скользящее среднее
-/// помнит вытесненные образцы и после десятка сохранений перестаёт
-/// соответствовать массиву `prototypes`.
+// Скользящее среднее помнит вытесненные образцы и после десятка сохранений
+// перестаёт соответствовать массиву prototypes: центроид пересчитывается по ним.
 fn prototypes_centroid(protos: &[serde_json::Value]) -> (Vec<f64>, usize) {
     let (vecs, weights): (Vec<Vec<f64>>, Vec<f64>) = protos
         .iter()
@@ -503,14 +502,20 @@ fn prototypes_centroid(protos: &[serde_json::Value]) -> (Vec<f64>, usize) {
     (centroid, count)
 }
 
+#[derive(Default)]
+struct PrototypeSample<'a> {
+    audio_file: &'a str,
+    start: Option<f64>,
+    end: Option<f64>,
+    channel: Option<usize>,
+    quality: Option<f64>,
+}
+
 fn store_voiceprint(
     name: &str,
     target_pack_id: Option<&str>,
     norm: Vec<f64>,
-    audio_file: &str,
-    sample_start: Option<f64>,
-    sample_end: Option<f64>,
-    sample_channel: Option<usize>,
+    sample: PrototypeSample<'_>,
 ) -> Result<(), String> {
     let chosen_pack = resolve_target_pack(name, target_pack_id);
     let now = crate::recording::now_secs();
@@ -525,11 +530,11 @@ fn store_voiceprint(
     // параллельные сохранения голосов.
     let new_id = format!("p{now}-{}", PROTO_SEQ.fetch_add(1, Ordering::Relaxed) + 1);
     let snippet_rel = snippet_for_new_prototype(
-        audio_file,
+        sample.audio_file,
         &new_id,
-        sample_start,
-        sample_end,
-        sample_channel,
+        sample.start,
+        sample.end,
+        sample.channel,
         vp_file.parent(),
     );
 
@@ -549,7 +554,8 @@ fn store_voiceprint(
         })
         .unwrap_or_default();
     profiles.retain(voiceprint_usable);
-    let duration_sec = prototype_duration(sample_start, sample_end);
+    let duration_sec = prototype_duration(sample.start, sample.end);
+    let quality_val = sample.quality.unwrap_or(1.0).clamp(0.1, 2.0);
     let mut duplicate = false;
     if let Some(p) = profiles.iter_mut().find(|p| {
         p.get("name")
@@ -603,14 +609,34 @@ fn store_voiceprint(
                 "id": new_id,
                 "embedding": norm,
                 "duration_sec": duration_sec,
-                "quality": 1.0,
+                "quality": quality_val,
                 "created_at": now_iso.clone(),
                 "snippet_relpath": snippet_rel.clone(),
             }));
         }
-        if protos.len() > MAX_PROTOTYPES {
-            let drop_n = protos.len() - MAX_PROTOTYPES;
-            protos.drain(0..drop_n);
+        while protos.len() > MAX_PROTOTYPES {
+            let worst_idx = protos
+                .iter()
+                .enumerate()
+                .map(|(idx, p)| {
+                    let q = p.get("quality").and_then(|v| v.as_f64()).unwrap_or(1.0);
+                    let d = p
+                        .get("duration_sec")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(4.0)
+                        .min(6.0);
+                    (idx, q * d)
+                })
+                .min_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)))
+                .map(|(idx, _)| idx)
+                .unwrap_or(0);
+            let removed = protos.remove(worst_idx);
+            if let (Some(rel), Some(parent)) = (
+                removed.get("snippet_relpath").and_then(|v| v.as_str()),
+                vp_file.parent(),
+            ) {
+                remove_snippet(parent, rel);
+            }
         }
         let (centroid, count) = prototypes_centroid(&protos);
         if count > 0 {
@@ -630,7 +656,7 @@ fn store_voiceprint(
                 "id": new_id,
                 "embedding": norm,
                 "duration_sec": duration_sec,
-                "quality": 1.0,
+                "quality": quality_val,
                 "created_at": now_iso,
                 "snippet_relpath": snippet_rel.clone(),
             }],
@@ -689,6 +715,7 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
         .and_then(|v| v.as_u64())
         .map(|v| v as usize);
 
+    let mut extracted_quality: Option<f64> = None;
     #[cfg(feature = "onnx")]
     if emb.is_empty() && !audio_file.is_empty() {
         if let (Some(start), Some(end)) = (sample_start, sample_end) {
@@ -700,10 +727,11 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
             };
             if inside_save_dir(&full_p) {
                 let channel_i32 = sample_channel.map(|c| c as i32);
-                if let Ok(e) =
+                if let Ok((e, _dur, q)) =
                     crate::transcribe::extract_utterance_embedding(&full_p, start, end, channel_i32)
                 {
                     emb = e;
+                    extracted_quality = Some(q);
                 }
             }
         }
@@ -739,10 +767,13 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
             &name,
             Some(&chosen_pack),
             norm,
-            &audio_file,
-            sample_start,
-            sample_end,
-            sample_channel,
+            PrototypeSample {
+                audio_file: &audio_file,
+                start: sample_start,
+                end: sample_end,
+                channel: sample_channel,
+                quality: extracted_quality,
+            },
         ) {
             json_response(request, json!({"ok": false, "error": error}), 422);
             return;
@@ -967,13 +998,14 @@ pub(super) fn handle_voiceprint_learn_sample(request: tiny_http::Request, body: 
             return;
         }
     };
-    let emb = match crate::transcribe::extract_utterance_embedding(&audio, start, end, channel) {
-        Ok(e) => e,
-        Err(e) => {
-            json_response(request, json!({"ok": false, "error": e}), 500);
-            return;
-        }
-    };
+    let (emb, _clean_dur, quality) =
+        match crate::transcribe::extract_utterance_embedding(&audio, start, end, channel) {
+            Ok(res) => res,
+            Err(e) => {
+                json_response(request, json!({"ok": false, "error": e}), 422);
+                return;
+            }
+        };
     if emb.len() != EMBEDDING_DIM {
         json_response(
             request,
@@ -996,14 +1028,18 @@ pub(super) fn handle_voiceprint_learn_sample(request: tiny_http::Request, body: 
         .and_then(|v| v.as_str())
         .map(|s| s.trim().to_string());
     let chosen_pack = resolve_target_pack(&name, pack_id.as_deref());
+    let audio_lossy = audio.to_string_lossy();
     if let Err(error) = store_voiceprint(
         &name,
         Some(&chosen_pack),
         norm,
-        &audio.to_string_lossy(),
-        Some(start),
-        Some(end),
-        channel.map(|c| c.max(0) as usize),
+        PrototypeSample {
+            audio_file: &audio_lossy,
+            start: Some(start),
+            end: Some(end),
+            channel: channel.map(|c| c.max(0) as usize),
+            quality: Some(quality),
+        },
     ) {
         json_response(request, json!({"ok": false, "error": error}), 422);
         return;
@@ -1634,10 +1670,11 @@ mod tests {
                 name,
                 Some("default"),
                 l2_normalize(&v),
-                "",
-                Some(1.0),
-                Some(3.0),
-                None,
+                PrototypeSample {
+                    start: Some(1.0),
+                    end: Some(3.0),
+                    ..Default::default()
+                },
             )
             .expect("прототип сохраняется");
         }
@@ -1701,12 +1738,12 @@ mod tests {
         for i in 0..3 {
             let mut v = vec![0.0; EMBEDDING_DIM];
             v[i] = 1.0;
-            store_voiceprint(name, Some("default"), v, "", None, None, None)
+            store_voiceprint(name, Some("default"), v, PrototypeSample::default())
                 .expect("свой прототип");
         }
         let mut alien = vec![0.0; EMBEDDING_DIM];
         alien[100] = 1.0;
-        let error = store_voiceprint(name, Some("default"), alien, "", None, None, None)
+        let error = store_voiceprint(name, Some("default"), alien, PrototypeSample::default())
             .expect_err("чужой голос должен быть отклонён");
         assert!(error.contains("другой голос"), "{error}");
         let vp = load_all_voiceprints()
@@ -1803,8 +1840,13 @@ mod tests {
                 .map(|i| (i + 1) as f64)
                 .collect::<Vec<_>>(),
         );
-        store_voiceprint(person_name, Some("default"), emb, "", None, None, None)
-            .expect("голос сохраняется");
+        store_voiceprint(
+            person_name,
+            Some("default"),
+            emb,
+            PrototypeSample::default(),
+        )
+        .expect("голос сохраняется");
 
         let vps_before = load_all_voiceprints();
         assert!(vps_before.iter().any(|v| same_name(
@@ -1824,6 +1866,76 @@ mod tests {
         let p_file = dir.join("packs/default/people.json");
         let text = std::fs::read_to_string(&p_file).unwrap_or_default();
         assert!(!text.contains(person_name));
+
+        if let Some(p) = prev {
+            std::env::set_var("MEETING_RECORDER_DATA_DIR", p);
+        } else {
+            std::env::remove_var("MEETING_RECORDER_DATA_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn store_voiceprint_evicts_lowest_quality_prototype() {
+        let _guard = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!(
+            "mr-voiceprint-evict-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let prev = std::env::var("MEETING_RECORDER_DATA_DIR").ok();
+        std::env::set_var("MEETING_RECORDER_DATA_DIR", &dir);
+
+        let name = "Тест-Вытеснение";
+        for i in 0..10 {
+            let mut v = vec![1.0; EMBEDDING_DIM];
+            v[i] = 10.0;
+            store_voiceprint(
+                name,
+                Some("default"),
+                l2_normalize(&v),
+                PrototypeSample {
+                    start: Some(0.0),
+                    end: Some(4.0),
+                    quality: Some(1.0),
+                    ..Default::default()
+                },
+            )
+            .expect("прототип");
+        }
+        let mut low = vec![1.0; EMBEDDING_DIM];
+        low[10] = 10.0;
+        store_voiceprint(
+            name,
+            Some("default"),
+            l2_normalize(&low),
+            PrototypeSample {
+                start: Some(0.0),
+                end: Some(1.0),
+                quality: Some(0.3),
+                ..Default::default()
+            },
+        )
+        .expect("слабый прототип");
+
+        let vp = load_all_voiceprints()
+            .into_iter()
+            .find(|v| same_name(v.get("name").and_then(|x| x.as_str()).unwrap_or(""), name))
+            .expect("профиль");
+        let protos = vp["prototypes"].as_array().expect("prototypes");
+        assert_eq!(protos.len(), MAX_PROTOTYPES);
+        assert!(
+            protos.iter().all(|p| {
+                let q = p["quality"].as_f64().unwrap_or(0.0);
+                (q - 1.0).abs() < 1e-6
+            }),
+            "слабый прототип должен быть вытеснен первым"
+        );
 
         if let Some(p) = prev {
             std::env::set_var("MEETING_RECORDER_DATA_DIR", p);

@@ -25,10 +25,8 @@ struct Case {
     expected_speakers: usize,
     #[serde(default)]
     probe_mark: Option<String>,
-    /// Эталонные интервалы спикеров для DER; опционально.
     #[serde(default)]
     expected_turns: Option<Vec<Turn>>,
-    /// Верхняя граница Real-Time Factor (время обработки / длительность).
     #[serde(default)]
     max_rtf: Option<f64>,
 }
@@ -75,9 +73,7 @@ fn dominant<'a>(intervals: &[(&'a str, f64, f64)], start: f64, end: f64) -> Opti
     best.map(|(speaker, _)| speaker)
 }
 
-/// DER с collar вокруг границ эталонных реплик и оптимальным сопоставлением
-/// меток через венгерский алгоритм. Интервалы режутся по всем границам,
-/// поэтому результат не зависит от шага сетки.
+// Нарезка интервалов по всем границам реплик исключает зависимость от шага сетки.
 fn compute_der(hyp: &[TranscriptUtterance], reference: &[Turn], collar_sec: f64) -> DerMetrics {
     let hyp_intervals: Vec<(&str, f64, f64)> = hyp
         .iter()
