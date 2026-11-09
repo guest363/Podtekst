@@ -55,26 +55,34 @@
 </script>
 
 <div class="summary-suggest">
+  <div class="summary-subhead">
+    <div class="summary-subhead-left">
+      <button
+        type="button"
+        class="summary-preset-chip"
+        onclick={(e) => onopenpickerat(e)}
+        title="Нажмите, чтобы выбрать другой шаблон"
+      >
+        <span>{primaryPreset?.label || 'Шаблон'}</span>
+        <span class="arrow">▾</span>
+      </button>
+    </div>
+  </div>
+
   {#if blockingText}
     <div class="summary-callout" role="status">
       <span class="summary-callout-text">{blockingText}</span>
     </div>
-  {/if}
-
-  {#if shortSource}
-    <div class="summary-callout" role="status">
-      <span class="summary-callout-text">
-        <strong>Короткая запись.</strong> Итоги могут быть неточными.
-      </span>
-    </div>
+  {:else if shortSource}
+    <p class="summary-note">Запись короткая — формулировки могут быть краткими.</p>
   {/if}
 
   {#if manualOnly}
     <p class="summary-hint">
-      Рекомендация отключена: недостаточно проверенных данных. Выберите шаблон.
+      Рекомендация отключена: выберите подходящий шаблон выше.
     </p>
   {:else if !classification && !summaryState.settings?.default_preset}
-    <p class="summary-hint">Тип разговора не определён. Выберите шаблон.</p>
+    <p class="summary-hint">Тип разговора не определён. Нажмите на шаблон выше, чтобы выбрать.</p>
   {/if}
 
   {#if modelMissing}
@@ -111,13 +119,6 @@
       >
         Собрать по шаблону «{primaryPreset.label}»
       </button>
-      <button
-        type="button"
-        class="btn-secondary"
-        onclick={(e) => onopenpickerat(e)}
-      >
-        Сменить шаблон
-      </button>
     {:else if !modelMissing}
       <button class="btn-primary" onclick={(e) => onopenpickerat(e)}>Выбрать шаблон</button>
     {/if}
@@ -125,12 +126,7 @@
 
   {#if classification && !manualOnly}
     <details class="summary-why">
-      <summary>
-        <span>Почему так решили</span>
-        <svg class="summary-why-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="m6 9 6 6 6-6"></path>
-        </svg>
-      </summary>
+      <summary>Почему так решили</summary>
       <p class="summary-why-text">
         <span>{recommendation}</span>
         <span class="summary-why-signals">
@@ -142,11 +138,7 @@
   {/if}
 
   <p class="summary-privacy">
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <rect x="4" y="10" width="16" height="10" rx="2"></rect>
-      <path d="M8 10V7a4 4 0 0 1 8 0v3"></path>
-    </svg>
-    <span>Анализ идёт на этом компьютере. Текст никуда не отправляется.</span>
+    Анализ выполняется на этом компьютере. Текст никуда не отправляется.
   </p>
 </div>
 
@@ -154,8 +146,51 @@
   .summary-suggest {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 12px;
     min-width: 0;
+  }
+  .summary-subhead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .summary-subhead-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+  .summary-preset-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--bg-inset);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-pill);
+    padding: 3px 10px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 140ms ease;
+    line-height: 1.35;
+  }
+  .summary-preset-chip:hover {
+    background: #fff;
+    border-color: #cbd5e1;
+    color: var(--accent-blue);
+  }
+  .summary-preset-chip .arrow {
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+  .summary-preset-chip:hover .arrow {
+    color: var(--accent-blue);
   }
 
   .summary-callout {
@@ -174,7 +209,13 @@
     font-size: 12px;
     line-height: 1.45;
   }
-  .summary-callout-text strong { font-weight: 700; }
+
+  .summary-note {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.45;
+  }
 
   .summary-hint {
     margin: 0;
@@ -211,24 +252,19 @@
 
   .summary-why {
     padding-top: 10px;
-    border-top: 1px solid rgba(15, 30, 51, 0.06);
+    border-top: 1px solid var(--border-soft);
     font-size: 12px;
     color: var(--text-muted);
   }
   .summary-why summary {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    width: fit-content;
-    list-style: none;
-    color: var(--text-muted);
-    font-weight: 600;
     cursor: pointer;
+    font-weight: 600;
+    color: var(--text-muted);
+    user-select: none;
   }
-  .summary-why summary::-webkit-details-marker { display: none; }
-  .summary-why summary:hover { color: var(--accent-blue); }
-  .summary-why-chevron { transition: transform 200ms var(--ease-spring); }
-  .summary-why[open] .summary-why-chevron { transform: rotate(180deg); }
+  .summary-why summary:hover {
+    color: var(--text-primary);
+  }
   .summary-why-text {
     margin: 8px 0 0;
     max-width: 70ch;
@@ -243,17 +279,13 @@
   }
 
   .summary-privacy {
-    display: flex;
-    align-items: flex-start;
-    gap: 7px;
     margin: 0;
     padding-top: 10px;
-    border-top: 1px solid rgba(15, 30, 51, 0.06);
+    border-top: 1px solid var(--border-soft);
     font-size: 11.5px;
     line-height: 1.5;
     color: var(--text-faint);
   }
-  .summary-privacy svg { flex-shrink: 0; margin-top: 1px; opacity: 0.8; }
 
   .summary-why summary:focus-visible,
   .summary-model-download:focus-visible {
@@ -264,16 +296,11 @@
   @media (max-width: 720px) {
     .summary-suggest { gap: 12px; }
     .summary-actions { flex-direction: column; align-items: stretch; }
-    .summary-actions .btn-primary,
-    .summary-actions .btn-secondary {
+    .summary-actions .btn-primary {
       width: 100%;
       min-height: 40px;
       justify-content: center;
     }
     .summary-model > .btn-primary { width: 100%; min-height: 40px; }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .summary-why-chevron { transition: none; }
   }
 </style>
