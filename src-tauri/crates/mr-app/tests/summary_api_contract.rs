@@ -206,8 +206,14 @@ fn summary_contract_suite() {
     assert_eq!(rev.len(), 64);
     assert!(v["classification"].is_object(), "нет рекомендации: {v}");
     assert_eq!(v["settings"]["auto_suggest"], true);
+    assert_eq!(v["settings"]["gpu"], "auto");
     assert_eq!(v["capabilities"]["classifier"], "heuristic");
     assert_eq!(v["limits"]["min_free_ram_mb"], 6656);
+
+    let (st, v) = json_call(port, "GET", "/api/summary/gpu", json!({}));
+    assert_eq!(st, 200, "GET gpu: {v}");
+    assert!(v["supported"].is_boolean());
+    assert_eq!(v["installing"], false);
 
     let (st, v) = json_call(
         port,
@@ -472,6 +478,13 @@ fn summary_contract_suite() {
         v["classification"].is_null(),
         "auto_suggest=false дал рекомендацию"
     );
+    let (st, v) = json_call(
+        port,
+        "POST",
+        "/api/summary/settings",
+        json!({"gpu": "cuda"}),
+    );
+    assert_eq!((st, v["code"].as_str()), (400, Some("invalid_gpu_mode")));
     let (st, _) = json_call(
         port,
         "POST",

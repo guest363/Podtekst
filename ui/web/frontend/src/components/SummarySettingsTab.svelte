@@ -1,13 +1,18 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte'
-  import type { SummaryDetail } from '../lib/api'
+  import { onDestroy, onMount, tick } from 'svelte'
+  import type { SummarySettings } from '../lib/api'
   import { isMobile } from '../lib/api'
   import { downloadModel } from '../lib/transcript.svelte.ts'
   import { fmtBytes, loadSystem, openTarget, system } from '../lib/system.svelte.ts'
-  import { toast } from '../lib/toast.svelte.ts'
+  import { toast, toastConfirm } from '../lib/toast.svelte.ts'
+  import { summaryErrorText } from '../lib/summaryUi.ts'
   import SummaryPromptModal from './SummaryPromptModal.svelte'
   import {
+    cancelSummaryGpu,
+    installSummaryGpu,
     loadSummarySettings,
+    refreshSummaryGpu,
+    removeSummaryGpu,
     saveSummarySettings,
     summaryModelPct,
     summaryState,
@@ -26,6 +31,21 @@
   const manualOnly = $derived(summaryState.capabilities?.classifier === 'manual_only')
   const model = $derived(summaryState.model)
   const modelPct = $derived(summaryModelPct())
+  const gpu = $derived(summaryState.gpu)
+  const gpuEnabled = $derived(settings?.gpu !== 'off')
+  const gpuBadge = $derived.by(() => {
+    if (!gpu) return 'Проверка…'
+    if (gpu.installing) return 'Установка…'
+    if (gpu.bundled) return 'Встроено'
+    if (gpu.has_update) return 'Обновление'
+    if (gpu.installed) return 'Установлено'
+    return 'Не установлено'
+  })
+  const gpuDownloadText = $derived(
+    gpu?.compressed_bytes
+      ? `Скачать ускорение GPU (${fmtBytes(gpu.compressed_bytes)})`
+      : 'Скачать ускорение GPU',
+  )
   const autoSuggest = $derived(settings?.auto_suggest ?? true)
   const defaultPreset = $derived(settings?.default_preset ?? '')
   const presetOptions = $derived([
@@ -85,6 +105,7 @@
     error = ''
     try {
       await loadSummarySettings()
+      if (summaryState.gpu?.installing) startGpuPoll()
     } catch (e) {
       error = 'Не удалось загрузить настройки итогов: ' + (e as Error).message
     } finally {
@@ -92,12 +113,78 @@
     }
   }
 
+  let gpuPoll: ReturnType<typeof setInterval> | null = null
+
+  function stopGpuPoll(): void {
+    if (gpuPoll) clearInterval(gpuPoll)
+    gpuPoll = null
+  }
+
+  function startGpuPoll(): void {
+    stopGpuPoll()
+    gpuPoll = setInterval(async () => {
+      try {
+        await refreshSummaryGpu()
+      } catch {
+        return
+      }
+      if (!summaryState.gpu?.installing) stopGpuPoll()
+    }, 500)
+  }
+
   onMount(() => {
     void reload()
     if (!system.snapshot) void loadSystem()
+    if (summaryState.gpu?.installing) startGpuPoll()
   })
 
-  async function save(patch: { auto_suggest?: boolean; default_preset?: string | null; detail?: SummaryDetail }): Promise<void> {
+  onDestroy(stopGpuPoll)
+
+  async function installGpu(): Promise<void> {
+    if (!gpu || gpu.installing) return
+    error = ''
+    try {
+      await installSummaryGpu()
+      startGpuPoll()
+    } catch (e) {
+      const code = (e as { code?: string }).code || 'gpu_internal'
+      error = summaryErrorText(code, (e as Error).message)
+      toast(error, 'error')
+      await refreshSummaryGpu().catch(() => {})
+    }
+  }
+
+  async function cancelGpu(): Promise<void> {
+    try {
+      await cancelSummaryGpu()
+    } catch (e) {
+      toast('Не удалось отменить скачивание: ' + (e as Error).message, 'error')
+    }
+  }
+
+  async function removeGpu(): Promise<void> {
+    try {
+      await removeSummaryGpu()
+      toast('GPU-пакет удалён. Итоги работают на CPU.')
+    } catch (e) {
+      const code = (e as { code?: string }).code || 'gpu_remove_failed'
+      toast(summaryErrorText(code, (e as Error).message), 'error')
+    }
+  }
+
+  function confirmRemoveGpu(): void {
+    toastConfirm(
+      'Удалить ускорение GPU? Итоги продолжат работать на CPU.',
+      'Удалить',
+      () => void removeGpu(),
+    )
+  }
+
+  function toggleGpu(): void {
+    void save({ gpu: gpuEnabled ? 'off' : 'auto' })
+  }
+
+  async function save(patch: Partial<SummarySettings>): Promise<void> {
     if (saving) return
     saving = true
     error = ''
@@ -396,6 +483,120 @@
         Анализ выполняется полностью на этом компьютере без передачи данных в сеть.
       </div>
     </div>
+
+    {#if gpu?.supported}
+      <div class="summary-section summary-section-divider">
+        <div class="summary-section-head">
+          <div class="card-title">Ускорение GPU</div>
+          <span class="detail-badge">{gpuBadge}</span>
+        </div>
+
+        <div class="summary-model-card">
+          <div class="summary-model-meta-col">
+            <span class="summary-model-title">{gpu?.title || 'GPU'}</span>
+            <span class="summary-model-sub">{gpu?.description || ''}</span>
+          </div>
+
+          {#if gpu?.device}
+            <div class="system-facts">
+              <span class="system-key">Устройство</span>
+              <span class="system-val">{gpu.device}</span>
+              <span class="system-key">На диске</span>
+              <span class="system-val">{fmtBytes(gpu.installed_bytes)}</span>
+            </div>
+          {:else if gpu?.installed && !gpu.bundled}
+            <div class="help-text summary-settings-warn">
+              Vulkan-устройство не найдено. Итоги продолжат работать на CPU.
+            </div>
+          {/if}
+
+          {#if gpu?.installing}
+            <div
+              class="vu-track progress-track"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={gpu.pct}
+              aria-label="Установка ускорения GPU"
+            >
+              <div class="vu-bar" style={`width: ${gpu.pct}%`}></div>
+            </div>
+            <div class="help-text" role="status">{gpu.stage || 'Установка…'} {gpu.pct}%</div>
+            <div class="summary-model-foot">
+              <button class="btn-secondary btn-sm" onclick={() => void cancelGpu()}>Отменить</button>
+            </div>
+          {:else}
+            {#if gpu?.error}
+              <div class="summary-settings-error" role="alert">
+                <span>{gpu.error}</span>
+                {#if !gpu.installed}
+                  <button class="btn-secondary btn-sm" onclick={() => void installGpu()}>Повторить</button>
+                {/if}
+              </div>
+            {/if}
+
+            {#if gpu?.installed}
+              <label class="setting-check">
+                <input
+                  type="checkbox"
+                  checked={gpuEnabled}
+                  disabled={saving}
+                  onchange={toggleGpu}
+                />
+                <span class="setting-switch" aria-hidden="true"></span>
+                <span>Использовать GPU, если доступен</span>
+              </label>
+              <div class="help-text">
+                Если GPU-пакет не загрузится, итоги автоматически перейдут на CPU.
+              </div>
+              <div class="summary-model-foot">
+                {#if gpu.has_update}
+                  <button
+                    class="btn-primary btn-sm"
+                    disabled={summaryState.generating}
+                    onclick={() => void installGpu()}
+                  >
+                    Обновить
+                  </button>
+                {/if}
+                {#if !gpu.bundled}
+                  <button
+                    class="btn-secondary btn-sm"
+                    disabled={summaryState.generating}
+                    onclick={confirmRemoveGpu}
+                  >
+                    Удалить
+                  </button>
+                {/if}
+                {#if gpu.license_url}
+                  <a class="summary-link" href={gpu.license_url} target="_blank" rel="noreferrer">
+                    {gpu.license || 'Лицензия'}
+                  </a>
+                {/if}
+              </div>
+            {:else if !gpu?.bundled}
+              <div class="help-text">
+                Необязательный пакет: ускоряет итоги на видеокартах Intel, AMD и NVIDIA. Без него всё работает на CPU.
+              </div>
+              <div class="summary-model-foot">
+                <button
+                  class="btn-primary btn-sm"
+                  disabled={gpu?.installing || !gpu?.supported || summaryState.generating}
+                  onclick={() => void installGpu()}
+                >
+                  {gpuDownloadText}
+                </button>
+                {#if gpu?.license_url}
+                  <a class="summary-link" href={gpu.license_url} target="_blank" rel="noreferrer">
+                    {gpu.license || 'Лицензия'}
+                  </a>
+                {/if}
+              </div>
+            {/if}
+          {/if}
+        </div>
+      </div>
+    {/if}
 
     {#if error}
       <div class="summary-settings-error" role="alert">

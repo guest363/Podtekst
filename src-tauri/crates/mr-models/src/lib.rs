@@ -19,6 +19,8 @@ pub enum ModelsError {
     },
     #[error("модель '{0}' не найдена в манифесте")]
     NotFound(String),
+    #[error("скачивание отменено")]
+    Cancelled,
     #[error("{0}")]
     Other(String),
 }
@@ -252,6 +254,48 @@ pub struct ProgressEvent {
     pub message: String,
 }
 
+/// Скачать один проверенный файл (например, необязательный runtime-пакет).
+/// Докачка `.part` и SHA-256 те же, что у моделей: вызывающий не должен
+/// изобретать свою проверку целостности.
+pub fn download_asset(
+    dest_dir: &Path,
+    filename: &str,
+    url: &str,
+    size_bytes: u64,
+    sha256: &str,
+    should_abort: &dyn Fn() -> bool,
+    on_progress: &dyn Fn(ProgressEvent),
+) -> Result<PathBuf> {
+    if filename.is_empty() || url.is_empty() || sha256.len() != 64 {
+        return Err(ModelsError::Other(
+            "некорректное описание файла".to_string(),
+        ));
+    }
+    fs::create_dir_all(dest_dir)?;
+    let target = dest_dir.join(filename);
+    if target.is_file()
+        && sha256_of_file(&target)
+            .map(|h| h.eq_ignore_ascii_case(sha256))
+            .unwrap_or(false)
+    {
+        return Ok(target);
+    }
+    let part = dest_dir.join(format!("{filename}.part"));
+    let _lock = DownloadLock::acquire(dest_dir, filename)?;
+    download_with_resume(url, &part, size_bytes, should_abort, on_progress)?;
+    let actual = sha256_of_file(&part)?;
+    if !actual.eq_ignore_ascii_case(sha256) {
+        let _ = fs::remove_file(&part);
+        return Err(ModelsError::ShaMismatch {
+            file: filename.to_string(),
+            expected: sha256.to_string(),
+            actual,
+        });
+    }
+    fs::rename(&part, &target)?;
+    Ok(target)
+}
+
 pub fn download_or_update_model(
     app_data: &Path,
     manifest: &ModelsManifest,
@@ -290,7 +334,7 @@ pub fn download_or_update_model(
         let mut last_err = String::new();
         let mut ok = false;
         for url in urls.iter().filter(|u| !u.is_empty()) {
-            match download_with_resume(url, &part, f.size_bytes, on_progress) {
+            match download_with_resume(url, &part, f.size_bytes, &|| false, on_progress) {
                 Ok(()) => {
                     if !is_placeholder_sha(&f.sha256) {
                         match sha256_of_file(&part) {
@@ -417,6 +461,7 @@ fn download_with_resume(
     url: &str,
     dest_part: &Path,
     expected: u64,
+    should_abort: &dyn Fn() -> bool,
     on_progress: &dyn Fn(ProgressEvent),
 ) -> Result<()> {
     use std::io::{Read, Write};
@@ -435,8 +480,11 @@ fn download_with_resume(
     let range_mismatch = status == 206
         && already > 0
         && resp.header("Content-Range").and_then(content_range_start) != Some(already);
-    if range_mismatch {
+    // 416 = `.part` уже больше/равен размеру файла (крах после докачки).
+    // Без сброса повторная установка навсегда упиралась бы в этот Range.
+    if range_mismatch || (status == 416 && already > 0) {
         already = 0;
+        let _ = std::fs::remove_file(dest_part);
         resp = range_request(&agent, url, 0)
             .call()
             .map_err(|e| ModelsError::Net(e.to_string()))?;
@@ -468,6 +516,9 @@ fn download_with_resume(
     let mut buf = [0u8; 256 * 1024];
     let mut done = if append { already } else { 0 };
     loop {
+        if should_abort() {
+            return Err(ModelsError::Cancelled);
+        }
         let n = reader
             .read(&mut buf)
             .map_err(|e| ModelsError::Net(e.to_string()))?;
@@ -623,6 +674,51 @@ mod tests {
         assert!(DownloadLock::acquire(&tmp, "m.onnx").is_err());
         drop(first);
         assert!(DownloadLock::acquire(&tmp, "m.onnx").is_ok());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn verified_asset_is_reused_without_network() {
+        let tmp = std::env::temp_dir().join(format!(
+            "mr-models-asset-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&tmp);
+        let path = tmp.join("pack.zip");
+        std::fs::write(&path, b"verified").unwrap();
+        let sha = sha256_of_file(&path).unwrap();
+        let got = download_asset(
+            &tmp,
+            "pack.zip",
+            "https://example.invalid/pack.zip",
+            b"verified".len() as u64,
+            &sha,
+            &|| false,
+            &|_| {},
+        )
+        .expect("готовый файл должен переиспользоваться");
+        assert_eq!(got, path);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn asset_requires_full_sha() {
+        let tmp = std::env::temp_dir().join(format!("mr-models-badsha-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        assert!(download_asset(
+            &tmp,
+            "x.bin",
+            "https://example.invalid",
+            0,
+            "abc",
+            &|| false,
+            &|_| {}
+        )
+        .is_err());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

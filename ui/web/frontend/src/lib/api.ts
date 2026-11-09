@@ -226,10 +226,37 @@ export interface SummaryArtifact {
   }
 }
 
+export type SummaryGpuMode = 'auto' | 'off'
+
+export interface SummaryGpuStatus {
+  supported: boolean
+  bundled: boolean
+  backend: string
+  title: string
+  description: string
+  pack_id: string | null
+  installed: boolean
+  has_update: boolean
+  device: string | null
+  reason: 'unsupported' | 'not_installed' | 'no_device' | null
+  compressed_bytes: number
+  installed_bytes: number
+  min_free_mb: number
+  license: string
+  license_url: string
+  installing: boolean
+  pct: number
+  stage: string
+  error: string | null
+  error_code: string | null
+  cancelled: boolean
+}
+
 export interface SummarySettings {
   auto_suggest: boolean
   default_preset: string | null
   detail: SummaryDetail
+  gpu: SummaryGpuMode
 }
 
 export interface SummaryCapabilities {
@@ -303,6 +330,7 @@ export interface SummarySettingsResponse {
   system_prompt_base?: string
   model: SummaryModelInfo | null
   capabilities: SummaryCapabilities
+  gpu: SummaryGpuStatus
 }
 
 export interface SummaryClassifyResponse {

@@ -30,6 +30,9 @@ struct SidecarState {
     child: Child,
     port: u16,
     model_sha: String,
+    gpu_layers: u32,
+    gpu_device: Option<u32>,
+    gpu_backend: Option<PathBuf>,
     token: String,
     token_path: PathBuf,
     stderr: Option<std::thread::JoinHandle<(u64, String)>>,
@@ -132,22 +135,60 @@ fn wait_health(
 
 pub struct SidecarBackend {
     runtime: RuntimeInfo,
+    fallback: Option<RuntimeInfo>,
     model_sha: String,
     threads: u32,
+    gpu_layers: u32,
+    gpu_device: Option<u32>,
+    gpu_backend: Option<PathBuf>,
     load_ms: u64,
 }
 
 impl SidecarBackend {
-    pub fn new(runtime: &RuntimeInfo, model_sha: String, threads: u32) -> Self {
+    pub fn new(
+        runtime: &RuntimeInfo,
+        model_sha: String,
+        threads: u32,
+        gpu_layers: u32,
+        gpu_device: Option<u32>,
+        gpu_backend: Option<PathBuf>,
+        fallback: Option<RuntimeInfo>,
+    ) -> Self {
         Self {
             runtime: runtime.clone(),
+            fallback,
             model_sha,
             threads,
+            gpu_layers,
+            gpu_device,
+            gpu_backend,
             load_ms: 0,
         }
     }
 
     fn ensure_loaded(
+        &mut self,
+        req: &GenerateRequest,
+        cancel: &CancelToken,
+    ) -> Result<(), BackendError> {
+        match self.ensure_loaded_once(req, cancel) {
+            Ok(()) => Ok(()),
+            Err(error @ (BackendError::Load(_) | BackendError::Oom | BackendError::Crashed))
+                if self.gpu_layers > 0 && self.fallback.is_some() =>
+            {
+                crate::note!("summary: GPU load failed, CPU fallback: {error:?}");
+                self.runtime = self.fallback.take().expect("fallback checked");
+                self.gpu_layers = 0;
+                self.gpu_device = None;
+                self.gpu_backend = None;
+                self.load_ms = 0;
+                self.ensure_loaded_once(req, cancel)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn ensure_loaded_once(
         &mut self,
         req: &GenerateRequest,
         cancel: &CancelToken,
@@ -159,6 +200,9 @@ impl SidecarBackend {
                 let alive = state.child.try_wait().ok().flatten().is_none();
                 alive
                     && state.model_sha == self.model_sha
+                    && state.gpu_layers == self.gpu_layers
+                    && state.gpu_device == self.gpu_device
+                    && state.gpu_backend == self.gpu_backend
                     && health_ok(state.port, &state.token)
                     && props_ok(state.port, &state.token, &req.model_path, req.n_ctx)
             }
@@ -177,14 +221,25 @@ impl SidecarBackend {
         let token = new_token();
         let token_path = api_key_path();
         write_token(&token_path, &token)?;
-        let args = build_args(&req.model_path, port, &token_path, req.threads, req.n_ctx);
+        let args = build_args(
+            &req.model_path,
+            port,
+            &token_path,
+            req.threads,
+            req.n_ctx,
+            self.gpu_layers,
+            self.gpu_device,
+        );
         let mut cmd = Command::new(&self.runtime.exe);
         cmd.args(&args)
             .current_dir(&self.runtime.dir)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
-        prepend_lib_path(&mut cmd, &self.runtime.dir);
+        prepend_lib_path(&mut cmd, &self.runtime.dir, self.gpu_backend.as_deref());
+        if let Some(backend) = self.gpu_backend.as_deref() {
+            cmd.env("GGML_BACKEND_PATH", backend);
+        }
         hide_window(&mut cmd);
         let load_started = Instant::now();
         port_guard.release();
@@ -229,6 +284,9 @@ impl SidecarBackend {
             child,
             port,
             model_sha: self.model_sha.clone(),
+            gpu_layers: self.gpu_layers,
+            gpu_device: self.gpu_device,
+            gpu_backend: self.gpu_backend.clone(),
             token,
             token_path,
             stderr: Some(stderr),
@@ -351,8 +409,9 @@ fn error_peak(error: &super::memory::MemoryError) -> u64 {
 
 impl SummaryBackend for SidecarBackend {
     fn probe(&mut self) -> Result<BackendInfo, BackendError> {
+        let suffix = if self.gpu_layers > 0 { "-gpu" } else { "" };
         Ok(BackendInfo {
-            runtime: format!("llama.cpp/{}", self.runtime.version),
+            runtime: format!("llama.cpp/{}{suffix}", self.runtime.version),
             version: self.runtime.version.clone(),
             commit: self.runtime.commit.clone(),
             model_id: MODEL_ID.to_string(),
@@ -367,7 +426,20 @@ impl SummaryBackend for SidecarBackend {
         cancel: &CancelToken,
         on_event: &mut dyn FnMut(BackendEvent),
     ) -> Result<String, BackendError> {
-        self.run_generate(req, cancel, on_event)
+        match self.run_generate(req, cancel, on_event) {
+            Ok(text) => Ok(text),
+            Err(BackendError::Crashed) if self.gpu_layers > 0 && self.fallback.is_some() => {
+                crate::note!("summary: GPU generation crashed, CPU retry");
+                kill_current();
+                self.runtime = self.fallback.take().expect("fallback checked");
+                self.gpu_layers = 0;
+                self.gpu_device = None;
+                self.gpu_backend = None;
+                self.load_ms = 0;
+                self.run_generate(req, cancel, on_event)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn shutdown(&mut self) {
@@ -454,6 +526,9 @@ pub(super) fn install_test_child(program: &str, args: &[&str]) -> u32 {
         child,
         port: 1,
         model_sha: "test".to_string(),
+        gpu_layers: 0,
+        gpu_device: None,
+        gpu_backend: None,
         token: "test".to_string(),
         token_path,
         stderr: None,

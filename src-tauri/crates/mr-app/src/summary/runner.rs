@@ -45,12 +45,30 @@ pub(super) fn run_pipeline(
     } else {
         #[cfg(not(target_os = "android"))]
         {
-            let runtime =
-                super::runtime_locator::locate().map_err(|_| SummaryJobError::ModelLoad)?;
+            let cpu = super::runtime_locator::locate().map_err(|_| SummaryJobError::ModelLoad)?;
+            let gpu = if super::config::load().gpu == super::config::GpuMode::Auto {
+                super::gpu::installed_runtime()
+            } else {
+                None
+            };
+            let (runtime, gpu_layers, gpu_device, gpu_backend, fallback) = match gpu {
+                Some(gpu) => (
+                    gpu.runtime,
+                    99,
+                    gpu.device_index,
+                    gpu.backend,
+                    Some(cpu.clone()),
+                ),
+                None => (cpu.clone(), 0, None, None, None),
+            };
             Box::new(sidecar::SidecarBackend::new(
-                runtime,
+                &runtime,
                 spec.model_sha.clone(),
                 threads,
+                gpu_layers,
+                gpu_device,
+                gpu_backend,
+                fallback,
             ))
         }
         #[cfg(target_os = "android")]

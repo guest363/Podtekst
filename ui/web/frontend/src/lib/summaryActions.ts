@@ -4,6 +4,7 @@ import type {
   SummaryClassifyResponse,
   SummaryDetail,
   SummaryGenerateResponse,
+  SummaryGpuStatus,
   SummaryPreset,
   SummarySettings,
 } from './api'
@@ -25,6 +26,38 @@ export async function saveSummarySettings(patch: Partial<SummarySettings>): Prom
   if (summaryState.file && summaryState.phase === 'suggest') {
     await loadSummary(summaryState.file, { silent: true })
   }
+}
+
+export async function refreshSummaryGpu(): Promise<void> {
+  const d = await apiJson<SummaryGpuStatus>('/api/summary/gpu')
+  summaryState.gpu = d
+}
+
+export async function installSummaryGpu(): Promise<void> {
+  await apiJson('/api/summary/gpu/install', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  })
+  await refreshSummaryGpu()
+}
+
+export async function cancelSummaryGpu(): Promise<void> {
+  await apiJson('/api/summary/gpu/cancel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  })
+  await refreshSummaryGpu()
+}
+
+export async function removeSummaryGpu(): Promise<void> {
+  const d = await apiJson<SummaryGpuStatus & { ok: boolean }>('/api/summary/gpu/remove', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  })
+  summaryState.gpu = d
 }
 
 export async function classifySummary(force = false): Promise<void> {

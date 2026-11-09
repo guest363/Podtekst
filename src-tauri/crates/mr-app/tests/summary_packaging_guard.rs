@@ -74,3 +74,36 @@ fn runtime_manifest_is_complete_per_target() {
             .unwrap_or(false));
     }
 }
+
+#[test]
+fn gpu_pack_manifest_is_pinned_and_small() {
+    let runtime = json(include_str!("../summary-runtime-manifest.json"));
+    let manifest = json(include_str!("../summary-gpu-manifest.json"));
+    assert_eq!(manifest["build"], runtime["build"]);
+    assert_eq!(manifest["commit"], runtime["commit"]);
+    assert_eq!(manifest["version"], runtime["version"]);
+    let packs = manifest["packs"].as_object().expect("packs");
+    assert!(packs.contains_key("linux-x86_64"));
+    assert!(packs.contains_key("windows-x86_64"));
+    assert!(!packs.contains_key("macos-arm64"), "macOS Metal встроен");
+    for (key, pack) in packs {
+        assert!(pack["url"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("https://github.com/ggml-org/llama.cpp/releases/download/b12182/"));
+        let sha = pack["sha256"].as_str().expect("sha256");
+        assert_eq!(sha.len(), 64, "{key}");
+        assert!(sha.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(pack["compressed_bytes"].as_u64().unwrap_or(0) <= 48 * 1024 * 1024);
+        assert!(pack["installed_bytes"].as_u64().unwrap_or(0) <= 60 * 1024 * 1024);
+        assert!(matches!(
+            pack["format"].as_str(),
+            Some("tar.gz") | Some("zip")
+        ));
+        assert!(!pack["library"].as_str().unwrap_or("").is_empty());
+        assert!(pack["url"]
+            .as_str()
+            .unwrap_or_default()
+            .ends_with(pack["asset"].as_str().unwrap_or("")));
+    }
+}

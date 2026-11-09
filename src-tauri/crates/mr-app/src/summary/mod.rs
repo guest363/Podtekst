@@ -5,6 +5,43 @@ mod cache;
 pub mod catalog;
 pub mod config;
 mod fake;
+#[cfg(not(target_os = "android"))]
+pub mod gpu;
+#[cfg(target_os = "android")]
+pub mod gpu {
+    use serde_json::{json, Value};
+
+    use super::ApiError;
+
+    pub fn status_json() -> Value {
+        json!({
+            "supported": false,
+            "installed": false,
+            "installing": false,
+            "reason": "unsupported",
+        })
+    }
+
+    pub fn install() -> Result<(), ApiError> {
+        Err(ApiError::new(
+            501,
+            "gpu_unsupported",
+            "Ускорение GPU на этой платформе не поддерживается.",
+        ))
+    }
+
+    pub fn cancel() -> bool {
+        false
+    }
+
+    pub fn remove() -> Result<Value, ApiError> {
+        Err(ApiError::new(
+            501,
+            "gpu_unsupported",
+            "Ускорение GPU на этой платформе не поддерживается.",
+        ))
+    }
+}
 mod id;
 mod job;
 mod memory;
@@ -26,6 +63,9 @@ use serde_json::{json, Value};
 
 pub use catalog::{
     model_path, model_ready, model_status, presets_json, settings_view, update_settings,
+};
+pub use gpu::{
+    cancel as gpu_cancel, install as gpu_install, remove as gpu_remove, status_json as gpu_status,
 };
 pub use job::{
     active_json, cancel, cancel_for_recording, cancel_for_transcription, generate, is_active,

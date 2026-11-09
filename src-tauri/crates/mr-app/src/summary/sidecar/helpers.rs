@@ -74,8 +74,10 @@ pub(super) fn build_args(
     token_path: &Path,
     threads: u32,
     n_ctx: u32,
+    gpu_layers: u32,
+    gpu_device: Option<u32>,
 ) -> Vec<String> {
-    vec![
+    let mut args = vec![
         "--model".to_string(),
         model_path.to_string_lossy().to_string(),
         "--host".to_string(),
@@ -109,25 +111,38 @@ pub(super) fn build_args(
         token_path.to_string_lossy().to_string(),
         "--log-disable".to_string(),
         "--n-gpu-layers".to_string(),
-        "0".to_string(),
+        gpu_layers.to_string(),
         "--alias".to_string(),
         MODEL_ID.to_string(),
-    ]
+    ];
+    if gpu_layers > 0 {
+        if let Some(index) = gpu_device {
+            args.extend(["--device".to_string(), format!("Vulkan{index}")]);
+        }
+        // При нехватке VRAM llama.cpp сам снизит число слоёв вместо падения.
+        args.extend(["--fit".to_string(), "on".to_string()]);
+    }
+    args
 }
 
-pub(super) fn prepend_lib_path(cmd: &mut Command, dir: &Path) {
-    let key = if cfg!(target_os = "macos") {
+pub(super) fn prepend_lib_path(cmd: &mut Command, dir: &Path, extra: Option<&Path>) {
+    let key = if cfg!(windows) {
+        "PATH"
+    } else if cfg!(target_os = "macos") {
         "DYLD_LIBRARY_PATH"
     } else {
         "LD_LIBRARY_PATH"
     };
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    let mut parts = vec![dir.to_string_lossy().to_string()];
+    if let Some(parent) = extra.and_then(Path::parent) {
+        parts.push(parent.to_string_lossy().to_string());
+    }
     let prev = std::env::var(key).unwrap_or_default();
-    let joined = if prev.is_empty() {
-        dir.to_string_lossy().to_string()
-    } else {
-        format!("{}:{prev}", dir.to_string_lossy())
-    };
-    cmd.env(key, joined);
+    if !prev.is_empty() {
+        parts.push(prev);
+    }
+    cmd.env(key, parts.join(sep));
 }
 
 #[cfg(windows)]
@@ -202,6 +217,8 @@ mod tests {
             Path::new("/data/key"),
             6,
             8192,
+            0,
+            None,
         );
         for flag in [
             "--jinja",
@@ -246,6 +263,26 @@ mod tests {
         let joined = args.join(" ");
         assert!(!joined.contains("Bearer"), "токен не должен быть в argv");
         assert!(!joined.contains("CANARY"));
+    }
+
+    #[test]
+    fn gpu_args_add_fit_and_layers() {
+        let args = build_args(
+            Path::new("/models/q.gguf"),
+            8123,
+            Path::new("/data/key"),
+            8,
+            16384,
+            99,
+            Some(1),
+        );
+        let ngl = args
+            .iter()
+            .position(|a| a == "--n-gpu-layers")
+            .expect("нет --n-gpu-layers");
+        assert_eq!(args[ngl + 1], "99");
+        assert!(args.windows(2).any(|w| w == ["--fit", "on"]));
+        assert!(args.windows(2).any(|w| w == ["--device", "Vulkan1"]));
     }
 
     #[test]
