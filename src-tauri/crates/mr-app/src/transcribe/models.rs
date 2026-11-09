@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use mr_packs as packs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -12,11 +11,8 @@ use mr_ml::onnx::segmentation::SegmentationModel;
 use mr_ml::onnx::vad::SileroVad;
 use mr_ml::onnx::whisper::Whisper;
 
+use super::asr_engine::{models_root, AsrEngine, LoadPlan, CTC_DIR, GIGAAM_DIR, WHISPER_DIR};
 use super::memory;
-
-pub(super) fn models_root() -> PathBuf {
-    packs::default_app_data_dir().join("models")
-}
 
 fn find_model_file(model_id: &str, needle: &str) -> Option<PathBuf> {
     let dir = models_root().join(model_id);
@@ -64,28 +60,31 @@ pub(super) struct ModelSet {
 
 /// Кэш моделей процесса: веса в сотни МБ читаются с диска один раз,
 /// а не на каждую расшифровку. Конкуренция исключена флагом RUNNING.
-static MODELS_CACHE: OnceLock<Mutex<Option<ModelSet>>> = OnceLock::new();
+static MODELS_CACHE: OnceLock<Mutex<Option<(ModelSet, LoadPlan)>>> = OnceLock::new();
 /// Сброс кэша бесполезен без поколения: активная расшифровка вернула бы старые веса.
 static MODELS_GEN: AtomicU64 = AtomicU64::new(0);
 
-fn take_cached_models() -> Result<(ModelSet, u64), String> {
+fn take_cached_models(plan: LoadPlan) -> Result<(ModelSet, u64), String> {
     let cache = MODELS_CACHE.get_or_init(|| Mutex::new(None));
     let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
-    if guard.is_none() {
-        *guard = Some(ModelSet::load()?);
+    let reusable = guard
+        .as_ref()
+        .is_some_and(|(_, cached)| cached.covers(plan));
+    if !reusable {
+        *guard = Some((ModelSet::load(plan)?, plan));
     }
     Ok((
-        guard.take().expect("только что положили"),
+        guard.take().expect("только что положили").0,
         MODELS_GEN.load(Ordering::SeqCst),
     ))
 }
 
-fn return_cached_models(models: ModelSet, gen: u64) {
+fn return_cached_models(models: ModelSet, gen: u64, plan: LoadPlan) {
     if MODELS_GEN.load(Ordering::SeqCst) != gen {
         return;
     }
     let cache = MODELS_CACHE.get_or_init(|| Mutex::new(None));
-    *cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(models);
+    *cache.lock().unwrap_or_else(|e| e.into_inner()) = Some((models, plan));
 }
 
 /// Модели возвращаются в кэш на любом пути выхода: ошибка распознавания не
@@ -93,14 +92,17 @@ fn return_cached_models(models: ModelSet, gen: u64) {
 pub(super) struct ModelsGuard {
     models: Option<ModelSet>,
     gen: u64,
+    plan: LoadPlan,
 }
 
 impl ModelsGuard {
-    pub(super) fn take() -> Result<Self, String> {
-        let (models, gen) = take_cached_models()?;
+    pub(super) fn take(asr: Option<AsrEngine>, ctc_enabled: bool) -> Result<Self, String> {
+        let plan = LoadPlan::new(asr, ctc_enabled);
+        let (models, gen) = take_cached_models(plan)?;
         Ok(Self {
             models: Some(models),
             gen,
+            plan,
         })
     }
 }
@@ -122,7 +124,7 @@ impl std::ops::DerefMut for ModelsGuard {
 impl Drop for ModelsGuard {
     fn drop(&mut self) {
         if let Some(models) = self.models.take() {
-            return_cached_models(models, self.gen);
+            return_cached_models(models, self.gen, self.plan);
         }
     }
 }
@@ -176,7 +178,7 @@ pub(crate) fn extract_utterance_embedding(
     if samples.len() < (16000.0 * 0.4) as usize {
         return Err("Фрагмент короче 0.4 с: голос не извлечь".to_string());
     }
-    let mut models = ModelsGuard::take()?;
+    let mut models = ModelsGuard::take(None, false)?;
     let mut clean_samples = samples;
     if let Some(segmentation) = models.segmentation.as_mut() {
         if let Ok(seg) = segmentation.segment(&clean_samples) {
@@ -210,7 +212,7 @@ pub(crate) fn extract_utterance_embedding(
 }
 
 impl ModelSet {
-    fn load() -> Result<Self, String> {
+    fn load(plan: LoadPlan) -> Result<Self, String> {
         let vad_path = find_model_file("vad-silero-v6", ".onnx")
             .ok_or_else(|| "Модель Silero VAD не скачана. Откройте «Настройки» → «Модели ИИ» и нажмите «Скачать».".to_string())?;
         let vad = SileroVad::load(&vad_path).map_err(|error| {
@@ -223,47 +225,61 @@ impl ModelSet {
             );
             error
         })?;
-        let giga_dir = models_root().join("asr-gigaam-v3-rnnt-int8");
-        let gigaam = match GigaAM::load(&giga_dir) {
-            Ok(model) => Some(model),
-            Err(error) => {
-                log::warn!(
-                    target: "model",
-                    id = "asr-gigaam-v3-rnnt-int8",
-                    dir = giga_dir.display().to_string(),
-                    error = error;
-                    "ev=model.load_failed"
-                );
-                None
+        let gigaam = match plan.asr {
+            Some(AsrEngine::Gigaam) => {
+                let dir = models_root().join(GIGAAM_DIR);
+                match GigaAM::load(&dir) {
+                    Ok(model) => Some(model),
+                    Err(error) => {
+                        log::error!(
+                            target: "model",
+                            id = GIGAAM_DIR,
+                            dir = dir.display().to_string(),
+                            error = error;
+                            "ev=model.load_failed"
+                        );
+                        return Err(AsrEngine::Gigaam.missing_error());
+                    }
+                }
             }
+            _ => None,
         };
-        let ctc_dir = models_root().join("asr-gigaam-v3-e2e-ctc-int8");
-        let ctc = match GigaCTC::load(&ctc_dir) {
-            Ok(model) => Some(model),
-            Err(error) => {
-                log::warn!(
-                    target: "model",
-                    id = "asr-gigaam-v3-e2e-ctc-int8",
-                    dir = ctc_dir.display().to_string(),
-                    error = error;
-                    "ev=model.load_failed"
-                );
-                None
+        let ctc = if plan.ctc {
+            let dir = models_root().join(CTC_DIR);
+            match GigaCTC::load(&dir) {
+                Ok(model) => Some(model),
+                Err(error) => {
+                    log::warn!(
+                        target: "model",
+                        id = CTC_DIR,
+                        dir = dir.display().to_string(),
+                        error = error;
+                        "ev=model.load_failed"
+                    );
+                    None
+                }
             }
+        } else {
+            None
         };
-        let whisper_dir = models_root().join("asr-whisper-large-v3-turbo-q");
-        let whisper = match Whisper::load(&whisper_dir) {
-            Ok(model) => Some(model),
-            Err(error) => {
-                log::warn!(
-                    target: "model",
-                    id = "asr-whisper-large-v3-turbo-q",
-                    dir = whisper_dir.display().to_string(),
-                    error = error;
-                    "ev=model.load_failed"
-                );
-                None
+        let whisper = match plan.asr {
+            Some(AsrEngine::Whisper) => {
+                let dir = models_root().join(WHISPER_DIR);
+                match Whisper::load(&dir) {
+                    Ok(model) => Some(model),
+                    Err(error) => {
+                        log::error!(
+                            target: "model",
+                            id = WHISPER_DIR,
+                            dir = dir.display().to_string(),
+                            error = error;
+                            "ev=model.load_failed"
+                        );
+                        return Err(AsrEngine::Whisper.missing_error());
+                    }
+                }
             }
+            _ => None,
         };
         let emb_path = find_model_file("diar-eres2netv2-emb", ".onnx")
             .or_else(|| find_model_file("diar-pyannote-emb", ".onnx"))
@@ -297,10 +313,6 @@ impl ModelSet {
                     }
                 }
             });
-        if gigaam.is_none() && whisper.is_none() {
-            log::error!(target: "model", reason = "no_asr_model"; "ev=model.load_failed");
-            return Err("Нет модели распознавания речи. Скачайте GigaAM или Whisper: «Настройки» → «Модели ИИ».".to_string());
-        }
         Ok(Self {
             vad,
             gigaam,

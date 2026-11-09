@@ -1,4 +1,5 @@
 mod artifacts;
+mod asr_engine;
 mod channel_mix;
 mod diag;
 pub mod diarize;

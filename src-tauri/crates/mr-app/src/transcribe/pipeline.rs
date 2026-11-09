@@ -6,6 +6,7 @@ use mr_audio::decode::{decode_to_channels_16k_auto, is_video_path};
 use mr_ml::hotwords::{sanitize_hotwords, DEFAULT_CONFIDENCE_THRESHOLD};
 
 use super::artifacts::{write_run_manifest, write_transcript_doc};
+use super::asr_engine::{pick_asr_engine, AsrEngine};
 use super::channel_mix;
 use super::diag::{audio_stats, stage_begin, stage_end, AudioStats};
 use super::document::{unique_speech_sec, Meta, Stats, TranscriptDoc};
@@ -22,83 +23,6 @@ mod vad;
 const MAX_SEGMENT_SEC: f32 = 20.0;
 const SEGMENT_GAP_SEC: f32 = 0.5;
 const SEGMENT_PAD_SEC: f64 = 0.25;
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum AsrEngine {
-    Gigaam,
-    Whisper,
-}
-
-impl AsrEngine {
-    fn uses_gigaam(self) -> bool {
-        self == Self::Gigaam
-    }
-
-    fn id(self) -> &'static str {
-        match self {
-            Self::Gigaam => "gigaam",
-            Self::Whisper => "whisper",
-        }
-    }
-
-    fn model_id(self) -> &'static str {
-        match self {
-            Self::Gigaam => "gigaam-v3-rnnt-int8",
-            Self::Whisper => "whisper-large-v3-turbo-q",
-        }
-    }
-
-    fn display_name(self) -> &'static str {
-        match self {
-            Self::Gigaam => "GigaAM-v3 (русский язык)",
-            Self::Whisper => "Whisper large-v3-turbo (30+ языков)",
-        }
-    }
-}
-
-fn pick_asr_engine(
-    engine: &str,
-    language: &str,
-    has_gigaam: bool,
-    has_whisper: bool,
-) -> Result<AsrEngine, String> {
-    if !has_gigaam && !has_whisper {
-        return Err(
-            "Нет модели распознавания речи. Скачайте GigaAM или Whisper: «Настройки» → «Модели ИИ»."
-                .to_string(),
-        );
-    }
-    match engine {
-        "whisper" => has_whisper
-            .then_some(AsrEngine::Whisper)
-            .ok_or_else(|| "Модель Whisper не скачана: «Настройки» → «Модели ИИ».".to_string()),
-        "gigaam" => has_gigaam
-            .then_some(AsrEngine::Gigaam)
-            .ok_or_else(|| "Модель GigaAM не скачана: «Настройки» → «Модели ИИ».".to_string()),
-        "auto" => {
-            let language = language.trim();
-            let russian = language.is_empty()
-                || language.eq_ignore_ascii_case("auto")
-                || language.eq_ignore_ascii_case("ru");
-            if russian {
-                Ok(if has_gigaam {
-                    AsrEngine::Gigaam
-                } else {
-                    AsrEngine::Whisper
-                })
-            } else {
-                Ok(if has_whisper {
-                    AsrEngine::Whisper
-                } else {
-                    AsrEngine::Gigaam
-                })
-            }
-        }
-        other => Err(format!(
-            "Неизвестный движок распознавания «{other}»: допустимы auto, gigaam, whisper."
-        )),
-    }
-}
 
 pub(super) fn quiet_blank_penalty(duration_sec: f64, rms: f32) -> f32 {
     if duration_sec <= 4.0 && (0.0015..0.015).contains(&rms) {
@@ -296,13 +220,32 @@ fn transcribe_file_inner(
     let models_stage = Instant::now();
     stage_begin("models");
     events::emit_stage(2, "Загружаю модели…");
-    let mut models = ModelsGuard::take()?;
-    let engine = pick_asr_engine(
+    let mut engine = pick_asr_engine(
         &opts.engine,
         &opts.language,
-        models.gigaam.is_some(),
-        models.whisper.is_some(),
+        AsrEngine::Gigaam.installed(),
+        AsrEngine::Whisper.installed(),
     )?;
+    let mut models = match ModelsGuard::take(Some(engine), opts.ctc_enabled) {
+        Ok(models) => models,
+        Err(error) if opts.engine.eq_ignore_ascii_case("auto") => {
+            // Битые веса основного движка не должны ронять auto, если второй установлен.
+            let fallback = engine.other();
+            if !fallback.installed() {
+                return Err(error);
+            }
+            log::warn!(
+                target: "model",
+                from = engine.id(),
+                to = fallback.id(),
+                error = error;
+                "ev=model.fallback"
+            );
+            engine = fallback;
+            ModelsGuard::take(Some(engine), opts.ctc_enabled)?
+        }
+        Err(error) => return Err(error),
+    };
     let use_gigaam = engine.uses_gigaam();
     let mut engine_name = engine.display_name().to_string();
     events::emit_stage(6, &format!("Модели готовы: {engine_name}"));
@@ -496,7 +439,7 @@ fn transcribe_file_inner(
 
 #[cfg(test)]
 mod tests {
-    use super::{pick_asr_engine, quiet_blank_penalty, AsrEngine};
+    use super::quiet_blank_penalty;
 
     #[test]
     fn blank_penalty_only_for_short_quiet_speech() {
@@ -504,65 +447,5 @@ mod tests {
         assert_eq!(quiet_blank_penalty(10.0, 0.011), 0.0);
         assert_eq!(quiet_blank_penalty(2.6, 0.0003), 0.0);
         assert_eq!(quiet_blank_penalty(2.6, 0.2), 0.0);
-    }
-
-    #[test]
-    fn explicit_engine_requires_its_own_model() {
-        assert_eq!(
-            pick_asr_engine("whisper", "ru", true, true),
-            Ok(AsrEngine::Whisper)
-        );
-        assert_eq!(
-            pick_asr_engine("gigaam", "en", true, true),
-            Ok(AsrEngine::Gigaam)
-        );
-        assert!(pick_asr_engine("whisper", "en", true, false)
-            .unwrap_err()
-            .contains("Whisper"));
-        assert!(pick_asr_engine("gigaam", "ru", false, true)
-            .unwrap_err()
-            .contains("GigaAM"));
-    }
-
-    #[test]
-    fn auto_prefers_whisper_for_non_russian_language() {
-        for language in ["en", "de", "zh", "EN"] {
-            assert_eq!(
-                pick_asr_engine("auto", language, true, true),
-                Ok(AsrEngine::Whisper),
-                "language = {language}"
-            );
-        }
-        assert_eq!(
-            pick_asr_engine("auto", "en", true, false),
-            Ok(AsrEngine::Gigaam)
-        );
-    }
-
-    #[test]
-    fn auto_prefers_gigaam_for_russian_or_unknown_language() {
-        for language in ["ru", "RU", "auto", "", "  "] {
-            assert_eq!(
-                pick_asr_engine("auto", language, true, true),
-                Ok(AsrEngine::Gigaam),
-                "language = {language}"
-            );
-        }
-        assert_eq!(
-            pick_asr_engine("auto", "ru", false, true),
-            Ok(AsrEngine::Whisper)
-        );
-    }
-
-    #[test]
-    fn no_models_or_unknown_engine_is_an_error() {
-        for language in ["ru", "en", "auto"] {
-            assert!(pick_asr_engine("auto", language, false, false).is_err());
-            assert!(pick_asr_engine("whisper", language, false, false).is_err());
-            assert!(pick_asr_engine("gigaam", language, false, false).is_err());
-        }
-        assert!(pick_asr_engine("ctc", "ru", true, true)
-            .unwrap_err()
-            .contains("Неизвестный движок"));
     }
 }
