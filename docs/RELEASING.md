@@ -9,7 +9,7 @@ GitHub Release.
 
 Обновите версию в:
 
-* `src-tauri/crates/*/Cargo.toml` (5 крейтов);
+* `src-tauri/crates/*/Cargo.toml` (6 крейтов);
 * `src-tauri/crates/mr-app/tauri.conf.json`;
 * `ui/web/frontend/package.json`;
 * `CHANGELOG.md`;
