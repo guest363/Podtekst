@@ -105,6 +105,7 @@ cd ui/web/frontend && yarn lint && yarn check && yarn build  # Фронт: Biome
 |---|---|
 | Доменные термины (Turn, Voiceprint, Cluster, Person, VAD) | `CONTEXT.md` |
 | Dev-логи, артефакты запуска, разбор сбоев | `docs/dev-logging.md` |
+| Тестирование на открытых датасетах: метрики, наборы, приёмка | `docs/testing/OPEN-DATASETS-TZ.md` |
 | Регламент работы с ИИ (Track 1 / Track 2), верификация | `docs/ai/workflow.md` |
 | Мобильная версия (Android AAudio, Foreground Service) | `ANDROID.md` |
 | ML-инференс, ONNX, Silero, GigaAM, Whisper, эмбеддинги | `src-tauri/crates/mr-ml/AGENTS.md` |
