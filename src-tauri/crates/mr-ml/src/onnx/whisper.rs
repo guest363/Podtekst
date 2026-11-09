@@ -113,7 +113,9 @@ impl Whisper {
         }
         const N_FRAMES: usize = 3000;
         const N_MELS: usize = 128;
-        let mut flat = vec![0.0f32; N_MELS * N_FRAMES];
+        // Ноль в нормализованной мел-шкале Whisper — это шум 10^-4, а не
+        // тишина: 26 секунд такого «шума» провоцируют догадки в хвосте.
+        let mut flat = vec![whisper_silence_floor(&mel); N_MELS * N_FRAMES];
         for (t, row) in mel.iter().take(N_FRAMES).enumerate() {
             for c in 0..N_MELS.min(row.len()) {
                 flat[c * N_FRAMES + t] = row[c];
@@ -227,6 +229,16 @@ impl Whisper {
         }
         Ok((logits.ok_or_else(|| "нет логитов".to_string())?, present))
     }
+}
+
+/// Контракт `whisper_mel`: тишина — `global_max - 8 дБ`, затем `(x + 4) / 4`.
+fn whisper_silence_floor(mel: &[Vec<f32>]) -> f32 {
+    let max = mel
+        .iter()
+        .flatten()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+    ((-10.0f32).max(max * 4.0 - 12.0) + 4.0) / 4.0
 }
 
 fn present_of(past_name: &str) -> String {
@@ -379,6 +391,22 @@ mod tests {
             ]
         })
         .to_string()
+    }
+
+    #[test]
+    fn padding_uses_silence_level_not_zero() {
+        let tone: Vec<f32> = (0..16000 * 2)
+            .map(|i| (2.0 * std::f64::consts::PI * 440.0 * i as f64 / 16000.0).sin() as f32)
+            .collect();
+        let mut thirty = tone.clone();
+        thirty.resize(16000 * 30, 0.0);
+        let full = whisper_mel(&thirty);
+        let expected = full[full.len() - 1][0];
+        let actual = whisper_silence_floor(&whisper_mel(&tone));
+        assert!(
+            (actual - expected).abs() < 1e-4,
+            "тишина {actual}, хвост 30 с {expected}"
+        );
     }
 
     #[test]

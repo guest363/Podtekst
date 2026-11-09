@@ -8,6 +8,9 @@
 //! * ERes2NetV2 (3D-Speaker): то же, но окно Hann и покадровая кухня kaldi
 //!   (минус среднее кадра → преэмфазис внутри кадра), как `torchaudio.compliance.kaldi.fbank`.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+
 fn hann(n: usize) -> Vec<f64> {
     if n <= 1 {
         return vec![1.0; n];
@@ -199,6 +202,32 @@ fn dft(x: &[(f64, f64)]) -> Vec<(f64, f64)> {
         .collect()
 }
 
+/// Поворотные коэффициенты зависят только от `n`: без кэша каждый кадр
+/// заново считал тысячи `sin_cos` на всех уровнях рекурсии.
+fn twiddles(n: usize) -> Option<&'static [(f64, f64)]> {
+    static CACHE: OnceLock<HashMap<usize, Vec<(f64, f64)>>> = OnceLock::new();
+    let table = CACHE.get_or_init(|| {
+        let mut table = HashMap::new();
+        for top in [512usize, 400, 320] {
+            let mut n = top;
+            while n > 1 {
+                table.entry(n).or_insert_with(|| {
+                    (0..n)
+                        .map(|k| {
+                            let ang = -2.0 * std::f64::consts::PI * k as f64 / n as f64;
+                            let (s, c) = ang.sin_cos();
+                            (c, s)
+                        })
+                        .collect()
+                });
+                n = if n.is_multiple_of(2) { n / 2 } else { n / 5 };
+            }
+        }
+        table
+    });
+    table.get(&n).map(Vec::as_slice)
+}
+
 /// Смешанное БПФ Кули–Тьюки по множителям 2 и 5 — точное ДПФ для всех
 /// используемых `fft_size` (320, 400, 512) за O(n log n) вместо O(n²).
 /// Наивное ДПФ — O(n²): диаризация длинной записи занимала бы десятки минут.
@@ -214,14 +243,10 @@ fn fft(x: &[(f64, f64)]) -> Vec<(f64, f64)> {
     } else {
         return dft(x);
     };
+    let Some(tw) = twiddles(n) else {
+        return dft(x);
+    };
     let m = n / r;
-    let tw: Vec<(f64, f64)> = (0..n)
-        .map(|k| {
-            let ang = -2.0 * std::f64::consts::PI * k as f64 / n as f64;
-            let (s, c) = ang.sin_cos();
-            (c, s)
-        })
-        .collect();
     let subs: Vec<Vec<(f64, f64)>> = (0..r)
         .map(|j| fft(&(0..m).map(|i| x[i * r + j]).collect::<Vec<_>>()))
         .collect();
@@ -319,6 +344,82 @@ pub const ERES2NETV2_FRONTEND: FrontendParams = FrontendParams {
     kaldi_exact: true,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum WindowKind {
+    Hann,
+    PeriodicHann,
+    Hamming,
+}
+
+type WindowCache = Mutex<HashMap<(WindowKind, usize), Arc<Vec<f64>>>>;
+
+fn cached_window(kind: WindowKind, n: usize) -> Arc<Vec<f64>> {
+    static CACHE: OnceLock<WindowCache> = OnceLock::new();
+    let mut cache = CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(window) = cache.get(&(kind, n)) {
+        return Arc::clone(window);
+    }
+    let window = match kind {
+        WindowKind::Hann => hann(n),
+        WindowKind::PeriodicHann => hann_periodic(n),
+        WindowKind::Hamming => hamming(n),
+    };
+    let window = Arc::new(window);
+    cache.insert((kind, n), Arc::clone(&window));
+    window
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum FilterKind {
+    Htk,
+    Kaldi,
+    Slaney,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct FilterKey {
+    kind: FilterKind,
+    sample_rate: u32,
+    fft_size: usize,
+    n_mels: usize,
+    fmin_bits: u64,
+    fmax_bits: u64,
+}
+
+type FilterCache = Mutex<HashMap<FilterKey, Arc<Vec<Vec<f64>>>>>;
+
+fn cached_filters(p: FrontendParams, kind: FilterKind) -> Arc<Vec<Vec<f64>>> {
+    static CACHE: OnceLock<FilterCache> = OnceLock::new();
+    let key = FilterKey {
+        kind,
+        sample_rate: p.sample_rate,
+        fft_size: p.fft_size,
+        n_mels: p.n_mels,
+        fmin_bits: p.fmin.to_bits(),
+        fmax_bits: p.fmax.to_bits(),
+    };
+    let mut cache = CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(filters) = cache.get(&key) {
+        return Arc::clone(filters);
+    }
+    let filters = match kind {
+        FilterKind::Htk => mel_filters_htk(p.sample_rate, p.fft_size, p.n_mels, p.fmin, p.fmax),
+        FilterKind::Kaldi => mel_filters_kaldi(p.sample_rate, p.fft_size, p.n_mels, p.fmin, p.fmax),
+        FilterKind::Slaney => {
+            mel_filters_slaney(p.sample_rate, p.fft_size, p.n_mels, p.fmin, p.fmax)
+        }
+    };
+    let filters = Arc::new(filters);
+    cache.insert(key, Arc::clone(&filters));
+    filters
+}
+
 pub fn log_mel_frames(samples: &[f32], p: FrontendParams) -> Vec<Vec<f32>> {
     let mut sig: Vec<f32> = Vec::with_capacity(samples.len());
     if p.preemphasis > 0.0 && !p.kaldi_exact {
@@ -330,16 +431,22 @@ pub fn log_mel_frames(samples: &[f32], p: FrontendParams) -> Vec<Vec<f32>> {
     } else {
         sig.extend_from_slice(samples);
     }
-    let win = if p.hamming_window {
-        hamming(p.win_length)
-    } else {
-        hann(p.win_length)
-    };
-    let fb = if p.kaldi_exact {
-        mel_filters_kaldi(p.sample_rate, p.fft_size, p.n_mels, p.fmin, p.fmax)
-    } else {
-        mel_filters_htk(p.sample_rate, p.fft_size, p.n_mels, p.fmin, p.fmax)
-    };
+    let win = cached_window(
+        if p.hamming_window {
+            WindowKind::Hamming
+        } else {
+            WindowKind::Hann
+        },
+        p.win_length,
+    );
+    let fb = cached_filters(
+        p,
+        if p.kaldi_exact {
+            FilterKind::Kaldi
+        } else {
+            FilterKind::Htk
+        },
+    );
     let n = sig.len();
     let mut frames = Vec::new();
     let mut start = 0usize;
@@ -389,8 +496,8 @@ pub fn whisper_mel(samples: &[f32]) -> Vec<Vec<f32>> {
     if padded.len() < p.win_length {
         return Vec::new();
     }
-    let win = hann_periodic(p.win_length);
-    let fb = mel_filters_slaney(p.sample_rate, p.fft_size, p.n_mels, p.fmin, p.fmax);
+    let win = cached_window(WindowKind::PeriodicHann, p.win_length);
+    let fb = cached_filters(p, FilterKind::Slaney);
     // center=True добавляет по half-window с каждой стороны; torch отдаёт на
     // один кадр больше, чем нужно модели, и эталон его отбрасывает.
     let n_frames = (1 + (padded.len() - p.win_length) / p.hop) - 1;
@@ -400,7 +507,7 @@ pub fn whisper_mel(samples: &[f32]) -> Vec<Vec<f32>> {
         let start = t * p.hop;
         let frame: Vec<f64> = padded[start..start + p.win_length]
             .iter()
-            .zip(&win)
+            .zip(win.iter())
             .map(|(&x, &w)| x as f64 * w)
             .collect();
         let power = fft_power(&frame);
@@ -494,6 +601,16 @@ mod tests {
         let tone_e: f32 = w.iter().map(|r| r.iter().sum::<f32>()).sum();
         let sil_e: f32 = sil.iter().map(|r| r.iter().sum::<f32>()).sum();
         assert!(tone_e > sil_e);
+    }
+
+    #[test]
+    fn frontend_tables_are_cached() {
+        let first = cached_filters(ERES2NETV2_FRONTEND, FilterKind::Kaldi);
+        let second = cached_filters(ERES2NETV2_FRONTEND, FilterKind::Kaldi);
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(first.len(), ERES2NETV2_FRONTEND.n_mels);
+        let window = cached_window(WindowKind::Hann, 400);
+        assert_eq!(window.len(), 400);
     }
 
     /// 30 с при hop 160 и center=True дают ровно 3000 кадров, как у эталона.

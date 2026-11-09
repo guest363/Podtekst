@@ -13,7 +13,7 @@
 ## 2. Ключевые файлы
 
 - `src/lib.rs` - фасад крейта, публичные структуры диаризации и сегментации.
-- `src/cluster.rs` - complete linkage через nearest-neighbor chain O(n²), плоская матрица расстояний и силуэт-оценка фрагментов.
+- `src/cluster.rs` - average linkage (UPGMA) через nearest-neighbor chain O(n²), плоская матрица расстояний и силуэт-оценка фрагментов.
 - `src/onnx/vad.rs` - детектор речи Silero VAD v6.2 с сохранением скрытого состояния (state) между окнами 32 мс и pre-roll 64 мс.
 - `src/onnx/rnnt.rs` - акустическая модель GigaAM-v3 e2e RNNT (энкодер, предиктор, джойнер). Декодер и джойнер работают в один поток для исключения накладных расходов синхронизации.
 - `src/onnx/whisper.rs` - мультиязычный ASR Whisper large-v3-turbo.
