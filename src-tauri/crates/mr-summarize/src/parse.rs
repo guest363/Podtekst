@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::OnceLock;
 
 use regex::Regex;
@@ -54,6 +55,8 @@ pub fn empty(preset: &Preset) -> ParsedSummary {
 }
 
 pub fn parse(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryError> {
+    let cleaned = strip_envelope(output, preset);
+    let output = cleaned.as_ref();
     if !has_recognized_headings(output, preset)
         && output.lines().any(|line| !line.trim().is_empty())
     {
@@ -226,6 +229,12 @@ pub fn parse(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErro
         last_raw = trimmed.to_owned();
     }
 
+    for section in &mut sections {
+        section
+            .items
+            .retain(|item| !is_absence_item(section.id, &item.text));
+    }
+
     let items: usize = sections.iter().map(|s| s.items.len()).sum();
     if items == 0 {
         return Err(SummaryError::InvalidOutput("no sections or items".into()));
@@ -243,6 +252,71 @@ pub fn parse(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErro
         parser_recovered: recovered,
         injection_flagged: injection,
     })
+}
+
+fn strip_envelope<'a>(output: &'a str, preset: &Preset) -> Cow<'a, str> {
+    let mut text = output.trim();
+    if let Some(rest) = text.strip_prefix("```") {
+        let rest = rest.strip_prefix("markdown").unwrap_or(rest);
+        let rest = rest.strip_prefix('\n').unwrap_or(rest);
+        if let Some(inner) = rest.strip_suffix("```") {
+            text = inner.trim();
+        }
+    }
+    let lines: Vec<&str> = text.lines().collect();
+    if let Some(index) = lines.iter().position(|line| {
+        let trimmed = line.trim();
+        heading(trimmed)
+            .or_else(|| bare_heading(trimmed))
+            .and_then(|name| resolve_heading(preset, &name))
+            .is_some()
+    }) {
+        if index > 0 {
+            return Cow::Owned(lines[index..].join("\n"));
+        }
+    }
+    Cow::Borrowed(text)
+}
+
+fn is_absence_item(section_id: &str, text: &str) -> bool {
+    let normalized = crate::text::normalize(text);
+    let normalized = normalized.trim();
+    let markers: &[&str] = match section_id {
+        "decisions" => &[
+            "нет",
+            "нет решений",
+            "решений не принималось",
+            "решения не принимались",
+            "no decisions",
+            "no decisions were made",
+            "none",
+        ],
+        "tasks" | "next_steps" | "todo" => &[
+            "нет",
+            "нет задач",
+            "задач нет",
+            "no tasks",
+            "no action items",
+            "none",
+        ],
+        "questions" | "open_topics" => &[
+            "нет",
+            "нет вопросов",
+            "вопросов нет",
+            "no questions",
+            "none",
+        ],
+        "blockers" => &["нет", "нет блокеров", "блокеров нет", "no blockers", "none"],
+        "agreements" | "next_session" => &[
+            "нет",
+            "нет договоренностей",
+            "договоренностей нет",
+            "no agreements",
+            "none",
+        ],
+        _ => return false,
+    };
+    markers.contains(&normalized)
 }
 
 pub fn has_recognized_headings(output: &str, preset: &Preset) -> bool {
@@ -314,6 +388,11 @@ fn parse_flat(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErr
         };
         push_item(&mut doc.sections[target], text, role, task_meta);
         recovered += 1;
+    }
+    for section in &mut doc.sections {
+        section
+            .items
+            .retain(|item| !is_absence_item(section.id, &item.text));
     }
     let items: usize = doc.sections.iter().map(|s| s.items.len()).sum();
     if items == 0 {

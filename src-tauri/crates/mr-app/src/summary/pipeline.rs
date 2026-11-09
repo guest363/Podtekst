@@ -39,8 +39,8 @@ fn map_backend(error: BackendError) -> super::SummaryJobError {
 
 fn estimate_single_pass(chars: usize, max_tokens: u32) -> bool {
     let prompt_tokens = chars as f64 / 2.5 + 600.0;
-    chars <= 30_000
-        && prompt_tokens <= 13_000.0
+    chars <= 12_000
+        && prompt_tokens <= 6_000.0
         && prompt_tokens as u32 + max_tokens + 256 <= CONTEXT_TOKENS
 }
 
@@ -647,8 +647,8 @@ mod tests {
     }
 
     #[test]
-    fn thirty_minute_source_stays_single_pass() {
-        assert!(estimate_single_pass(25_000, 768));
+    fn twelve_minute_source_goes_map_reduce() {
+        assert!(!estimate_single_pass(13_000, 768));
     }
 
     #[test]

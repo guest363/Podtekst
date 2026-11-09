@@ -103,6 +103,7 @@ pub(super) fn cancel_sidecar(job: &Arc<Job>) {
 }
 
 fn stage(job: &Arc<Job>, phase: &'static str, pct: u8, chunk: Option<u32>, chunks: Option<u32>) {
+    job.touch_progress();
     let mut state = job.state.lock().unwrap_or_else(|e| e.into_inner());
     if pct <= state.pct && state.phase == phase {
         return;

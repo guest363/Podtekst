@@ -34,6 +34,22 @@ pub(super) struct Job {
     pub cancel: CancelToken,
     pub timed_out: AtomicBool,
     pub state: Mutex<JobState>,
+    last_progress: Mutex<Instant>,
+}
+
+impl Job {
+    /// Watchdog смотрит на прогресс, а не на общий wall-clock: длинная
+    /// CPU-встреча может законно идти 10–20 минут.
+    pub(super) fn touch_progress(&self) {
+        *self.last_progress.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
+    }
+
+    fn progress_elapsed(&self) -> Duration {
+        self.last_progress
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .elapsed()
+    }
 }
 
 pub(super) static JOB: Mutex<Option<Arc<Job>>> = Mutex::new(None);
@@ -98,6 +114,7 @@ fn reserve(file: String) -> Result<Reservation, ApiError> {
             chunk: None,
             chunks: None,
         }),
+        last_progress: Mutex::new(Instant::now()),
     });
     *cell = Some(job.clone());
     drop(cell);
@@ -366,7 +383,7 @@ pub fn generate(input: &GenerateInput, recording: bool) -> Result<StartOutcome, 
             "Внутренняя ошибка итогов. Повторите и лог.",
         ));
     }
-    arm_timeout(reservation.disarm(), source.transcript.total_chars());
+    arm_timeout(reservation.disarm());
     Ok(StartOutcome::Started { job_id })
 }
 
@@ -381,18 +398,22 @@ fn cache_matches(artifact: &mr_summarize::SummaryArtifact, input: &GenerateInput
                 .unwrap_or_default()
 }
 
-fn arm_timeout(job: Arc<Job>, chars: usize) {
-    let secs = (120 + chars / 20).clamp(300, 900) as u64;
-    std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(secs);
-        while Instant::now() < deadline {
-            if !is_current(&job.id) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(500));
-        }
+/// Watchdog: 15 минут без единого события прогресса или 4 часа абсолютного
+/// времени. Общий wall-clock не годится — 20-минутная встреча на CPU идёт
+/// 11 минут и это нормально.
+fn arm_timeout(job: Arc<Job>) {
+    const STALL: Duration = Duration::from_secs(15 * 60);
+    const ABSOLUTE: Duration = Duration::from_secs(4 * 60 * 60);
+    std::thread::spawn(move || loop {
         if !is_current(&job.id) {
             return;
+        }
+        if job.cancel.is_cancelled() {
+            return;
+        }
+        if job.progress_elapsed() < STALL && job.started.elapsed() < ABSOLUTE {
+            std::thread::sleep(Duration::from_millis(500));
+            continue;
         }
         job.timed_out.store(true, Ordering::SeqCst);
         job.cancel.cancel();
@@ -401,6 +422,7 @@ fn arm_timeout(job: Arc<Job>, chars: usize) {
             #[cfg(not(target_os = "android"))]
             sidecar::kill_current();
         }
+        return;
     });
 }
 
@@ -504,6 +526,19 @@ mod tests {
             sidecar::test_state_pid().is_none(),
             "sidecar state остался после kill"
         );
+    }
+
+    #[test]
+    fn progress_touch_resets_watchdog() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        *job_cell() = None;
+        let reservation = reserve("watchdog.wav".to_string()).expect("слот занят");
+        let job = reservation.job().clone();
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(job.progress_elapsed() >= Duration::from_millis(20));
+        job.touch_progress();
+        assert!(job.progress_elapsed() < Duration::from_millis(20));
+        drop(reservation);
     }
 
     #[test]

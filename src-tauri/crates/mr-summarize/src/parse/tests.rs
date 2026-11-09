@@ -253,3 +253,31 @@ fn decision_label_value_is_sanitized() {
     assert_eq!(decisions.items.len(), 1);
     assert_eq!(parsed.injection_flagged, 1);
 }
+
+#[test]
+fn preamble_and_fence_before_first_heading_are_dropped() {
+    let output = "Конечно, вот итоги встречи:\n```markdown\n# Итоги встречи\n## Кратко\n- Главный итог.\n```";
+    let parsed = parse(output, p("meeting")).unwrap();
+    let brief = parsed.sections.iter().find(|s| s.id == "brief").unwrap();
+    assert_eq!(brief.items.len(), 1, "{:?}", brief.items);
+    assert_eq!(brief.items[0].text, "Главный итог.");
+}
+
+#[test]
+fn absence_sentinels_are_removed_but_negative_decisions_survive() {
+    let output = "## Решения\n- Нет\n- Сокращений не было.\n## Задачи\n- Задач нет.\n";
+    let parsed = parse(output, p("meeting")).unwrap();
+    let decisions = parsed
+        .sections
+        .iter()
+        .find(|s| s.id == "decisions")
+        .unwrap();
+    assert_eq!(decisions.items.len(), 1, "{:?}", decisions.items);
+    assert_eq!(decisions.items[0].text, "Сокращений не было.");
+    let tasks = parsed.sections.iter().find(|s| s.id == "tasks").unwrap();
+    assert!(
+        tasks.items.is_empty(),
+        "absence-задача не удалена: {:?}",
+        tasks.items
+    );
+}
