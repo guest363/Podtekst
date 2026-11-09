@@ -142,7 +142,7 @@ enum EntryKind {
 /// Windows-разделители и буквы дисков: на Linux они выглядят обычным компонентом
 /// и после `Path::join` увели бы запись за пределы пакета.
 fn classify_entry<R: Read>(f: &zip::read::ZipFile<'_, R>) -> Option<(EntryKind, String)> {
-    let raw = f.name();
+    let raw = f.name().ok()?;
     if raw.contains('\\') || raw.contains(':') || raw.contains('\0') {
         return None;
     }
@@ -181,7 +181,7 @@ fn read_entry_limited<R: Read>(
     if f.size() > max_entry {
         return Err(PacksError::Zip(format!(
             "запись {} больше допустимых {max_entry} байт",
-            f.name()
+            f.name().as_deref().unwrap_or("<unnamed>")
         )));
     }
     let cap = max_entry.min(max_total.saturating_sub(*consumed));
