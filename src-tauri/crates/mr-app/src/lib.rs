@@ -445,7 +445,7 @@ pub fn run_cli() {
 use serde_json::json;
 
 #[cfg(test)]
-static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 mod tests {

@@ -162,8 +162,6 @@ pub fn enabled() -> bool {
 mod tests {
     use super::*;
 
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     #[test]
     fn default_is_heuristic_not_manual_only() {
         assert_eq!(
@@ -193,7 +191,9 @@ mod tests {
     }
     #[test]
     fn env_override_is_not_persisted_by_settings_update() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let old_mode = std::env::var_os("SUMMARY_CLASSIFIER_MODE");
         let old_enabled = std::env::var_os("PODTEKST_SUMMARY_ENABLED");
         let dir = std::env::temp_dir().join(format!(

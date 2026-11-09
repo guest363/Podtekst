@@ -477,8 +477,6 @@ pub fn cancel_for_recording() {
 mod tests {
     use super::*;
 
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
-
     fn alive(pid: u32) -> bool {
         #[cfg(target_os = "linux")]
         {
@@ -493,7 +491,9 @@ mod tests {
 
     #[test]
     fn cancel_kills_generation_child_and_releases_slot() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         *job_cell() = None;
         let reservation = reserve("cancel.wav".to_string()).expect("слот занят");
         let job_id = reservation.job().id.clone();
@@ -530,7 +530,9 @@ mod tests {
 
     #[test]
     fn progress_touch_resets_watchdog() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         *job_cell() = None;
         let reservation = reserve("watchdog.wav".to_string()).expect("слот занят");
         let job = reservation.job().clone();
@@ -543,7 +545,9 @@ mod tests {
 
     #[test]
     fn double_reserve_yields_one_slot() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         *job_cell() = None;
         let barrier = Arc::new(std::sync::Barrier::new(2));
         let handles: Vec<_> = (0..2)
