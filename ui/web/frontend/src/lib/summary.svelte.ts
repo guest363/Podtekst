@@ -6,6 +6,10 @@ export {
 } from './summaryLoad.ts'
 export {
   saveSummarySettings,
+  refreshSummaryGpu,
+  installSummaryGpu,
+  cancelSummaryGpu,
+  removeSummaryGpu,
   classifySummary,
   pickPreset,
   confirmSensitive,

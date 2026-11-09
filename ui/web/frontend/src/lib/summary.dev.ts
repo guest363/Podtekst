@@ -2,6 +2,7 @@
 // в dev-сборке, пока backend-маршруты /api/summary* ещё не подняты.
 import type {
   SummaryClassification,
+  SummaryGpuStatus,
   SummaryModelInfo,
   SummaryPreset,
   SummaryRecord,
@@ -86,7 +87,32 @@ const MODEL: SummaryModelInfo = {
   min_system_ram_mb: 12288,
 }
 
-let settings: SummarySettings = { auto_suggest: true, default_preset: null, detail: 'normal' }
+let settings: SummarySettings = { auto_suggest: true, default_preset: null, detail: 'normal', gpu: 'auto' }
+const mocks: { gpu: SummaryGpuStatus } = {
+  gpu: {
+    supported: true,
+    bundled: false,
+    backend: 'vulkan',
+    title: 'Vulkan (Intel, AMD, NVIDIA)',
+    description: 'Ускорение итогов через Vulkan.',
+    pack_id: 'linux-x86_64-vulkan',
+    installed: false,
+    has_update: false,
+    device: 'Mock GPU',
+    reason: 'not_installed',
+    compressed_bytes: 35871160,
+    installed_bytes: 41209848,
+    min_free_mb: 256,
+    license: 'MIT',
+    license_url: 'https://github.com/ggml-org/llama.cpp/blob/master/LICENSE',
+    installing: false,
+    pct: 0,
+    stage: '',
+    error: null,
+    error_code: null,
+    cancelled: false,
+  },
+}
 let record: SummaryRecord | null = null
 let seq = 0
 let job: { id: string; file: string; phase: string; pct: number; timers: number[]; cancelled: boolean } | null = null
@@ -291,6 +317,7 @@ export async function request(path: string, init?: RequestInit): Promise<unknown
       if (body.detail === 'short' || body.detail === 'normal' || body.detail === 'long') {
         settings.detail = body.detail
       }
+      if (body.gpu === 'auto' || body.gpu === 'off') settings.gpu = body.gpu
     }
     return {
       ok: true,
@@ -298,7 +325,23 @@ export async function request(path: string, init?: RequestInit): Promise<unknown
       presets: PRESETS,
       model: MODEL,
       capabilities: { summary_supported: true, runtime: 'sidecar', classifier: 'heuristic' },
+      gpu: mocks.gpu,
     }
+  }
+  if (url.pathname === '/api/summary/gpu') {
+    return { ok: true, ...mocks.gpu }
+  }
+  if (url.pathname === '/api/summary/gpu/install') {
+    mocks.gpu.installed = true
+    mocks.gpu.reason = null
+    return { ok: true, started: true }
+  }
+  if (url.pathname === '/api/summary/gpu/cancel') {
+    return { ok: true, cancelled: false }
+  }
+  if (url.pathname === '/api/summary/gpu/remove') {
+    mocks.gpu.installed = false
+    return { ok: true, ...mocks.gpu }
   }
   if (url.pathname === '/api/summary/classify') {
     return { ok: true, classification: classification(), source_rev: 'mock-rev-1', cache_hit: false }

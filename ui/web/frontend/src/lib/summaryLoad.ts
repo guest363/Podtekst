@@ -227,6 +227,7 @@ export async function loadSummarySettings(): Promise<void> {
   if (d.system_prompt_base) summaryState.systemPromptBase = d.system_prompt_base
   summaryState.model = d.model
   summaryState.capabilities = d.capabilities
+  summaryState.gpu = d.gpu
 }
 
 function pathKey(file: string): string {
