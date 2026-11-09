@@ -1,5 +1,6 @@
-import type { Utterance } from './api'
-import { fmtClockShort } from './api'
+import type { OkResponse, Utterance } from './api'
+import { fmtClockShort, readJsonSafe } from './api'
+import { isAbortError } from './guards.ts'
 import { toast } from './toast.svelte.ts'
 
 export type TranscriptMeta = {
@@ -163,16 +164,17 @@ async function saveBinary(
   try {
     const res = await fetch(`/api/export/save_dialog?name=${encodeURIComponent(defaultName)}`, {
       method: 'POST',
+      // SAFETY: буферы создаются локально через new Uint8Array, SharedArrayBuffer не используется.
       body: bytes.buffer as ArrayBuffer,
     })
     if (res.ok) {
-      const data = (await res.json()) as {
-        ok: boolean
-        path?: string
-        cancelled?: boolean
-        no_dialog?: boolean
-        error?: string
-      }
+      const data = await readJsonSafe<
+        OkResponse & {
+          path?: string
+          cancelled?: boolean
+          no_dialog?: boolean
+        }
+      >(res)
       if (data.ok && data.path) {
         toast(`Файл сохранён: ${data.path}`)
         return
@@ -189,7 +191,7 @@ async function saveBinary(
     // В случае сбоя сети fallback ниже
   }
 
-  const win = window as unknown as {
+  const win: Window & {
     showSaveFilePicker?: (options: {
       suggestedName?: string
       types?: Array<{ description: string; accept: Record<string, string[]> }>
@@ -199,7 +201,7 @@ async function saveBinary(
         close: () => Promise<void>
       }>
     }>
-  }
+  } = window
   if (typeof win.showSaveFilePicker === 'function') {
     try {
       const handle = await win.showSaveFilePicker({
@@ -212,12 +214,13 @@ async function saveBinary(
       toast(`Файл сохранён: ${defaultName}`)
       return
     } catch (err: unknown) {
-      if ((err as Error)?.name === 'AbortError') {
+      if (isAbortError(err)) {
         return
       }
     }
   }
 
+  // SAFETY: буферы создаются локально через new Uint8Array, SharedArrayBuffer не используется.
   const blob = new Blob([bytes.buffer as ArrayBuffer], { type: type.mime })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')

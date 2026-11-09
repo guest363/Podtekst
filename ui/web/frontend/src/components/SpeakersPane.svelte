@@ -9,6 +9,7 @@ import {
   speakerColor,
   speakerTint,
 } from '../lib/api'
+import { errText } from '../lib/guards.ts'
 import { loadPeople, peopleState } from '../lib/people.svelte.ts'
 import { toast, toastConfirm } from '../lib/toast.svelte.ts'
 import { editTranscript, transcript } from '../lib/transcript.svelte.ts'
@@ -214,10 +215,10 @@ async function saveVoiceprint(
       emit('transcript-reload')
       emit('voiceprints-changed')
     } else {
-      toast('Не удалось сохранить: ' + (d.error || 'неизвестная ошибка'), 'error')
+      toast(`Не удалось сохранить: ${d.error || 'неизвестная ошибка'}`, 'error')
     }
   } catch (e) {
-    toast('Сетевая ошибка: ' + (e as Error).message, 'error')
+    toast(`Сетевая ошибка: ${errText(e)}`, 'error')
   } finally {
     saveBtn.disabled = false
   }
@@ -241,10 +242,10 @@ async function unmatchSpeaker(speakerName: string): Promise<void> {
       toast(`Опознание спикера «${speakerName}» снято в этой записи`)
       emit('transcript-reload')
     } else {
-      toast('Не удалось снять опознание: ' + (d.error || 'ошибка'), 'error')
+      toast(`Не удалось снять опознание: ${d.error || 'ошибка'}`, 'error')
     }
   } catch (e) {
-    toast('Сетевая ошибка: ' + (e as Error).message, 'error')
+    toast(`Сетевая ошибка: ${errText(e)}`, 'error')
   }
 }
 
@@ -283,7 +284,7 @@ async function detachSample(s: {
     input?.focus()
     targetCard?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   } catch (e) {
-    toast('Не удалось вынести реплику: ' + (e as Error).message, 'error')
+    toast(`Не удалось вынести реплику: ${errText(e)}`, 'error')
   }
 }
 
@@ -318,7 +319,7 @@ let activeDropdown = $state<DropdownState | null>(null)
 let dropdownEl = $state<HTMLElement | null>(null)
 
 async function openDropdownFor(key: string, anchorEl: HTMLElement): Promise<void> {
-  const card = anchorEl.closest('.speaker-card') as HTMLElement | null
+  const card = anchorEl.closest<HTMLElement>('.speaker-card')
   const cardRect = card?.getBoundingClientRect()
   const rect = anchorEl.getBoundingClientRect()
   const estW = Math.max(270, cardRect ? cardRect.right - rect.left : rect.width)
@@ -489,17 +490,17 @@ function onInputKey(e: KeyboardEvent, btn: HTMLButtonElement | null): void {
               .slice(0, 4)
               .map((c) => {
                 if (Array.isArray(c)) return `${String(c[0])} · ${Number(c[1]).toFixed(2)}`
-                const cand = c as SpeakerCandidate
+                const cand = c
                 const pSuffix = cand.pack_name ? ` (${cand.pack_name})` : ''
                 const sim = cand.similarity
                 return typeof sim === 'number' ? `${cand.name}${pSuffix} · ${sim.toFixed(2)}` : `${cand.name}${pSuffix}`
               })}
             {@const fullNames = spk.candidates
               .slice(0, 4)
-              .map((c) => (Array.isArray(c) ? String(c[0]) : (c as SpeakerCandidate).name))}
+              .map((c) => (Array.isArray(c) ? String(c[0]) : c.name))}
             {@const candPacks = spk.candidates
               .slice(0, 4)
-              .map((c) => (Array.isArray(c) ? undefined : (c as SpeakerCandidate).pack_id))}
+              .map((c) => (Array.isArray(c) ? undefined : c.pack_id))}
             <div class="assign-label">Похожие голоса:</div>
             <div class="candidates">
               {#each names as label, i (fullNames[i])}
@@ -536,19 +537,19 @@ function onInputKey(e: KeyboardEvent, btn: HTMLButtonElement | null): void {
                 aria-label="Имя человека"
                 oninput={(e) => {
                   setCardValue(spk.key, e.currentTarget.value)
-                  const wrap = e.currentTarget.closest('.assign-input-wrap') as HTMLElement | null
+                  const wrap = e.currentTarget.closest<HTMLElement>('.assign-input-wrap')
                   if (wrap) void openDropdownFor(spk.key, wrap)
                 }}
                 onfocus={(e) => {
-                  const wrap = e.currentTarget.closest('.assign-input-wrap') as HTMLElement | null
+                  const wrap = e.currentTarget.closest<HTMLElement>('.assign-input-wrap')
                   if (wrap) void openDropdownFor(spk.key, wrap)
                 }}
                 onclick={(e) => {
-                  const wrap = e.currentTarget.closest('.assign-input-wrap') as HTMLElement | null
+                  const wrap = e.currentTarget.closest<HTMLElement>('.assign-input-wrap')
                   if (wrap) void openDropdownFor(spk.key, wrap)
                 }}
                 onkeydown={(e) => {
-                  const card = (e.currentTarget as HTMLElement).closest('.speaker-card')
+                  const card = e.currentTarget.closest('.speaker-card')
                   const btn = card?.querySelector<HTMLButtonElement>('.btn-save-voiceprint') ?? null
                   onInputKey(e, btn)
                 }}
@@ -561,7 +562,7 @@ function onInputKey(e: KeyboardEvent, btn: HTMLButtonElement | null): void {
                 tabindex="-1"
                 onclick={(e) => {
                   e.stopPropagation()
-                  const wrap = (e.currentTarget as HTMLElement).closest('.assign-input-wrap') as HTMLElement | null
+                  const wrap = e.currentTarget.closest<HTMLElement>('.assign-input-wrap')
                   if (activeDropdown?.spkKey === spk.key) {
                     closeDropdown()
                   } else if (wrap) {
@@ -582,7 +583,7 @@ function onInputKey(e: KeyboardEvent, btn: HTMLButtonElement | null): void {
                   spk.name,
                   cardVal,
                   spk.embedding ?? null,
-                  e.currentTarget as HTMLButtonElement,
+                  e.currentTarget,
                   samples[0]
                     ? { start: samples[0].start, end: samples[0].end, channel: samples[0].channel }
                     : undefined,

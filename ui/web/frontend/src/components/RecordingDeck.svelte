@@ -1,6 +1,8 @@
 <script lang="ts">
 import { onMount } from 'svelte'
+import type { OkResponse } from '../lib/api'
 import { baseName, isMobile, readJsonSafe } from '../lib/api'
+import { errText } from '../lib/guards.ts'
 import {
   isScreenCaptureSupported,
   screenRecorder,
@@ -10,6 +12,35 @@ import { hasSystemAudio, settings } from '../lib/settings.svelte.ts'
 import { toast } from '../lib/toast.svelte.ts'
 import { engine, syncEngineFromStatus } from '../lib/transcript.svelte.ts'
 import { emit, openTranscript, ui } from '../lib/ui.svelte.ts'
+
+type RecordStartResponse = OkResponse & {
+  mic_muted?: boolean
+  sys_error?: string
+  screen_error?: string
+}
+type RecordStopResponse = OkResponse & {
+  is_video?: boolean
+  filename?: string
+  file?: string
+  silent?: boolean
+  sys_silent?: boolean
+}
+type StatusResponse = {
+  mic_level?: number
+  sys_level?: number
+  transcribing?: boolean
+  transcribing_file?: string
+  summarizing?: boolean
+  summarizing_file?: string
+  summary_phase?: string
+  summary_pct?: number
+  screen_recording?: boolean
+  screen_supported?: boolean
+  system_audio_permission?: boolean
+  recording?: boolean
+  elapsed?: number
+  device?: { mic_name?: string; mic_muted?: boolean }
+}
 
 let isRecording = $state(false)
 let screenSupported = $state(false)
@@ -80,7 +111,7 @@ async function toggleRecord(): Promise<void> {
           screen: wantScreen,
         }),
       })
-      const d = await readJsonSafe(r)
+      const d = await readJsonSafe<RecordStartResponse>(r)
       if (d.ok) {
         setRecordingState(true)
         if (wantScreen) {
@@ -88,8 +119,8 @@ async function toggleRecord(): Promise<void> {
           toast('Запись экрана и звука началась')
         }
         if (d.mic_muted) toast('Микрофон выключен в системе – будет тишина', 'error')
-        if (d.sys_error) toast('Системный звук не пишется: ' + d.sys_error, 'error')
-        if (d.screen_error) toast('Экран не записывается: ' + d.screen_error, 'error')
+        if (d.sys_error) toast(`Системный звук не пишется: ${d.sys_error}`, 'error')
+        if (d.screen_error) toast(`Экран не записывается: ${d.screen_error}`, 'error')
       } else if (d.error === 'Запись уже идёт') {
         setRecordingState(true)
       } else {
@@ -103,7 +134,7 @@ async function toggleRecord(): Promise<void> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ defer_autotranscribe: false }),
       })
-      const d = await readJsonSafe(r)
+      const d = await readJsonSafe<RecordStopResponse>(r)
       setRecordingState(false)
       screenRecorder.active = false
       emit('recordings-changed')
@@ -129,14 +160,14 @@ async function toggleRecord(): Promise<void> {
       }
     }
   } catch (e) {
-    toast('Ошибка записи: ' + (e as Error).message, 'error')
+    toast(`Ошибка записи: ${errText(e)}`, 'error')
   }
 }
 
 async function pollLevels(): Promise<void> {
   try {
     const r = await fetch('/api/status')
-    const d = await readJsonSafe(r)
+    const d = await readJsonSafe<StatusResponse>(r)
     // tail_level_01 уже RMS с запасом ×3; приводим к 0…1.
     micRms = Math.min(1, (d.mic_level || 0) / 3)
     sysRms = Math.min(1, (d.sys_level || 0) / 3)

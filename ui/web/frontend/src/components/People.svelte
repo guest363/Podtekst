@@ -1,6 +1,7 @@
 <script lang="ts">
-import type { Person } from '../lib/api'
+import type { OkResponse, Person } from '../lib/api'
 import { readJsonSafe } from '../lib/api'
+import { errText } from '../lib/guards.ts'
 import {
   deleteVoice,
   deleteVoiceSample,
@@ -51,7 +52,7 @@ function selectPack(id: string): void {
 $effect(() => {
   if (!packDropdownOpen) return
   const onScroll = (e: Event) => {
-    const target = e.target as HTMLElement | null
+    const target = e.target instanceof HTMLElement ? e.target : null
     if (target?.closest?.('.pack-dropdown-popover')) return
     packDropdownOpen = false
   }
@@ -122,7 +123,7 @@ async function savePerson(): Promise<void> {
           : { name: cleanName, role: cleanRole, pack_id: targetPackId },
       ),
     })
-    const d = await readJsonSafe(r)
+    const d = await readJsonSafe<OkResponse>(r)
     if (!d.ok) {
       toast(d.error || 'Не удалось сохранить участника', 'error')
       return
@@ -131,7 +132,7 @@ async function savePerson(): Promise<void> {
     closeForm()
     await loadPeople()
   } catch (e) {
-    toast('Не удалось сохранить участника: ' + (e as Error).message, 'error')
+    toast(`Не удалось сохранить участника: ${errText(e)}`, 'error')
   } finally {
     saving = false
   }
@@ -186,7 +187,7 @@ async function removePerson(name: string): Promise<void> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
     })
-    const d = await readJsonSafe(r)
+    const d = await readJsonSafe<OkResponse>(r)
     if (!d.ok) {
       toast(d.error || 'Не удалось убрать участника', 'error')
       return
@@ -194,7 +195,7 @@ async function removePerson(name: string): Promise<void> {
     toast(`«${name}» убран из участников`)
     await loadPeople()
   } catch (e) {
-    toast('Не удалось убрать участника: ' + (e as Error).message, 'error')
+    toast(`Не удалось убрать участника: ${errText(e)}`, 'error')
   }
 }
 </script>

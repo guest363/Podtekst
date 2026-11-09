@@ -13,18 +13,51 @@ import type {
   SummaryStateName,
 } from './api'
 
-export const summaryState = $state({
+type SummaryState = {
+  file: string
+  phase: SummaryPhase
+  expanded: boolean
+  presets: SummaryPreset[]
+  systemPromptBase: string
+  classification: SummaryClassification | null
+  chosenPresetId: string
+  pendingPresetId: string
+  pendingDowngrade: boolean
+  manualChoice: boolean
+  record: SummaryRecord | null
+  sourceRev: string
+  stale: boolean
+  generating: boolean
+  jobId: string
+  jobFile: string
+  stage: string
+  pct: number
+  elapsedSec: number
+  note: string
+  notice: string
+  error: { code: string; message: string; scope: 'load' | 'generate' } | null
+  model: SummaryModelInfo | null
+  gpu: SummaryGpuStatus | null
+  settings: SummarySettings | null
+  busy: SummaryBusy | null
+  blockReason: SummaryBlockReason | null
+  stateName: SummaryStateName
+  capabilities: SummaryCapabilities | null
+  limits: SummaryLimits | null
+}
+
+export const summaryState: SummaryState = $state({
   file: '',
-  phase: 'idle' as SummaryPhase,
+  phase: 'idle',
   expanded: false,
-  presets: [] as SummaryPreset[],
+  presets: [],
   systemPromptBase: '',
-  classification: null as SummaryClassification | null,
+  classification: null,
   chosenPresetId: '',
   pendingPresetId: '',
   pendingDowngrade: false,
   manualChoice: false,
-  record: null as SummaryRecord | null,
+  record: null,
   sourceRev: '',
   stale: false,
   generating: false,
@@ -35,13 +68,13 @@ export const summaryState = $state({
   elapsedSec: 0,
   note: '',
   notice: '',
-  error: null as { code: string; message: string; scope: 'load' | 'generate' } | null,
-  model: null as SummaryModelInfo | null,
-  gpu: null as SummaryGpuStatus | null,
-  settings: null as SummarySettings | null,
-  busy: null as SummaryBusy | null,
-  blockReason: null as SummaryBlockReason | null,
-  stateName: 'missing' as SummaryStateName,
-  capabilities: null as SummaryCapabilities | null,
-  limits: null as SummaryLimits | null,
+  error: null,
+  model: null,
+  gpu: null,
+  settings: null,
+  busy: null,
+  blockReason: null,
+  stateName: 'missing',
+  capabilities: null,
+  limits: null,
 })

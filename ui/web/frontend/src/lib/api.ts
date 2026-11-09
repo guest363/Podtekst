@@ -1,6 +1,12 @@
 // Типизированный клиент REST-ядра. Формы ответов зафиксированы здесь;
 // страж контракта — Rust-тест restored_endpoints_roundtrip.
 
+export type OkResponse = {
+  ok?: boolean
+  error?: string
+  code?: string
+}
+
 export type Person = {
   name: string
   role?: string
@@ -457,9 +463,9 @@ export function encPath(p: string): string {
   return encodeURIComponent(p)
 }
 
-export async function readJsonSafe(res: Response): Promise<any> {
+export async function readJsonSafe<T = Record<string, unknown>>(res: Response): Promise<T> {
   const ct = res.headers.get('content-type') || ''
-  if (ct.includes('application/json')) return await res.json()
+  if (ct.includes('application/json')) return (await res.json()) as T // SAFETY: контракт endpoint, тип задаёт вызывающая сторона
   const text = await res.text()
   throw new Error(`Сервер вернул HTTP ${res.status}: ${text.slice(0, 160)}`)
 }
@@ -500,7 +506,7 @@ export function parseRecDate(rawDate?: string, rawName?: string): Date | null {
     const parts = rawDate.trim().split(/[\sT]/)
     if (parts.length >= 1) {
       const [y, m, d] = parts[0].split('-').map(Number)
-      if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+      if (!Number.isNaN(y) && !Number.isNaN(m) && !Number.isNaN(d)) {
         return new Date(y, m - 1, d)
       }
     }
@@ -508,7 +514,7 @@ export function parseRecDate(rawDate?: string, rawName?: string): Date | null {
   const match = String(rawName).match(/__(\d{2})-(\d{2})-(\d{4})/)
   if (match) {
     const [, d, m, y] = match.map(Number)
-    if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+    if (!Number.isNaN(y) && !Number.isNaN(m) && !Number.isNaN(d)) {
       return new Date(y, m - 1, d)
     }
   }

@@ -1,5 +1,6 @@
 // Production не импортирует: стенд включается только `?summary_mock=1`
 // в dev-сборке, пока backend-маршруты /api/summary* ещё не подняты.
+
 import type {
   SummaryClassification,
   SummaryGpuStatus,
@@ -8,6 +9,7 @@ import type {
   SummaryRecord,
   SummarySettings,
 } from './api'
+import { isRecord } from './guards.ts'
 import { emit } from './ui.svelte.ts'
 
 const PRESETS: SummaryPreset[] = [
@@ -176,8 +178,8 @@ function buildMarkdown(preset: SummaryPreset): string {
 function buildRecord(presetId: string, file: string): SummaryRecord {
   const preset = PRESETS.find((p) => p.id === presetId) ?? PRESETS[0]
   return {
-    id: 'mock-summary-' + seq,
-    job_id: job?.id || 'mock-job-' + seq,
+    id: `mock-summary-${seq}`,
+    job_id: job?.id || `mock-job-${seq}`,
     file,
     preset_id: preset.id,
     preset_label: preset.label,
@@ -259,7 +261,7 @@ function emitStage(phase: string, pct: number, chunk?: number, chunks?: number):
 function startJob(file: string, presetId: string): { job_id: string; started: boolean } {
   clearJob()
   seq += 1
-  const id = 'mock-job-' + seq
+  const id = `mock-job-${seq}`
   const timers: number[] = []
   job = { id, file, phase: 'load', pct: 0, timers, cancelled: false }
   const later = (ms: number, fn: () => void) => timers.push(window.setTimeout(fn, ms))
@@ -279,7 +281,7 @@ function startJob(file: string, presetId: string): { job_id: string; started: bo
   return { job_id: id, started: true }
 }
 
-function summaryResponse(file: string): unknown {
+function summaryResponse(_file: string): unknown {
   const active = job
     ? {
         job_id: job.id,
@@ -313,7 +315,8 @@ function summaryResponse(file: string): unknown {
 
 function parseBody(init?: RequestInit): Record<string, unknown> {
   try {
-    return JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+    const parsed: unknown = JSON.parse(String(init?.body || '{}'))
+    return isRecord(parsed) ? parsed : {}
   } catch {
     return {}
   }
@@ -332,7 +335,7 @@ export async function request(path: string, init?: RequestInit): Promise<unknown
       const body = parseBody(init)
       if (typeof body.auto_suggest === 'boolean') settings.auto_suggest = body.auto_suggest
       if (body.default_preset === null || typeof body.default_preset === 'string') {
-        settings.default_preset = body.default_preset as string | null
+        settings.default_preset = body.default_preset
       }
       if (body.detail === 'short' || body.detail === 'normal' || body.detail === 'long') {
         settings.detail = body.detail

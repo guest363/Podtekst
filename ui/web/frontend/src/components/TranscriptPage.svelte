@@ -105,7 +105,7 @@ function getTranscriptMeta(): {
 } {
   const filename = baseName(ui.currentTranscriptPath) || 'Встреча'
   const lastUtt = transcript.utterances?.[transcript.utterances.length - 1]
-  const durStr = lastUtt && lastUtt.end ? fmtClock(lastUtt.end) : ''
+  const durStr = lastUtt?.end ? fmtClock(lastUtt.end) : ''
 
   const speakerMap = new Map<string, { name: string; role?: string }>()
   for (const u of transcript.utterances || []) {
@@ -180,8 +180,8 @@ async function copyAll(): Promise<void> {
 }
 
 function seekTo(sec: number): void {
-  const media = document.getElementById('transcriptFullMedia') as HTMLMediaElement | null
-  if (media && isFinite(sec)) {
+  const media = document.querySelector<HTMLMediaElement>('#transcriptFullMedia')
+  if (media && Number.isFinite(sec)) {
     media.currentTime = Math.max(0, sec)
     if (media.paused) {
       void media.play().catch(() => {})
@@ -206,9 +206,11 @@ function requestTranscription(): void {
 }
 
 function goBack(): void {
-  document.querySelectorAll('.transcript-page audio, .transcript-page video').forEach((m) => {
-    ;(m as HTMLMediaElement).pause()
-  })
+  document
+    .querySelectorAll<HTMLMediaElement>('.transcript-page audio, .transcript-page video')
+    .forEach((m) => {
+      m.pause()
+    })
   closeTranscript()
 }
 

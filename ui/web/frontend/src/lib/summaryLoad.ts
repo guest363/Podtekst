@@ -1,7 +1,8 @@
 import type { SummaryPresetsResponse, SummaryResponse, SummarySettingsResponse } from './api'
 import { encPath } from './api'
+import { isAbortError } from './guards.ts'
 import { settings } from './settings.svelte.ts'
-import { apiJson, isMockMode, type SummaryApiError } from './summaryApi.ts'
+import { apiJson, isMockMode, SummaryApiError } from './summaryApi.ts'
 import { summaryState } from './summaryState.svelte.ts'
 import { summaryErrorText, summaryExpectedError, summaryStageText } from './summaryUi.ts'
 import { toast } from './toast.svelte.ts'
@@ -185,8 +186,8 @@ export async function loadSummary(
     if (id !== loadSeq) return
     applyResponse(d, opts, freshFile)
   } catch (e) {
-    if (id !== loadSeq || (e as Error)?.name === 'AbortError') return
-    const code = (e as SummaryApiError).code || 'internal'
+    if (id !== loadSeq || isAbortError(e)) return
+    const code = e instanceof SummaryApiError ? e.code : 'internal'
     if (code === 'summary_disabled' || code === 'summary_unsupported') {
       settings.summaryFeature = false
       summaryState.phase = 'idle'
@@ -237,7 +238,7 @@ function sameRecording(a?: string | null, b?: string | null): boolean {
   if (a === b) return true
   const x = pathKey(a)
   const y = pathKey(b)
-  return x === y || x.endsWith('/' + y) || y.endsWith('/' + x)
+  return x === y || x.endsWith(`/${y}`) || y.endsWith(`/${x}`)
 }
 
 function jobMatches(evt: { job_id?: string; file?: string }): boolean {
@@ -246,6 +247,7 @@ function jobMatches(evt: { job_id?: string; file?: string }): boolean {
 }
 
 function handleSummaryEvent(evt: unknown): void {
+  // SAFETY: событие приходит от движка; поля читаются защитно ниже.
   const e = evt as {
     type?: string
     job_id?: string

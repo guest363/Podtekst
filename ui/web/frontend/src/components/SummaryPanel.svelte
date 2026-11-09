@@ -146,7 +146,7 @@ $effect(() => {
 })
 
 function openPickerAt(e: MouseEvent): void {
-  pickerAnchor = e.currentTarget as HTMLElement
+  pickerAnchor = e.currentTarget instanceof HTMLElement ? e.currentTarget : null
   pickerOpen = true
 }
 function openPicker(): void {

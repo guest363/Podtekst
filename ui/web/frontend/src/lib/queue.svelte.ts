@@ -1,5 +1,14 @@
+import type { OkResponse } from './api'
 import { readJsonSafe } from './api'
+import { errText } from './guards.ts'
 import { toast } from './toast.svelte.ts'
+
+type QueueResponse = {
+  running?: boolean
+  current_file?: string | null
+  queue?: QueueItem[]
+  total?: number
+}
 
 export type QueueItem = {
   position: number
@@ -25,7 +34,7 @@ export const queueState = $state<QueueState>({
 export async function loadQueue(): Promise<void> {
   try {
     const res = await fetch('/api/transcribe/queue')
-    const data = await readJsonSafe(res)
+    const data = await readJsonSafe<QueueResponse>(res)
     if (data) {
       queueState.running = Boolean(data.running)
       queueState.currentFile = data.current_file || null
@@ -47,14 +56,14 @@ export async function removeFromQueue(file: string): Promise<boolean> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ file }),
     })
-    const data = await readJsonSafe(res)
+    const data = await readJsonSafe<OkResponse>(res)
     if (data?.ok) {
       toast('Файл снят с очереди')
       await loadQueue()
       return true
     }
   } catch (e) {
-    toast('Не удалось снять файл: ' + (e as Error).message, 'error')
+    toast(`Не удалось снять файл: ${errText(e)}`, 'error')
   }
   return false
 }
@@ -64,14 +73,14 @@ export async function clearQueue(): Promise<boolean> {
     const res = await fetch('/api/transcribe/queue/clear', {
       method: 'POST',
     })
-    const data = await readJsonSafe(res)
+    const data = await readJsonSafe<OkResponse & { cleared?: number }>(res)
     if (data?.ok) {
       toast(`Очередь очищена (снято: ${data.cleared || 0})`)
       await loadQueue()
       return true
     }
   } catch (e) {
-    toast('Не удалось очистить очередь: ' + (e as Error).message, 'error')
+    toast(`Не удалось очистить очередь: ${errText(e)}`, 'error')
   }
   return false
 }

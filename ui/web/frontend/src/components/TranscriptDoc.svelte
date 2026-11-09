@@ -2,6 +2,7 @@
 import { tick } from 'svelte'
 import type { SpeakerInfo, Utterance } from '../lib/api'
 import { fmtClockShort, speakerColor, speakerTint } from '../lib/api'
+import { errText } from '../lib/guards.ts'
 import { addHotword } from '../lib/settings.svelte.ts'
 import { toast } from '../lib/toast.svelte.ts'
 import { editTranscript } from '../lib/transcript.svelte.ts'
@@ -118,7 +119,7 @@ async function applyChange(change: {
     await editTranscript(file, change)
     return true
   } catch (e) {
-    toast('Не удалось сохранить правку: ' + (e as Error).message, 'error')
+    toast(`Не удалось сохранить правку: ${errText(e)}`, 'error')
     return false
   } finally {
     saving = false
@@ -136,10 +137,10 @@ async function startEdit(index: number, point?: { x: number; y: number }): Promi
   editor.focus({ preventScroll: true })
 
   let range: Range | null = null
-  const d = document as Document & {
+  const d: Document & {
     caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
     caretRangeFromPoint?: (x: number, y: number) => Range | null
-  }
+  } = document
   if (point && d.caretPositionFromPoint) {
     const pos = d.caretPositionFromPoint(point.x, point.y)
     if (pos) {
@@ -190,7 +191,8 @@ async function openSpeakerMenu(e: MouseEvent, index: number): Promise<void> {
     speakerMenu = null
     return
   }
-  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  const rect =
+    e.currentTarget instanceof HTMLElement ? e.currentTarget.getBoundingClientRect() : new DOMRect()
   const estW = 270
   speakerMenu = {
     index,
@@ -236,7 +238,7 @@ async function detachSpeaker(index: number): Promise<void> {
 }
 
 async function onUttTextClick(e: MouseEvent, index: number): Promise<void> {
-  const t = (e.target as HTMLElement).closest?.('[data-w]') as HTMLElement | null
+  const t = e.target instanceof HTMLElement ? e.target.closest<HTMLElement>('[data-w]') : null
   if (t && index >= 0) {
     e.stopPropagation()
     await openWordMenu(e, index, t.dataset.w || '')
@@ -245,7 +247,7 @@ async function onUttTextClick(e: MouseEvent, index: number): Promise<void> {
 
 async function openWordMenu(e: MouseEvent, index: number, word: string): Promise<void> {
   if (!word) return
-  const anchor = (e.target as HTMLElement).getBoundingClientRect()
+  const anchor = e.target instanceof HTMLElement ? e.target.getBoundingClientRect() : new DOMRect()
   const estW = 250
   wordMenu = {
     index,
@@ -405,7 +407,7 @@ let blocks = $derived.by((): (Block | Raw)[] => {
         search: `${m[1]} ${m[2]} ${m[3]}`.toLowerCase(),
         sec,
         index: -1,
-      } as Block)
+      } satisfies Block)
       continue
     }
     const li = t.match(/^[-*]\s+(.*)$/)
@@ -425,7 +427,7 @@ let blocks = $derived.by((): (Block | Raw)[] => {
 let q = $derived(search.trim().toLowerCase())
 let uttTotal = $derived(blocks.filter((b) => b.kind === 'utt').length)
 let hitCount = $derived(
-  q ? blocks.filter((b) => b.kind === 'utt' && (b as Block).search.includes(q)).length : 0,
+  q ? blocks.filter((b) => b.kind === 'utt' && b.search.includes(q)).length : 0,
 )
 </script>
 
@@ -479,38 +481,38 @@ let hitCount = $derived(
       </div>
     {/if}
     {#each blocks as b, i (i)}
-      {#if b.kind === 'utt' && (!q || (b as Block).search.includes(q))}
+      {#if b.kind === 'utt' && (!q || b.search.includes(q))}
         <div
-          class="utt utterance {(b as Block).search.includes(q) && q ? 'highlight' : ''} {(b as Block).index === activeIndex ? 'active' : ''}"
-          data-utt={(b as Block).index}
-          style={`--spk: ${speakerColor((b as Block).speaker)}; --spk-bg: ${speakerTint((b as Block).speaker)}`}
+          class="utt utterance {b.search.includes(q) && q ? 'highlight' : ''} {b.index === activeIndex ? 'active' : ''}"
+          data-utt={b.index}
+          style={`--spk: ${speakerColor(b.speaker)}; --spk-bg: ${speakerTint(b.speaker)}`}
         >
           <button
             type="button"
             class="utt-time-btn"
             title="Воспроизвести с этого момента"
-            aria-label={`Воспроизвести с ${(b as Block).time}`}
-            onclick={() => onseek?.((b as Block).sec)}
+            aria-label={`Воспроизвести с ${b.time}`}
+            onclick={() => onseek?.(b.sec)}
           >
-            {(b as Block).time}
+            {b.time}
           </button>
           <div class="utt-body">
             <button
               type="button"
               class="utt-speaker speaker-chip"
-              disabled={(b as Block).index < 0}
+              disabled={b.index < 0}
               title="Управление спикером"
-              onclick={(e) => void openSpeakerMenu(e, (b as Block).index)}
+              onclick={(e) => void openSpeakerMenu(e, b.index)}
             >
-              {(b as Block).speaker}
+              {b.speaker}
             </button>
-            {#if (b as Block).index >= 0 && editingIndex !== (b as Block).index}
+            {#if b.index >= 0 && editingIndex !== b.index}
               <div class="utt-actions">
                 <button
                   type="button"
                   class="utt-detach-btn"
                   title="Вынести реплику в отдельного спикера"
-                  onclick={() => void detachSpeaker((b as Block).index)}
+                  onclick={() => void detachSpeaker(b.index)}
                 >
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
@@ -525,7 +527,7 @@ let hitCount = $derived(
                   class="utt-edit-btn"
                   title="Редактировать реплику"
                   aria-label="Редактировать реплику"
-                  onclick={() => void startEdit((b as Block).index)}
+                  onclick={() => void startEdit(b.index)}
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path>
@@ -533,7 +535,7 @@ let hitCount = $derived(
                 </button>
               </div>
             {/if}
-            {#if editingIndex === (b as Block).index}
+            {#if editingIndex === b.index}
               <div
                 class="utt-text editing"
                 contenteditable="true"
@@ -543,49 +545,49 @@ let hitCount = $derived(
                 tabindex="0"
                 bind:this={editor}
                 bind:innerText={draft}
-                onkeydown={(e) => onEditorKey(e, (b as Block).index)}
+                onkeydown={(e) => onEditorKey(e, b.index)}
                 onblur={() => {
-                  if (editingIndex === (b as Block).index && !saving) void saveText((b as Block).index, false)
+                  if (editingIndex === b.index && !saving) void saveText(b.index, false)
                 }}
               ></div>
-            {:else if (b as Block).index >= 0}
+            {:else if b.index >= 0}
               <div
                 class="utt-text"
                 role="textbox"
                 aria-label="Редактировать реплику"
                 tabindex="0"
-                onclick={(e) => void onUttTextClick(e, (b as Block).index)}
+                onclick={(e) => void onUttTextClick(e, b.index)}
                 onkeydown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
-                    void startEdit((b as Block).index)
+                    void startEdit(b.index)
                   }
                 }}
-              >{@html (b as Block).html}</div>
+              >{@html b.html}</div>
             {:else}
-              <div class="utt-text">{@html (b as Block).html}</div>
+              <div class="utt-text">{@html b.html}</div>
             {/if}
           </div>
         </div>
       {:else if b.kind === 'h1'}
-        <h1>{(b as Raw).text}</h1>
+        <h1>{b.text}</h1>
       {:else if b.kind === 'h2'}
-        <h2>{(b as Raw).text}</h2>
+        <h2>{b.text}</h2>
       {:else if b.kind === 'h3'}
-        <h3>{(b as Raw).text}</h3>
+        <h3>{b.text}</h3>
       {:else if b.kind === 'hr'}
         <hr />
       {:else if b.kind === 'ul'}
         <ul>
-          {#each (b as Raw).items ?? [] as item, j (j)}
+          {#each b.items ?? [] as item, j (j)}
             <li>{@html inlineMd(item)}</li>
           {/each}
         </ul>
       {:else if b.kind === 'p'}
-        {#if (b as Raw).items?.[0] === 'meta'}
-          <p class="md-meta">{@html inlineMd((b as Raw).text ?? '')}</p>
+        {#if b.items?.[0] === 'meta'}
+          <p class="md-meta">{@html inlineMd(b.text ?? '')}</p>
         {:else}
-          <p>{@html inlineMd((b as Raw).text ?? '')}</p>
+          <p>{@html inlineMd(b.text ?? '')}</p>
         {/if}
       {/if}
     {/each}

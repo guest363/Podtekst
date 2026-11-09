@@ -2,6 +2,7 @@
 import { onDestroy, onMount, tick } from 'svelte'
 import type { SummarySettings } from '../lib/api'
 import { isMobile } from '../lib/api'
+import { errText, isRecord } from '../lib/guards.ts'
 import {
   cancelSummaryGpu,
   installSummaryGpu,
@@ -109,7 +110,7 @@ async function reload(): Promise<void> {
     await loadSummarySettings()
     if (summaryState.gpu?.installing) startGpuPoll()
   } catch (e) {
-    error = 'Не удалось загрузить настройки итогов: ' + (e as Error).message
+    error = `Не удалось загрузить настройки итогов: ${errText(e)}`
   } finally {
     loading = false
   }
@@ -149,8 +150,8 @@ async function installGpu(): Promise<void> {
     await installSummaryGpu()
     startGpuPoll()
   } catch (e) {
-    const code = (e as { code?: string }).code || 'gpu_internal'
-    error = summaryErrorText(code, (e as Error).message)
+    const code = isRecord(e) && typeof e.code === 'string' ? e.code : 'gpu_internal'
+    error = summaryErrorText(code, errText(e))
     toast(error, 'error')
     await refreshSummaryGpu().catch(() => {})
   }
@@ -160,7 +161,7 @@ async function cancelGpu(): Promise<void> {
   try {
     await cancelSummaryGpu()
   } catch (e) {
-    toast('Не удалось отменить скачивание: ' + (e as Error).message, 'error')
+    toast(`Не удалось отменить скачивание: ${errText(e)}`, 'error')
   }
 }
 
@@ -169,8 +170,8 @@ async function removeGpu(): Promise<void> {
     await removeSummaryGpu()
     toast('GPU-пакет удалён. Итоги работают на CPU.')
   } catch (e) {
-    const code = (e as { code?: string }).code || 'gpu_remove_failed'
-    toast(summaryErrorText(code, (e as Error).message), 'error')
+    const code = isRecord(e) && typeof e.code === 'string' ? e.code : 'gpu_remove_failed'
+    toast(summaryErrorText(code, errText(e)), 'error')
   }
 }
 
@@ -193,7 +194,7 @@ async function save(patch: Partial<SummarySettings>): Promise<void> {
   try {
     await saveSummarySettings(patch)
   } catch (e) {
-    error = 'Не удалось сохранить: ' + (e as Error).message
+    error = `Не удалось сохранить: ${errText(e)}`
     toast(error, 'error')
     await reload()
   } finally {
@@ -247,7 +248,8 @@ function onPresetKeydown(e: KeyboardEvent): void {
   }
   const items = [...(presetList?.querySelectorAll<HTMLElement>('.speaker-select-item') ?? [])]
   if (!items.length) return
-  const index = items.indexOf(document.activeElement as HTMLElement)
+  const active = document.activeElement
+  const index = active instanceof HTMLElement ? items.indexOf(active) : -1
   const next =
     e.key === 'ArrowDown'
       ? items[(index + 1) % items.length]
@@ -256,8 +258,11 @@ function onPresetKeydown(e: KeyboardEvent): void {
 }
 
 function onPresetFocusOut(e: FocusEvent): void {
-  const next = e.relatedTarget as Node | null
-  if (presetOpen && (!next || !(e.currentTarget as HTMLElement).contains(next))) {
+  const next = e.relatedTarget instanceof Node ? e.relatedTarget : null
+  if (
+    presetOpen &&
+    (!next || !(e.currentTarget instanceof HTMLElement && e.currentTarget.contains(next)))
+  ) {
     presetOpen = false
   }
 }

@@ -2,8 +2,18 @@ import { isVideoPath } from './api'
 
 export type AppTab = 'studio' | 'queue' | 'people' | 'dict' | 'settings'
 
-export const ui = $state({
-  activeTab: 'studio' as AppTab,
+type UiState = {
+  activeTab: AppTab
+  settingsOpen: boolean
+  systemOpen: boolean
+  donateOpen: boolean
+  transcriptOpen: boolean
+  currentTranscriptPath: string
+  currentTranscriptIsVideo: boolean
+}
+
+export const ui: UiState = $state({
+  activeTab: 'studio',
   settingsOpen: false,
   systemOpen: false,
   donateOpen: false,

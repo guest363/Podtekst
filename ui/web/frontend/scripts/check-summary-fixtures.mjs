@@ -6,7 +6,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (name) => JSON.parse(readFileSync(join(root, 'src/lib/fixtures', name), 'utf8'))
 
 function fail(message) {
-  console.error('summary fixtures: ' + message)
+  console.error(`summary fixtures: ${message}`)
   process.exit(1)
 }
 

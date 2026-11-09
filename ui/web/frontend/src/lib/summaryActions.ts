@@ -9,6 +9,7 @@ import type {
 } from './api'
 import { baseName } from './api'
 import { buildComposedMarkdown, downloadMarkdown } from './export.ts'
+import { errText } from './guards.ts'
 import { apiJson, isMockMode, SummaryApiError } from './summaryApi.ts'
 import { finishGenerating, loadSummary, loadSummaryPresets, startTicker } from './summaryLoad.ts'
 import { summaryState } from './summaryState.svelte.ts'
@@ -240,9 +241,10 @@ export async function generateSummary(
     finishGenerating()
     summaryState.phase = 'error'
     summaryState.expanded = true
+    const code = e instanceof SummaryApiError ? e.code : 'internal'
     summaryState.error = {
-      code: (e as SummaryApiError).code || 'internal',
-      message: summaryErrorText((e as SummaryApiError).code || 'internal', (e as Error).message),
+      code,
+      message: summaryErrorText(code, errText(e)),
       scope: 'generate',
     }
   }
@@ -259,7 +261,7 @@ export async function cancelSummary(): Promise<void> {
     })
     if (!d.ok || !d.cancelled) summaryState.note = 'Задача уже завершилась.'
   } catch (e) {
-    summaryState.note = 'Не удалось остановить сборку: ' + (e as Error).message
+    summaryState.note = `Не удалось остановить сборку: ${errText(e)}`
   }
 }
 

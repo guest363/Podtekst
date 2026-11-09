@@ -1,5 +1,6 @@
 <script lang="ts">
 import { tick } from 'svelte'
+import { errText } from '../lib/guards.ts'
 import {
   cancelSensitive,
   cancelSummary,
@@ -70,7 +71,7 @@ async function retryShort(): Promise<void> {
     await saveSummarySettings({ detail: 'short' })
     retrySummary()
   } catch (e) {
-    toast('Не удалось сохранить подробность: ' + (e as Error).message, 'error')
+    toast(`Не удалось сохранить подробность: ${errText(e)}`, 'error')
   }
 }
 </script>

@@ -1,36 +1,54 @@
-import type { Person, VoiceDetail, Voicepack, VoiceprintSummary } from './api'
+import type { OkResponse, Person, VoiceDetail, Voicepack, VoiceprintSummary } from './api'
 import { readJsonSafe } from './api'
+import { errText } from './guards.ts'
 import { toast } from './toast.svelte.ts'
 
-export const peopleState = $state({
-  list: [] as Person[],
-  voiceprints: [] as string[],
-  voiceprintCounts: {} as Record<string, number>,
-  packs: [] as Voicepack[],
+type PeopleResponse = {
+  people?: Person[]
+  voiceprints?: unknown[]
+  packs?: Voicepack[]
+}
+type VoiceprintsResponse = { voiceprints?: VoiceprintSummary[] }
+type VoiceDetailResponse = VoiceDetail & OkResponse
+
+type PeopleState = {
+  list: Person[]
+  voiceprints: string[]
+  voiceprintCounts: Record<string, number>
+  packs: Voicepack[]
+  selectedPackFilter: string
+  query: string
+  voiceDetail: VoiceDetail | null
+  voiceDetailName: string
+}
+
+export const peopleState: PeopleState = $state({
+  list: [],
+  voiceprints: [],
+  voiceprintCounts: {},
+  packs: [],
   selectedPackFilter: 'all',
   query: '',
-  voiceDetail: null as VoiceDetail | null,
+  voiceDetail: null,
   voiceDetailName: '',
 })
 
 export async function loadPeople(): Promise<void> {
   try {
     const r = await fetch('/api/people')
-    const d = await readJsonSafe(r)
-    peopleState.list = (d.people || []) as Person[]
-    peopleState.voiceprints = ((d.voiceprints || []) as string[]).map((v) =>
-      String(v).toLowerCase().trim(),
-    )
+    const d = await readJsonSafe<PeopleResponse>(r)
+    peopleState.list = d.people || []
+    peopleState.voiceprints = (d.voiceprints || []).map((v) => String(v).toLowerCase().trim())
     if (Array.isArray(d.packs)) {
-      peopleState.packs = d.packs as Voicepack[]
+      peopleState.packs = d.packs
     }
   } catch {}
   // Сколько эмбеддингов у каждого: тот же /api/voiceprints, без нового контракта.
   try {
     const r = await fetch('/api/voiceprints')
-    const d = await readJsonSafe(r)
+    const d = await readJsonSafe<VoiceprintsResponse>(r)
     const counts: Record<string, number> = {}
-    for (const v of (d.voiceprints || []) as VoiceprintSummary[]) {
+    for (const v of d.voiceprints || []) {
       const key = String(v.name || '')
         .toLowerCase()
         .trim()
@@ -63,7 +81,7 @@ export async function loadVoiceDetail(name: string): Promise<boolean> {
   peopleState.voiceDetail = null
   peopleState.voiceDetailName = name
   try {
-    const d = await readJsonSafe(
+    const d = await readJsonSafe<VoiceDetailResponse>(
       await fetch(`/api/voiceprints/detail?name=${encodeURIComponent(name)}`),
     )
     if (!d.ok) {
@@ -78,7 +96,7 @@ export async function loadVoiceDetail(name: string): Promise<boolean> {
     }
     return true
   } catch (e) {
-    toast('Не удалось загрузить голоса: ' + (e as Error).message, 'error')
+    toast(`Не удалось загрузить голоса: ${errText(e)}`, 'error')
     return false
   }
 }
@@ -96,7 +114,7 @@ export async function deleteVoice(name: string): Promise<boolean> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: clean }),
     })
-    const d = await readJsonSafe(r)
+    const d = await readJsonSafe<OkResponse>(r)
     if (!d.ok) {
       toast(d.error || 'Не удалось удалить голос', 'error')
       return false
@@ -106,7 +124,7 @@ export async function deleteVoice(name: string): Promise<boolean> {
     await loadVoiceDetail(clean)
     return true
   } catch (e) {
-    toast('Не удалось удалить голос: ' + (e as Error).message, 'error')
+    toast(`Не удалось удалить голос: ${errText(e)}`, 'error')
     return false
   }
 }
@@ -117,7 +135,7 @@ export async function deleteVoiceSample(
   packId?: string,
 ): Promise<boolean> {
   try {
-    const d = await readJsonSafe(
+    const d = await readJsonSafe<OkResponse>(
       await fetch('/api/voiceprints/delete_sample', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -133,7 +151,7 @@ export async function deleteVoiceSample(
     await loadVoiceDetail(name)
     return true
   } catch (e) {
-    toast('Не удалось удалить образец: ' + (e as Error).message, 'error')
+    toast(`Не удалось удалить образец: ${errText(e)}`, 'error')
     return false
   }
 }
@@ -148,7 +166,7 @@ export async function addPerson(name: string, role: string, packId?: string): Pr
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: cleanName, role: cleanRole, pack_id: packId || 'default' }),
     })
-    const d = await readJsonSafe(r)
+    const d = await readJsonSafe<OkResponse>(r)
     if (!d.ok) {
       toast(d.error || 'Не удалось добавить участника', 'error')
       return false
@@ -157,7 +175,7 @@ export async function addPerson(name: string, role: string, packId?: string): Pr
     await loadPeople()
     return true
   } catch (e) {
-    toast('Не удалось добавить участника: ' + (e as Error).message, 'error')
+    toast(`Не удалось добавить участника: ${errText(e)}`, 'error')
     return false
   }
 }
@@ -171,7 +189,7 @@ export async function movePerson(name: string, toPackId: string): Promise<boolea
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: cleanName, to_pack_id: toPackId }),
     })
-    const d = await readJsonSafe(r)
+    const d = await readJsonSafe<OkResponse>(r)
     if (!d.ok) {
       toast(d.error || 'Не удалось переместить участника', 'error')
       return false
@@ -180,7 +198,7 @@ export async function movePerson(name: string, toPackId: string): Promise<boolea
     await loadPeople()
     return true
   } catch (e) {
-    toast('Не удалось переместить участника: ' + (e as Error).message, 'error')
+    toast(`Не удалось переместить участника: ${errText(e)}`, 'error')
     return false
   }
 }

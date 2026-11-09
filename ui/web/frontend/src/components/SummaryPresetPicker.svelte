@@ -36,7 +36,7 @@ function place(): void {
 
 $effect(() => {
   if (!open) return
-  previous = document.activeElement as HTMLElement | null
+  previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
   place()
   void tick().then(() => {
     const current = dialog?.querySelector<HTMLElement>('[data-picker-current="true"]')

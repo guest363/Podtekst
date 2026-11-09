@@ -1,6 +1,6 @@
 <script lang="ts">
 import { onMount } from 'svelte'
-import type { RecordingItem } from '../lib/api'
+import type { OkResponse, RecordingItem } from '../lib/api'
 import {
   displayRecTitle,
   fmtClock,
@@ -11,6 +11,7 @@ import {
   pluralSpeakers,
   readJsonSafe,
 } from '../lib/api'
+import { errText } from '../lib/guards.ts'
 import { getPosition, isActive, isQueued, removeFromQueue } from '../lib/queue.svelte.ts'
 import {
   deleteRecording,
@@ -270,7 +271,7 @@ async function saveRename(rec: RecordingItem): Promise<void> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: rec.path, name }),
     })
-    const d = await readJsonSafe(r)
+    const d = await readJsonSafe<OkResponse>(r)
     if (d.ok) {
       toast('Запись переименована')
       cancelRename()
@@ -279,7 +280,7 @@ async function saveRename(rec: RecordingItem): Promise<void> {
       toast(d.error || 'Не удалось переименовать запись', 'error')
     }
   } catch (e) {
-    toast('Не удалось переименовать запись: ' + (e as Error).message, 'error')
+    toast(`Не удалось переименовать запись: ${errText(e)}`, 'error')
   } finally {
     savingName = false
   }

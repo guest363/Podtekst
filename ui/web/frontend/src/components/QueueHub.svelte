@@ -1,6 +1,8 @@
 <script lang="ts">
 import { onMount } from 'svelte'
+import type { OkResponse } from '../lib/api'
 import { baseName, encPath, fmtClock, readJsonSafe } from '../lib/api'
+import { errText } from '../lib/guards.ts'
 import { clearQueue, loadQueue, queueState, removeFromQueue } from '../lib/queue.svelte.ts'
 import { loadRecordings, recordings } from '../lib/recordings.svelte.ts'
 import { toast } from '../lib/toast.svelte.ts'
@@ -38,10 +40,10 @@ async function handleFiles(files: FileList | File[]) {
         },
         body: file,
       })
-      const data = await readJsonSafe(res)
+      const data = await readJsonSafe<OkResponse & { path?: string }>(res)
       if (data?.ok && data.path) {
         count += 1
-        await startTranscription(data.path as string)
+        await startTranscription(data.path)
       }
     }
     if (count > 0) {
@@ -50,15 +52,15 @@ async function handleFiles(files: FileList | File[]) {
       await loadQueue()
     }
   } catch (e) {
-    toast('Ошибка загрузки: ' + (e as Error).message, 'error')
+    toast(`Ошибка загрузки: ${errText(e)}`, 'error')
   } finally {
     uploading = false
   }
 }
 
 function onFileInputChange(e: Event) {
-  const input = e.target as HTMLInputElement
-  if (input.files) {
+  const input = e.target instanceof HTMLInputElement ? e.target : null
+  if (input?.files) {
     void handleFiles(input.files)
     input.value = ''
   }

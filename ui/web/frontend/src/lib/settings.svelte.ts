@@ -1,27 +1,71 @@
 import type { ModelInfo, Voicepack } from './api'
 import { isMobile, readJsonSafe } from './api'
+import { errText } from './guards.ts'
 import { loadPeople } from './people.svelte.ts'
 import { toast, toastConfirm } from './toast.svelte.ts'
 
-export const settings = $state({
-  packs: [] as Voicepack[],
-  models: [] as ModelInfo[],
+type StatusResponse = {
+  platform?: string
+  features?: { summary?: boolean }
+  device?: { has_system_audio?: boolean }
+  system_audio_permission?: boolean
+  ffmpeg?: Record<string, unknown>
+}
+
+type SummarySettingsResponse = {
+  ok?: boolean
+  code?: string
+  capabilities?: { summary_supported?: boolean }
+}
+
+type TranscribeAutoResponse = { enabled?: boolean }
+type RecordModeResponse = { mode?: 'mix' | 'split'; explicit?: boolean }
+type VoicepacksResponse = { ok?: boolean; packs?: Voicepack[] }
+type ModelsResponse = { ok?: boolean; models?: ModelInfo[] }
+type HotwordsResponse = {
+  ok?: boolean
+  error?: string
+  hotwords?: unknown[]
+  ctc_enabled?: boolean
+}
+type ExportPackResponse = { ok?: boolean; path?: string; error?: string }
+type ImportPackResponse = { ok?: boolean; pack?: { name?: string }; error?: string }
+type OkResponse = { ok?: boolean; error?: string; code?: string }
+
+type SettingsState = {
+  packs: Voicepack[]
+  models: ModelInfo[]
+  newPackName: string
+  recordMode: 'split' | 'mix'
+  platform: string
+  systemAudio: boolean
+  systemAudioPermission: boolean
+  autoTranscribe: boolean
+  hotwords: string[]
+  ctcEnabled: boolean
+  hotwordsLoaded: boolean
+  summaryFeature: boolean | null
+}
+
+export const settings: SettingsState = $state({
+  packs: [],
+  models: [],
   newPackName: '',
   recordMode: 'split',
   platform: '',
   systemAudio: false,
   systemAudioPermission: true,
   autoTranscribe: true,
-  hotwords: [] as string[],
+  hotwords: [],
   ctcEnabled: true,
   hotwordsLoaded: false,
-  summaryFeature: null as boolean | null,
+  summaryFeature: null,
 })
 
 export async function loadSummaryFeature(): Promise<void> {
   if (settings.summaryFeature !== null) return
   try {
-    const st = await readJsonSafe(await fetch('/api/status'))
+    const st = await readJsonSafe<StatusResponse>(await fetch('/api/status'))
     if (st?.features && typeof st.features.summary === 'boolean' && !st.features.summary) {
       settings.summaryFeature = false
       return
@@ -30,7 +74,7 @@ export async function loadSummaryFeature(): Promise<void> {
     /* статус недоступен — проверим сам маршрут итогов */
   }
   try {
-    const d = await readJsonSafe(await fetch('/api/summary/settings'))
+    const d = await readJsonSafe<SummarySettingsResponse>(await fetch('/api/summary/settings'))
     if (d?.ok === false) {
       settings.summaryFeature = !(d.code === 'summary_disabled' || d.code === 'summary_unsupported')
       return
@@ -44,7 +88,7 @@ export async function loadSummaryFeature(): Promise<void> {
 
 export async function loadAutoTranscribe(): Promise<void> {
   try {
-    const d = await readJsonSafe(await fetch('/api/transcribe/auto'))
+    const d = await readJsonSafe<TranscribeAutoResponse>(await fetch('/api/transcribe/auto'))
     settings.autoTranscribe = d.enabled !== false
   } catch {}
 }
@@ -52,7 +96,7 @@ export async function loadAutoTranscribe(): Promise<void> {
 export async function setAutoTranscribe(enabled: boolean): Promise<void> {
   settings.autoTranscribe = enabled
   try {
-    const d = await readJsonSafe(
+    const d = await readJsonSafe<OkResponse>(
       await fetch('/api/transcribe/auto', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -72,7 +116,7 @@ export async function loadRecordMode(): Promise<void> {
     return
   }
   try {
-    const st = await readJsonSafe(await fetch('/api/status'))
+    const st = await readJsonSafe<StatusResponse>(await fetch('/api/status'))
     if (typeof st.platform === 'string') settings.platform = st.platform
     settings.systemAudio = st.device?.has_system_audio === true
     if (typeof st.system_audio_permission === 'boolean') {
@@ -82,7 +126,7 @@ export async function loadRecordMode(): Promise<void> {
     /* платформа неизвестна — покажем режим как есть */
   }
   try {
-    const d = await readJsonSafe(await fetch('/api/record/mode'))
+    const d = await readJsonSafe<RecordModeResponse>(await fetch('/api/record/mode'))
     if (d.mode === 'mix' || d.mode === 'split') settings.recordMode = d.mode
     // Старый конфиг мог сохранить mix, когда системного канала ещё не было.
     // Один раз переключаем на split; ручной выбор пользователя не трогаем.
@@ -117,12 +161,21 @@ export function statusBadge(kind: string, text: string): string {
   return `<span class="status-badge ${kind}">${esc}</span>`
 }
 
-export const ffmpeg = $state({
+type FfmpegState = {
+  known: boolean
+  available: boolean
+  downloading: boolean
+  pct: number
+  error: string | null
+  manualUrl: string
+}
+
+export const ffmpeg: FfmpegState = $state({
   known: false,
   available: false,
   downloading: false,
   pct: 0,
-  error: null as string | null,
+  error: null,
   manualUrl: 'https://www.gyan.dev/ffmpeg/builds/',
 })
 
@@ -138,7 +191,7 @@ function applyFfmpegStatus(f: Record<string, unknown> | undefined): void {
 
 export async function loadFfmpeg(): Promise<void> {
   try {
-    const st = await readJsonSafe(await fetch('/api/status'))
+    const st = await readJsonSafe<StatusResponse>(await fetch('/api/status'))
     applyFfmpegStatus(st.ffmpeg)
   } catch {
     /* статус недоступен — карточка просто не покажется */
@@ -150,13 +203,13 @@ let ffmpegPoll: ReturnType<typeof setInterval> | undefined
 export async function downloadFfmpeg(): Promise<void> {
   try {
     const r = await fetch('/api/tools/ffmpeg/download', { method: 'POST' })
-    const d = await readJsonSafe(r)
+    const d = await readJsonSafe<OkResponse>(r)
     if (!d.ok) {
       toast(d.error || 'Не удалось запустить скачивание', 'error')
       return
     }
   } catch (e) {
-    toast('Ошибка: ' + (e as Error).message, 'error')
+    toast(`Ошибка: ${errText(e)}`, 'error')
     return
   }
   ffmpeg.downloading = true
@@ -177,8 +230,8 @@ export async function downloadFfmpeg(): Promise<void> {
 export async function loadVoicePacks(): Promise<void> {
   try {
     const r = await fetch('/api/voicepacks')
-    const d = await readJsonSafe(r)
-    settings.packs = (d.ok && d.packs ? d.packs : []) as Voicepack[]
+    const d = await readJsonSafe<VoicepacksResponse>(r)
+    settings.packs = d.ok && d.packs ? d.packs : []
   } catch {
     settings.packs = []
   }
@@ -187,8 +240,8 @@ export async function loadVoicePacks(): Promise<void> {
 export async function loadModels(): Promise<void> {
   try {
     const r = await fetch('/api/models')
-    const d = await readJsonSafe(r)
-    settings.models = (d.ok && d.models ? d.models : []) as ModelInfo[]
+    const d = await readJsonSafe<ModelsResponse>(r)
+    settings.models = d.ok && d.models ? d.models : []
   } catch {
     settings.models = []
   }
@@ -196,7 +249,7 @@ export async function loadModels(): Promise<void> {
 
 export async function loadHotwords(): Promise<void> {
   try {
-    const d = await readJsonSafe(await fetch('/api/hotwords'))
+    const d = await readJsonSafe<HotwordsResponse>(await fetch('/api/hotwords'))
     if (Array.isArray(d.hotwords))
       settings.hotwords = d.hotwords.filter((x: unknown) => typeof x === 'string')
     if (typeof d.ctc_enabled === 'boolean') settings.ctcEnabled = d.ctc_enabled
@@ -206,7 +259,7 @@ export async function loadHotwords(): Promise<void> {
 
 export async function saveHotwords(hotwords: string[], ctcEnabled: boolean): Promise<boolean> {
   try {
-    const d = await readJsonSafe(
+    const d = await readJsonSafe<HotwordsResponse>(
       await fetch('/api/hotwords', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -217,12 +270,14 @@ export async function saveHotwords(hotwords: string[], ctcEnabled: boolean): Pro
       toast(d.error || 'Не удалось сохранить словарь', 'error')
       return false
     }
-    settings.hotwords = Array.isArray(d.hotwords) ? d.hotwords : []
+    settings.hotwords = Array.isArray(d.hotwords)
+      ? d.hotwords.filter((x): x is string => typeof x === 'string')
+      : []
     settings.ctcEnabled = d.ctc_enabled !== false
     settings.hotwordsLoaded = true
     return true
   } catch (e) {
-    toast('Не удалось сохранить словарь: ' + (e as Error).message, 'error')
+    toast(`Не удалось сохранить словарь: ${errText(e)}`, 'error')
     return false
   }
 }
@@ -233,8 +288,9 @@ export async function addHotword(term: string): Promise<boolean> {
   let cur: string[] = settings.hotwordsLoaded ? [...settings.hotwords] : []
   if (!settings.hotwordsLoaded) {
     try {
-      const d = await readJsonSafe(await fetch('/api/hotwords'))
-      if (Array.isArray(d.hotwords)) cur = d.hotwords.filter((x: unknown) => typeof x === 'string')
+      const d = await readJsonSafe<HotwordsResponse>(await fetch('/api/hotwords'))
+      if (Array.isArray(d.hotwords))
+        cur = d.hotwords.filter((x): x is string => typeof x === 'string')
       if (typeof d.ctc_enabled === 'boolean') settings.ctcEnabled = d.ctc_enabled
       settings.hotwordsLoaded = true
     } catch {}
@@ -271,7 +327,7 @@ export function deletePack(p: Voicepack): void {
     () =>
       void (async () => {
         try {
-          const d = await readJsonSafe(
+          const d = await readJsonSafe<OkResponse>(
             await fetch('/api/voicepacks/delete', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -286,7 +342,7 @@ export function deletePack(p: Voicepack): void {
           await loadVoicePacks()
           await loadPeople()
         } catch (e) {
-          toast('Не удалось удалить пакет: ' + (e as Error).message, 'error')
+          toast(`Не удалось удалить пакет: ${errText(e)}`, 'error')
         }
       })(),
   )
@@ -299,13 +355,13 @@ export async function exportPack(p: Voicepack): Promise<void> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pack_id: p.id }),
     })
-    const dd = await readJsonSafe(rr)
+    const dd = await readJsonSafe<ExportPackResponse>(rr)
     toast(
       dd.ok ? `Пакет экспортирован: ${dd.path}` : dd.error || 'Ошибка экспорта',
       dd.ok ? '' : 'error',
     )
   } catch (e) {
-    toast('Ошибка экспорта: ' + (e as Error).message, 'error')
+    toast(`Ошибка экспорта: ${errText(e)}`, 'error')
   }
 }
 
@@ -321,7 +377,7 @@ export async function importPack(file: File): Promise<boolean> {
       headers: { 'X-Filename': encodeURIComponent(name) },
       body: file,
     })
-    const d = await readJsonSafe(r)
+    const d = await readJsonSafe<ImportPackResponse>(r)
     if (!d.ok) {
       toast(d.error || 'Не удалось импортировать пакет', 'error')
       return false
@@ -331,7 +387,7 @@ export async function importPack(file: File): Promise<boolean> {
     await loadPeople()
     return true
   } catch (e) {
-    toast('Не удалось импортировать: ' + (e as Error).message, 'error')
+    toast(`Не удалось импортировать: ${errText(e)}`, 'error')
     return false
   }
 }
@@ -348,7 +404,7 @@ export async function createPack(): Promise<void> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
     })
-    const d = await readJsonSafe(r)
+    const d = await readJsonSafe<OkResponse>(r)
     if (d.ok) {
       settings.newPackName = ''
       toast(`Пакет «${name}» создан`)
@@ -357,6 +413,6 @@ export async function createPack(): Promise<void> {
       toast(d.error || 'Не удалось создать пакет', 'error')
     }
   } catch (e) {
-    toast('Ошибка: ' + (e as Error).message, 'error')
+    toast(`Ошибка: ${errText(e)}`, 'error')
   }
 }

@@ -120,7 +120,8 @@ function onSelectKeydown(e: KeyboardEvent): void {
   }
   const items = [...(selectList?.querySelectorAll<HTMLElement>('.speaker-select-item') ?? [])]
   if (!items.length) return
-  const index = items.indexOf(document.activeElement as HTMLElement)
+  const active = document.activeElement
+  const index = active instanceof HTMLElement ? items.indexOf(active) : -1
   const next =
     e.key === 'ArrowDown'
       ? items[(index + 1) % items.length]
@@ -129,8 +130,11 @@ function onSelectKeydown(e: KeyboardEvent): void {
 }
 
 function onSelectFocusOut(e: FocusEvent): void {
-  const next = e.relatedTarget as Node | null
-  if (selectOpen && (!next || !(e.currentTarget as HTMLElement).contains(next))) {
+  const next = e.relatedTarget instanceof Node ? e.relatedTarget : null
+  if (
+    selectOpen &&
+    (!next || !(e.currentTarget instanceof HTMLElement && e.currentTarget.contains(next)))
+  ) {
     selectOpen = false
   }
 }

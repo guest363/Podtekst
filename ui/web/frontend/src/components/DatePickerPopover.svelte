@@ -131,7 +131,7 @@ function isInRange(d: Date): boolean {
 
 onMount(() => {
   function onPointerDown(e: PointerEvent): void {
-    if (rootEl && !rootEl.contains(e.target as Node)) {
+    if (rootEl && !(e.target instanceof Node && rootEl.contains(e.target))) {
       // Если был выбран только один день, фиксируем его
       if (selStart && !selEnd) {
         onSelect(selStart, selStart, formatRangeLabel(selStart, selStart))

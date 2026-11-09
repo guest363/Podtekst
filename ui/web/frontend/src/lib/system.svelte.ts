@@ -1,5 +1,28 @@
+import type { OkResponse } from './api'
 import { readJsonSafe } from './api'
+import { errText, isRecord } from './guards.ts'
 import { toast } from './toast.svelte.ts'
+
+type SystemResponse = SystemSnapshot &
+  OkResponse & {
+    system?: SystemSnapshot
+    snapshot?: SystemSnapshot
+  }
+type CheckResponse = OkResponse & {
+  checks?: unknown[]
+  summary?: ChecksSummary
+  checked_at?: string
+}
+type JournalResponse = OkResponse & {
+  sessions?: JournalSession[]
+  total?: number
+  truncated?: boolean
+}
+type CrashesResponse = OkResponse & {
+  items?: CrashItem[]
+  unacknowledged?: number
+}
+type DiagnosticsResponse = OkResponse & { shared?: boolean; path?: string }
 
 export type CheckFix = {
   kind: string
@@ -211,18 +234,34 @@ export type SystemSnapshot = {
   log?: { path?: string; bytes?: number; modified_at?: string }
 }
 
-export const system = $state({
-  snapshot: null as SystemSnapshot | null,
-  checks: [] as SystemCheck[],
-  summary: null as ChecksSummary | null,
+type SystemState = {
+  snapshot: SystemSnapshot | null
+  checks: SystemCheck[]
+  summary: ChecksSummary | null
+  checkedAt: string
+  loading: boolean
+  checksLoading: boolean
+  error: string
+  journal: JournalSession[]
+  journalTotal: number
+  journalTruncated: boolean
+  crashes: CrashItem[]
+  unacknowledged: number
+  crashesLoading: boolean
+}
+
+export const system: SystemState = $state({
+  snapshot: null,
+  checks: [],
+  summary: null,
   checkedAt: '',
   loading: false,
   checksLoading: false,
   error: '',
-  journal: [] as JournalSession[],
+  journal: [],
   journalTotal: 0,
   journalTruncated: false,
-  crashes: [] as CrashItem[],
+  crashes: [],
   unacknowledged: 0,
   crashesLoading: false,
 })
@@ -273,16 +312,16 @@ export async function loadSystem(): Promise<void> {
   system.loading = true
   system.error = ''
   try {
-    const d = await readJsonSafe(await fetch('/api/system'))
+    const d = await readJsonSafe<SystemResponse>(await fetch('/api/system'))
     if (d.ok === false) throw new Error(String(d.error || 'Не удалось получить состояние системы'))
-    const snap = (d.system ?? d.snapshot ?? d) as SystemSnapshot
+    const snap = d.system ?? d.snapshot ?? d
     system.snapshot = snap
     const crashes = snap.crashes
     if (crashes && typeof crashes.unacknowledged === 'number') {
       system.unacknowledged = crashes.unacknowledged
     }
   } catch (e) {
-    system.error = (e as Error).message
+    system.error = errText(e)
   } finally {
     system.loading = false
   }
@@ -292,7 +331,7 @@ export async function runChecks(probeAudio = true): Promise<void> {
   if (system.checksLoading) return
   system.checksLoading = true
   try {
-    const d = await readJsonSafe(
+    const d = await readJsonSafe<CheckResponse>(
       await fetch('/api/system/check', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -300,22 +339,25 @@ export async function runChecks(probeAudio = true): Promise<void> {
       }),
     )
     if (d.ok === false) throw new Error(String(d.error || 'Проверка не выполнилась'))
-    system.checks = (Array.isArray(d.checks) ? d.checks : []).map((c: any) => ({
-      id: String(c?.id || ''),
-      title: String(c?.title || c?.id || 'Проверка'),
-      status: String(c?.status || 'skip'),
-      detail: String(c?.detail || ''),
-      hint: String(c?.hint || ''),
-      fix:
-        c?.fix && typeof c.fix === 'object'
+    system.checks = (Array.isArray(d.checks) ? d.checks : []).map((c: unknown) => {
+      const item = isRecord(c) ? c : {}
+      const fix = isRecord(item.fix) ? item.fix : null
+      return {
+        id: String(item.id || ''),
+        title: String(item.title || item.id || 'Проверка'),
+        status: String(item.status || 'skip'),
+        detail: String(item.detail || ''),
+        hint: String(item.hint || ''),
+        fix: fix
           ? {
-              kind: String(c.fix.kind || ''),
-              target: String(c.fix.target || ''),
-              label: String(c.fix.label || ''),
+              kind: String(fix.kind || ''),
+              target: String(fix.target || ''),
+              label: String(fix.label || ''),
             }
           : null,
-      duration_ms: Number(c?.duration_ms) || 0,
-    }))
+        duration_ms: Number(item.duration_ms) || 0,
+      }
+    })
     const s = d.summary
     system.summary =
       s && typeof s === 'object'
@@ -329,7 +371,7 @@ export async function runChecks(probeAudio = true): Promise<void> {
         : null
     system.checkedAt = String(d.checked_at || '')
   } catch (e) {
-    toast('Проверка не выполнилась: ' + (e as Error).message, 'error')
+    toast(`Проверка не выполнилась: ${errText(e)}`, 'error')
   } finally {
     system.checksLoading = false
   }
@@ -337,7 +379,7 @@ export async function runChecks(probeAudio = true): Promise<void> {
 
 export async function openTarget(target: string): Promise<void> {
   try {
-    const d = await readJsonSafe(
+    const d = await readJsonSafe<OkResponse>(
       await fetch('/api/system/open', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -346,19 +388,19 @@ export async function openTarget(target: string): Promise<void> {
     )
     if (d.ok === false) throw new Error(String(d.error || 'Не удалось открыть'))
   } catch (e) {
-    toast('Не удалось открыть: ' + (e as Error).message, 'error')
+    toast(`Не удалось открыть: ${errText(e)}`, 'error')
   }
 }
 
 export async function loadJournal(limit = 20): Promise<void> {
   try {
-    const d = await readJsonSafe(await fetch(`/api/journal?limit=${limit}`))
+    const d = await readJsonSafe<JournalResponse>(await fetch(`/api/journal?limit=${limit}`))
     if (d.ok === false) throw new Error(String(d.error || 'Журнал недоступен'))
-    system.journal = (Array.isArray(d.sessions) ? d.sessions : []) as JournalSession[]
+    system.journal = Array.isArray(d.sessions) ? d.sessions : []
     system.journalTotal = Number(d.total) || system.journal.length
     system.journalTruncated = d.truncated === true
   } catch (e) {
-    toast('Журнал не загрузился: ' + (e as Error).message, 'error')
+    toast(`Журнал не загрузился: ${errText(e)}`, 'error')
   }
 }
 
@@ -366,13 +408,13 @@ export async function loadCrashes(): Promise<void> {
   if (system.crashesLoading) return
   system.crashesLoading = true
   try {
-    const d = await readJsonSafe(await fetch('/api/crashes'))
+    const d = await readJsonSafe<CrashesResponse>(await fetch('/api/crashes'))
     if (d.ok === false) throw new Error(String(d.error || 'Сбои недоступны'))
-    system.crashes = (Array.isArray(d.items) ? d.items : []) as CrashItem[]
+    system.crashes = Array.isArray(d.items) ? d.items : []
     system.unacknowledged =
       Number(d.unacknowledged) || system.crashes.filter(crashUnacknowledged).length
   } catch (e) {
-    toast('Сбои не загрузились: ' + (e as Error).message, 'error')
+    toast(`Сбои не загрузились: ${errText(e)}`, 'error')
   } finally {
     system.crashesLoading = false
   }
@@ -380,7 +422,7 @@ export async function loadCrashes(): Promise<void> {
 
 export async function ackCrash(id: string | null = null): Promise<void> {
   try {
-    const d = await readJsonSafe(
+    const d = await readJsonSafe<OkResponse>(
       await fetch('/api/crashes/ack', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -396,20 +438,22 @@ export async function ackCrash(id: string | null = null): Promise<void> {
       system.unacknowledged = 0
     }
   } catch (e) {
-    toast('Не удалось скрыть сбой: ' + (e as Error).message, 'error')
+    toast(`Не удалось скрыть сбой: ${errText(e)}`, 'error')
   }
 }
 
 export async function collectDiagnostics(): Promise<void> {
   try {
-    const d = await readJsonSafe(await fetch('/api/diagnostics', { method: 'POST' }))
+    const d = await readJsonSafe<DiagnosticsResponse>(
+      await fetch('/api/diagnostics', { method: 'POST' }),
+    )
     if (d.ok === false) throw new Error(String(d.error || 'Не удалось собрать отчёт'))
     if (d.shared === true) {
       toast('Отчёт готов. Выберите, куда его отправить.')
       return
     }
-    toast('Отчёт диагностики сохранён: ' + String(d.path || ''))
+    toast(`Отчёт диагностики сохранён: ${String(d.path || '')}`)
   } catch (e) {
-    toast('Отчёт не собрался: ' + (e as Error).message, 'error')
+    toast(`Отчёт не собрался: ${errText(e)}`, 'error')
   }
 }
