@@ -15,10 +15,10 @@ import {
   transcript,
 } from '../lib/transcript.svelte.ts'
 import { closeTranscript, ui } from '../lib/ui.svelte.ts'
-import SlimPlayer from './SlimPlayer.svelte'
-import SpeakersPane from './SpeakersPane.svelte'
-import SummaryPanel from './SummaryPanel.svelte'
-import TranscriptDoc from './TranscriptDoc.svelte'
+import SlimPlayer from './slim-player.svelte'
+import SpeakersPane from './speakers-pane.svelte'
+import SummaryPanel from './summary-panel.svelte'
+import TranscriptDoc from './transcript-doc.svelte'
 
 let speakersOpen = $state(
   typeof localStorage !== 'undefined' ? localStorage.getItem('mr_speakers_open') !== 'false' : true,

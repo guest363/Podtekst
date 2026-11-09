@@ -12,7 +12,7 @@ import {
   showPreviousResult,
   summaryState,
 } from '../lib/summary.svelte.ts'
-import { summaryElapsed } from '../lib/summaryUi.ts'
+import { summaryElapsed } from '../lib/summary-ui.ts'
 import { toast } from '../lib/toast.svelte.ts'
 import { closeTranscript, emit } from '../lib/ui.svelte.ts'
 

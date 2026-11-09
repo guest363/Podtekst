@@ -3,7 +3,7 @@ import { baseName, encPath, isCoreModel, isVideoPath, readJsonSafe } from './api
 import { errText, isAbortError } from './guards.ts'
 import { loadQueue, type QueueItem, queueState } from './queue.svelte.ts'
 import { settings } from './settings.svelte.ts'
-import { summaryStageText } from './summaryUi.ts'
+import { summaryStageText } from './summary-ui.ts'
 import { toast } from './toast.svelte.ts'
 import { emit, ui } from './ui.svelte.ts'
 
@@ -136,7 +136,7 @@ export const editTranscript = async (
 }
 
 export const emptyHint = (): string => {
-  // Критерий «ядра» — как в downloadAllCoreModels и App.svelte.
+  // Критерий «ядра» — как в downloadAllCoreModels и app.svelte.
   const missingCore = settings.models.filter((m) => isCoreModel(m) && !m.is_installed)
   const base = ui.currentTranscriptIsVideo
     ? 'Расшифровка ещё не выполнялась. Звук из видео извлекается автоматически.'

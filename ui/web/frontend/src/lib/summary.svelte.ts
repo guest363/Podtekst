@@ -20,10 +20,10 @@ export {
   summaryModelPct,
   toggleSummary,
   updateStaleSummary,
-} from './summaryActions.ts'
+} from './summary-actions.ts'
 export {
   loadSummary,
   loadSummaryPresets,
   loadSummarySettings,
-} from './summaryLoad.ts'
-export { summaryState } from './summaryState.svelte.ts'
+} from './summary-load.ts'
+export { summaryState } from './summary-state.svelte.ts'

@@ -23,8 +23,8 @@ import { openTarget, runChecks, system } from '../lib/system.svelte.ts'
 import { downloadModel, engine, ensureStream } from '../lib/transcript.svelte.ts'
 import { on, selectTab, ui } from '../lib/ui.svelte.ts'
 import { checkUpdate, update } from '../lib/update.svelte.ts'
-import SummarySettingsTab from './SummarySettingsTab.svelte'
-import SystemSettingsTab from './SystemSettingsTab.svelte'
+import SummarySettingsTab from './summary-settings-tab.svelte'
+import SystemSettingsTab from './system-settings-tab.svelte'
 
 type Props = {
   inline?: boolean

@@ -13,11 +13,11 @@ import {
   summaryModelPct,
   summaryState,
 } from '../lib/summary.svelte.ts'
-import { summaryErrorText } from '../lib/summaryUi.ts'
+import { summaryErrorText } from '../lib/summary-ui.ts'
 import { fmtBytes, loadSystem, openTarget, system } from '../lib/system.svelte.ts'
 import { toast, toastConfirm } from '../lib/toast.svelte.ts'
 import { downloadModel } from '../lib/transcript.svelte.ts'
-import SummaryPromptModal from './SummaryPromptModal.svelte'
+import SummaryPromptModal from './summary-prompt-modal.svelte'
 
 let loading = $state(false)
 let saving = $state(false)

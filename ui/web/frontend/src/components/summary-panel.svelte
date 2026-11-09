@@ -18,12 +18,12 @@ import {
   summaryPreset,
   summaryShortDate,
   summaryWarnings,
-} from '../lib/summaryUi.ts'
+} from '../lib/summary-ui.ts'
 import { engine, transcript } from '../lib/transcript.svelte.ts'
-import SummaryPresetPicker from './SummaryPresetPicker.svelte'
-import SummaryResult from './SummaryResult.svelte'
-import SummaryStage from './SummaryStage.svelte'
-import SummarySuggestion from './SummarySuggestion.svelte'
+import SummaryPresetPicker from './summary-preset-picker.svelte'
+import SummaryResult from './summary-result.svelte'
+import SummaryStage from './summary-stage.svelte'
+import SummarySuggestion from './summary-suggestion.svelte'
 
 type Props = {
   file: string

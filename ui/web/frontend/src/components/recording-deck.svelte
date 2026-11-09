@@ -7,7 +7,7 @@ import {
   isScreenCaptureSupported,
   screenRecorder,
   toggleScreenCapture,
-} from '../lib/screenRecorder.svelte.ts'
+} from '../lib/screen-recorder.svelte.ts'
 import { hasSystemAudio, settings } from '../lib/settings.svelte.ts'
 import { toast } from '../lib/toast.svelte.ts'
 import { engine, syncEngineFromStatus } from '../lib/transcript.svelte.ts'

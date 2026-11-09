@@ -22,8 +22,8 @@ import {
 import { toast } from '../lib/toast.svelte.ts'
 import { engine } from '../lib/transcript.svelte.ts'
 import { on, openTranscript } from '../lib/ui.svelte.ts'
-import DatePickerPopover from './DatePickerPopover.svelte'
-import SlimPlayer from './SlimPlayer.svelte'
+import DatePickerPopover from './date-picker-popover.svelte'
+import SlimPlayer from './slim-player.svelte'
 
 let uploadInput: HTMLInputElement | null = $state(null)
 let uploadBtn: HTMLButtonElement | null = $state(null)

@@ -11,7 +11,7 @@ import {
   summaryPreset,
   summaryRecommendation,
   summarySignals,
-} from '../lib/summaryUi.ts'
+} from '../lib/summary-ui.ts'
 import { transcript } from '../lib/transcript.svelte.ts'
 
 type Props = {

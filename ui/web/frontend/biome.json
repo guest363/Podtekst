@@ -40,6 +40,10 @@
         "useConsistentTypeDefinitions": {
           "level": "error",
           "options": { "style": "type" }
+        },
+        "useFilenamingConvention": {
+          "level": "error",
+          "options": { "filenameCases": ["kebab-case"] }
         }
       },
       "complexity": {

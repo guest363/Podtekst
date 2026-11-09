@@ -1,7 +1,7 @@
 <script lang="ts">
 import type { SummaryRecord } from '../lib/api'
 import { renderInline } from '../lib/markdown'
-import { summaryDate, summaryDuration, summaryWarnings } from '../lib/summaryUi.ts'
+import { summaryDate, summaryDuration, summaryWarnings } from '../lib/summary-ui.ts'
 
 type Props = {
   record: SummaryRecord
