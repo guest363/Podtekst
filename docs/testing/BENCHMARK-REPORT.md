@@ -9,7 +9,7 @@
 
 ## 1. Краткий вывод
 
-1. **Русский ASR работает, но не на уровне публикации GigaAM.** FLEURS `ru_ru`: 5,42% WER, 2,06% CER. Golos Crowd: 20,79% raw WER, 10,43% после нормализации чисел и латиницы. Golos Farfield: 15,53%. Разрыв с GigaAM v3 (2,4%/3,9%) требует отдельного разбора VAD, нарезки, int8 и нормализации.
+1. **Русский ASR работает, но не на уровне публикации GigaAM.** FLEURS `ru_ru`: 5,42% WER, 2,06% CER. Golos Crowd: 20,79% raw WER, 10,00% после нормализации чисел и латиницы. Golos Farfield: 15,53% raw WER, 12,58% после нормализации. Разрыв с GigaAM v3 (2,4%/3,9%) требует отдельного разбора VAD, нарезки, int8 и нормализации.
 2. **Мультиязычный ASR сломан.** Whisper-путь на английском даёт Reshape-ошибку на части файлов, на других - галлюцинацию с WER 96% на двух файлах FLEURS. Без этого нельзя измерить английскую и китайскую диаризацию.
 3. **Диаризация корректно не измерена.** AMI IHM с GigaAM fallback: DER 80,97%, пропущено 73,7% речи. VoxConverse: DER 43,87%, SCA 20%, переразбиение 2→4 и 2→5 спикеров. Это результат сломанной связки ASR/диаризации, а не чистая оценка кластеризации.
 4. **Производительность.** Длинные файлы: RTF 0,23-0,55, RSS 2,5-2,8 ГиБ. Короткие файлы: RTF 1,7-3,3 из-за загрузки моделей на каждый процесс.
@@ -50,7 +50,7 @@
 
 Колонка SCA для односпикерных наборов почти всегда 100%, поэтому она не показательна. Главное - WER.
 
-Golos Crowd: 20,79% raw WER сильно завышен форматом. После нормализации чисел (схлопывание числительных и цифр в один токен) и транслитерации латиницы в кириллицу WER падает до 10,43% на тех же 100 файлах. Оставшиеся ошибки - морфология (`смотрешке`/`смотрешках`), бренды (`синергия тв`/`synergy tv`) и редкие имена. Публикация GigaAM v3 даёт 2,4%, но условия нормализации там не описаны; наши 10,43% всё равно выше.
+Golos Crowd: 20,79% raw WER сильно завышен форматом. После нормализации чисел (схлопывание числительных и цифр в один токен) и транслитерации латиницы в кириллицу WER падает до 10,00% на тех же 100 файлах (`tools/diar_eval/normalize_wer.py`, `metrics_norm.csv` в каталоге прогона). Golos Farfield: 15,53% → 12,58% по той же методике. Оставшиеся ошибки - морфология (`смотрешке`/`смотрешках`), бренды (`синергия тв`/`synergy tv`) и редкие имена. Публикация GigaAM v3 даёт 2,4%, но условия нормализации там не описаны; наши 10,00% всё равно выше.
 
 FLEURS `ru_ru`: 5,42% WER и 2,06% CER. Это ближе к опубликованным Whisper large-v2 (5,6%) и выглядит правдоподобно для int8/greedy на чистой речи.
 
@@ -85,8 +85,8 @@ FLEURS `en_us`: 96,43% WER и 89,47% CER на двух файлах. Это не
 
 | Набор | Podtekst, пилот | Опубликовано | Что это значит |
 |---|---:|---:|---|
-| Golos Crowd test, WER | 20,79% raw; 10,43% после нормализации чисел и латиницы | GigaAM v3 RNNT 2,4% | Raw WER завышен форматом; даже нормализованный результат в 4 раза выше публикации. Нужен разбор VAD/нарезки/квантования. |
-| Golos Farfield test, WER | 15,53% | GigaAM v3 RNNT 3,9% | В 4 раза выше публикации; дальнее поле и командный домен. Нужен разбор по SNR и длине. |
+| Golos Crowd test, WER | 20,79% raw; 10,00% после нормализации чисел и латиницы | GigaAM v3 RNNT 2,4% | Raw WER завышен форматом; даже нормализованный результат в 4 раза выше публикации. Нужен разбор VAD/нарезки/квантования. |
+| Golos Farfield test, WER | 15,53% raw; 12,58% после нормализации чисел и латиницы | GigaAM v3 RNNT 3,9% | В 3 раза выше публикации; дальнее поле и командный домен. Нужен разбор по SNR и длине. |
 | FLEURS `ru_ru`, WER | 5,42% | Whisper large-v2 5,6% (не GigaAM) | Порядок величины сопоставим с Whisper v2, но это разные модели и разные условия. |
 | FLEURS `en_us`, WER | 96,43% на 2 файлах | Whisper large-v2 4,2% | Путь Whisper сломан; сравнивать нельзя. |
 | VoxConverse, DER | 43,87% (GigaAM fallback) | pyannote 3.1 11,3%; senko 13,5% | Невалидный движок и невалидная развязка ASR/диаризации; не сравнивать. |
@@ -205,7 +205,7 @@ VoxConverse, 5 файлов, 22,6 мин, GigaAM fallback:
 - Доверительные интервалы не посчитаны; при 100 файлах Golos ошибка доли может быть несколько процентных пунктов.
 - Кросс-платформенный смоук (macOS, Windows) не выполнялся.
 - Golos Crowd - командный домен с брендами и числами; переносить WER на встречи нельзя.
-- Нормализация чисел и латиницы для Crowd - внешний пересчёт, в `metrics.csv` его нет.
+- Нормализация чисел и латиницы для Crowd и Farfield - отдельный постпроцессинг `tools/diar_eval/normalize_wer.py` поверх `metrics.csv`; raw-колонки `WER`/`CER` он не меняет, нормализованные значения лежат в `metrics_norm.csv`.
 
 ## 10. Воспроизведение
 
@@ -222,6 +222,7 @@ PY=~/.cache/podtekst-bench/venv/bin/python
 $PY tools/diar_eval/transcript_to_rttm.py --self-test
 $PY tools/diar_eval/evaluate.py --self-test
 $PY tools/diar_eval/metrics.py --self-test
+$PY tools/diar_eval/normalize_wer.py --self-test
 $PY tools/diar_eval/run_batch.py --self-test
 $PY tools/diar_eval/report.py --self-test
 
@@ -238,6 +239,13 @@ $PY tools/diar_eval/run_batch.py \
 $PY tools/diar_eval/report.py \
   --run ~/.cache/podtekst-bench/runs/golos-crowd-100 \
   --out ~/.cache/podtekst-bench/runs/golos-crowd-100/report.md
+
+# нормализованный WER/CER (числа и латиница) поверх raw-метрики
+$PY tools/diar_eval/normalize_wer.py \
+  --metrics ~/.cache/podtekst-bench/runs/golos-crowd-100/metrics.csv \
+  --manifest ~/.cache/podtekst-bench/data/manifest-run.json \
+  --data-root ~/.cache/podtekst-bench/data \
+  --out ~/.cache/podtekst-bench/runs/golos-crowd-100/metrics_norm.csv
 ```
 
 Внешние ориентиры: `docs/testing/EXTERNAL-BENCHMARKS.md`.
