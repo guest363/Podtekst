@@ -104,6 +104,7 @@ jobs:
         run: |
           corepack enable
           yarn install --immutable
+          yarn lint
           yarn check
           yarn build
       - name: Static build is committed

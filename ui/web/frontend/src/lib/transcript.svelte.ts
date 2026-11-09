@@ -1,15 +1,50 @@
-import { baseName, encPath, isCoreModel, readJsonSafe } from './api'
-import type { ModelInfo, SpeakerInfo, TranscriptData, Utterance } from './api'
+import type { ModelInfo, OkResponse, SpeakerInfo, TranscriptData, Utterance } from './api'
+import { baseName, encPath, isCoreModel, isVideoPath, readJsonSafe } from './api'
+import { errText, isAbortError } from './guards.ts'
+import { loadQueue, type QueueItem, queueState } from './queue.svelte.ts'
+import { settings } from './settings.svelte.ts'
+import { summaryStageText } from './summary-ui.ts'
 import { toast } from './toast.svelte.ts'
 import { emit, ui } from './ui.svelte.ts'
-import { settings } from './settings.svelte.ts'
-import { isVideoPath } from './api'
-import { loadQueue, queueState } from './queue.svelte.ts'
-import { summaryStageText } from './summaryUi.ts'
 
-export const transcript = $state({
-  speakers: [] as SpeakerInfo[],
-  utterances: [] as Utterance[],
+type TranscriptEditResponse = OkResponse & TranscriptData
+type TranscribeStartResponse = OkResponse & {
+  started?: boolean
+  queued?: boolean
+  position?: number
+}
+type ModelsResponse = { models?: ModelInfo[] }
+type EngineEvent = {
+  type?: string
+  file?: string
+  pct?: number
+  stage?: string
+  message?: string
+  done?: number
+  total?: number
+  model_id?: string
+  ok?: boolean
+  error?: string
+  queue?: QueueItem[]
+  should_prompt_donate?: boolean
+  phase?: string
+  chunk?: number
+  chunks?: number
+}
+
+type TranscriptState = {
+  speakers: SpeakerInfo[]
+  utterances: Utterance[]
+  markdown: string
+  rev: string
+  hasText: boolean
+  loadError: string
+  extractVisible: boolean
+}
+
+export const transcript: TranscriptState = $state({
+  speakers: [],
+  utterances: [],
   markdown: '',
   rev: '',
   hasText: false,
@@ -20,7 +55,19 @@ export const transcript = $state({
 // Единственное состояние движка для всего UI (дека, модалка, настройки):
 // ядро обрабатывает файлы по одному, поэтому прогресс и очередь должны
 // выглядеть одинаково в любом месте интерфейса.
-export const engine = $state({
+type EngineState = {
+  running: boolean
+  summaryRunning: boolean
+  file: string
+  msg: string
+  pct: number
+  summaryFile: string
+  summaryMsg: string
+  summaryPct: number
+  downloading: Record<string, number>
+}
+
+export const engine: EngineState = $state({
   running: false,
   summaryRunning: false,
   file: '',
@@ -29,13 +76,13 @@ export const engine = $state({
   summaryFile: '',
   summaryMsg: '',
   summaryPct: 0,
-  downloading: {} as Record<string, number>,
+  downloading: {},
 })
 
 let openSeq = 0
 let openAbort: AbortController | null = null
 
-export async function openTranscriptFile(rawPath: string): Promise<void> {
+export const openTranscriptFile = async (rawPath: string): Promise<void> => {
   const seq = ++openSeq
   openAbort?.abort()
   openAbort = new AbortController()
@@ -53,11 +100,11 @@ export async function openTranscriptFile(rawPath: string): Promise<void> {
       signal: openAbort.signal,
     })
     if (seq !== openSeq) return
-    d = (await readJsonSafe(r)) as TranscriptData
+    d = await readJsonSafe<TranscriptData>(r)
   } catch (e) {
-    if (seq !== openSeq || (e as Error)?.name === 'AbortError') return
+    if (seq !== openSeq || isAbortError(e)) return
     transcript.hasText = false
-    transcript.loadError = 'Не удалось загрузить расшифровку: ' + (e as Error).message
+    transcript.loadError = `Не удалось загрузить расшифровку: ${errText(e)}`
     return
   }
   if (seq !== openSeq) return
@@ -66,19 +113,19 @@ export async function openTranscriptFile(rawPath: string): Promise<void> {
   transcript.speakers = d.speakers_info || []
   transcript.markdown = d.markdown || ''
   transcript.rev = typeof d.rev === 'string' ? d.rev : ''
-  transcript.hasText = Boolean((d.markdown && d.markdown.trim()) || transcript.utterances.length > 0)
+  transcript.hasText = Boolean(d.markdown?.trim() || transcript.utterances.length > 0)
 }
 
-export async function editTranscript(
+export const editTranscript = async (
   rawPath: string,
   change: { index?: number; text?: string; speaker?: string; old_speaker?: string },
-): Promise<void> {
+): Promise<void> => {
   const r = await fetch('/api/transcript/edit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ file: rawPath, ...change }),
   })
-  const d = await readJsonSafe(r)
+  const d = await readJsonSafe<TranscriptEditResponse>(r)
   if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`)
   transcript.utterances = d.utterances || []
   transcript.speakers = d.speakers_info || []
@@ -88,32 +135,33 @@ export async function editTranscript(
   emit('transcript-edited')
 }
 
-export function emptyHint(): string {
-  // Критерий «ядра» — как в downloadAllCoreModels и App.svelte.
+export const emptyHint = (): string => {
+  // Критерий «ядра» — как в downloadAllCoreModels и app.svelte.
   const missingCore = settings.models.filter((m) => isCoreModel(m) && !m.is_installed)
   const base = ui.currentTranscriptIsVideo
     ? 'Расшифровка ещё не выполнялась. Звук из видео извлекается автоматически.'
     : 'Расшифровка ещё не выполнялась.'
   if (missingCore.length > 0) {
-    return base + ' Для работы нужны модели: «Настройки» → «Компоненты».'
+    return `${base} Для работы нужны модели: «Настройки» → «Компоненты».`
   }
-  return base + ' Нажмите «Запустить расшифровку».'
+  return `${base} Нажмите «Запустить расшифровку».`
 }
 
 let evtSource: EventSource | null = null
 let finishedAt = 0
 let finishing = false
 
-export function closeStreamIfIdle(): void {
+export const closeStreamIfIdle = (): void => {
   if (!engine.running && !engine.summaryRunning && Object.keys(engine.downloading).length === 0) {
     evtSource?.close()
     evtSource = null
   }
 }
 
-export function ensureStream(): void {
+export const ensureStream = (): void => {
   if (evtSource) return
-  if (!engine.running && !engine.summaryRunning && Object.keys(engine.downloading).length === 0) return
+  if (!engine.running && !engine.summaryRunning && Object.keys(engine.downloading).length === 0)
+    return
   evtSource = new EventSource('/api/transcribe_stream')
   evtSource.onmessage = (e: MessageEvent) => handleEngineEvent(e)
   evtSource.onerror = () => {
@@ -140,10 +188,10 @@ export function ensureStream(): void {
 // Итог model-done по id: без него исчезновение прогресса неотличимо от успеха.
 const downloadOutcome: Record<string, boolean> = {}
 
-function handleEngineEvent(e: MessageEvent): void {
-  let evt: any
+const handleEngineEvent = (e: MessageEvent): void => {
+  let evt: EngineEvent
   try {
-    evt = JSON.parse(e.data)
+    evt = JSON.parse(e.data) as EngineEvent // SAFETY: контракт событий движка; поля проверяются по месту
   } catch {
     return
   }
@@ -155,15 +203,8 @@ function handleEngineEvent(e: MessageEvent): void {
       }
       engine.summaryRunning = true
       engine.summaryFile = String(evt.file || engine.summaryFile || '')
-      engine.summaryPct = Math.max(
-        engine.summaryPct,
-        Math.min(100, Number(evt.pct) || 0),
-      )
-      engine.summaryMsg = summaryStageText(
-        String(evt.phase || ''),
-        evt.chunk,
-        evt.chunks,
-      )
+      engine.summaryPct = Math.max(engine.summaryPct, Math.min(100, Number(evt.pct) || 0))
+      engine.summaryMsg = summaryStageText(String(evt.phase || ''), evt.chunk, evt.chunks)
     } else if (evt.type === 'summary-done' || evt.type === 'summary-error') {
       engine.summaryRunning = false
       engine.summaryPct = 0
@@ -196,7 +237,8 @@ function handleEngineEvent(e: MessageEvent): void {
       queueState.currentFile = evt.file
     }
     engine.msg = evt.message || 'Обработка…'
-    if (evt.pct !== undefined) engine.pct = Math.max(engine.pct, Math.max(5, Math.min(100, evt.pct)))
+    if (evt.pct !== undefined)
+      engine.pct = Math.max(engine.pct, Math.max(5, Math.min(100, evt.pct)))
   } else if (evt.type === 'segment') {
     engine.msg = `Реплик распознано: ${evt.done || 0} из ${evt.total || 0}`
     if (evt.pct !== undefined) engine.pct = evt.pct
@@ -209,7 +251,7 @@ function handleEngineEvent(e: MessageEvent): void {
     emit('models-changed')
     const title = settings.models.find((m) => m.id === modelId)?.title || modelId
     if (evt.ok) toast(`Модель «${title}» готова`)
-    else toast('Ошибка модели: ' + (evt.error || ''), 'error')
+    else toast(`Ошибка модели: ${evt.error || ''}`, 'error')
     closeStreamIfIdle()
   } else if (evt.type === 'stats') {
     if (evt.should_prompt_donate) emit('support-changed')
@@ -220,11 +262,11 @@ function handleEngineEvent(e: MessageEvent): void {
         closeStreamIfIdle()
       }
     })
-    toast('Расшифровка прервана: ' + (evt.message || 'неизвестная ошибка'), 'error')
+    toast(`Расшифровка прервана: ${evt.message || 'неизвестная ошибка'}`, 'error')
   }
 }
 
-function finishEngine(donePath: string): void {
+const finishEngine = (donePath: string): void => {
   if (!engine.running || finishing) return
   finishing = true
   void loadQueue()
@@ -249,23 +291,27 @@ function finishEngine(donePath: string): void {
   }
 }
 
-export async function startTranscription(rawPath: string): Promise<void> {
+export const startTranscription = async (rawPath: string): Promise<void> => {
   try {
     const r = await fetch('/api/transcribe/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ file: rawPath, engine: 'auto' }),
     })
-    const d = await readJsonSafe(r)
+    const d = await readJsonSafe<TranscribeStartResponse>(r)
     if (!d.ok) throw new Error(d.error || 'движок отклонил запуск')
     if (d.started === false) {
-      toast(d.queued ? `Запись добавлена в очередь (#${d.position})` : 'Эта запись уже расшифровывается')
+      toast(
+        d.queued
+          ? `Запись добавлена в очередь (#${d.position})`
+          : 'Эта запись уже расшифровывается',
+      )
       await loadQueue()
       ensureStream()
       return
     }
   } catch (e) {
-    toast('Не удалось запустить расшифровку: ' + (e as Error).message, 'error')
+    toast(`Не удалось запустить расшифровку: ${errText(e)}`, 'error')
     return
   }
   engine.running = true
@@ -280,12 +326,12 @@ export async function startTranscription(rawPath: string): Promise<void> {
  *  завершить мимо этой страницы (авто-расшифровка после записи, CLI, IPC,
  *  сон телефона). 2 секунды после done игнорируем — флаг ядра снимается
  *  чуть позже самого события, иначе опрос «оживил» бы завершённую задачу. */
-export function syncEngineFromStatus(
+export const syncEngineFromStatus = (
   running: boolean,
   file: string,
   summary?: { active: boolean; file?: string; phase?: string; pct?: number },
-): void {
-  if (summary && summary.active) {
+): void => {
+  if (summary?.active) {
     if (!engine.summaryRunning) {
       engine.summaryPct = 0
       engine.summaryMsg = 'Собираю итоги…'
@@ -322,12 +368,14 @@ export function syncEngineFromStatus(
   }
 }
 
-export const downloadingCore = $state({
+type DownloadingCoreState = { active: boolean; queued: string[] }
+
+export const downloadingCore: DownloadingCoreState = $state({
   active: false,
-  queued: [] as string[],
+  queued: [],
 })
 
-export async function downloadModel(m: ModelInfo): Promise<boolean> {
+export const downloadModel = async (m: ModelInfo): Promise<boolean> => {
   delete downloadOutcome[m.id]
   engine.downloading[m.id] = 0
   ensureStream()
@@ -337,11 +385,11 @@ export async function downloadModel(m: ModelInfo): Promise<boolean> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model_id: m.id }),
     })
-    const d = await readJsonSafe(r)
+    const d = await readJsonSafe<OkResponse>(r)
     if (!d.ok) throw new Error(d.error || `HTTP ${r.status}`)
   } catch (e) {
     delete engine.downloading[m.id]
-    toast('Не удалось запустить скачивание: ' + (e as Error).message, 'error')
+    toast(`Не удалось запустить скачивание: ${errText(e)}`, 'error')
     return false
   }
 
@@ -369,9 +417,9 @@ export async function downloadModel(m: ModelInfo): Promise<boolean> {
         return
       }
       try {
-        const d = await readJsonSafe(await fetch('/api/models'))
-        const cur = ((d.models || []) as ModelInfo[]).find((x) => x.id === m.id)
-        if (cur && cur.is_installed && !cur.has_update) {
+        const d = await readJsonSafe<ModelsResponse>(await fetch('/api/models'))
+        const cur = (d.models || []).find((x) => x.id === m.id)
+        if (cur?.is_installed && !cur.has_update) {
           clearInterval(timer)
           delete engine.downloading[m.id]
           delete downloadOutcome[m.id]
@@ -383,7 +431,7 @@ export async function downloadModel(m: ModelInfo): Promise<boolean> {
   })
 }
 
-export async function downloadAllCoreModels(): Promise<void> {
+export const downloadAllCoreModels = async (): Promise<void> => {
   const core = settings.models.filter((m) => isCoreModel(m) && !m.is_installed)
   if (core.length === 0) return
   downloadingCore.active = true

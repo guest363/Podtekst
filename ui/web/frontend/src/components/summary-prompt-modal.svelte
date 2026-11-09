@@ -1,159 +1,162 @@
 <script lang="ts">
-  import { tick } from 'svelte'
-  import type { SummaryPreset } from '../lib/api'
+import { tick } from 'svelte'
+import type { SummaryPreset } from '../lib/api'
 
-  interface Props {
-    open: boolean
-    presets: SummaryPreset[]
-    initialId?: string
-    defaultPresetId?: string
-    systemPromptBase?: string
-    onselect?: (id: string) => void
-    onclose: () => void
+type Props = {
+  open: boolean
+  presets: SummaryPreset[]
+  initialId?: string
+  defaultPresetId?: string
+  systemPromptBase?: string
+  onselect?: (id: string) => void
+  onclose: () => void
+}
+
+let {
+  open,
+  presets,
+  initialId = '',
+  defaultPresetId = '',
+  systemPromptBase = '',
+  onselect,
+  onclose,
+}: Props = $props()
+
+let activeId = $state('')
+let showFullPrompt = $state(false)
+let copied = $state(false)
+let selectOpen = $state(false)
+let selectTrigger = $state<HTMLButtonElement | null>(null)
+let selectList = $state<HTMLDivElement | null>(null)
+
+$effect(() => {
+  if (open) {
+    activeId = initialId || defaultPresetId || presets[0]?.id || 'meeting'
+    showFullPrompt = false
+    copied = false
+    selectOpen = false
   }
+})
 
-  let {
-    open,
-    presets,
-    initialId = '',
-    defaultPresetId = '',
-    systemPromptBase = '',
-    onselect,
-    onclose,
-  }: Props = $props()
+const activePreset = $derived(presets.find((p) => p.id === activeId) ?? presets[0] ?? null)
 
-  let activeId = $state('')
-  let showFullPrompt = $state(false)
-  let copied = $state(false)
-  let selectOpen = $state(false)
-  let selectTrigger = $state<HTMLButtonElement | null>(null)
-  let selectList = $state<HTMLDivElement | null>(null)
-
-  $effect(() => {
-    if (open) {
-      activeId = initialId || defaultPresetId || presets[0]?.id || 'meeting'
-      showFullPrompt = false
-      copied = false
-      selectOpen = false
-    }
-  })
-
-  const activePreset = $derived(
-    presets.find((p) => p.id === activeId) ?? presets[0] ?? null,
-  )
-
-  const activeSections = $derived.by(() => {
-    if (!activePreset) return []
-    if (activePreset.sections_detail && activePreset.sections_detail.length > 0) {
-      return activePreset.sections_detail
-    }
-    return activePreset.sections.map((id) => ({ id, title: id, role: 'plain' as const }))
-  })
-
-  const activeFullPrompt = $derived.by(() => {
-    if (!activePreset) return ''
-    let text = `${activePreset.role || ''} ${activePreset.domain || ''}`
-    if (activePreset.speaker_primary && activePreset.speaker_primary.length > 0) {
-      text += ` Приоритет при противоречиях: слова ${activePreset.speaker_primary.join(', ')} важнее остальных.`
-    }
-    if (systemPromptBase) {
-      text += `\n\n${systemPromptBase}`
-    }
-    return text.trim()
-  })
-
-  const activeRolePrompt = $derived.by(() => {
-    if (!activePreset) return ''
-    let text = `${activePreset.role || ''}\n${activePreset.domain || ''}`
-    if (activePreset.speaker_primary && activePreset.speaker_primary.length > 0) {
-      text += `\nПриоритет реплик: слова ${activePreset.speaker_primary.join(', ')} важнее остальных.`
-    }
-    return text.trim()
-  })
-
-  function onWindowKey(e: KeyboardEvent): void {
-    if (!open) return
-    if (e.key === 'Escape') {
-      if (selectOpen) {
-        closeSelect(true)
-        e.stopPropagation()
-      } else {
-        onclose()
-      }
-    }
+const activeSections = $derived.by(() => {
+  if (!activePreset) return []
+  if (activePreset.sections_detail && activePreset.sections_detail.length > 0) {
+    return activePreset.sections_detail
   }
+  return activePreset.sections.map((id) => ({ id, title: id, role: 'plain' as const }))
+})
 
-  function onBackdropMouseDown(e: MouseEvent): void {
-    if (e.target === e.currentTarget) {
+const activeFullPrompt = $derived.by(() => {
+  if (!activePreset) return ''
+  let text = `${activePreset.role || ''} ${activePreset.domain || ''}`
+  if (activePreset.speaker_primary && activePreset.speaker_primary.length > 0) {
+    text += ` Приоритет при противоречиях: слова ${activePreset.speaker_primary.join(', ')} важнее остальных.`
+  }
+  if (systemPromptBase) {
+    text += `\n\n${systemPromptBase}`
+  }
+  return text.trim()
+})
+
+const activeRolePrompt = $derived.by(() => {
+  if (!activePreset) return ''
+  let text = `${activePreset.role || ''}\n${activePreset.domain || ''}`
+  if (activePreset.speaker_primary && activePreset.speaker_primary.length > 0) {
+    text += `\nПриоритет реплик: слова ${activePreset.speaker_primary.join(', ')} важнее остальных.`
+  }
+  return text.trim()
+})
+
+const onWindowKey = (e: KeyboardEvent): void => {
+  if (!open) return
+  if (e.key === 'Escape') {
+    if (selectOpen) {
+      closeSelect(true)
+      e.stopPropagation()
+    } else {
       onclose()
     }
   }
+}
 
-  function openSelectList(): void {
-    selectOpen = true
-    void tick().then(() => {
-      const current = selectList?.querySelector<HTMLElement>('[aria-selected="true"]')
-      const first = selectList?.querySelector<HTMLElement>('.speaker-select-item')
-      ;(current ?? first)?.focus()
-    })
-  }
-
-  function closeSelect(returnFocus = false): void {
-    selectOpen = false
-    if (returnFocus) selectTrigger?.focus()
-  }
-
-  function choosePreset(id: string): void {
-    activeId = id
-    closeSelect(true)
-  }
-
-  function onSelectKeydown(e: KeyboardEvent): void {
-    if (e.key === 'Escape' && selectOpen) {
-      e.stopPropagation()
-      closeSelect(true)
-      return
-    }
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
-    e.preventDefault()
-    if (!selectOpen) {
-      openSelectList()
-      return
-    }
-    const items = [...(selectList?.querySelectorAll<HTMLElement>('.speaker-select-item') ?? [])]
-    if (!items.length) return
-    const index = items.indexOf(document.activeElement as HTMLElement)
-    const next = e.key === 'ArrowDown'
-      ? items[(index + 1) % items.length]
-      : items[(index - 1 + items.length) % items.length]
-    next?.focus()
-  }
-
-  function onSelectFocusOut(e: FocusEvent): void {
-    const next = e.relatedTarget as Node | null
-    if (selectOpen && (!next || !(e.currentTarget as HTMLElement).contains(next))) {
-      selectOpen = false
-    }
-  }
-
-  async function copyPrompt(): Promise<void> {
-    const text = showFullPrompt ? activeFullPrompt : activeRolePrompt
-    if (!text) return
-    try {
-      await navigator.clipboard.writeText(text)
-      copied = true
-      setTimeout(() => {
-        copied = false
-      }, 1600)
-    } catch {
-      /* буфер недоступен */
-    }
-  }
-
-  function handleSelect(id: string): void {
-    onselect?.(id)
+const onBackdropMouseDown = (e: MouseEvent): void => {
+  if (e.target === e.currentTarget) {
     onclose()
   }
+}
+
+const openSelectList = (): void => {
+  selectOpen = true
+  void tick().then(() => {
+    const current = selectList?.querySelector<HTMLElement>('[aria-selected="true"]')
+    const first = selectList?.querySelector<HTMLElement>('.speaker-select-item')
+    ;(current ?? first)?.focus()
+  })
+}
+
+const closeSelect = (returnFocus = false): void => {
+  selectOpen = false
+  if (returnFocus) selectTrigger?.focus()
+}
+
+const choosePreset = (id: string): void => {
+  activeId = id
+  closeSelect(true)
+}
+
+const onSelectKeydown = (e: KeyboardEvent): void => {
+  if (e.key === 'Escape' && selectOpen) {
+    e.stopPropagation()
+    closeSelect(true)
+    return
+  }
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+  e.preventDefault()
+  if (!selectOpen) {
+    openSelectList()
+    return
+  }
+  const items = [...(selectList?.querySelectorAll<HTMLElement>('.speaker-select-item') ?? [])]
+  if (!items.length) return
+  const active = document.activeElement
+  const index = active instanceof HTMLElement ? items.indexOf(active) : -1
+  const next =
+    e.key === 'ArrowDown'
+      ? items[(index + 1) % items.length]
+      : items[(index - 1 + items.length) % items.length]
+  next?.focus()
+}
+
+const onSelectFocusOut = (e: FocusEvent): void => {
+  const next = e.relatedTarget instanceof Node ? e.relatedTarget : null
+  if (
+    selectOpen &&
+    (!next || !(e.currentTarget instanceof HTMLElement && e.currentTarget.contains(next)))
+  ) {
+    selectOpen = false
+  }
+}
+
+const copyPrompt = async (): Promise<void> => {
+  const text = showFullPrompt ? activeFullPrompt : activeRolePrompt
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    copied = true
+    setTimeout(() => {
+      copied = false
+    }, 1600)
+  } catch {
+    /* буфер недоступен */
+  }
+}
+
+const handleSelect = (id: string): void => {
+  onselect?.(id)
+  onclose()
+}
 </script>
 
 <svelte:window onkeydown={onWindowKey} />

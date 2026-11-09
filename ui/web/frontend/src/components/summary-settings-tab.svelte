@@ -1,263 +1,271 @@
 <script lang="ts">
-  import { onDestroy, onMount, tick } from 'svelte'
-  import type { SummarySettings } from '../lib/api'
-  import { isMobile } from '../lib/api'
-  import { downloadModel } from '../lib/transcript.svelte.ts'
-  import { fmtBytes, loadSystem, openTarget, system } from '../lib/system.svelte.ts'
-  import { toast, toastConfirm } from '../lib/toast.svelte.ts'
-  import { summaryErrorText } from '../lib/summaryUi.ts'
-  import SummaryPromptModal from './SummaryPromptModal.svelte'
-  import {
-    cancelSummaryGpu,
-    installSummaryGpu,
-    loadSummarySettings,
-    refreshSummaryGpu,
-    removeSummaryGpu,
-    saveSummarySettings,
-    summaryModelPct,
-    summaryState,
-  } from '../lib/summary.svelte.ts'
+import { onDestroy, onMount, tick } from 'svelte'
+import type { SummarySettings } from '../lib/api'
+import { isMobile } from '../lib/api'
+import { errText, isRecord } from '../lib/guards.ts'
+import {
+  cancelSummaryGpu,
+  installSummaryGpu,
+  loadSummarySettings,
+  refreshSummaryGpu,
+  removeSummaryGpu,
+  saveSummarySettings,
+  summaryModelPct,
+  summaryState,
+} from '../lib/summary.svelte.ts'
+import { summaryErrorText } from '../lib/summary-ui.ts'
+import { fmtBytes, loadSystem, openTarget, system } from '../lib/system.svelte.ts'
+import { toast, toastConfirm } from '../lib/toast.svelte.ts'
+import { downloadModel } from '../lib/transcript.svelte.ts'
+import SummaryPromptModal from './summary-prompt-modal.svelte'
 
-  let loading = $state(false)
-  let saving = $state(false)
-  let error = $state('')
-  let presetOpen = $state(false)
-  let presetTrigger = $state<HTMLButtonElement | null>(null)
-  let presetList = $state<HTMLDivElement | null>(null)
-  let guideOpen = $state(false)
-  let guidePresetId = $state('')
+let loading = $state(false)
+let saving = $state(false)
+let error = $state('')
+let presetOpen = $state(false)
+let presetTrigger = $state<HTMLButtonElement | null>(null)
+let presetList = $state<HTMLDivElement | null>(null)
+let guideOpen = $state(false)
+let guidePresetId = $state('')
 
-  const settings = $derived(summaryState.settings)
-  const manualOnly = $derived(summaryState.capabilities?.classifier === 'manual_only')
-  const model = $derived(summaryState.model)
-  const modelPct = $derived(summaryModelPct())
-  const gpu = $derived(summaryState.gpu)
-  const gpuEnabled = $derived(settings?.gpu !== 'off')
-  const gpuBadge = $derived.by(() => {
-    if (!gpu) return 'Проверка…'
-    if (gpu.installing) return 'Установка…'
-    if (gpu.bundled) return 'Встроено'
-    if (gpu.has_update) return 'Обновление'
-    if (gpu.installed) return 'Установлено'
-    return 'Не установлено'
-  })
-  const gpuDownloadText = $derived(
-    gpu?.compressed_bytes
-      ? `Скачать ускорение GPU (${fmtBytes(gpu.compressed_bytes)})`
-      : 'Скачать ускорение GPU',
-  )
-  const autoSuggest = $derived(settings?.auto_suggest ?? true)
-  const defaultPreset = $derived(settings?.default_preset ?? '')
-  const presetOptions = $derived([
-    { id: '', label: 'Авто — по типу разговора' },
-    ...summaryState.presets.map((p) => ({ id: p.id, label: p.label })),
-  ])
-  const selectedPresetLabel = $derived(
-    presetOptions.find((p) => p.id === defaultPreset)?.label ?? presetOptions[0].label,
-  )
-  const detail = $derived(settings?.detail ?? 'normal')
-  const modelSizeGb = $derived(
-    ((model?.total_size_bytes || 2497281120) / 1073741824).toFixed(1).replace('.', ','),
-  )
-  const ramGib = $derived((((model?.ram_mb || 5530) / 1024)).toFixed(1).replace('.', ','))
-  const requiredFreeGib = $derived((((model?.required_free_mb || 6656) / 1024)).toFixed(1).replace('.', ','))
-  const diskFree = $derived(fmtBytes(system.snapshot?.disk?.free_bytes) || '—')
-  const ramText = $derived.by(() => {
-    const total = fmtBytes(system.snapshot?.memory?.total_bytes)
-    if (total) return `${total} ОЗУ`
-    const available = fmtBytes(system.snapshot?.memory?.available_bytes)
-    return available ? `${available} ОЗУ доступно` : '—'
-  })
+const settings = $derived(summaryState.settings)
+const manualOnly = $derived(summaryState.capabilities?.classifier === 'manual_only')
+const model = $derived(summaryState.model)
+const modelPct = $derived(summaryModelPct())
+const gpu = $derived(summaryState.gpu)
+const gpuEnabled = $derived(settings?.gpu !== 'off')
+const gpuBadge = $derived.by(() => {
+  if (!gpu) return 'Проверка…'
+  if (gpu.installing) return 'Установка…'
+  if (gpu.bundled) return 'Встроено'
+  if (gpu.has_update) return 'Обновление'
+  if (gpu.installed) return 'Установлено'
+  return 'Не установлено'
+})
+const gpuDownloadText = $derived(
+  gpu?.compressed_bytes
+    ? `Скачать ускорение GPU (${fmtBytes(gpu.compressed_bytes)})`
+    : 'Скачать ускорение GPU',
+)
+const autoSuggest = $derived(settings?.auto_suggest ?? true)
+const defaultPreset = $derived(settings?.default_preset ?? '')
+const presetOptions = $derived([
+  { id: '', label: 'Авто — по типу разговора' },
+  ...summaryState.presets.map((p) => ({ id: p.id, label: p.label })),
+])
+const selectedPresetLabel = $derived(
+  presetOptions.find((p) => p.id === defaultPreset)?.label ?? presetOptions[0].label,
+)
+const detail = $derived(settings?.detail ?? 'normal')
+const modelSizeGb = $derived(
+  ((model?.total_size_bytes || 2497281120) / 1073741824).toFixed(1).replace('.', ','),
+)
+const ramGib = $derived(((model?.ram_mb || 5530) / 1024).toFixed(1).replace('.', ','))
+const requiredFreeGib = $derived(
+  ((model?.required_free_mb || 6656) / 1024).toFixed(1).replace('.', ','),
+)
+const diskFree = $derived(fmtBytes(system.snapshot?.disk?.free_bytes) || '—')
+const ramText = $derived.by(() => {
+  const total = fmtBytes(system.snapshot?.memory?.total_bytes)
+  if (total) return `${total} ОЗУ`
+  const available = fmtBytes(system.snapshot?.memory?.available_bytes)
+  return available ? `${available} ОЗУ доступно` : '—'
+})
 
-  const detailBadge = $derived.by(() => {
-    switch (detail) {
-      case 'short':
-        return 'Быстрый срез'
-      case 'long':
-        return 'Максимум деталей'
-      default:
-        return 'Сбалансировано'
-    }
-  })
-
-  const detailInfo = $derived.by(() => {
-    switch (detail) {
-      case 'short':
-        return {
-          title: 'Кратко:',
-          desc: 'только суть — 2–3 главных решения и ключевые задачи без второстепенного контекста (~1 мин чтения).',
-        }
-      case 'long':
-        return {
-          title: 'Полный протокол:',
-          desc: 'подробный контекст каждого вопроса, позиции участников, все задачи, открытые вопросы и цитаты (~5–7 мин чтения).',
-        }
-      default:
-        return {
-          title: 'Сбалансированный вариант:',
-          desc: 'краткий ход встречи, задачи с ответственными и сроками, принятые решения (~2–3 мин чтения).',
-        }
-    }
-  })
-
-  async function reload(): Promise<void> {
-    loading = true
-    error = ''
-    try {
-      await loadSummarySettings()
-      if (summaryState.gpu?.installing) startGpuPoll()
-    } catch (e) {
-      error = 'Не удалось загрузить настройки итогов: ' + (e as Error).message
-    } finally {
-      loading = false
-    }
+const detailBadge = $derived.by(() => {
+  switch (detail) {
+    case 'short':
+      return 'Быстрый срез'
+    case 'long':
+      return 'Максимум деталей'
+    default:
+      return 'Сбалансировано'
   }
+})
 
-  let gpuPoll: ReturnType<typeof setInterval> | null = null
-
-  function stopGpuPoll(): void {
-    if (gpuPoll) clearInterval(gpuPoll)
-    gpuPoll = null
-  }
-
-  function startGpuPoll(): void {
-    stopGpuPoll()
-    gpuPoll = setInterval(async () => {
-      try {
-        await refreshSummaryGpu()
-      } catch {
-        return
+const detailInfo = $derived.by(() => {
+  switch (detail) {
+    case 'short':
+      return {
+        title: 'Кратко:',
+        desc: 'только суть — 2–3 главных решения и ключевые задачи без второстепенного контекста (~1 мин чтения).',
       }
-      if (!summaryState.gpu?.installing) stopGpuPoll()
-    }, 500)
+    case 'long':
+      return {
+        title: 'Полный протокол:',
+        desc: 'подробный контекст каждого вопроса, позиции участников, все задачи, открытые вопросы и цитаты (~5–7 мин чтения).',
+      }
+    default:
+      return {
+        title: 'Сбалансированный вариант:',
+        desc: 'краткий ход встречи, задачи с ответственными и сроками, принятые решения (~2–3 мин чтения).',
+      }
   }
+})
 
-  onMount(() => {
-    void reload()
-    if (!system.snapshot) void loadSystem()
+const reload = async (): Promise<void> => {
+  loading = true
+  error = ''
+  try {
+    await loadSummarySettings()
     if (summaryState.gpu?.installing) startGpuPoll()
+  } catch (e) {
+    error = `Не удалось загрузить настройки итогов: ${errText(e)}`
+  } finally {
+    loading = false
+  }
+}
+
+let gpuPoll: ReturnType<typeof setInterval> | null = null
+
+const stopGpuPoll = (): void => {
+  if (gpuPoll) clearInterval(gpuPoll)
+  gpuPoll = null
+}
+
+const startGpuPoll = (): void => {
+  stopGpuPoll()
+  gpuPoll = setInterval(async () => {
+    try {
+      await refreshSummaryGpu()
+    } catch {
+      return
+    }
+    if (!summaryState.gpu?.installing) stopGpuPoll()
+  }, 500)
+}
+
+onMount(() => {
+  void reload()
+  if (!system.snapshot) void loadSystem()
+  if (summaryState.gpu?.installing) startGpuPoll()
+})
+
+onDestroy(stopGpuPoll)
+
+const installGpu = async (): Promise<void> => {
+  if (!gpu || gpu.installing) return
+  error = ''
+  try {
+    await installSummaryGpu()
+    startGpuPoll()
+  } catch (e) {
+    const code = isRecord(e) && typeof e.code === 'string' ? e.code : 'gpu_internal'
+    error = summaryErrorText(code, errText(e))
+    toast(error, 'error')
+    await refreshSummaryGpu().catch(() => {})
+  }
+}
+
+const cancelGpu = async (): Promise<void> => {
+  try {
+    await cancelSummaryGpu()
+  } catch (e) {
+    toast(`Не удалось отменить скачивание: ${errText(e)}`, 'error')
+  }
+}
+
+const removeGpu = async (): Promise<void> => {
+  try {
+    await removeSummaryGpu()
+    toast('GPU-пакет удалён. Итоги работают на CPU.')
+  } catch (e) {
+    const code = isRecord(e) && typeof e.code === 'string' ? e.code : 'gpu_remove_failed'
+    toast(summaryErrorText(code, errText(e)), 'error')
+  }
+}
+
+const confirmRemoveGpu = (): void => {
+  toastConfirm(
+    'Удалить ускорение GPU? Итоги продолжат работать на CPU.',
+    'Удалить',
+    () => void removeGpu(),
+  )
+}
+
+const toggleGpu = (): void => {
+  void save({ gpu: gpuEnabled ? 'off' : 'auto' })
+}
+
+const save = async (patch: Partial<SummarySettings>): Promise<void> => {
+  if (saving) return
+  saving = true
+  error = ''
+  try {
+    await saveSummarySettings(patch)
+  } catch (e) {
+    error = `Не удалось сохранить: ${errText(e)}`
+    toast(error, 'error')
+    await reload()
+  } finally {
+    saving = false
+  }
+}
+
+const download = async (): Promise<void> => {
+  if (!model || modelPct !== null) return
+  const ok = await downloadModel(model)
+  if (ok) await reload()
+}
+
+const openPresetList = (): void => {
+  if (saving) return
+  presetOpen = true
+  void tick().then(() => {
+    const current = presetList?.querySelector<HTMLElement>('[aria-selected="true"]')
+    const first = presetList?.querySelector<HTMLElement>('.speaker-select-item')
+    ;(current ?? first)?.focus()
   })
+}
 
-  onDestroy(stopGpuPoll)
+const closePreset = (returnFocus = false): void => {
+  presetOpen = false
+  if (returnFocus) presetTrigger?.focus()
+}
 
-  async function installGpu(): Promise<void> {
-    if (!gpu || gpu.installing) return
-    error = ''
-    try {
-      await installSummaryGpu()
-      startGpuPoll()
-    } catch (e) {
-      const code = (e as { code?: string }).code || 'gpu_internal'
-      error = summaryErrorText(code, (e as Error).message)
-      toast(error, 'error')
-      await refreshSummaryGpu().catch(() => {})
-    }
-  }
+const choosePreset = (id: string): void => {
+  closePreset(true)
+  if (id === defaultPreset) return
+  void save({ default_preset: id || null })
+}
 
-  async function cancelGpu(): Promise<void> {
-    try {
-      await cancelSummaryGpu()
-    } catch (e) {
-      toast('Не удалось отменить скачивание: ' + (e as Error).message, 'error')
-    }
-  }
+const openGuide = (presetId?: string): void => {
+  guidePresetId = presetId || defaultPreset || summaryState.presets[0]?.id || 'meeting'
+  guideOpen = true
+}
 
-  async function removeGpu(): Promise<void> {
-    try {
-      await removeSummaryGpu()
-      toast('GPU-пакет удалён. Итоги работают на CPU.')
-    } catch (e) {
-      const code = (e as { code?: string }).code || 'gpu_remove_failed'
-      toast(summaryErrorText(code, (e as Error).message), 'error')
-    }
-  }
-
-  function confirmRemoveGpu(): void {
-    toastConfirm(
-      'Удалить ускорение GPU? Итоги продолжат работать на CPU.',
-      'Удалить',
-      () => void removeGpu(),
-    )
-  }
-
-  function toggleGpu(): void {
-    void save({ gpu: gpuEnabled ? 'off' : 'auto' })
-  }
-
-  async function save(patch: Partial<SummarySettings>): Promise<void> {
-    if (saving) return
-    saving = true
-    error = ''
-    try {
-      await saveSummarySettings(patch)
-    } catch (e) {
-      error = 'Не удалось сохранить: ' + (e as Error).message
-      toast(error, 'error')
-      await reload()
-    } finally {
-      saving = false
-    }
-  }
-
-  async function download(): Promise<void> {
-    if (!model || modelPct !== null) return
-    const ok = await downloadModel(model)
-    if (ok) await reload()
-  }
-
-  function openPresetList(): void {
-    if (saving) return
-    presetOpen = true
-    void tick().then(() => {
-      const current = presetList?.querySelector<HTMLElement>('[aria-selected="true"]')
-      const first = presetList?.querySelector<HTMLElement>('.speaker-select-item')
-      ;(current ?? first)?.focus()
-    })
-  }
-
-  function closePreset(returnFocus = false): void {
-    presetOpen = false
-    if (returnFocus) presetTrigger?.focus()
-  }
-
-  function choosePreset(id: string): void {
+const onPresetKeydown = (e: KeyboardEvent): void => {
+  if (e.key === 'Escape' && presetOpen) {
+    e.stopPropagation()
     closePreset(true)
-    if (id === defaultPreset) return
-    void save({ default_preset: id || null })
+    return
   }
-
-  function openGuide(presetId?: string): void {
-    guidePresetId = presetId || defaultPreset || summaryState.presets[0]?.id || 'meeting'
-    guideOpen = true
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+  e.preventDefault()
+  if (!presetOpen) {
+    openPresetList()
+    return
   }
-
-  function onPresetKeydown(e: KeyboardEvent): void {
-    if (e.key === 'Escape' && presetOpen) {
-      e.stopPropagation()
-      closePreset(true)
-      return
-    }
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
-    e.preventDefault()
-    if (!presetOpen) {
-      openPresetList()
-      return
-    }
-    const items = [...(presetList?.querySelectorAll<HTMLElement>('.speaker-select-item') ?? [])]
-    if (!items.length) return
-    const index = items.indexOf(document.activeElement as HTMLElement)
-    const next = e.key === 'ArrowDown'
+  const items = [...(presetList?.querySelectorAll<HTMLElement>('.speaker-select-item') ?? [])]
+  if (!items.length) return
+  const active = document.activeElement
+  const index = active instanceof HTMLElement ? items.indexOf(active) : -1
+  const next =
+    e.key === 'ArrowDown'
       ? items[(index + 1) % items.length]
       : items[(index - 1 + items.length) % items.length]
-    next?.focus()
-  }
+  next?.focus()
+}
 
-  function onPresetFocusOut(e: FocusEvent): void {
-    const next = e.relatedTarget as Node | null
-    if (presetOpen && (!next || !(e.currentTarget as HTMLElement).contains(next))) {
-      presetOpen = false
-    }
+const onPresetFocusOut = (e: FocusEvent): void => {
+  const next = e.relatedTarget instanceof Node ? e.relatedTarget : null
+  if (
+    presetOpen &&
+    (!next || !(e.currentTarget instanceof HTMLElement && e.currentTarget.contains(next)))
+  ) {
+    presetOpen = false
   }
+}
 </script>
 
 <div class="settings-pane summary-settings" role="tabpanel" tabindex="0" aria-label="Итоги">

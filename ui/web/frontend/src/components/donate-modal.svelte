@@ -1,21 +1,21 @@
 <script lang="ts">
-  import { pluralRecords } from '../lib/api'
-  import { copyMethod, support } from '../lib/support.svelte.ts'
-  import { ui } from '../lib/ui.svelte.ts'
+import { pluralRecords } from '../lib/api'
+import { copyMethod, support } from '../lib/support.svelte.ts'
+import { ui } from '../lib/ui.svelte.ts'
 
-  function savedLabel(minutes: number): string {
-    const total = Math.max(0, Math.round(minutes))
-    if (total < 60) return `${total} мин`
-    const h = Math.floor(total / 60)
-    const m = total % 60
-    return m > 0 ? `${h} ч ${m} мин` : `${h} ч`
-  }
+const savedLabel = (minutes: number): string => {
+  const total = Math.max(0, Math.round(minutes))
+  if (total < 60) return `${total} мин`
+  const h = Math.floor(total / 60)
+  const m = total % 60
+  return m > 0 ? `${h} ч ${m} мин` : `${h} ч`
+}
 
-  function onWindowKey(e: KeyboardEvent): void {
-    if (ui.donateOpen && e.key === 'Escape') {
-      ui.donateOpen = false
-    }
+const onWindowKey = (e: KeyboardEvent): void => {
+  if (ui.donateOpen && e.key === 'Escape') {
+    ui.donateOpen = false
   }
+}
 </script>
 
 <svelte:window onkeydown={onWindowKey} />

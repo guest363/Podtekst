@@ -1,110 +1,123 @@
 <script lang="ts">
-  import { renderMarkdown } from '../lib/markdown'
-  import { collectDiagnostics, fmtBytes, fmtDateTime, loadSystem, system } from '../lib/system.svelte.ts'
-  import { copyText, toast } from '../lib/toast.svelte.ts'
-  import {
-    applyUpdate,
-    checkUpdate,
-    closeUpdateModal,
-    skipVersion,
-    update,
-  } from '../lib/update.svelte.ts'
+import { renderMarkdown } from '../lib/markdown'
+import {
+  collectDiagnostics,
+  fmtBytes,
+  fmtDateTime,
+  loadSystem,
+  system,
+} from '../lib/system.svelte.ts'
+import { copyText, toast } from '../lib/toast.svelte.ts'
+import {
+  applyUpdate,
+  checkUpdate,
+  closeUpdateModal,
+  skipVersion,
+  update,
+} from '../lib/update.svelte.ts'
 
-  let { recording }: { recording?: boolean } = $props()
+let { recording }: { recording?: boolean } = $props()
 
-  let detailsOpen = $state(false)
-  let diagBusy = $state(false)
+let detailsOpen = $state(false)
+let diagBusy = $state(false)
 
-  const isRecording = $derived(recording ?? system.snapshot?.recording?.active === true)
-  const releaseUrl = $derived(update.url || 'https://github.com/guest363/podtekst/releases/latest')
-  const hasDetails = $derived(Boolean(update.errorCode || update.hint || update.attempt || !update.sourcesAgree || update.stale))
+const isRecording = $derived(recording ?? system.snapshot?.recording?.active === true)
+const releaseUrl = $derived(update.url || 'https://github.com/guest363/podtekst/releases/latest')
+const hasDetails = $derived(
+  Boolean(
+    update.errorCode || update.hint || update.attempt || !update.sourcesAgree || update.stale,
+  ),
+)
 
-  // Владелец пропа может не передать состояние записи: читаем его из снимка системы.
-  $effect(() => {
-    if (update.modalOpen && recording === undefined && !system.snapshot) void loadSystem()
-  })
+// Владелец пропа может не передать состояние записи: читаем его из снимка системы.
+$effect(() => {
+  if (update.modalOpen && recording === undefined && !system.snapshot) void loadSystem()
+})
 
-  // Очистка заметок от универсальных шаблонов установки других ОС и diff-ссылок
-  const cleanedNotes = $derived.by(() => {
-    if (!update.notes) return ''
-    return update.notes
-      .replace(/##?\s*Как обновиться[\s\S]*?(?=##|\Z)/gi, '')
-      .replace(/Инструкция по установке без подписи ОС:.*$/gmi, '')
-      .replace(/Полный список изменений:.*$/gmi, '')
-      .trim()
-  })
+// Очистка заметок от универсальных шаблонов установки других ОС и diff-ссылок
+const cleanedNotes = $derived.by(() => {
+  if (!update.notes) return ''
+  return update.notes
+    .replace(/##?\s*Как обновиться[\s\S]*?(?=##|Z)/gi, '')
+    .replace(/Инструкция по установке без подписи ОС:.*$/gim, '')
+    .replace(/Полный список изменений:.*$/gim, '')
+    .trim()
+})
 
-  const STAGE_LABELS: Record<string, string> = {
-    starting: 'Запуск обновления',
-    checking: 'Проверка обновления',
-    download: 'Скачивание',
-    install: 'Установка',
-    restart: 'Перезапуск',
-    apply: 'Установка',
+const STAGE_LABELS: Record<string, string> = {
+  starting: 'Запуск обновления',
+  checking: 'Проверка обновления',
+  download: 'Скачивание',
+  install: 'Установка',
+  restart: 'Перезапуск',
+  apply: 'Установка',
+}
+
+const ATTEMPT_OUTCOMES: Record<string, string> = {
+  started: 'запущена',
+  installed: 'установлено',
+  failed: 'ошибка',
+  not_confirmed: 'не подтверждено',
+}
+
+const detailRows = $derived.by(() => {
+  const rows: Array<[string, string]> = []
+  rows.push([
+    'Режим запуска',
+    update.selfUpdate ? 'самообновление (AppImage)' : 'исходники (run.sh)',
+  ])
+  if (update.errorCode) rows.push(['Код ошибки', update.errorCode])
+  if (update.hint) rows.push(['Подсказка', update.hint])
+  if (update.retryAfterSec > 0) rows.push(['Повтор через', `${update.retryAfterSec} с`])
+  rows.push(['Источники', update.sourcesAgree ? 'совпадают' : 'расходятся'])
+  rows.push(['Данные проверки', update.stale ? 'могли устареть' : 'актуальны'])
+  if (update.attempt) {
+    const a = update.attempt
+    rows.push([
+      'Последняя попытка',
+      `${a.from || '—'} → ${a.to || '—'}, ${ATTEMPT_OUTCOMES[a.outcome] || a.outcome || 'без итога'}${
+        a.started_at ? `, ${fmtDateTime(a.started_at)}` : ''
+      }`,
+    ])
   }
+  return rows
+})
 
-  const ATTEMPT_OUTCOMES: Record<string, string> = {
-    started: 'запущена',
-    installed: 'установлено',
-    failed: 'ошибка',
-    not_confirmed: 'не подтверждено',
+const stageText = (stage: string): string => {
+  return STAGE_LABELS[stage] || 'Обновление'
+}
+
+const progressSize = (): string => {
+  if (update.total > 0) {
+    return ` · ${fmtBytes(update.downloaded) || '0 Б'} из ${fmtBytes(update.total)}`
   }
+  if (update.downloaded > 0) return ` · скачано ${fmtBytes(update.downloaded)}`
+  return ''
+}
 
-  const detailRows = $derived.by(() => {
-    const rows: Array<[string, string]> = []
-    rows.push(['Режим запуска', update.selfUpdate ? 'самообновление (AppImage)' : 'исходники (run.sh)'])
-    if (update.errorCode) rows.push(['Код ошибки', update.errorCode])
-    if (update.hint) rows.push(['Подсказка', update.hint])
-    if (update.retryAfterSec > 0) rows.push(['Повтор через', `${update.retryAfterSec} с`])
-    rows.push(['Источники', update.sourcesAgree ? 'совпадают' : 'расходятся'])
-    rows.push(['Данные проверки', update.stale ? 'могли устареть' : 'актуальны'])
-    if (update.attempt) {
-      const a = update.attempt
-      rows.push([
-        'Последняя попытка',
-        `${a.from || '—'} → ${a.to || '—'}, ${ATTEMPT_OUTCOMES[a.outcome] || a.outcome || 'без итога'}${
-          a.started_at ? `, ${fmtDateTime(a.started_at)}` : ''
-        }`,
-      ])
-    }
-    return rows
-  })
+const retry = (): void => {
+  if (update.stage === 'check') void checkUpdate(true, true)
+  else void applyUpdate()
+}
 
-  function stageText(stage: string): string {
-    return STAGE_LABELS[stage] || 'Обновление'
+const copyPullCommand = async (): Promise<void> => {
+  const ok = await copyText('git pull && ./run.sh')
+  toast(ok ? 'Команда скопирована' : 'Не удалось скопировать', ok ? '' : 'error')
+}
+
+const diagnostics = async (): Promise<void> => {
+  if (diagBusy) return
+  diagBusy = true
+  try {
+    await collectDiagnostics()
+  } finally {
+    diagBusy = false
   }
+}
 
-  function progressSize(): string {
-    if (update.total > 0) {
-      return ` · ${fmtBytes(update.downloaded) || '0 Б'} из ${fmtBytes(update.total)}`
-    }
-    if (update.downloaded > 0) return ` · скачано ${fmtBytes(update.downloaded)}`
-    return ''
-  }
-
-  function retry(): void {
-    if (update.stage === 'check') void checkUpdate(true, true)
-    else void applyUpdate()
-  }
-
-  async function copyPullCommand(): Promise<void> {
-    const ok = await copyText('git pull && ./run.sh')
-    toast(ok ? 'Команда скопирована' : 'Не удалось скопировать', ok ? '' : 'error')
-  }
-
-  async function diagnostics(): Promise<void> {
-    if (diagBusy) return
-    diagBusy = true
-    try {
-      await collectDiagnostics()
-    } finally {
-      diagBusy = false
-    }
-  }
-
-  function onWindowKey(e: KeyboardEvent): void {
-    if (update.modalOpen && e.key === 'Escape') closeUpdateModal()
-  }
+const onWindowKey = (e: KeyboardEvent): void => {
+  if (update.modalOpen && e.key === 'Escape') closeUpdateModal()
+}
 </script>
 
 <svelte:window onkeydown={onWindowKey} />

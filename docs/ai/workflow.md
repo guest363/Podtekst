@@ -44,7 +44,11 @@ cargo test --workspace --locked --manifest-path src-tauri/Cargo.toml
 cargo clippy -p mr-app --features tauri-ui --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
 
 # 4. Проверка типов и сборка фронтенда (если изменялся ui/web/frontend)
-cd ui/web/frontend && yarn check && yarn build
+cd ui/web/frontend && yarn lint && yarn check && yarn build
+cd ../..
+root="$(git rev-parse --show-toplevel)"
+expected="$(cd "$root" && find ui/web/frontend/src ui/web/frontend/index.html ui/web/frontend/package.json ui/web/frontend/yarn.lock ui/web/frontend/vite.config.ts -type f -print | LC_ALL=C sort | while IFS= read -r f; do sha256sum "$f"; done | sha256sum | cut -d' ' -f1)"
+printf '%s\n' "$expected" > "$root/ui/web/static/.mr-stamp"
 ```
 
 # 5. P11-аудит комментариев (всегда, до коммита)

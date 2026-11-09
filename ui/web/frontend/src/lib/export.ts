@@ -1,8 +1,9 @@
-import { fmtClockShort } from './api'
-import type { Utterance } from './api'
+import type { OkResponse, Utterance } from './api'
+import { fmtClockShort, readJsonSafe } from './api'
+import { isAbortError } from './guards.ts'
 import { toast } from './toast.svelte.ts'
 
-export interface TranscriptMeta {
+export type TranscriptMeta = {
   title: string
   source: string
   durStr?: string
@@ -16,17 +17,17 @@ const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, n) => {
   return c >>> 0
 })
 
-function crc32(data: Uint8Array): number {
+const crc32 = (data: Uint8Array): number => {
   let crc = 0xffffffff
   for (const byte of data) crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8)
   return (crc ^ 0xffffffff) >>> 0
 }
 
-function le(value: number, bytes: number): Uint8Array {
+const le = (value: number, bytes: number): Uint8Array => {
   return Uint8Array.from({ length: bytes }, (_, i) => (value >>> (i * 8)) & 0xff)
 }
 
-function join(parts: Uint8Array[]): Uint8Array {
+const join = (parts: Uint8Array[]): Uint8Array => {
   const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0))
   let offset = 0
   for (const part of parts) {
@@ -36,7 +37,7 @@ function join(parts: Uint8Array[]): Uint8Array {
   return out
 }
 
-function zip(files: Array<{ name: string; data: Uint8Array }>): Uint8Array {
+const zip = (files: Array<{ name: string; data: Uint8Array }>): Uint8Array => {
   const locals: Uint8Array[] = []
   const centrals: Uint8Array[] = []
   let offset = 0
@@ -44,39 +45,82 @@ function zip(files: Array<{ name: string; data: Uint8Array }>): Uint8Array {
     const name = encoder.encode(file.name)
     const crc = crc32(file.data)
     const local = join([
-      le(0x04034b50, 4), le(20, 2), le(0x800, 2), le(0, 2), le(0, 2), le(0x21, 2),
-      le(crc, 4), le(file.data.length, 4), le(file.data.length, 4), le(name.length, 2), le(0, 2),
-      name, file.data,
+      le(0x04034b50, 4),
+      le(20, 2),
+      le(0x800, 2),
+      le(0, 2),
+      le(0, 2),
+      le(0x21, 2),
+      le(crc, 4),
+      le(file.data.length, 4),
+      le(file.data.length, 4),
+      le(name.length, 2),
+      le(0, 2),
+      name,
+      file.data,
     ])
     locals.push(local)
-    centrals.push(join([
-      le(0x02014b50, 4), le(20, 2), le(20, 2), le(0x800, 2), le(0, 2), le(0, 2), le(0x21, 2),
-      le(crc, 4), le(file.data.length, 4), le(file.data.length, 4), le(name.length, 2),
-      le(0, 2), le(0, 2), le(0, 2), le(0, 2), le(0, 4), le(offset, 4), name,
-    ]))
+    centrals.push(
+      join([
+        le(0x02014b50, 4),
+        le(20, 2),
+        le(20, 2),
+        le(0x800, 2),
+        le(0, 2),
+        le(0, 2),
+        le(0x21, 2),
+        le(crc, 4),
+        le(file.data.length, 4),
+        le(file.data.length, 4),
+        le(name.length, 2),
+        le(0, 2),
+        le(0, 2),
+        le(0, 2),
+        le(0, 2),
+        le(0, 4),
+        le(offset, 4),
+        name,
+      ]),
+    )
     offset += local.length
   }
   const central = join(centrals)
   return join([
     ...locals,
     central,
-    le(0x06054b50, 4), le(0, 2), le(0, 2), le(files.length, 2), le(files.length, 2),
-    le(central.length, 4), le(offset, 4), le(0, 2),
+    le(0x06054b50, 4),
+    le(0, 2),
+    le(0, 2),
+    le(files.length, 2),
+    le(files.length, 2),
+    le(central.length, 4),
+    le(offset, 4),
+    le(0, 2),
   ])
 }
 
-function xml(value: string): string {
-  return value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c] ?? c)
+const xml = (value: string): string => {
+  return value.replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c] ?? c,
+  )
 }
 
-function runs(text: string, bold = false, color?: string): string {
+const runs = (text: string, bold = false, color?: string): string => {
   const bTag = bold ? '<w:b/>' : ''
   const cTag = color ? `<w:color w:val="${color}"/>` : ''
   const props = bTag || cTag ? `<w:rPr>${bTag}${cTag}</w:rPr>` : ''
-  return `<w:r>${props}${text.split('\n').map((line, i) => `${i ? '<w:br/>' : ''}<w:t xml:space="preserve">${xml(line)}</w:t>`).join('')}</w:r>`
+  return `<w:r>${props}${text
+    .split('\n')
+    .map((line, i) => `${i ? '<w:br/>' : ''}<w:t xml:space="preserve">${xml(line)}</w:t>`)
+    .join('')}</w:r>`
 }
 
-export function buildDocx(fileName: string, utterances: Utterance[], meta?: TranscriptMeta): Uint8Array {
+export const buildDocx = (
+  fileName: string,
+  utterances: Utterance[],
+  meta?: TranscriptMeta,
+): Uint8Array => {
   const title = meta?.title || fileName
   const source = meta?.source || fileName
   const dur = meta?.durStr ? ` (${meta.durStr})` : ''
@@ -112,24 +156,25 @@ export function buildDocx(fileName: string, utterances: Utterance[], meta?: Tran
   ])
 }
 
-async function saveBinary(
+const saveBinary = async (
   defaultName: string,
   bytes: Uint8Array,
   type: { mime: string; description: string; accept: Record<string, string[]> },
-): Promise<void> {
+): Promise<void> => {
   try {
     const res = await fetch(`/api/export/save_dialog?name=${encodeURIComponent(defaultName)}`, {
       method: 'POST',
+      // SAFETY: буферы создаются локально через new Uint8Array, SharedArrayBuffer не используется.
       body: bytes.buffer as ArrayBuffer,
     })
     if (res.ok) {
-      const data = (await res.json()) as {
-        ok: boolean
-        path?: string
-        cancelled?: boolean
-        no_dialog?: boolean
-        error?: string
-      }
+      const data = await readJsonSafe<
+        OkResponse & {
+          path?: string
+          cancelled?: boolean
+          no_dialog?: boolean
+        }
+      >(res)
       if (data.ok && data.path) {
         toast(`Файл сохранён: ${data.path}`)
         return
@@ -146,7 +191,7 @@ async function saveBinary(
     // В случае сбоя сети fallback ниже
   }
 
-  const win = window as unknown as {
+  const win: Window & {
     showSaveFilePicker?: (options: {
       suggestedName?: string
       types?: Array<{ description: string; accept: Record<string, string[]> }>
@@ -156,7 +201,7 @@ async function saveBinary(
         close: () => Promise<void>
       }>
     }>
-  }
+  } = window
   if (typeof win.showSaveFilePicker === 'function') {
     try {
       const handle = await win.showSaveFilePicker({
@@ -169,12 +214,13 @@ async function saveBinary(
       toast(`Файл сохранён: ${defaultName}`)
       return
     } catch (err: unknown) {
-      if ((err as Error)?.name === 'AbortError') {
+      if (isAbortError(err)) {
         return
       }
     }
   }
 
+  // SAFETY: буферы создаются локально через new Uint8Array, SharedArrayBuffer не используется.
   const blob = new Blob([bytes.buffer as ArrayBuffer], { type: type.mime })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
@@ -187,11 +233,11 @@ async function saveBinary(
   toast(`Файл скачан: ${defaultName}`)
 }
 
-export async function exportDocx(
+export const exportDocx = async (
   fileName: string,
   utterances: Utterance[],
   meta?: TranscriptMeta,
-): Promise<void> {
+): Promise<void> => {
   const bytes = buildDocx(fileName, utterances, meta)
   const defaultName = `${fileName.replace(/\.[^.]+$/, '') || 'Расшифровка'}.docx`
   await saveBinary(defaultName, bytes, {
@@ -203,14 +249,17 @@ export async function exportDocx(
   })
 }
 
-export function buildComposedMarkdown(summaryMarkdown: string, transcriptMarkdown: string): string {
+export const buildComposedMarkdown = (
+  summaryMarkdown: string,
+  transcriptMarkdown: string,
+): string => {
   const summary = String(summaryMarkdown || '').trim()
   const transcript = String(transcriptMarkdown || '').trim()
   if (summary && transcript) return `${summary}\n\n---\n\n${transcript}`
   return summary || transcript
 }
 
-export async function downloadMarkdown(fileName: string, markdown: string): Promise<void> {
+export const downloadMarkdown = async (fileName: string, markdown: string): Promise<void> => {
   const base = fileName.replace(/\.[^.]+$/, '').trim() || 'Итоги и расшифровка'
   const name = `${base}.md`
   const bytes = new TextEncoder().encode(markdown)
@@ -221,7 +270,6 @@ export async function downloadMarkdown(fileName: string, markdown: string): Prom
   })
 }
 
-
-export function printTranscript(): void {
+export const printTranscript = (): void => {
   window.print()
 }

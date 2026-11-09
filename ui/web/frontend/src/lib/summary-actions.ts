@@ -1,4 +1,3 @@
-import { baseName } from './api'
 import type {
   SummaryCancelResponse,
   SummaryClassifyResponse,
@@ -8,15 +7,17 @@ import type {
   SummaryPreset,
   SummarySettings,
 } from './api'
-import { downloadModel, engine, ensureStream } from './transcript.svelte.ts'
-import { copyText, toast, toastConfirm } from './toast.svelte.ts'
+import { baseName } from './api'
 import { buildComposedMarkdown, downloadMarkdown } from './export.ts'
-import { summaryErrorText, summaryPreset } from './summaryUi.ts'
-import { apiJson, isMockMode, SummaryApiError } from './summaryApi.ts'
-import { finishGenerating, loadSummary, loadSummaryPresets, startTicker } from './summaryLoad.ts'
-import { summaryState } from './summaryState.svelte.ts'
+import { errText } from './guards.ts'
+import { apiJson, isMockMode, SummaryApiError } from './summary-api.ts'
+import { finishGenerating, loadSummary, loadSummaryPresets, startTicker } from './summary-load.ts'
+import { summaryState } from './summary-state.svelte.ts'
+import { summaryErrorText, summaryPreset } from './summary-ui.ts'
+import { copyText, toast, toastConfirm } from './toast.svelte.ts'
+import { downloadModel, engine, ensureStream } from './transcript.svelte.ts'
 
-export async function saveSummarySettings(patch: Partial<SummarySettings>): Promise<void> {
+export const saveSummarySettings = async (patch: Partial<SummarySettings>): Promise<void> => {
   const d = await apiJson<{ ok: boolean; settings: SummarySettings }>('/api/summary/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -28,12 +29,12 @@ export async function saveSummarySettings(patch: Partial<SummarySettings>): Prom
   }
 }
 
-export async function refreshSummaryGpu(): Promise<void> {
+export const refreshSummaryGpu = async (): Promise<void> => {
   const d = await apiJson<SummaryGpuStatus>('/api/summary/gpu')
   summaryState.gpu = d
 }
 
-export async function installSummaryGpu(): Promise<void> {
+export const installSummaryGpu = async (): Promise<void> => {
   await apiJson('/api/summary/gpu/install', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -42,7 +43,7 @@ export async function installSummaryGpu(): Promise<void> {
   await refreshSummaryGpu()
 }
 
-export async function cancelSummaryGpu(): Promise<void> {
+export const cancelSummaryGpu = async (): Promise<void> => {
   await apiJson('/api/summary/gpu/cancel', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -51,7 +52,7 @@ export async function cancelSummaryGpu(): Promise<void> {
   await refreshSummaryGpu()
 }
 
-export async function removeSummaryGpu(): Promise<void> {
+export const removeSummaryGpu = async (): Promise<void> => {
   const d = await apiJson<SummaryGpuStatus & { ok: boolean }>('/api/summary/gpu/remove', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -60,7 +61,7 @@ export async function removeSummaryGpu(): Promise<void> {
   summaryState.gpu = d
 }
 
-export async function classifySummary(force = false): Promise<void> {
+export const classifySummary = async (force = false): Promise<void> => {
   if (!summaryState.file || summaryState.capabilities?.classifier !== 'heuristic') return
   const d = await apiJson<SummaryClassifyResponse>('/api/summary/classify', {
     method: 'POST',
@@ -71,15 +72,15 @@ export async function classifySummary(force = false): Promise<void> {
   summaryState.sourceRev = d.source_rev || summaryState.sourceRev
 }
 
-function detail(): SummaryDetail {
+const detail = (): SummaryDetail => {
   return summaryState.settings?.detail || 'normal'
 }
 
-function presetFor(id: string): SummaryPreset | null {
+const presetFor = (id: string): SummaryPreset | null => {
   return summaryPreset(id, summaryState.presets)
 }
 
-export async function pickPreset(id: string): Promise<void> {
+export const pickPreset = async (id: string): Promise<void> => {
   summaryState.pendingDowngrade = false
   summaryState.manualChoice = true
   summaryState.chosenPresetId = id
@@ -109,7 +110,7 @@ export async function pickPreset(id: string): Promise<void> {
   await generateSummary(id, { replace: false })
 }
 
-export function confirmSensitive(): void {
+export const confirmSensitive = (): void => {
   const id = summaryState.pendingPresetId
   if (!id) return
   const allowDowngrade = summaryState.pendingDowngrade
@@ -123,14 +124,14 @@ export function confirmSensitive(): void {
   })
 }
 
-export function cancelSensitive(): void {
+export const cancelSensitive = (): void => {
   summaryState.pendingPresetId = ''
   summaryState.pendingDowngrade = false
   summaryState.phase = summaryState.record ? 'result' : 'suggest'
   summaryState.expanded = true
 }
 
-export async function generateSummary(
+export const generateSummary = async (
   presetId: string,
   opts: {
     force?: boolean
@@ -138,7 +139,7 @@ export async function generateSummary(
     replace?: boolean
     allowDowngrade?: boolean
   } = {},
-): Promise<void> {
+): Promise<void> => {
   const file = summaryState.file
   if (!file || summaryState.phase === 'generating') return
   const hardBlock = summaryState.blockReason
@@ -158,7 +159,11 @@ export async function generateSummary(
   const preset = presetFor(presetId)
   if (!preset) {
     summaryState.phase = 'error'
-    summaryState.error = { code: 'invalid_preset', message: summaryErrorText('invalid_preset'), scope: 'generate' }
+    summaryState.error = {
+      code: 'invalid_preset',
+      message: summaryErrorText('invalid_preset'),
+      scope: 'generate',
+    }
     return
   }
   if (preset.sensitive && !opts.confirmSensitive) {
@@ -236,15 +241,16 @@ export async function generateSummary(
     finishGenerating()
     summaryState.phase = 'error'
     summaryState.expanded = true
+    const code = e instanceof SummaryApiError ? e.code : 'internal'
     summaryState.error = {
-      code: (e as SummaryApiError).code || 'internal',
-      message: summaryErrorText((e as SummaryApiError).code || 'internal', (e as Error).message),
+      code,
+      message: summaryErrorText(code, errText(e)),
       scope: 'generate',
     }
   }
 }
 
-export async function cancelSummary(): Promise<void> {
+export const cancelSummary = async (): Promise<void> => {
   if (!summaryState.jobId) return
   summaryState.note = 'Останавливаю сборку…'
   try {
@@ -255,11 +261,11 @@ export async function cancelSummary(): Promise<void> {
     })
     if (!d.ok || !d.cancelled) summaryState.note = 'Задача уже завершилась.'
   } catch (e) {
-    summaryState.note = 'Не удалось остановить сборку: ' + (e as Error).message
+    summaryState.note = `Не удалось остановить сборку: ${errText(e)}`
   }
 }
 
-export async function retrySummary(): Promise<void> {
+export const retrySummary = async (): Promise<void> => {
   if (summaryState.error?.code === 'schema_unsupported') {
     await rebuildInOldFormat()
     return
@@ -292,7 +298,7 @@ export async function retrySummary(): Promise<void> {
 }
 
 /** Новее мажор артефакта: единственный путь замены — явные force + allow_downgrade. */
-export async function rebuildInOldFormat(): Promise<void> {
+export const rebuildInOldFormat = async (): Promise<void> => {
   if (!summaryState.presets.length) await loadSummaryPresets()
   const id =
     summaryState.chosenPresetId ||
@@ -316,7 +322,7 @@ export async function rebuildInOldFormat(): Promise<void> {
   })
 }
 
-export function updateStaleSummary(): void {
+export const updateStaleSummary = (): void => {
   const id = summaryState.record?.preset_id
   if (!id) return
   const preset = presetFor(id)
@@ -328,46 +334,50 @@ export function updateStaleSummary(): void {
   })
 }
 
-export function showPreviousResult(): void {
+export const showPreviousResult = (): void => {
   if (!summaryState.record) return
   summaryState.phase = 'result'
   summaryState.error = null
   summaryState.expanded = true
 }
 
-export function toggleSummary(): void {
+export const toggleSummary = (): void => {
   summaryState.expanded = !summaryState.expanded
 }
 
-export function retryLoad(): void {
+export const retryLoad = (): void => {
   if (summaryState.file) void loadSummary(summaryState.file)
 }
 
-export async function copySummary(): Promise<void> {
+export const copySummary = async (): Promise<void> => {
   if (!summaryState.record) return
   if (await copyText(summaryState.record.markdown)) toast('Итоги скопированы')
   else toast('Не удалось скопировать', 'error')
 }
 
-export async function exportSummary(transcriptMarkdown: string): Promise<void> {
+export const exportSummary = async (transcriptMarkdown: string): Promise<void> => {
   const record = summaryState.record
   if (!record) return
-  const stem = baseName(summaryState.file).replace(/\.[^.]+$/, '').trim() || 'Запись'
+  const stem =
+    baseName(summaryState.file)
+      .replace(/\.[^.]+$/, '')
+      .trim() || 'Запись'
   await downloadMarkdown(
     `${stem} — итоги и расшифровка`,
     buildComposedMarkdown(record.markdown, transcriptMarkdown),
   )
 }
 
-export function downloadSummaryModel(): void {
+export const downloadSummaryModel = (): void => {
   const model = summaryState.model
   if (!model) return
   void downloadModel(model).then((ok) => {
-    if (ok && summaryState.file) void loadSummary(summaryState.file, { silent: true, openResult: true })
+    if (ok && summaryState.file)
+      void loadSummary(summaryState.file, { silent: true, openResult: true })
   })
 }
 
-export function summaryModelPct(): number | null {
+export const summaryModelPct = (): number | null => {
   const id = summaryState.model?.id
   if (!id) return null
   const pct = engine.downloading[id]

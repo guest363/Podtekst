@@ -1,197 +1,203 @@
 <script lang="ts">
-  import { readJsonSafe } from '../lib/api'
-  import {
-    deleteVoice,
-    deleteVoiceSample,
-    hasVoiceprint,
-    loadPeople,
-    loadVoiceDetail,
-    peopleState,
-    snippetUrl,
-    voiceprintCount,
-  } from '../lib/people.svelte.ts'
-  import { toast, toastConfirm } from '../lib/toast.svelte.ts'
-  import type { Person } from '../lib/api'
+import type { OkResponse, Person } from '../lib/api'
+import { readJsonSafe } from '../lib/api'
+import { errText } from '../lib/guards.ts'
+import {
+  deleteVoice,
+  deleteVoiceSample,
+  hasVoiceprint,
+  loadPeople,
+  loadVoiceDetail,
+  peopleState,
+  snippetUrl,
+  voiceprintCount,
+} from '../lib/people.svelte.ts'
+import { toast, toastConfirm } from '../lib/toast.svelte.ts'
 
-  let filtered = $derived(
-    peopleState.list.filter((p) => {
-      const q = peopleState.query.trim().toLowerCase()
-      const matchQ = !q || String(p.name || '').toLowerCase().includes(q)
-      const matchPack =
-        peopleState.selectedPackFilter === 'all' ||
-        (p.pack_id || 'default') === peopleState.selectedPackFilter
-      return matchQ && matchPack
-    }),
-  )
+let filtered = $derived(
+  peopleState.list.filter((p) => {
+    const q = peopleState.query.trim().toLowerCase()
+    const matchQ =
+      !q ||
+      String(p.name || '')
+        .toLowerCase()
+        .includes(q)
+    const matchPack =
+      peopleState.selectedPackFilter === 'all' ||
+      (p.pack_id || 'default') === peopleState.selectedPackFilter
+    return matchQ && matchPack
+  }),
+)
 
-  let formOpen = $state(false)
-  let editingPerson = $state<Person | null>(null)
-  let name = $state('')
-  let role = $state('')
-  let targetPackId = $state('default')
-  let saving = $state(false)
-  let packDropdownOpen = $state(false)
-  let selectedPackName = $derived(
-    peopleState.packs.find((p) => p.id === targetPackId)?.name || 'Основной профиль',
-  )
+let formOpen = $state(false)
+let editingPerson = $state<Person | null>(null)
+let name = $state('')
+let role = $state('')
+let targetPackId = $state('default')
+let saving = $state(false)
+let packDropdownOpen = $state(false)
+let selectedPackName = $derived(
+  peopleState.packs.find((p) => p.id === targetPackId)?.name || 'Основной профиль',
+)
 
-  function togglePackDropdown(): void {
-    packDropdownOpen = !packDropdownOpen
-  }
+const togglePackDropdown = (): void => {
+  packDropdownOpen = !packDropdownOpen
+}
 
-  function selectPack(id: string): void {
-    targetPackId = id
+const selectPack = (id: string): void => {
+  targetPackId = id
+  packDropdownOpen = false
+}
+
+$effect(() => {
+  if (!packDropdownOpen) return
+  const onScroll = (e: Event) => {
+    const target = e.target instanceof HTMLElement ? e.target : null
+    if (target?.closest?.('.pack-dropdown-popover')) return
     packDropdownOpen = false
   }
-
-  $effect(() => {
-    if (!packDropdownOpen) return
-    const onScroll = (e: Event) => {
-      const target = e.target as HTMLElement | null
-      if (target?.closest?.('.pack-dropdown-popover')) return
-      packDropdownOpen = false
-    }
-    window.addEventListener('scroll', onScroll, { capture: true, passive: true })
-    return () => {
-      window.removeEventListener('scroll', onScroll, { capture: true })
-    }
-  })
-
-  function startAdd(): void {
-    editingPerson = null
-    name = ''
-    role = ''
-    targetPackId =
-      peopleState.selectedPackFilter !== 'all'
-        ? peopleState.selectedPackFilter
-        : (peopleState.packs[0]?.id || 'default')
-    packDropdownOpen = false
-    formOpen = true
-    peopleState.voiceDetail = null
-    peopleState.voiceDetailName = ''
+  window.addEventListener('scroll', onScroll, { capture: true, passive: true })
+  return () => {
+    window.removeEventListener('scroll', onScroll, { capture: true })
   }
+})
 
-  function startEdit(p: Person): void {
-    editingPerson = p
-    name = p.name || ''
-    role = p.role || ''
-    targetPackId = p.pack_id || 'default'
-    packDropdownOpen = false
-    formOpen = true
-    peopleState.voiceDetail = null
-    peopleState.voiceDetailName = ''
-    if (p.name && hasVoiceprint(p.name)) void loadVoiceDetail(p.name)
-  }
+const startAdd = (): void => {
+  editingPerson = null
+  name = ''
+  role = ''
+  targetPackId =
+    peopleState.selectedPackFilter !== 'all'
+      ? peopleState.selectedPackFilter
+      : peopleState.packs[0]?.id || 'default'
+  packDropdownOpen = false
+  formOpen = true
+  peopleState.voiceDetail = null
+  peopleState.voiceDetailName = ''
+}
 
-  function closeForm(): void {
-    formOpen = false
-    editingPerson = null
-    name = ''
-    role = ''
-    targetPackId = 'default'
-    packDropdownOpen = false
-    stopVoice()
-    peopleState.voiceDetail = null
-    peopleState.voiceDetailName = ''
-  }
+const startEdit = (p: Person): void => {
+  editingPerson = p
+  name = p.name || ''
+  role = p.role || ''
+  targetPackId = p.pack_id || 'default'
+  packDropdownOpen = false
+  formOpen = true
+  peopleState.voiceDetail = null
+  peopleState.voiceDetailName = ''
+  if (p.name && hasVoiceprint(p.name)) void loadVoiceDetail(p.name)
+}
 
-  async function savePerson(): Promise<void> {
-    const cleanName = name.trim()
-    if (!cleanName) return
-    const cleanRole = role.trim() || 'Участник'
-    saving = true
-    try {
-      const oldPack = editingPerson?.pack_id || 'default'
-      const r = await fetch(editingPerson ? '/api/people/update' : '/api/people/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          editingPerson
-            ? {
-                old_name: editingPerson.name,
-                name: cleanName,
-                role: cleanRole,
-                from_pack_id: oldPack,
-                pack_id: targetPackId,
-                target_pack_id: targetPackId,
-              }
-            : { name: cleanName, role: cleanRole, pack_id: targetPackId },
-        ),
-      })
-      const d = await readJsonSafe(r)
-      if (!d.ok) {
-        toast(d.error || 'Не удалось сохранить участника', 'error')
-        return
-      }
-      toast(editingPerson ? `Участник «${cleanName}» сохранён` : `Участник «${cleanName}» добавлен`)
-      closeForm()
-      await loadPeople()
-    } catch (e) {
-      toast('Не удалось сохранить участника: ' + (e as Error).message, 'error')
-    } finally {
-      saving = false
-    }
-  }
+const closeForm = (): void => {
+  formOpen = false
+  editingPerson = null
+  name = ''
+  role = ''
+  targetPackId = 'default'
+  packDropdownOpen = false
+  stopVoice()
+  peopleState.voiceDetail = null
+  peopleState.voiceDetailName = ''
+}
 
-  let voiceAudio: HTMLAudioElement | null = $state(null)
-  let playingProto = $state('')
-
-  function stopVoice(): void {
-    voiceAudio?.pause()
-    voiceAudio = null
-    playingProto = ''
-  }
-
-  function playVoice(packId: string, protoId: string): void {
-    if (playingProto === protoId) {
-      stopVoice()
+const savePerson = async (): Promise<void> => {
+  const cleanName = name.trim()
+  if (!cleanName) return
+  const cleanRole = role.trim() || 'Участник'
+  saving = true
+  try {
+    const oldPack = editingPerson?.pack_id || 'default'
+    const r = await fetch(editingPerson ? '/api/people/update' : '/api/people/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        editingPerson
+          ? {
+              old_name: editingPerson.name,
+              name: cleanName,
+              role: cleanRole,
+              from_pack_id: oldPack,
+              pack_id: targetPackId,
+              target_pack_id: targetPackId,
+            }
+          : { name: cleanName, role: cleanRole, pack_id: targetPackId },
+      ),
+    })
+    const d = await readJsonSafe<OkResponse>(r)
+    if (!d.ok) {
+      toast(d.error || 'Не удалось сохранить участника', 'error')
       return
     }
+    toast(editingPerson ? `Участник «${cleanName}» сохранён` : `Участник «${cleanName}» добавлен`)
+    closeForm()
+    await loadPeople()
+  } catch (e) {
+    toast(`Не удалось сохранить участника: ${errText(e)}`, 'error')
+  } finally {
+    saving = false
+  }
+}
+
+let voiceAudio: HTMLAudioElement | null = $state(null)
+let playingProto = $state('')
+
+const stopVoice = (): void => {
+  voiceAudio?.pause()
+  voiceAudio = null
+  playingProto = ''
+}
+
+const playVoice = (packId: string, protoId: string): void => {
+  if (playingProto === protoId) {
     stopVoice()
-    const audio = new Audio(snippetUrl(packId, protoId))
-    voiceAudio = audio
-    playingProto = protoId
-    audio.onended = () => {
-      if (playingProto === protoId) stopVoice()
-    }
-    audio.onerror = () => {
-      if (playingProto === protoId) stopVoice()
-      toast('Не удалось воспроизвести образец', 'error')
-    }
-    void audio.play().catch(() => {
-      stopVoice()
-      toast('Не удалось воспроизвести образец', 'error')
+    return
+  }
+  stopVoice()
+  const audio = new Audio(snippetUrl(packId, protoId))
+  voiceAudio = audio
+  playingProto = protoId
+  audio.onended = () => {
+    if (playingProto === protoId) stopVoice()
+  }
+  audio.onerror = () => {
+    if (playingProto === protoId) stopVoice()
+    toast('Не удалось воспроизвести образец', 'error')
+  }
+  void audio.play().catch(() => {
+    stopVoice()
+    toast('Не удалось воспроизвести образец', 'error')
+  })
+}
+
+const fmtVoiceDate = (iso: unknown): string => {
+  if (typeof iso !== 'string' || !iso) return ''
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return ''
+  try {
+    return new Date(t).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })
+  } catch {
+    return ''
+  }
+}
+
+const removePerson = async (name: string): Promise<void> => {
+  try {
+    const r = await fetch('/api/people/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
     })
-  }
-
-  function fmtVoiceDate(iso: unknown): string {
-    if (typeof iso !== 'string' || !iso) return ''
-    const t = Date.parse(iso)
-    if (Number.isNaN(t)) return ''
-    try {
-      return new Date(t).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })
-    } catch {
-      return ''
+    const d = await readJsonSafe<OkResponse>(r)
+    if (!d.ok) {
+      toast(d.error || 'Не удалось убрать участника', 'error')
+      return
     }
+    toast(`«${name}» убран из участников`)
+    await loadPeople()
+  } catch (e) {
+    toast(`Не удалось убрать участника: ${errText(e)}`, 'error')
   }
-
-  async function removePerson(name: string): Promise<void> {    try {
-      const r = await fetch('/api/people/remove', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
-      })
-      const d = await readJsonSafe(r)
-      if (!d.ok) {
-        toast(d.error || 'Не удалось убрать участника', 'error')
-        return
-      }
-      toast(`«${name}» убран из участников`)
-      await loadPeople()
-    } catch (e) {
-      toast('Не удалось убрать участника: ' + (e as Error).message, 'error')
-    }
-  }
+}
 </script>
 
 <div class="people-pane" aria-label="Участники встречи">

@@ -14,7 +14,7 @@ cargo test --workspace --locked --manifest-path src-tauri/Cargo.toml
 cargo clippy -p mr-app --features tauri-ui --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
 
 # Web UI
-cd ui/web/frontend && corepack enable && yarn install --immutable && yarn check && yarn build
+cd ui/web/frontend && corepack enable && yarn install --immutable && yarn lint && yarn check && yarn build
 ```
 
 После изменения исходников фронта пересоберите статику (`yarn build`) и

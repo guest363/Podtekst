@@ -2,8 +2,18 @@ import { isVideoPath } from './api'
 
 export type AppTab = 'studio' | 'queue' | 'people' | 'dict' | 'settings'
 
-export const ui = $state({
-  activeTab: 'studio' as AppTab,
+type UiState = {
+  activeTab: AppTab
+  settingsOpen: boolean
+  systemOpen: boolean
+  donateOpen: boolean
+  transcriptOpen: boolean
+  currentTranscriptPath: string
+  currentTranscriptIsVideo: boolean
+}
+
+export const ui: UiState = $state({
+  activeTab: 'studio',
   settingsOpen: false,
   systemOpen: false,
   donateOpen: false,
@@ -12,7 +22,7 @@ export const ui = $state({
   currentTranscriptIsVideo: false,
 })
 
-export function selectTab(tab: AppTab): void {
+export const selectTab = (tab: AppTab): void => {
   ui.activeTab = tab
   if (ui.transcriptOpen) {
     ui.transcriptOpen = false
@@ -26,7 +36,7 @@ export function selectTab(tab: AppTab): void {
   }
 }
 
-export function openTranscript(path: string, isVideo?: boolean): void {
+export const openTranscript = (path: string, isVideo?: boolean): void => {
   const vid = typeof isVideo === 'boolean' ? isVideo : isVideoPath(path)
   ui.currentTranscriptPath = path
   ui.currentTranscriptIsVideo = vid
@@ -39,7 +49,7 @@ export function openTranscript(path: string, isVideo?: boolean): void {
   }
 }
 
-export function closeTranscript(): void {
+export const closeTranscript = (): void => {
   ui.transcriptOpen = false
   ui.currentTranscriptPath = ''
   if (typeof window !== 'undefined' && window.location.hash.startsWith('#/transcript')) {
@@ -48,7 +58,7 @@ export function closeTranscript(): void {
   }
 }
 
-export function initRouting(): void {
+export const initRouting = (): void => {
   if (typeof window === 'undefined') return
 
   const syncFromHash = () => {
@@ -92,12 +102,12 @@ export function initRouting(): void {
 type Handler = (data?: unknown) => void
 const handlers = new Map<string, Handler[]>()
 
-export function on(evt: string, fn: Handler): void {
+export const on = (evt: string, fn: Handler): void => {
   const list = handlers.get(evt) ?? []
   list.push(fn)
   handlers.set(evt, list)
 }
 
-export function emit(evt: string, data?: unknown): void {
+export const emit = (evt: string, data?: unknown): void => {
   for (const fn of handlers.get(evt) ?? []) fn(data)
 }

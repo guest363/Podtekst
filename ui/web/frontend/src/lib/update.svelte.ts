@@ -1,15 +1,96 @@
 import { readJsonSafe } from './api'
+import { errText, isRecord } from './guards.ts'
 import { loadSystem } from './system.svelte.ts'
 import { toast } from './toast.svelte.ts'
 
-export interface UpdateAttempt {
+type UpdateStateResponse = {
+  ok?: boolean
+  current?: unknown
+  latest?: unknown
+  tag?: unknown
+  name?: unknown
+  date?: unknown
+  notes?: unknown
+  notes_truncated?: unknown
+  size_bytes?: unknown
+  is_newer?: unknown
+  url?: unknown
+  sources_agree?: unknown
+  stale?: unknown
+  self_update?: unknown
+  install_mode?: unknown
+  skipped_version?: unknown
+  last_attempt?: unknown
+  last_check?: {
+    latest?: unknown
+    at?: unknown
+    is_newer?: unknown
+    stale?: unknown
+  }
+  error?: unknown
+  error_code?: unknown
+  stage?: unknown
+  retryable?: unknown
+  hint?: unknown
+  retry_after_sec?: unknown
+  version?: unknown
+}
+
+type UpdateProgressResponse = {
+  pct?: unknown
+  downloaded?: unknown
+  total?: unknown
+  stage?: unknown
+  version?: unknown
+  error?: unknown
+  error_code?: unknown
+  retryable?: unknown
+  hint?: unknown
+  running?: boolean
+}
+
+export type UpdateAttempt = {
   from: string
   to: string
   started_at: string
   outcome: string
 }
 
-export const update = $state({
+type UpdateState = {
+  current: string
+  latest: string
+  tag: string
+  name: string
+  date: string
+  notes: string
+  notesTruncated: boolean
+  sizeBytes: number
+  isNewer: boolean
+  selfUpdate: boolean
+  installMode: string
+  url: string
+  sourcesAgree: boolean
+  stale: boolean
+  lastCheckAt: string
+  skippedVersion: string
+  checking: boolean
+  applying: boolean
+  pct: number
+  downloaded: number
+  total: number
+  stage: string
+  error: string
+  errorCode: string
+  retryable: boolean
+  hint: string
+  retryAfterSec: number
+  dismissed: boolean
+  dismissedVersion: string
+  modalOpen: boolean
+  attempt: UpdateAttempt | null
+}
+
+export const update: UpdateState = $state({
   current: '',
   latest: '',
   tag: '',
@@ -40,30 +121,29 @@ export const update = $state({
   dismissed: false,
   dismissedVersion: '',
   modalOpen: false,
-  attempt: null as UpdateAttempt | null,
+  attempt: null,
 })
 
-function str(v: unknown): string {
+const str = (v: unknown): string => {
   return typeof v === 'string' ? v : ''
 }
 
-function num(v: unknown): number {
+const num = (v: unknown): number => {
   return typeof v === 'number' && Number.isFinite(v) ? v : 0
 }
 
-function attemptOf(v: unknown): UpdateAttempt | null {
-  if (!v || typeof v !== 'object') return null
-  const a = v as Record<string, unknown>
+const attemptOf = (v: unknown): UpdateAttempt | null => {
+  if (!isRecord(v)) return null
   return {
-    from: str(a.from),
-    to: str(a.to),
-    started_at: str(a.started_at),
-    outcome: str(a.outcome),
+    from: str(v.from),
+    to: str(v.to),
+    started_at: str(v.started_at),
+    outcome: str(v.outcome),
   }
 }
 
 /** Предложение показывается заново только для другой версии: фоновый опрос не сбрасывает «Позже». */
-function syncDismissed(): void {
+const syncDismissed = (): void => {
   if (!update.isNewer) {
     update.dismissed = false
     return
@@ -72,9 +152,9 @@ function syncDismissed(): void {
     update.latest === update.dismissedVersion || update.latest === update.skippedVersion
 }
 
-export async function loadUpdateState(): Promise<void> {
+export const loadUpdateState = async (): Promise<void> => {
   try {
-    const d = await readJsonSafe(await fetch('/api/update/state'))
+    const d = await readJsonSafe<UpdateStateResponse>(await fetch('/api/update/state'))
     if (d.ok === false) return
     if (str(d.current)) update.current = str(d.current)
     if (typeof d.self_update === 'boolean') update.selfUpdate = d.self_update
@@ -94,13 +174,13 @@ export async function loadUpdateState(): Promise<void> {
   }
 }
 
-export async function checkUpdate(force = false, notify = false): Promise<void> {
+export const checkUpdate = async (force = false, notify = false): Promise<void> => {
   if (update.checking) return
   update.checking = true
   update.error = ''
   try {
     await loadUpdateState()
-    const d = await readJsonSafe(
+    const d = await readJsonSafe<UpdateStateResponse>(
       await fetch(`/api/update/check${force ? '?force=1' : ''}`),
     )
     if (str(d.current)) update.current = str(d.current)
@@ -145,7 +225,7 @@ export async function checkUpdate(force = false, notify = false): Promise<void> 
       toast(`У вас последняя версия ${update.current}`)
     }
   } catch (e) {
-    update.error = 'Не удалось проверить обновления: ' + (e as Error).message
+    update.error = `Не удалось проверить обновления: ${errText(e)}`
     update.errorCode = 'network'
     update.stage = 'check'
     update.retryable = true
@@ -157,19 +237,19 @@ export async function checkUpdate(force = false, notify = false): Promise<void> 
 
 let progressTimer: ReturnType<typeof setInterval> | undefined
 
-function stopProgress(): void {
+const stopProgress = (): void => {
   if (progressTimer) {
     clearInterval(progressTimer)
     progressTimer = undefined
   }
 }
 
-function startProgress(): void {
+const startProgress = (): void => {
   stopProgress()
   progressTimer = setInterval(() => void pollProgress(), 1000)
 }
 
-function failApply(d: any): void {
+const failApply = (d: UpdateStateResponse): void => {
   update.applying = false
   update.error = str(d.error) || 'Не удалось начать обновление'
   update.errorCode = str(d.error_code)
@@ -180,9 +260,9 @@ function failApply(d: any): void {
   toast(update.error, 'error')
 }
 
-async function pollProgress(): Promise<void> {
+const pollProgress = async (): Promise<void> => {
   try {
-    const p = await readJsonSafe(await fetch('/api/update/progress'))
+    const p = await readJsonSafe<UpdateProgressResponse>(await fetch('/api/update/progress'))
     update.pct = num(p.pct)
     update.downloaded = num(p.downloaded)
     update.total = num(p.total)
@@ -195,7 +275,7 @@ async function pollProgress(): Promise<void> {
       update.errorCode = str(p.error_code) || 'install_failed'
       update.retryable = p.retryable !== false
       update.hint = str(p.hint)
-      toast('Обновление не установилось: ' + update.error, 'error')
+      toast(`Обновление не установилось: ${update.error}`, 'error')
     } else if (!p.running) {
       // Приложение перезапускается: сервер перестанет отвечать, опрос больше не нужен.
       stopProgress()
@@ -205,7 +285,7 @@ async function pollProgress(): Promise<void> {
   }
 }
 
-export async function applyUpdate(): Promise<void> {
+export const applyUpdate = async (): Promise<void> => {
   if (update.applying) return
   stopProgress()
   update.applying = true
@@ -218,7 +298,9 @@ export async function applyUpdate(): Promise<void> {
   update.hint = ''
   update.retryable = false
   try {
-    const d = await readJsonSafe(await fetch('/api/update/apply', { method: 'POST' }))
+    const d = await readJsonSafe<UpdateStateResponse>(
+      await fetch('/api/update/apply', { method: 'POST' }),
+    )
     if (d.ok === false) {
       failApply(d)
       return
@@ -228,7 +310,7 @@ export async function applyUpdate(): Promise<void> {
   } catch (e) {
     // Соединение могло оборваться уже после старта установки: проверяем прогресс.
     try {
-      const p = await readJsonSafe(await fetch('/api/update/progress'))
+      const p = await readJsonSafe<UpdateProgressResponse>(await fetch('/api/update/progress'))
       if (p.running) {
         if (str(p.stage)) update.stage = str(p.stage)
         startProgress()
@@ -238,7 +320,7 @@ export async function applyUpdate(): Promise<void> {
       // Сервер не отвечает — установка действительно не началась.
     }
     update.applying = false
-    update.error = 'Обновление не запустилось: ' + (e as Error).message
+    update.error = `Обновление не запустилось: ${errText(e)}`
     update.errorCode = 'apply_failed'
     update.retryable = true
     toast(update.error, 'error')
@@ -247,15 +329,15 @@ export async function applyUpdate(): Promise<void> {
   startProgress()
 }
 
-export function dismissUpdate(): void {
+export const dismissUpdate = (): void => {
   update.dismissed = true
   update.dismissedVersion = update.latest
   update.modalOpen = false
 }
 
-export async function skipVersion(version: string | null): Promise<void> {
+export const skipVersion = async (version: string | null): Promise<void> => {
   try {
-    const d = await readJsonSafe(
+    const d = await readJsonSafe<UpdateStateResponse>(
       await fetch('/api/update/skip', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -279,16 +361,16 @@ export async function skipVersion(version: string | null): Promise<void> {
     }
     toast('Пропуск версии снят')
   } catch (e) {
-    toast('Не удалось сохранить пропуск: ' + (e as Error).message, 'error')
+    toast(`Не удалось сохранить пропуск: ${errText(e)}`, 'error')
   }
 }
 
-export function openUpdateModal(): void {
+export const openUpdateModal = (): void => {
   update.modalOpen = true
   void loadSystem()
   if (!update.latest && !update.checking) void checkUpdate()
 }
 
-export function closeUpdateModal(): void {
+export const closeUpdateModal = (): void => {
   update.modalOpen = false
 }

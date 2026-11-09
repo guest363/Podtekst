@@ -1,143 +1,157 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
-  import { formatRangeLabel } from '../lib/api'
+import { onMount } from 'svelte'
+import { formatRangeLabel } from '../lib/api'
 
-  interface Props {
-    start: Date | null
-    end: Date | null
-    onSelect: (start: Date, end: Date, label: string) => void
-    onClear: () => void
-    onClose: () => void
-    hasRecordings?: (d: Date) => boolean
+type Props = {
+  start: Date | null
+  end: Date | null
+  onSelect: (start: Date, end: Date, label: string) => void
+  onClear: () => void
+  onClose: () => void
+  hasRecordings?: (d: Date) => boolean
+}
+
+const { start, end, onSelect, onClear, onClose, hasRecordings }: Props = $props()
+
+const MONTHS = [
+  'Январь',
+  'Февраль',
+  'Март',
+  'Апрель',
+  'Май',
+  'Июнь',
+  'Июль',
+  'Август',
+  'Сентябрь',
+  'Октябрь',
+  'Ноябрь',
+  'Декабрь',
+]
+
+const now = new Date()
+const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+
+let viewYear = $state(today.getFullYear())
+let viewMonth = $state(today.getMonth())
+
+let selStart = $state<Date | null>(null)
+let selEnd = $state<Date | null>(null)
+let hoverDate = $state<Date | null>(null)
+
+$effect(() => {
+  selStart = start
+  selEnd = end
+  if (start) {
+    viewYear = start.getFullYear()
+    viewMonth = start.getMonth()
   }
+})
 
-  const { start, end, onSelect, onClear, onClose, hasRecordings }: Props = $props()
+let rootEl: HTMLDivElement | null = $state(null)
 
-  const MONTHS = [
-    'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
-    'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь',
-  ]
-
-  const now = new Date()
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-
-  let viewYear = $state(today.getFullYear())
-  let viewMonth = $state(today.getMonth())
-
-  let selStart = $state<Date | null>(null)
-  let selEnd = $state<Date | null>(null)
-  let hoverDate = $state<Date | null>(null)
-
-  $effect(() => {
-    selStart = start
-    selEnd = end
-    if (start) {
-      viewYear = start.getFullYear()
-      viewMonth = start.getMonth()
-    }
-  })
-
-  let rootEl: HTMLDivElement | null = $state(null)
-
-  function prevMonth(): void {
-    if (viewMonth === 0) {
-      viewMonth = 11
-      viewYear -= 1
-    } else {
-      viewMonth -= 1
-    }
+const prevMonth = (): void => {
+  if (viewMonth === 0) {
+    viewMonth = 11
+    viewYear -= 1
+  } else {
+    viewMonth -= 1
   }
+}
 
-  function nextMonth(): void {
-    if (viewMonth === 11) {
-      viewMonth = 0
-      viewYear += 1
-    } else {
-      viewMonth += 1
-    }
+const nextMonth = (): void => {
+  if (viewMonth === 11) {
+    viewMonth = 0
+    viewYear += 1
+  } else {
+    viewMonth += 1
   }
+}
 
-  function onDayClick(d: Date): void {
-    if (!selStart || (selStart && selEnd)) {
-      selStart = d
-      selEnd = null
-    } else {
-      let s = selStart
-      let e = d
-      if (e.getTime() < s.getTime()) {
-        const tmp = s
-        s = e
-        e = tmp
+const onDayClick = (d: Date): void => {
+  if (!selStart || (selStart && selEnd)) {
+    selStart = d
+    selEnd = null
+  } else {
+    let s = selStart
+    let e = d
+    if (e.getTime() < s.getTime()) {
+      const tmp = s
+      s = e
+      e = tmp
+    }
+    selStart = s
+    selEnd = e
+    onSelect(s, e, formatRangeLabel(s, e))
+    onClose()
+  }
+}
+
+const confirmSingle = (): void => {
+  if (selStart) {
+    const e = selEnd ?? selStart
+    onSelect(selStart, e, formatRangeLabel(selStart, e))
+    onClose()
+  }
+}
+
+const daysGrid = $derived.by(() => {
+  // getDay(): 0 (Вс) -> смещение: Пн=0, Вт=1... Вс=6
+  const firstDayIdx = (new Date(viewYear, viewMonth, 1).getDay() + 6) % 7
+  const totalDays = new Date(viewYear, viewMonth + 1, 0).getDate()
+  const cells: (Date | null)[] = []
+  for (let i = 0; i < firstDayIdx; i++) cells.push(null)
+  for (let day = 1; day <= totalDays; day++) {
+    cells.push(new Date(viewYear, viewMonth, day))
+  }
+  return cells
+})
+
+const isSameDay = (a: Date | null, b: Date | null): boolean => {
+  if (!a || !b) return false
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  )
+}
+
+const isToday = (d: Date): boolean => {
+  return isSameDay(d, today)
+}
+
+const isInRange = (d: Date): boolean => {
+  const s = selStart
+  const e = selEnd ?? (selStart ? hoverDate : null)
+  if (!s || !e) return false
+  const t = d.getTime()
+  const t1 = Math.min(s.getTime(), e.getTime())
+  const t2 = Math.max(s.getTime(), e.getTime())
+  return t > t1 && t < t2
+}
+
+onMount(() => {
+  const onPointerDown = (e: PointerEvent): void => {
+    if (rootEl && !(e.target instanceof Node && rootEl.contains(e.target))) {
+      // Если был выбран только один день, фиксируем его
+      if (selStart && !selEnd) {
+        onSelect(selStart, selStart, formatRangeLabel(selStart, selStart))
       }
-      selStart = s
-      selEnd = e
-      onSelect(s, e, formatRangeLabel(s, e))
       onClose()
     }
   }
-
-  function confirmSingle(): void {
-    if (selStart) {
-      const e = selEnd ?? selStart
-      onSelect(selStart, e, formatRangeLabel(selStart, e))
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') {
+      e.stopPropagation()
       onClose()
     }
   }
-
-  const daysGrid = $derived.by(() => {
-    // getDay(): 0 (Вс) -> смещение: Пн=0, Вт=1... Вс=6
-    const firstDayIdx = (new Date(viewYear, viewMonth, 1).getDay() + 6) % 7
-    const totalDays = new Date(viewYear, viewMonth + 1, 0).getDate()
-    const cells: (Date | null)[] = []
-    for (let i = 0; i < firstDayIdx; i++) cells.push(null)
-    for (let day = 1; day <= totalDays; day++) {
-      cells.push(new Date(viewYear, viewMonth, day))
-    }
-    return cells
-  })
-
-  function isSameDay(a: Date | null, b: Date | null): boolean {
-    if (!a || !b) return false
-    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+  window.addEventListener('pointerdown', onPointerDown, true)
+  window.addEventListener('keydown', onKey)
+  return () => {
+    window.removeEventListener('pointerdown', onPointerDown, true)
+    window.removeEventListener('keydown', onKey)
   }
-
-  function isToday(d: Date): boolean {
-    return isSameDay(d, today)
-  }
-
-  function isInRange(d: Date): boolean {
-    const s = selStart
-    const e = selEnd ?? (selStart ? hoverDate : null)
-    if (!s || !e) return false
-    const t = d.getTime()
-    const t1 = Math.min(s.getTime(), e.getTime())
-    const t2 = Math.max(s.getTime(), e.getTime())
-    return t > t1 && t < t2
-  }
-
-  onMount(() => {
-    function onPointerDown(e: PointerEvent): void {
-      if (rootEl && !rootEl.contains(e.target as Node)) {
-        // Если был выбран только один день, фиксируем его
-        if (selStart && !selEnd) {
-          onSelect(selStart, selStart, formatRangeLabel(selStart, selStart))
-        }
-        onClose()
-      }
-    }
-    function onKey(e: KeyboardEvent): void {
-      if (e.key === 'Escape') {
-        e.stopPropagation()
-        onClose()
-      }
-    }
-    window.addEventListener('pointerdown', onPointerDown, true)
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('pointerdown', onPointerDown, true)
-      window.removeEventListener('keydown', onKey)
-    }
-  })
+})
 </script>
 
 <div class="date-picker-popover" bind:this={rootEl} role="dialog" aria-label="Календарь периода">

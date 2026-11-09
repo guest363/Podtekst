@@ -1,318 +1,290 @@
 <script lang="ts">
-    import SlimPlayer from "./SlimPlayer.svelte";
-    import DatePickerPopover from "./DatePickerPopover.svelte";
-    import {
-        deleteRecording,
-        handleFileUpload,
-        loadRecordings,
-        recordings,
-    } from "../lib/recordings.svelte.ts";
-    import {
-        displayRecTitle,
-        fmtClock,
-        formatRecDate,
-        isMobile,
-        parseRecDate,
-        pluralRecords,
-        pluralSpeakers,
-        readJsonSafe,
-    } from "../lib/api";
-    import type { RecordingItem } from "../lib/api";
-    import { on, openTranscript } from "../lib/ui.svelte.ts";
-    import { toast } from "../lib/toast.svelte.ts";
-    import { onMount } from "svelte";
-    import {
-        getPosition,
-        isActive,
-        isQueued,
-        removeFromQueue,
-    } from "../lib/queue.svelte.ts";
-    import { engine } from "../lib/transcript.svelte.ts";
+import { onMount } from 'svelte'
+import type { OkResponse, RecordingItem } from '../lib/api'
+import {
+  displayRecTitle,
+  fmtClock,
+  formatRecDate,
+  isMobile,
+  parseRecDate,
+  pluralRecords,
+  pluralSpeakers,
+  readJsonSafe,
+} from '../lib/api'
+import { errText } from '../lib/guards.ts'
+import { getPosition, isActive, isQueued, removeFromQueue } from '../lib/queue.svelte.ts'
+import {
+  deleteRecording,
+  handleFileUpload,
+  loadRecordings,
+  recordings,
+} from '../lib/recordings.svelte.ts'
+import { toast } from '../lib/toast.svelte.ts'
+import { engine } from '../lib/transcript.svelte.ts'
+import { on, openTranscript } from '../lib/ui.svelte.ts'
+import DatePickerPopover from './date-picker-popover.svelte'
+import SlimPlayer from './slim-player.svelte'
 
-    let uploadInput: HTMLInputElement | null = $state(null);
-    let uploadBtn: HTMLButtonElement | null = $state(null);
-    let dropCard: HTMLElement | null = $state(null);
-    let search = $state("");
-    let renaming = $state("");
-    let renameValue = $state("");
-    let savingName = $state(false);
-    let deleteTarget = $state<RecordingItem | null>(null);
-    let deleting = $state(false);
+let uploadInput: HTMLInputElement | null = $state(null)
+let uploadBtn: HTMLButtonElement | null = $state(null)
+let dropCard: HTMLElement | null = $state(null)
+let search = $state('')
+let renaming = $state('')
+let renameValue = $state('')
+let savingName = $state(false)
+let deleteTarget = $state<RecordingItem | null>(null)
+let deleting = $state(false)
 
-    let activeRec = $state<RecordingItem | null>(null);
-    let isPlaying = $state(false);
-    let playerRef = $state<{ togglePlay: () => void } | null>(null);
+let activeRec = $state<RecordingItem | null>(null)
+let isPlaying = $state(false)
+let playerRef = $state<{ togglePlay: () => void } | null>(null)
 
-    function toggleRecPlay(rec: RecordingItem): void {
-        if (activeRec?.path === rec.path) {
-            playerRef?.togglePlay();
+const toggleRecPlay = (rec: RecordingItem): void => {
+  if (activeRec?.path === rec.path) {
+    playerRef?.togglePlay()
+  } else {
+    activeRec = rec
+    isPlaying = true
+  }
+}
+
+const now = new Date()
+const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+
+let mainFilter = $state<'today' | 'week' | 'all' | 'range'>('week')
+let mainRangeStart = $state<Date | null>(today)
+let mainRangeEnd = $state<Date | null>(today)
+let mainRangeLabel = $state('')
+let mainPickerOpen = $state(false)
+
+// На телефоне видео не импортируется (нет ffmpeg) и не показывается.
+const items = $derived(isMobile ? recordings.items.filter((r) => !r.is_video) : recordings.items)
+
+const countToday = $derived(
+  items.filter((r) => {
+    const d = parseRecDate(r.date, r.name)
+    return d && d.getTime() === today.getTime()
+  }).length,
+)
+const countWeek = $derived(
+  items.filter((r) => {
+    const d = parseRecDate(r.date, r.name)
+    if (!d) return false
+    const t = d.getTime()
+    return t >= today.getTime() - 6 * 86400000 && t <= today.getTime()
+  }).length,
+)
+
+const filterByRange = (
+  list: RecordingItem[],
+  start: Date | null,
+  end: Date | null,
+): RecordingItem[] => {
+  if (!start && !end) return list
+  return list.filter((r) => {
+    const d = parseRecDate(r.date, r.name)
+    if (!d) return false
+    const t = d.getTime()
+    if (start && t < start.getTime()) return false
+    if (end && t > end.getTime()) return false
+    return true
+  })
+}
+
+const mainFiltered = $derived.by(() => {
+  let list =
+    search.trim() === ''
+      ? items
+      : items.filter((r) => r.name.toLowerCase().includes(search.trim().toLowerCase()))
+
+  if (mainFilter === 'today') {
+    list = filterByRange(list, today, today)
+  } else if (mainFilter === 'week') {
+    const s = new Date(today.getTime() - 6 * 86400000)
+    list = filterByRange(list, s, today)
+  } else if (mainFilter === 'range' && mainRangeStart) {
+    list = filterByRange(list, mainRangeStart, mainRangeEnd ?? mainRangeStart)
+  }
+  return list
+})
+
+const mainGroups = $derived.by(() => {
+  const map = new Map<string, { label: string; isToday: boolean; recs: RecordingItem[] }>()
+  const monthsGen = [
+    'января',
+    'февраля',
+    'марта',
+    'апреля',
+    'мая',
+    'июня',
+    'июля',
+    'августа',
+    'сентября',
+    'октября',
+    'ноября',
+    'декабря',
+  ]
+  const monthsNom = [
+    'Январь',
+    'Февраль',
+    'Март',
+    'Апрель',
+    'Май',
+    'Июнь',
+    'Июль',
+    'Август',
+    'Сентябрь',
+    'Октябрь',
+    'Ноябрь',
+    'Декабрь',
+  ]
+  for (const rec of mainFiltered) {
+    const d = parseRecDate(rec.date, rec.name)
+    let key = 'archive'
+    let label = 'Архив'
+    let isGroupToday = false
+
+    if (d) {
+      const yesterday = new Date(today)
+      yesterday.setDate(yesterday.getDate() - 1)
+      const y = d.getFullYear()
+      const ySuffix = y !== today.getFullYear() ? ` ${y}` : ''
+
+      if (d.getTime() === today.getTime()) {
+        key = 'today'
+        label = `Сегодня · ${d.getDate()} ${monthsGen[d.getMonth()]}`
+        isGroupToday = true
+      } else if (d.getTime() === yesterday.getTime()) {
+        key = 'yesterday'
+        label = `Вчера · ${d.getDate()} ${monthsGen[d.getMonth()]}`
+      } else {
+        const diffDays = Math.round((today.getTime() - d.getTime()) / 86400000)
+        if (diffDays > 0 && diffDays <= 7) {
+          key = `day-${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+          label = `${d.getDate()} ${monthsGen[d.getMonth()]}${ySuffix}`
         } else {
-            activeRec = rec;
-            isPlaying = true;
+          key = `month-${d.getFullYear()}-${d.getMonth()}`
+          label = `${monthsNom[d.getMonth()]}${ySuffix}`
         }
+      }
     }
 
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-    let mainFilter = $state<"today" | "week" | "all" | "range">("week");
-    let mainRangeStart = $state<Date | null>(today);
-    let mainRangeEnd = $state<Date | null>(today);
-    let mainRangeLabel = $state("");
-    let mainPickerOpen = $state(false);
-
-    // На телефоне видео не импортируется (нет ffmpeg) и не показывается.
-    const items = $derived(
-        isMobile
-            ? recordings.items.filter((r) => !r.is_video)
-            : recordings.items,
-    );
-
-    const countToday = $derived(
-        items.filter((r) => {
-            const d = parseRecDate(r.date, r.name);
-            return d && d.getTime() === today.getTime();
-        }).length,
-    );
-    const countWeek = $derived(
-        items.filter((r) => {
-            const d = parseRecDate(r.date, r.name);
-            if (!d) return false;
-            const t = d.getTime();
-            return t >= today.getTime() - 6 * 86400000 && t <= today.getTime();
-        }).length,
-    );
-
-    function filterByRange(
-        list: RecordingItem[],
-        start: Date | null,
-        end: Date | null,
-    ): RecordingItem[] {
-        if (!start && !end) return list;
-        return list.filter((r) => {
-            const d = parseRecDate(r.date, r.name);
-            if (!d) return false;
-            const t = d.getTime();
-            if (start && t < start.getTime()) return false;
-            if (end && t > end.getTime()) return false;
-            return true;
-        });
+    let entry = map.get(key)
+    if (!entry) {
+      entry = { label, isToday: isGroupToday, recs: [] }
+      map.set(key, entry)
     }
+    entry.recs.push(rec)
+  }
+  return Array.from(map.values())
+})
 
-    const mainFiltered = $derived.by(() => {
-        let list =
-            search.trim() === ""
-                ? items
-                : items.filter((r) =>
-                      r.name
-                          .toLowerCase()
-                          .includes(search.trim().toLowerCase()),
-                  );
+const setMainPreset = (p: 'today' | 'week' | 'all'): void => {
+  mainFilter = p
+  mainRangeStart =
+    p === 'today' ? today : p === 'week' ? new Date(today.getTime() - 6 * 86400000) : null
+  mainRangeEnd = p === 'all' ? null : today
+  mainRangeLabel = ''
+  mainPickerOpen = false
+}
 
-        if (mainFilter === "today") {
-            list = filterByRange(list, today, today);
-        } else if (mainFilter === "week") {
-            const s = new Date(today.getTime() - 6 * 86400000);
-            list = filterByRange(list, s, today);
-        } else if (mainFilter === "range" && mainRangeStart) {
-            list = filterByRange(
-                list,
-                mainRangeStart,
-                mainRangeEnd ?? mainRangeStart,
-            );
-        }
-        return list;
-    });
+const onMainRangeSelect = (start: Date, end: Date, label: string): void => {
+  mainFilter = 'range'
+  mainRangeStart = start
+  mainRangeEnd = end
+  mainRangeLabel = label
+  mainPickerOpen = false
+}
 
-    const mainGroups = $derived.by(() => {
-        const map = new Map<
-            string,
-            { label: string; isToday: boolean; recs: RecordingItem[] }
-        >();
-        const monthsGen = [
-            "января",
-            "февраля",
-            "марта",
-            "апреля",
-            "мая",
-            "июня",
-            "июля",
-            "августа",
-            "сентября",
-            "октября",
-            "ноября",
-            "декабря",
-        ];
-        const monthsNom = [
-            "Январь",
-            "Февраль",
-            "Март",
-            "Апрель",
-            "Май",
-            "Июнь",
-            "Июль",
-            "Август",
-            "Сентябрь",
-            "Октябрь",
-            "Ноябрь",
-            "Декабрь",
-        ];
-        for (const rec of mainFiltered) {
-            const d = parseRecDate(rec.date, rec.name);
-            let key = "archive";
-            let label = "Архив";
-            let isGroupToday = false;
+const clearMainRange = (): void => {
+  setMainPreset('today')
+}
 
-            if (d) {
-                const yesterday = new Date(today);
-                yesterday.setDate(yesterday.getDate() - 1);
-                const y = d.getFullYear();
-                const ySuffix = y !== today.getFullYear() ? ` ${y}` : "";
+const hasRecsOnDate = (d: Date): boolean => {
+  const t = d.getTime()
+  return items.some((r) => {
+    const rd = parseRecDate(r.date, r.name)
+    return rd && rd.getTime() === t
+  })
+}
 
-                if (d.getTime() === today.getTime()) {
-                    key = "today";
-                    label = `Сегодня · ${d.getDate()} ${monthsGen[d.getMonth()]}`;
-                    isGroupToday = true;
-                } else if (d.getTime() === yesterday.getTime()) {
-                    key = "yesterday";
-                    label = `Вчера · ${d.getDate()} ${monthsGen[d.getMonth()]}`;
-                } else {
-                    const diffDays = Math.round(
-                        (today.getTime() - d.getTime()) / 86400000,
-                    );
-                    if (diffDays > 0 && diffDays <= 7) {
-                        key = `day-${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-                        label = `${d.getDate()} ${monthsGen[d.getMonth()]}${ySuffix}`;
-                    } else {
-                        key = `month-${d.getFullYear()}-${d.getMonth()}`;
-                        label = `${monthsNom[d.getMonth()]}${ySuffix}`;
-                    }
-                }
-            }
+onMount(() => {
+  on('recordings-changed', () => void loadRecordings())
+  const onFocus = () => void loadRecordings()
+  window.addEventListener('focus', onFocus)
+  void loadRecordings()
+  return () => {
+    window.removeEventListener('focus', onFocus)
+  }
+})
 
-            let entry = map.get(key);
-            if (!entry) {
-                entry = { label, isToday: isGroupToday, recs: [] };
-                map.set(key, entry);
-            }
-            entry.recs.push(rec);
-        }
-        return Array.from(map.values());
-    });
+const onWindowKey = (e: KeyboardEvent): void => {
+  if (e.key !== 'Escape') return
+  if (deleteTarget) {
+    deleteTarget = null
+    return
+  }
+  if (mainPickerOpen) {
+    mainPickerOpen = false
+  }
+}
 
-    function setMainPreset(p: "today" | "week" | "all"): void {
-        mainFilter = p;
-        mainRangeStart =
-            p === "today"
-                ? today
-                : p === "week"
-                  ? new Date(today.getTime() - 6 * 86400000)
-                  : null;
-        mainRangeEnd = p === "all" ? null : today;
-        mainRangeLabel = "";
-        mainPickerOpen = false;
+const confirmDelete = async (): Promise<void> => {
+  if (!deleteTarget || deleting) return
+  deleting = true
+  if (activeRec?.path === deleteTarget.path) {
+    activeRec = null
+    isPlaying = false
+  }
+  const ok = await deleteRecording(deleteTarget)
+  deleting = false
+  if (ok) deleteTarget = null
+}
+
+const onDrop = (e: DragEvent): void => {
+  e.preventDefault()
+  dropCard?.classList.remove('dragover')
+  const f = e.dataTransfer?.files?.[0]
+  if (f && uploadBtn) void handleFileUpload(f, uploadBtn)
+}
+
+const startRename = (rec: RecordingItem): void => {
+  renaming = rec.path
+  renameValue = rec.name.replace(/\.[^.]+$/, '')
+}
+
+const cancelRename = (): void => {
+  renaming = ''
+  renameValue = ''
+}
+
+const saveRename = async (rec: RecordingItem): Promise<void> => {
+  const name = renameValue.trim()
+  if (!name) {
+    toast('Имя не может быть пустым', 'error')
+    return
+  }
+  savingName = true
+  try {
+    const r = await fetch('/api/recordings/rename', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: rec.path, name }),
+    })
+    const d = await readJsonSafe<OkResponse>(r)
+    if (d.ok) {
+      toast('Запись переименована')
+      cancelRename()
+      await loadRecordings()
+    } else {
+      toast(d.error || 'Не удалось переименовать запись', 'error')
     }
-
-    function onMainRangeSelect(start: Date, end: Date, label: string): void {
-        mainFilter = "range";
-        mainRangeStart = start;
-        mainRangeEnd = end;
-        mainRangeLabel = label;
-        mainPickerOpen = false;
-    }
-
-    function clearMainRange(): void {
-        setMainPreset("today");
-    }
-
-    function hasRecsOnDate(d: Date): boolean {
-        const t = d.getTime();
-        return items.some((r) => {
-            const rd = parseRecDate(r.date, r.name);
-            return rd && rd.getTime() === t;
-        });
-    }
-
-    onMount(() => {
-        on("recordings-changed", () => void loadRecordings());
-        const onFocus = () => void loadRecordings();
-        window.addEventListener("focus", onFocus);
-        void loadRecordings();
-        return () => {
-            window.removeEventListener("focus", onFocus);
-        };
-    });
-
-    function onWindowKey(e: KeyboardEvent): void {
-        if (e.key !== "Escape") return;
-        if (deleteTarget) {
-            deleteTarget = null;
-            return;
-        }
-        if (mainPickerOpen) {
-            mainPickerOpen = false;
-        }
-    }
-
-    async function confirmDelete(): Promise<void> {
-        if (!deleteTarget || deleting) return;
-        deleting = true;
-        if (activeRec?.path === deleteTarget.path) {
-            activeRec = null;
-            isPlaying = false;
-        }
-        const ok = await deleteRecording(deleteTarget);
-        deleting = false;
-        if (ok) deleteTarget = null;
-    }
-
-    function onDrop(e: DragEvent): void {
-        e.preventDefault();
-        dropCard?.classList.remove("dragover");
-        const f = e.dataTransfer?.files?.[0];
-        if (f && uploadBtn) void handleFileUpload(f, uploadBtn);
-    }
-
-    function startRename(rec: RecordingItem): void {
-        renaming = rec.path;
-        renameValue = rec.name.replace(/\.[^.]+$/, "");
-    }
-
-    function cancelRename(): void {
-        renaming = "";
-        renameValue = "";
-    }
-
-    async function saveRename(rec: RecordingItem): Promise<void> {
-        const name = renameValue.trim();
-        if (!name) {
-            toast("Имя не может быть пустым", "error");
-            return;
-        }
-        savingName = true;
-        try {
-            const r = await fetch("/api/recordings/rename", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ path: rec.path, name }),
-            });
-            const d = await readJsonSafe(r);
-            if (d.ok) {
-                toast("Запись переименована");
-                cancelRename();
-                await loadRecordings();
-            } else {
-                toast(d.error || "Не удалось переименовать запись", "error");
-            }
-        } catch (e) {
-            toast(
-                "Не удалось переименовать запись: " + (e as Error).message,
-                "error",
-            );
-        } finally {
-            savingName = false;
-        }
-    }
+  } catch (e) {
+    toast(`Не удалось переименовать запись: ${errText(e)}`, 'error')
+  } finally {
+    savingName = false
+  }
+}
 </script>
 
 {#snippet recRow(rec: RecordingItem)}

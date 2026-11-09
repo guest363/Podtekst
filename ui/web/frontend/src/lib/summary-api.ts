@@ -14,7 +14,7 @@ type DevModule = typeof import('./summary.dev.ts')
 let devModule: DevModule | null | undefined
 let mockMode = false
 
-async function devMock(): Promise<DevModule | null> {
+const devMock = async (): Promise<DevModule | null> => {
   if (devModule !== undefined) return devModule
   if (
     !import.meta.env.DEV ||
@@ -29,24 +29,24 @@ async function devMock(): Promise<DevModule | null> {
 }
 
 /** Dev-стенд подменяет только транспорт `/api/summary*`, не production-путь. */
-export function isMockMode(): boolean {
+export const isMockMode = (): boolean => {
   return mockMode
 }
 
-export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
+export const apiJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const dev = await devMock()
   mockMode = Boolean(dev)
-  if (dev) return (await dev.request(path, init)) as T
+  if (dev) return (await dev.request(path, init)) as T // SAFETY: dev-стенд повторяет контракт /api/summary*
   const r = await fetch(path, init)
-  let d: unknown
+  let d: { ok?: boolean; code?: string; error?: string }
   try {
     d = await readJsonSafe(r)
   } catch {
     throw new SummaryApiError('internal', r.status)
   }
-  const body = d as { ok?: boolean; code?: string; error?: string }
+  const body = d
   if (!r.ok || body?.ok === false) {
     throw new SummaryApiError(body?.code || `http_${r.status}`, r.status, body?.error)
   }
-  return body as T
+  return body as T // SAFETY: форма ответа соответствует DTO и проверена Rust-тестом
 }

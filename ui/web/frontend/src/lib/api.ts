@@ -1,7 +1,13 @@
 // Типизированный клиент REST-ядра. Формы ответов зафиксированы здесь;
 // страж контракта — Rust-тест restored_endpoints_roundtrip.
 
-export interface Person {
+export type OkResponse = {
+  ok?: boolean
+  error?: string
+  code?: string
+}
+
+export type Person = {
   name: string
   role?: string
   domain?: string
@@ -11,7 +17,7 @@ export interface Person {
   pack_enabled?: boolean
 }
 
-export interface Voicepack {
+export type Voicepack = {
   id: string
   name: string
   enabled: boolean
@@ -20,7 +26,7 @@ export interface Voicepack {
   snippets_count?: number
 }
 
-export interface ModelInfo {
+export type ModelInfo = {
   id: string
   kind?: string
   title: string
@@ -45,20 +51,27 @@ export interface ModelInfo {
  * Файл с совпавшим размером, но битым содержимым считается скачанным:
  * точную проверку делает только SHA-256 при скачивании.
  */
-export function remainingMb(m: ModelInfo): number {
+export const remainingMb = (m: ModelInfo): number => {
   const left = Math.max(0, (m.total_size_bytes || 0) - (m.on_disk_bytes || 0))
   return Math.round(left / 1048576)
 }
 
 /** Whisper и CTC — дополнения: без них распознавание и спикеры работают.
  *  Модель итогов не входит в базовый набор и не влияет на его готовность. */
-export function isCoreModel(m: ModelInfo): boolean {
+export const isCoreModel = (m: ModelInfo): boolean => {
   if (m.kind === 'summary') return false
   const id = m.id.toLowerCase()
   return !id.includes('whisper') && !id.includes('ctc')
 }
 
-export type SummaryPhase = 'idle' | 'loading' | 'suggest' | 'confirm-sensitive' | 'generating' | 'result' | 'error'
+export type SummaryPhase =
+  | 'idle'
+  | 'loading'
+  | 'suggest'
+  | 'confirm-sensitive'
+  | 'generating'
+  | 'result'
+  | 'error'
 export type SummaryStateName = 'missing' | 'fresh' | 'stale' | 'unsupported' | 'corrupt'
 export type Confidence = 'high' | 'medium' | 'low'
 export type SummaryDetail = 'short' | 'normal' | 'long'
@@ -67,32 +80,32 @@ export type OutLang = 'ru' | 'en'
 export type SummaryRole = 'plain' | 'decision' | 'task' | 'status'
 export type InlineSegment = { kind: 'text' | 'bold' | 'code'; value: string }
 
-export interface TaskMeta {
+export type TaskMeta = {
   assignee: string | null
   deadline: string | null
   deadline_source: 'model' | 'extracted'
 }
 
-export interface SummaryItem {
+export type SummaryItem = {
   text: string
   role: SummaryRole
   task?: TaskMeta
 }
 
-export interface SummarySection {
+export type SummarySection = {
   id: string
   title: string
   role: SummaryRole
   items: SummaryItem[]
 }
 
-export interface SummaryPresetSection {
+export type SummaryPresetSection = {
   id: string
   title: string
   role: SummaryRole
 }
 
-export interface SummaryPreset {
+export type SummaryPreset = {
   id: string
   label: string
   short: string
@@ -106,11 +119,11 @@ export interface SummaryPreset {
   speaker_primary?: string[]
 }
 
-export interface SummaryModelInfo extends ModelInfo {
+export type SummaryModelInfo = ModelInfo & {
   kind: 'summary'
 }
 
-export interface SummaryClassification {
+export type SummaryClassification = {
   preset_id: string | null
   confidence: Confidence
   alternatives: string[]
@@ -126,7 +139,7 @@ export interface SummaryClassification {
   cache_hit?: boolean
 }
 
-export interface SummaryRecord {
+export type SummaryRecord = {
   id: string
   job_id: string
   file: string
@@ -148,7 +161,7 @@ export interface SummaryRecord {
   schema_minor: number
 }
 
-export interface SummaryArtifact {
+export type SummaryArtifact = {
   schema: string
   schema_minor: number
   id: string
@@ -228,7 +241,7 @@ export interface SummaryArtifact {
 
 export type SummaryGpuMode = 'auto' | 'off'
 
-export interface SummaryGpuStatus {
+export type SummaryGpuStatus = {
   supported: boolean
   bundled: boolean
   backend: string
@@ -252,26 +265,26 @@ export interface SummaryGpuStatus {
   cancelled: boolean
 }
 
-export interface SummarySettings {
+export type SummarySettings = {
   auto_suggest: boolean
   default_preset: string | null
   detail: SummaryDetail
   gpu: SummaryGpuMode
 }
 
-export interface SummaryCapabilities {
+export type SummaryCapabilities = {
   summary_supported: boolean
   runtime: 'sidecar' | 'missing'
   classifier: 'heuristic' | 'manual_only'
 }
 
-export interface SummaryBusy {
+export type SummaryBusy = {
   kind: 'transcribing' | 'recording' | 'summary'
   file?: string
   job_id?: string
 }
 
-export interface SummaryActive {
+export type SummaryActive = {
   job_id: string
   file: string
   phase: string
@@ -281,7 +294,7 @@ export interface SummaryActive {
   elapsed_sec?: number
 }
 
-export interface SummaryLimits {
+export type SummaryLimits = {
   max_chars: number
   max_seconds: number
   min_free_ram_mb: number
@@ -301,7 +314,7 @@ export type SummaryBlockReason =
   | 'too_short'
   | 'no_text'
 
-export interface SummaryResponse {
+export type SummaryResponse = {
   ok: boolean
   state: SummaryStateName
   source_rev: string
@@ -316,14 +329,14 @@ export interface SummaryResponse {
   block_reason: SummaryBlockReason | null
 }
 
-export interface SummaryPresetsResponse {
+export type SummaryPresetsResponse = {
   ok: boolean
   catalog_version: number
   presets: SummaryPreset[]
   system_prompt_base?: string
 }
 
-export interface SummarySettingsResponse {
+export type SummarySettingsResponse = {
   ok: boolean
   settings: SummarySettings
   presets: SummaryPreset[]
@@ -333,14 +346,14 @@ export interface SummarySettingsResponse {
   gpu: SummaryGpuStatus
 }
 
-export interface SummaryClassifyResponse {
+export type SummaryClassifyResponse = {
   ok: boolean
   classification: SummaryClassification | null
   source_rev: string
   cache_hit?: boolean
 }
 
-export interface SummaryGenerateResponse {
+export type SummaryGenerateResponse = {
   ok: boolean
   job_id?: string
   started?: boolean
@@ -348,12 +361,12 @@ export interface SummaryGenerateResponse {
   summary_id?: string
 }
 
-export interface SummaryCancelResponse {
+export type SummaryCancelResponse = {
   ok: boolean
   cancelled: boolean
 }
 
-export interface SpeakerSample {
+export type SpeakerSample = {
   start: number
   end: number
   dur?: number
@@ -362,20 +375,20 @@ export interface SpeakerSample {
   channel?: number | null
 }
 
-export interface SpeakerCandidate {
+export type SpeakerCandidate = {
   name: string
   similarity?: number
   pack_id?: string
   pack_name?: string
 }
 
-export interface VoiceprintSummary {
+export type VoiceprintSummary = {
   name: string
   samples_count: number
   updated_at?: string
 }
 
-export interface VoicePrototype {
+export type VoicePrototype = {
   id?: string | null
   created_at?: string | null
   duration_sec?: number | null
@@ -383,14 +396,14 @@ export interface VoicePrototype {
   has_snippet?: boolean
 }
 
-export interface VoiceDetail {
+export type VoiceDetail = {
   name?: string | null
   pack_id?: string
   samples_count?: number | null
   prototypes?: VoicePrototype[]
 }
 
-export interface SpeakerInfo {
+export type SpeakerInfo = {
   id?: string
   name: string
   channel?: number | null
@@ -408,13 +421,13 @@ export interface SpeakerInfo {
   total_speech_sec?: number
 }
 
-export interface WordConf {
+export type WordConf = {
   w: string
   conf: number
   needs_review: boolean
 }
 
-export interface Utterance {
+export type Utterance = {
   start: number
   end?: number
   speaker?: string
@@ -424,7 +437,7 @@ export interface Utterance {
   ctc_used?: boolean
 }
 
-export interface TranscriptData {
+export type TranscriptData = {
   filename?: string
   meta?: Record<string, unknown>
   speakers_info?: SpeakerInfo[]
@@ -433,7 +446,7 @@ export interface TranscriptData {
   rev?: string
 }
 
-export interface RecordingItem {
+export type RecordingItem = {
   name: string
   path: string
   is_video: boolean
@@ -446,54 +459,54 @@ export interface RecordingItem {
   owned?: boolean
 }
 
-export function encPath(p: string): string {
+export const encPath = (p: string): string => {
   return encodeURIComponent(p)
 }
 
-export async function readJsonSafe(res: Response): Promise<any> {
+export const readJsonSafe = async <T = Record<string, unknown>>(res: Response): Promise<T> => {
   const ct = res.headers.get('content-type') || ''
-  if (ct.includes('application/json')) return await res.json()
+  if (ct.includes('application/json')) return (await res.json()) as T // SAFETY: контракт endpoint, тип задаёт вызывающая сторона
   const text = await res.text()
   throw new Error(`Сервер вернул HTTP ${res.status}: ${text.slice(0, 160)}`)
 }
 
-export function baseName(p: string): string {
+export const baseName = (p: string): string => {
   return String(p).split(/[\\/]/).pop() ?? ''
 }
 
-export function isVideoPath(p: string): boolean {
+export const isVideoPath = (p: string): boolean => {
   return ['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v'].some((ext) =>
     String(p).toLowerCase().endsWith(ext),
   )
 }
 
-export function fmtClock(sec: number): string {
-  if (!isFinite(sec) || sec < 0) sec = 0
-  const h = Math.floor(sec / 3600)
-  const m = Math.floor((sec % 3600) / 60)
-  const s = Math.floor(sec % 60)
+export const fmtClock = (sec: number): string => {
+  const total = Number.isFinite(sec) && sec > 0 ? sec : 0
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = Math.floor(total % 60)
   const mm = String(m).padStart(2, '0')
   const ss = String(s).padStart(2, '0')
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
 }
 
-export function fmtClockShort(sec: number): string {
+export const fmtClockShort = (sec: number): string => {
   const s = Math.max(0, Number(sec) || 0)
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${(s % 60).toFixed(0).padStart(2, '0')}`
 }
 
-export interface FormattedRecDate {
+export type FormattedRecDate = {
   day: string
   time: string
   full: string
 }
 
-export function parseRecDate(rawDate?: string, rawName?: string): Date | null {
+export const parseRecDate = (rawDate?: string, rawName?: string): Date | null => {
   if (rawDate) {
     const parts = rawDate.trim().split(/[\sT]/)
     if (parts.length >= 1) {
       const [y, m, d] = parts[0].split('-').map(Number)
-      if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+      if (!Number.isNaN(y) && !Number.isNaN(m) && !Number.isNaN(d)) {
         return new Date(y, m - 1, d)
       }
     }
@@ -501,21 +514,21 @@ export function parseRecDate(rawDate?: string, rawName?: string): Date | null {
   const match = String(rawName).match(/__(\d{2})-(\d{2})-(\d{4})/)
   if (match) {
     const [, d, m, y] = match.map(Number)
-    if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+    if (!Number.isNaN(y) && !Number.isNaN(m) && !Number.isNaN(d)) {
       return new Date(y, m - 1, d)
     }
   }
   return null
 }
 
-export function formatRecDate(rawDate?: string, rawName?: string): FormattedRecDate {
+export const formatRecDate = (rawDate?: string, rawName?: string): FormattedRecDate => {
   let time = ''
   if (rawDate) {
     const parts = rawDate.trim().split(/[\sT]/)
     if (parts.length >= 2) time = parts[1].slice(0, 5)
   }
   if (!time) {
-    const m = String(rawName).match(/(\d{2})[:\-](\d{2})/)
+    const m = String(rawName).match(/(\d{2})[:-](\d{2})/)
     if (m) time = `${m[1]}:${m[2]}`
   }
 
@@ -533,8 +546,18 @@ export function formatRecDate(rawDate?: string, rawName?: string): FormattedRecD
       day = 'Вчера'
     } else {
       const months = [
-        'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
-        'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+        'января',
+        'февраля',
+        'марта',
+        'апреля',
+        'мая',
+        'июня',
+        'июля',
+        'августа',
+        'сентября',
+        'октября',
+        'ноября',
+        'декабря',
       ]
       const d = itemDate.getDate()
       const m = itemDate.getMonth()
@@ -549,7 +572,7 @@ export function formatRecDate(rawDate?: string, rawName?: string): FormattedRecD
   return { day: 'Запись', time: '', full: 'Запись' }
 }
 
-export function formatRangeLabel(start: Date, end: Date): string {
+export const formatRangeLabel = (start: Date, end: Date): string => {
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   if (start.getTime() === end.getTime()) {
@@ -563,7 +586,7 @@ export function formatRangeLabel(start: Date, end: Date): string {
   return `${fmt(start)}–${fmt(end)}`
 }
 
-export function pluralRecords(n: number): string {
+export const pluralRecords = (n: number): string => {
   const mod10 = n % 10
   const mod100 = n % 100
   if (mod10 === 1 && mod100 !== 11) return 'запись'
@@ -571,9 +594,9 @@ export function pluralRecords(n: number): string {
   return 'записей'
 }
 
-export function displayRecTitle(rawName: string): string {
+export const displayRecTitle = (rawName: string): string => {
   const stem = rawName.replace(/\.[^.]+$/, '')
-  if (/^\d{2}[:\-]\d{2}(?:-\d{2}[:\-]\d{2})?__\d{2}-\d{2}-\d{4}$/.test(stem)) {
+  if (/^\d{2}[:-]\d{2}(?:-\d{2}[:-]\d{2})?__\d{2}-\d{2}-\d{4}$/.test(stem)) {
     return 'Запись встречи'
   }
   return stem
@@ -591,7 +614,7 @@ const SPEAKER_PALETTE = [
   '#9d174d',
 ]
 
-function speakerIndex(name: string): number {
+const speakerIndex = (name: string): number => {
   // FNV-1a: стабильно раскладывает имена по палитре без частых совпадений.
   let h = 2166136261
   for (const ch of String(name || '')) {
@@ -601,11 +624,11 @@ function speakerIndex(name: string): number {
   return (h >>> 0) % SPEAKER_PALETTE.length
 }
 
-export function speakerColor(name: string): string {
+export const speakerColor = (name: string): string => {
   return SPEAKER_PALETTE[speakerIndex(name)]
 }
 
-export function speakerTint(_name: string): string {
+export const speakerTint = (_name: string): string => {
   return '#ffffff'
 }
 
@@ -620,7 +643,7 @@ export const isMobile: boolean =
 export const isAndroid: boolean =
   typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
 
-export function pluralSpeakers(n: number): string {
+export const pluralSpeakers = (n: number): string => {
   const mod10 = n % 10
   const mod100 = n % 100
   if (mod10 === 1 && mod100 !== 11) return 'спикер'

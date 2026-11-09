@@ -1,85 +1,87 @@
 <script lang="ts">
-  import { baseName, encPath, fmtClock, readJsonSafe } from '../lib/api'
-  import { clearQueue, loadQueue, queueState, removeFromQueue } from '../lib/queue.svelte.ts'
-  import { engine, startTranscription, syncEngineFromStatus } from '../lib/transcript.svelte.ts'
-  import { loadRecordings, recordings } from '../lib/recordings.svelte.ts'
-  import { openTranscript } from '../lib/ui.svelte.ts'
-  import { toast } from '../lib/toast.svelte.ts'
-  import { onMount } from 'svelte'
+import { onMount } from 'svelte'
+import type { OkResponse } from '../lib/api'
+import { baseName, encPath, fmtClock, readJsonSafe } from '../lib/api'
+import { errText } from '../lib/guards.ts'
+import { clearQueue, loadQueue, queueState, removeFromQueue } from '../lib/queue.svelte.ts'
+import { loadRecordings, recordings } from '../lib/recordings.svelte.ts'
+import { toast } from '../lib/toast.svelte.ts'
+import { engine, startTranscription, syncEngineFromStatus } from '../lib/transcript.svelte.ts'
+import { openTranscript } from '../lib/ui.svelte.ts'
 
-  let fileInput: HTMLInputElement | null = $state(null)
-  let uploading = $state(false)
-  let isDragOver = $state(false)
+let fileInput: HTMLInputElement | null = $state(null)
+let uploading = $state(false)
+let isDragOver = $state(false)
 
-  onMount(() => {
-    void loadQueue()
-    void loadRecordings()
-    // Страница очереди не монтирует RecordingDeck, поэтому о внешнем запуске
-    // (автозапуск, CLI) узнаём только опросом.
-    const timer = setInterval(() => {
-      void loadQueue().then(() =>
-        syncEngineFromStatus(queueState.running, queueState.currentFile || ''),
-      )
-    }, 2000)
-    return () => clearInterval(timer)
-  })
-
-  async function handleFiles(files: FileList | File[]) {
-    if (!files || files.length === 0) return
-    uploading = true
-    let count = 0
-    try {
-      for (const file of Array.from(files)) {
-        const res = await fetch('/api/upload', {
-          method: 'POST',
-          headers: {
-            'X-Filename': encPath(file.name),
-            'Content-Type': file.type || 'application/octet-stream',
-          },
-          body: file,
-        })
-        const data = await readJsonSafe(res)
-        if (data?.ok && data.path) {
-          count += 1
-          await startTranscription(data.path as string)
-        }
-      }
-      if (count > 0) {
-        toast(`Добавлено файлов в очередь: ${count}`)
-        await loadRecordings()
-        await loadQueue()
-      }
-    } catch (e) {
-      toast('Ошибка загрузки: ' + (e as Error).message, 'error')
-    } finally {
-      uploading = false
-    }
-  }
-
-  function onFileInputChange(e: Event) {
-    const input = e.target as HTMLInputElement
-    if (input.files) {
-      void handleFiles(input.files)
-      input.value = ''
-    }
-  }
-
-  function onDrop(e: DragEvent) {
-    e.preventDefault()
-    isDragOver = false
-    if (e.dataTransfer?.files) {
-      void handleFiles(e.dataTransfer.files)
-    }
-  }
-
-  const unparsedRecordings = $derived(
-    recordings.items.filter(
-      (r) =>
-        !r.has_transcript &&
-        r.path !== engine.file &&
-        !queueState.items.some((q) => q.file === r.path)
+onMount(() => {
+  void loadQueue()
+  void loadRecordings()
+  // Страница очереди не монтирует RecordingDeck, поэтому о внешнем запуске
+  // (автозапуск, CLI) узнаём только опросом.
+  const timer = setInterval(() => {
+    void loadQueue().then(() =>
+      syncEngineFromStatus(queueState.running, queueState.currentFile || ''),
     )
-  )
+  }, 2000)
+  return () => clearInterval(timer)
+})
+
+const handleFiles = async (files: FileList | File[]) => {
+  if (!files || files.length === 0) return
+  uploading = true
+  let count = 0
+  try {
+    for (const file of Array.from(files)) {
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: {
+          'X-Filename': encPath(file.name),
+          'Content-Type': file.type || 'application/octet-stream',
+        },
+        body: file,
+      })
+      const data = await readJsonSafe<OkResponse & { path?: string }>(res)
+      if (data?.ok && data.path) {
+        count += 1
+        await startTranscription(data.path)
+      }
+    }
+    if (count > 0) {
+      toast(`Добавлено файлов в очередь: ${count}`)
+      await loadRecordings()
+      await loadQueue()
+    }
+  } catch (e) {
+    toast(`Ошибка загрузки: ${errText(e)}`, 'error')
+  } finally {
+    uploading = false
+  }
+}
+
+const onFileInputChange = (e: Event) => {
+  const input = e.target instanceof HTMLInputElement ? e.target : null
+  if (input?.files) {
+    void handleFiles(input.files)
+    input.value = ''
+  }
+}
+
+const onDrop = (e: DragEvent) => {
+  e.preventDefault()
+  isDragOver = false
+  if (e.dataTransfer?.files) {
+    void handleFiles(e.dataTransfer.files)
+  }
+}
+
+const unparsedRecordings = $derived(
+  recordings.items.filter(
+    (r) =>
+      !r.has_transcript &&
+      r.path !== engine.file &&
+      !queueState.items.some((q) => q.file === r.path),
+  ),
+)
 </script>
 
 <div

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { dismissToast, toasts } from '../lib/toast.svelte.ts'
+import { dismissToast, toasts } from '../lib/toast.svelte.ts'
 </script>
 
 <div class="toast-stack" aria-live="polite">

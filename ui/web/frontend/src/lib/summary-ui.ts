@@ -1,9 +1,4 @@
-import type {
-  Confidence,
-  SummaryClassification,
-  SummaryPreset,
-  SummaryRecord,
-} from './api'
+import type { Confidence, SummaryClassification, SummaryPreset, SummaryRecord } from './api'
 
 const PRESET_PHRASE: Record<string, string> = {
   meeting: 'рабочую встречу',
@@ -25,22 +20,22 @@ const PRESET_ACCUSATIVE: Record<string, string> = {
   universal: 'Универсальный',
 }
 
-export function summaryPreset(id: string, presets: SummaryPreset[]): SummaryPreset | null {
+export const summaryPreset = (id: string, presets: SummaryPreset[]): SummaryPreset | null => {
   return presets.find((p) => p.id === id) ?? null
 }
 
-export function summaryPresetPhrase(id: string): string {
+export const summaryPresetPhrase = (id: string): string => {
   return PRESET_PHRASE[id] ?? 'разговор'
 }
 
-export function summaryPresetAccusative(id: string): string {
+export const summaryPresetAccusative = (id: string): string => {
   return PRESET_ACCUSATIVE[id] ?? id
 }
 
-export function summaryRecommendation(
+export const summaryRecommendation = (
   classification: SummaryClassification | null,
   presets: SummaryPreset[],
-): string {
+): string => {
   if (!classification || !classification.preset_id) {
     return 'Тип разговора не определён. Выберите шаблон.'
   }
@@ -64,7 +59,7 @@ export function summaryRecommendation(
   return `Не уверен, но больше похоже на ${phrase}.`
 }
 
-export function summaryConfidenceText(confidence: Confidence): string {
+export const summaryConfidenceText = (confidence: Confidence): string => {
   if (confidence === 'high') return 'заметные признаки'
   if (confidence === 'medium') return 'умеренные признаки'
   return 'слабые признаки'
@@ -92,7 +87,7 @@ const SIGNAL_TEXT: Record<string, string> = {
   timing_long: 'длинная запись',
 }
 
-export function summarySignals(signals: string[]): string[] {
+export const summarySignals = (signals: string[]): string[] => {
   return signals
     .filter((s) => s !== 'no_signal')
     .map((s) => SIGNAL_TEXT[s])
@@ -125,7 +120,7 @@ const WARNING_TEXT: Record<string, string> = {
   fallback_extracted: 'Часть задач восстановлена из реплик.',
 }
 
-export function summaryWarnings(record: SummaryRecord): string[] {
+export const summaryWarnings = (record: SummaryRecord): string[] => {
   const items = record.warnings.map((w) => WARNING_TEXT[w] ?? w)
   if (record.truncated && !record.warnings.includes('truncated')) {
     items.unshift(WARNING_TEXT.truncated)
@@ -149,12 +144,14 @@ const ERROR_TEXT: Record<string, string> = {
   recording_active: 'Идёт запись. Итоги можно собрать после её окончания.',
   stale_source: 'Расшифровка изменилась. Итоги не сохранены. Повторите.',
   classifier_manual_only: 'Рекомендация отключена: недостаточно проверенных данных.',
-  low_memory: 'Для модели нужно не меньше 12 ГБ ОЗУ и около 6,5 ГБ свободно. Закройте приложения и повторите.',
+  low_memory:
+    'Для модели нужно не меньше 12 ГБ ОЗУ и около 6,5 ГБ свободно. Закройте приложения и повторите.',
   too_short: 'В записи мало текста для итогов.',
   no_text: 'В расшифровке нет текста.',
   schema_unsupported: 'Эта версия не поддерживает формат итогов. Обновите приложение.',
   model_missing: 'Модель итогов не скачана.',
-  runtime_missing: 'Локальный движок итогов не установлен. Переустановите приложение из релизной сборки.',
+  runtime_missing:
+    'Локальный движок итогов не установлен. Переустановите приложение из релизной сборки.',
   summary_disabled: 'Итоги отключены в этой сборке.',
   summary_unsupported: 'Итоги на этом устройстве не поддерживаются.',
   gpu_unsupported: 'Ускорение GPU на этой платформе не поддерживается.',
@@ -166,7 +163,8 @@ const ERROR_TEXT: Record<string, string> = {
   gpu_download_failed: 'Не удалось скачать GPU-пакет. Проверьте сеть и повторите.',
   gpu_sha_mismatch: 'Файл GPU-пакета повреждён. Повторите скачивание.',
   gpu_extract_failed: 'Не удалось распаковать GPU-пакет. Повторите скачивание.',
-  gpu_probe_failed: 'GPU-пакет установлен, но Vulkan-устройство не найдено. Итоги продолжат работать на CPU.',
+  gpu_probe_failed:
+    'GPU-пакет установлен, но Vulkan-устройство не найдено. Итоги продолжат работать на CPU.',
   gpu_cancelled: 'Скачивание отменено.',
   gpu_internal: 'Не удалось установить GPU-пакет. Повторите.',
   gpu_remove_failed: 'Не удалось удалить GPU-пакет. Закройте приложение и повторите.',
@@ -181,32 +179,32 @@ const ERROR_TEXT: Record<string, string> = {
   internal: 'Внутренняя ошибка итогов. Повторите и проверьте лог.',
 }
 
-export function summaryErrorText(code: string, fallback?: string): string {
+export const summaryErrorText = (code: string, fallback?: string): string => {
   return ERROR_TEXT[code] ?? fallback ?? 'Не удалось собрать итоги.'
 }
 
-export function summaryExpectedError(code: string): string {
+export const summaryExpectedError = (code: string): string => {
   return ERROR_TEXT[code] ?? 'Не удалось загрузить итоги. Проверьте, что приложение запущено.'
 }
 
-function pad(n: number): string {
+const pad = (n: number): string => {
   return String(n).padStart(2, '0')
 }
 
-export function summaryDate(iso?: string | null): string {
+export const summaryDate = (iso?: string | null): string => {
   if (!iso) return ''
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
   return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-export function summaryShortDate(iso?: string | null): string {
+export const summaryShortDate = (iso?: string | null): string => {
   const full = summaryDate(iso)
   const m = full.match(/^(\d{2}\.\d{2})\.\d{4}, (\d{2}:\d{2})$/)
   return m ? `${m[1]}, ${m[2]}` : full
 }
 
-export function summaryDuration(ms?: number | null): string {
+export const summaryDuration = (ms?: number | null): string => {
   const sec = Math.max(0, Math.round((Number(ms) || 0) / 1000))
   if (sec < 60) return `${sec} с`
   const m = Math.floor(sec / 60)
@@ -214,16 +212,16 @@ export function summaryDuration(ms?: number | null): string {
   return `${m} мин ${pad(s)} с`
 }
 
-export function summaryElapsed(sec: number): string {
+export const summaryElapsed = (sec: number): string => {
   const total = Math.max(0, Math.floor(sec))
   return `${pad(Math.floor(total / 60))}:${pad(total % 60)}`
 }
 
-export function summaryStageText(
+export const summaryStageText = (
   phase: string,
   chunk?: number | null,
   chunks?: number | null,
-): string {
+): string => {
   if (phase === 'load') return 'Загружаю модель…'
   if (phase === 'prepare') return 'Готовлю текст…'
   if (phase === 'map') {

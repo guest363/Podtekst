@@ -1,27 +1,24 @@
-import { encPath } from './api'
 import type { SummaryPresetsResponse, SummaryResponse, SummarySettingsResponse } from './api'
+import { encPath } from './api'
+import { isAbortError } from './guards.ts'
+import { settings } from './settings.svelte.ts'
+import { apiJson, isMockMode, SummaryApiError } from './summary-api.ts'
+import { summaryState } from './summary-state.svelte.ts'
+import { summaryErrorText, summaryExpectedError, summaryStageText } from './summary-ui.ts'
+import { toast } from './toast.svelte.ts'
 import { closeStreamIfIdle, engine, ensureStream, transcript } from './transcript.svelte.ts'
 import { on } from './ui.svelte.ts'
-import { toast } from './toast.svelte.ts'
-import {
-  summaryErrorText,
-  summaryExpectedError,
-  summaryStageText,
-} from './summaryUi.ts'
-import { apiJson, isMockMode, SummaryApiError } from './summaryApi.ts'
-import { summaryState } from './summaryState.svelte.ts'
-import { settings } from './settings.svelte.ts'
 
 let loadSeq = 0
 let abort: AbortController | null = null
 let ticker: ReturnType<typeof setInterval> | null = null
 
-function stopTicker(): void {
+const stopTicker = (): void => {
   if (ticker) clearInterval(ticker)
   ticker = null
 }
 
-export function startTicker(): void {
+export const startTicker = (): void => {
   stopTicker()
   ticker = setInterval(() => {
     if (!summaryState.generating) return stopTicker()
@@ -34,7 +31,7 @@ export function startTicker(): void {
   }, 1000)
 }
 
-export function finishGenerating(): void {
+export const finishGenerating = (): void => {
   summaryState.generating = false
   engine.summaryRunning = false
   engine.summaryPct = 0
@@ -44,7 +41,7 @@ export function finishGenerating(): void {
   if (!isMockMode()) closeStreamIfIdle()
 }
 
-function resetForFile(): void {
+const resetForFile = (): void => {
   stopTicker()
   summaryState.phase = 'loading'
   summaryState.expanded = true
@@ -70,7 +67,7 @@ function resetForFile(): void {
   summaryState.sourceRev = transcript.rev
 }
 
-function summaryReady(d: SummaryResponse): boolean {
+const summaryReady = (d: SummaryResponse): boolean => {
   const hard =
     d.block_reason === 'too_short' ||
     d.block_reason === 'unsupported' ||
@@ -83,11 +80,11 @@ function summaryReady(d: SummaryResponse): boolean {
   return d.capabilities.summary_supported !== false && !hard && !modelMissing
 }
 
-function applyResponse(
+const applyResponse = (
   d: SummaryResponse,
   opts: { openResult?: boolean; silent?: boolean },
   freshFile: boolean,
-): void {
+): void => {
   const wasGenerating = summaryState.generating
   summaryState.settings = d.settings
   summaryState.model = d.model
@@ -162,10 +159,10 @@ function applyResponse(
   summaryState.manualChoice = false
 }
 
-export async function loadSummary(
+export const loadSummary = async (
   file: string,
   opts: { openResult?: boolean; silent?: boolean } = {},
-): Promise<void> {
+): Promise<void> => {
   if (!file) {
     summaryState.file = ''
     summaryState.phase = 'idle'
@@ -189,8 +186,8 @@ export async function loadSummary(
     if (id !== loadSeq) return
     applyResponse(d, opts, freshFile)
   } catch (e) {
-    if (id !== loadSeq || (e as Error)?.name === 'AbortError') return
-    const code = (e as SummaryApiError).code || 'internal'
+    if (id !== loadSeq || isAbortError(e)) return
+    const code = e instanceof SummaryApiError ? e.code : 'internal'
     if (code === 'summary_disabled' || code === 'summary_unsupported') {
       settings.summaryFeature = false
       summaryState.phase = 'idle'
@@ -209,7 +206,7 @@ export async function loadSummary(
   }
 }
 
-export async function loadSummaryPresets(): Promise<void> {
+export const loadSummaryPresets = async (): Promise<void> => {
   if (summaryState.presets.length > 0 && summaryState.systemPromptBase) return
   try {
     const d = await apiJson<SummaryPresetsResponse>('/api/summary/presets')
@@ -220,7 +217,7 @@ export async function loadSummaryPresets(): Promise<void> {
   }
 }
 
-export async function loadSummarySettings(): Promise<void> {
+export const loadSummarySettings = async (): Promise<void> => {
   const d = await apiJson<SummarySettingsResponse>('/api/summary/settings')
   summaryState.settings = d.settings
   summaryState.presets = Array.isArray(d.presets) ? d.presets : summaryState.presets
@@ -230,26 +227,27 @@ export async function loadSummarySettings(): Promise<void> {
   summaryState.gpu = d.gpu
 }
 
-function pathKey(file: string): string {
+const pathKey = (file: string): string => {
   return file.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
 }
 
 // Бэкенд отдаёт путь относительно save_dir, а UI открывает запись абсолютным
 // путём из /api/recordings. Сравниваем хвост пути, пока job_id ещё неизвестен.
-function sameRecording(a?: string | null, b?: string | null): boolean {
+const sameRecording = (a?: string | null, b?: string | null): boolean => {
   if (!a || !b) return false
   if (a === b) return true
   const x = pathKey(a)
   const y = pathKey(b)
-  return x === y || x.endsWith('/' + y) || y.endsWith('/' + x)
+  return x === y || x.endsWith(`/${y}`) || y.endsWith(`/${x}`)
 }
 
-function jobMatches(evt: { job_id?: string; file?: string }): boolean {
+const jobMatches = (evt: { job_id?: string; file?: string }): boolean => {
   if (evt.job_id && summaryState.jobId) return evt.job_id === summaryState.jobId
   return sameRecording(evt.file, summaryState.file)
 }
 
-function handleSummaryEvent(evt: unknown): void {
+const handleSummaryEvent = (evt: unknown): void => {
+  // SAFETY: событие приходит от движка; поля читаются защитно ниже.
   const e = evt as {
     type?: string
     job_id?: string
@@ -314,7 +312,7 @@ function handleSummaryEvent(evt: unknown): void {
   }
 }
 
-function markStaleFromTranscript(): void {
+const markStaleFromTranscript = (): void => {
   if (transcript.rev) summaryState.sourceRev = transcript.rev
   else summaryState.sourceRev = ''
   if (summaryState.record) {

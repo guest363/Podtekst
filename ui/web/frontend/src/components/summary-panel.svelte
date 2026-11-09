@@ -1,187 +1,190 @@
 <script lang="ts">
-  import { tick } from 'svelte'
-  import { isAndroid } from '../lib/api'
-  import { engine, transcript } from '../lib/transcript.svelte.ts'
-  import { settings } from '../lib/settings.svelte.ts'
-  import {
-    cancelSensitive,
-    copySummary,
-    exportSummary,
-    generateSummary,
-    loadSummary,
-    pickPreset,
-    summaryState,
-    toggleSummary,
-    updateStaleSummary,
-  } from '../lib/summary.svelte.ts'
-  import {
-    summaryDuration,
-    summaryPreset,
-    summaryShortDate,
-    summaryWarnings,
-  } from '../lib/summaryUi.ts'
-  import SummaryPresetPicker from './SummaryPresetPicker.svelte'
-  import SummaryResult from './SummaryResult.svelte'
-  import SummaryStage from './SummaryStage.svelte'
-  import SummarySuggestion from './SummarySuggestion.svelte'
+import { tick } from 'svelte'
+import { isAndroid } from '../lib/api'
+import { settings } from '../lib/settings.svelte.ts'
+import {
+  cancelSensitive,
+  copySummary,
+  exportSummary,
+  generateSummary,
+  loadSummary,
+  pickPreset,
+  summaryState,
+  toggleSummary,
+  updateStaleSummary,
+} from '../lib/summary.svelte.ts'
+import {
+  summaryDuration,
+  summaryPreset,
+  summaryShortDate,
+  summaryWarnings,
+} from '../lib/summary-ui.ts'
+import { engine, transcript } from '../lib/transcript.svelte.ts'
+import SummaryPresetPicker from './summary-preset-picker.svelte'
+import SummaryResult from './summary-result.svelte'
+import SummaryStage from './summary-stage.svelte'
+import SummarySuggestion from './summary-suggestion.svelte'
 
-  interface Props {
-    file: string
-    transcriptMarkdown: () => string
-  }
-  let { file, transcriptMarkdown }: Props = $props()
+type Props = {
+  file: string
+  transcriptMarkdown: () => string
+}
+let { file, transcriptMarkdown }: Props = $props()
 
-  let panelEl = $state<HTMLElement | null>(null)
-  let toggleBtn = $state<HTMLButtonElement | null>(null)
-  let pickerOpen = $state(false)
-  let pickerAnchor = $state<HTMLElement | null>(null)
-  let loadedFor = ''
-  let wasGenerating = false
+let panelEl = $state<HTMLElement | null>(null)
+let toggleBtn = $state<HTMLButtonElement | null>(null)
+let pickerOpen = $state(false)
+let pickerAnchor = $state<HTMLElement | null>(null)
+let loadedFor = ''
+let wasGenerating = false
 
-  $effect(() => {
-    if (file && file !== loadedFor && settings.summaryFeature !== false) {
-      loadedFor = file
-      void loadSummary(file)
-    }
-  })
+$effect(() => {
+  if (file && file !== loadedFor && settings.summaryFeature !== false) {
+    loadedFor = file
+    void loadSummary(file)
+  }
+})
 
-  const visible = $derived(
-    !isAndroid &&
-      settings.summaryFeature !== false &&
-      transcript.hasText &&
-      summaryState.capabilities?.summary_supported !== false &&
-      summaryState.blockReason !== 'no_text',
-  )
-  const classification = $derived(
-    summaryState.phase === 'suggest' && !summaryState.record && summaryState.classification?.preset_id
-      ? summaryState.classification
-      : null,
-  )
-  const currentPreset = $derived(
-    summaryPreset(
-      summaryState.phase === 'confirm-sensitive'
-        ? summaryState.pendingPresetId || summaryState.chosenPresetId
-        : summaryState.record?.preset_id ||
-            summaryState.chosenPresetId ||
-            summaryState.classification?.preset_id ||
-            '',
-      summaryState.presets,
-    ),
-  )
-  const warnings = $derived(summaryState.record ? summaryWarnings(summaryState.record) : [])
-  const hardBlock = $derived(
-    summaryState.blockReason === 'too_short' ||
-      summaryState.blockReason === 'unsupported' ||
-      summaryState.blockReason === 'runtime_missing' ||
-      summaryState.blockReason === 'low_memory',
-  )
-  const softBlock = $derived(
-    summaryState.blockReason === 'transcribing' ||
-      summaryState.blockReason === 'recording' ||
-      summaryState.blockReason === 'busy_summary' ||
-      engine.running,
-  )
-  const modelMissing = $derived(
-    summaryState.blockReason === 'model_missing' ||
-      summaryState.blockReason === 'model_download' ||
-      summaryState.model?.is_installed === false,
-  )
-  const primaryPreset = $derived(
-    summaryPreset(
-      summaryState.chosenPresetId ||
-        summaryState.classification?.preset_id ||
-        summaryState.settings?.default_preset ||
-        '',
-      summaryState.presets,
-    ),
-  )
-  const canGenerate = $derived(!hardBlock && !softBlock && !modelMissing && Boolean(primaryPreset))
-  const canRegenerate = $derived(
-    !hardBlock && !softBlock && !modelMissing && Boolean(summaryState.record?.preset_id || primaryPreset),
-  )
-  const softBlockText = $derived.by(() => {
-    if (summaryState.blockReason === 'transcribing') {
-      return 'Идёт расшифровка. Итоги можно собрать после её окончания.'
-    }
-    if (summaryState.blockReason === 'recording') {
-      return 'Идёт запись. Итоги можно собрать после её окончания.'
-    }
-    if (summaryState.blockReason === 'busy_summary') {
-      return 'Итоги уже собираются для другой записи. Повторите позже.'
-    }
-    if (engine.running) {
-      return 'Идёт расшифровка. Итоги можно собрать после её окончания.'
-    }
-    return ''
-  })
-  const barStatus = $derived.by(() => {
-    if (summaryState.phase === 'loading') return 'Загружаю итоги…'
-    if (summaryState.phase === 'generating') return `Собираю итоги… ${summaryState.pct}%`
-    if (summaryState.phase === 'error') return 'Не удалось собрать итоги'
-    if (summaryState.phase === 'confirm-sensitive') return 'Нужно подтверждение'
-    if (summaryState.phase === 'result' && summaryState.record) {
-      return `Готово · ${summaryShortDate(summaryState.record.created_at)} · ${summaryDuration(summaryState.record.duration_ms)}`
-    }
-    return ''
-  })
-  const liveText = $derived.by(() => {
-    if (summaryState.phase === 'generating') return summaryState.stage || 'Собираю итоги'
-    if (summaryState.phase === 'result' && summaryState.record) return 'Итоги готовы'
-    if (summaryState.phase === 'error') return 'Не удалось собрать итоги'
-    return ''
-  })
+const visible = $derived(
+  !isAndroid &&
+    settings.summaryFeature !== false &&
+    transcript.hasText &&
+    summaryState.capabilities?.summary_supported !== false &&
+    summaryState.blockReason !== 'no_text',
+)
+const classification = $derived(
+  summaryState.phase === 'suggest' && !summaryState.record && summaryState.classification?.preset_id
+    ? summaryState.classification
+    : null,
+)
+const currentPreset = $derived(
+  summaryPreset(
+    summaryState.phase === 'confirm-sensitive'
+      ? summaryState.pendingPresetId || summaryState.chosenPresetId
+      : summaryState.record?.preset_id ||
+          summaryState.chosenPresetId ||
+          summaryState.classification?.preset_id ||
+          '',
+    summaryState.presets,
+  ),
+)
+const warnings = $derived(summaryState.record ? summaryWarnings(summaryState.record) : [])
+const hardBlock = $derived(
+  summaryState.blockReason === 'too_short' ||
+    summaryState.blockReason === 'unsupported' ||
+    summaryState.blockReason === 'runtime_missing' ||
+    summaryState.blockReason === 'low_memory',
+)
+const softBlock = $derived(
+  summaryState.blockReason === 'transcribing' ||
+    summaryState.blockReason === 'recording' ||
+    summaryState.blockReason === 'busy_summary' ||
+    engine.running,
+)
+const modelMissing = $derived(
+  summaryState.blockReason === 'model_missing' ||
+    summaryState.blockReason === 'model_download' ||
+    summaryState.model?.is_installed === false,
+)
+const primaryPreset = $derived(
+  summaryPreset(
+    summaryState.chosenPresetId ||
+      summaryState.classification?.preset_id ||
+      summaryState.settings?.default_preset ||
+      '',
+    summaryState.presets,
+  ),
+)
+const canGenerate = $derived(!hardBlock && !softBlock && !modelMissing && Boolean(primaryPreset))
+const canRegenerate = $derived(
+  !hardBlock &&
+    !softBlock &&
+    !modelMissing &&
+    Boolean(summaryState.record?.preset_id || primaryPreset),
+)
+const softBlockText = $derived.by(() => {
+  if (summaryState.blockReason === 'transcribing') {
+    return 'Идёт расшифровка. Итоги можно собрать после её окончания.'
+  }
+  if (summaryState.blockReason === 'recording') {
+    return 'Идёт запись. Итоги можно собрать после её окончания.'
+  }
+  if (summaryState.blockReason === 'busy_summary') {
+    return 'Итоги уже собираются для другой записи. Повторите позже.'
+  }
+  if (engine.running) {
+    return 'Идёт расшифровка. Итоги можно собрать после её окончания.'
+  }
+  return ''
+})
+const barStatus = $derived.by(() => {
+  if (summaryState.phase === 'loading') return 'Загружаю итоги…'
+  if (summaryState.phase === 'generating') return `Собираю итоги… ${summaryState.pct}%`
+  if (summaryState.phase === 'error') return 'Не удалось собрать итоги'
+  if (summaryState.phase === 'confirm-sensitive') return 'Нужно подтверждение'
+  if (summaryState.phase === 'result' && summaryState.record) {
+    return `Готово · ${summaryShortDate(summaryState.record.created_at)} · ${summaryDuration(summaryState.record.duration_ms)}`
+  }
+  return ''
+})
+const liveText = $derived.by(() => {
+  if (summaryState.phase === 'generating') return summaryState.stage || 'Собираю итоги'
+  if (summaryState.phase === 'result' && summaryState.record) return 'Итоги готовы'
+  if (summaryState.phase === 'error') return 'Не удалось собрать итоги'
+  return ''
+})
 
-  $effect(() => {
-    if (summaryState.phase === 'generating') wasGenerating = true
-    if (summaryState.phase === 'result' && wasGenerating) {
-      const inside = panelEl?.contains(document.activeElement)
-      wasGenerating = false
-      if (inside) {
-        void tick().then(() => panelEl?.querySelector<HTMLElement>('.summary-heading')?.focus())
-      }
+$effect(() => {
+  if (summaryState.phase === 'generating') wasGenerating = true
+  if (summaryState.phase === 'result' && wasGenerating) {
+    const inside = panelEl?.contains(document.activeElement)
+    wasGenerating = false
+    if (inside) {
+      void tick().then(() => panelEl?.querySelector<HTMLElement>('.summary-heading')?.focus())
     }
-  })
+  }
+})
 
-  function openPickerAt(e: MouseEvent): void {
-    pickerAnchor = e.currentTarget as HTMLElement
-    pickerOpen = true
+const openPickerAt = (e: MouseEvent): void => {
+  pickerAnchor = e.currentTarget instanceof HTMLElement ? e.currentTarget : null
+  pickerOpen = true
+}
+const openPicker = (): void => {
+  pickerAnchor = panelEl
+  pickerOpen = true
+}
+const closePicker = (): void => {
+  pickerOpen = false
+}
+const choose = (id: string): void => {
+  pickerOpen = false
+  void pickPreset(id)
+}
+const regenerate = (): void => {
+  const record = summaryState.record
+  if (record) void generateSummary(record.preset_id, { force: true })
+}
+const onWindowKey = (e: KeyboardEvent): void => {
+  if (!visible || e.key !== 'Escape') return
+  if (pickerOpen) {
+    e.preventDefault()
+    e.stopPropagation()
+    closePicker()
+    return
   }
-  function openPicker(): void {
-    pickerAnchor = panelEl
-    pickerOpen = true
+  if (summaryState.phase === 'confirm-sensitive') {
+    e.preventDefault()
+    e.stopPropagation()
+    cancelSensitive()
+    return
   }
-  function closePicker(): void {
-    pickerOpen = false
+  if (summaryState.expanded && panelEl?.contains(document.activeElement)) {
+    e.preventDefault()
+    e.stopPropagation()
+    toggleSummary()
+    toggleBtn?.focus()
   }
-  function choose(id: string): void {
-    pickerOpen = false
-    void pickPreset(id)
-  }
-  function regenerate(): void {
-    const record = summaryState.record
-    if (record) void generateSummary(record.preset_id, { force: true })
-  }
-  function onWindowKey(e: KeyboardEvent): void {
-    if (!visible || e.key !== 'Escape') return
-    if (pickerOpen) {
-      e.preventDefault()
-      e.stopPropagation()
-      closePicker()
-      return
-    }
-    if (summaryState.phase === 'confirm-sensitive') {
-      e.preventDefault()
-      e.stopPropagation()
-      cancelSensitive()
-      return
-    }
-    if (summaryState.expanded && panelEl?.contains(document.activeElement)) {
-      e.preventDefault()
-      e.stopPropagation()
-      toggleSummary()
-      toggleBtn?.focus()
-    }
-  }
+}
 </script>
 
 <svelte:window onkeydowncapture={onWindowKey} />

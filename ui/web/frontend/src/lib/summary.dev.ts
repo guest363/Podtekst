@@ -1,5 +1,6 @@
 // Production не импортирует: стенд включается только `?summary_mock=1`
 // в dev-сборке, пока backend-маршруты /api/summary* ещё не подняты.
+
 import type {
   SummaryClassification,
   SummaryGpuStatus,
@@ -8,6 +9,7 @@ import type {
   SummaryRecord,
   SummarySettings,
 } from './api'
+import { isRecord } from './guards.ts'
 import { emit } from './ui.svelte.ts'
 
 const PRESETS: SummaryPreset[] = [
@@ -47,8 +49,16 @@ const PRESETS: SummaryPreset[] = [
     id: 'psychology',
     label: 'Психологическая сессия',
     short: 'Сессия или доверительный разговор.',
-    caution: 'Это заметки о разговоре, не медицинская консультация и не диагноз. Проверьте формулировки.',
-    sections: ['topics', 'client_words', 'observations', 'agreements', 'next_session', 'open_topics'],
+    caution:
+      'Это заметки о разговоре, не медицинская консультация и не диагноз. Проверьте формулировки.',
+    sections: [
+      'topics',
+      'client_words',
+      'observations',
+      'agreements',
+      'next_session',
+      'open_topics',
+    ],
     sensitive: true,
   },
   {
@@ -87,7 +97,12 @@ const MODEL: SummaryModelInfo = {
   min_system_ram_mb: 12288,
 }
 
-let settings: SummarySettings = { auto_suggest: true, default_preset: null, detail: 'normal', gpu: 'auto' }
+const settings: SummarySettings = {
+  auto_suggest: true,
+  default_preset: null,
+  detail: 'normal',
+  gpu: 'auto',
+}
 const mocks: { gpu: SummaryGpuStatus } = {
   gpu: {
     supported: true,
@@ -115,9 +130,16 @@ const mocks: { gpu: SummaryGpuStatus } = {
 }
 let record: SummaryRecord | null = null
 let seq = 0
-let job: { id: string; file: string; phase: string; pct: number; timers: number[]; cancelled: boolean } | null = null
+let job: {
+  id: string
+  file: string
+  phase: string
+  pct: number
+  timers: number[]
+  cancelled: boolean
+} | null = null
 
-function classification(): SummaryClassification {
+const classification = (): SummaryClassification => {
   return {
     preset_id: 'meeting',
     confidence: 'high',
@@ -134,7 +156,7 @@ function classification(): SummaryClassification {
   }
 }
 
-function buildMarkdown(preset: SummaryPreset): string {
+const buildMarkdown = (preset: SummaryPreset): string => {
   return [
     '# Итоги встречи',
     '',
@@ -153,11 +175,11 @@ function buildMarkdown(preset: SummaryPreset): string {
   ].join('\n')
 }
 
-function buildRecord(presetId: string, file: string): SummaryRecord {
+const buildRecord = (presetId: string, file: string): SummaryRecord => {
   const preset = PRESETS.find((p) => p.id === presetId) ?? PRESETS[0]
   return {
-    id: 'mock-summary-' + seq,
-    job_id: job?.id || 'mock-job-' + seq,
+    id: `mock-summary-${seq}`,
+    job_id: job?.id || `mock-job-${seq}`,
     file,
     preset_id: preset.id,
     preset_label: preset.label,
@@ -217,12 +239,12 @@ function buildRecord(presetId: string, file: string): SummaryRecord {
   }
 }
 
-function clearJob(): void {
+const clearJob = (): void => {
   if (job) for (const timer of job.timers) clearTimeout(timer)
   job = null
 }
 
-function emitStage(phase: string, pct: number, chunk?: number, chunks?: number): void {
+const emitStage = (phase: string, pct: number, chunk?: number, chunks?: number): void => {
   if (!job || job.cancelled) return
   job.phase = phase
   job.pct = pct
@@ -236,10 +258,10 @@ function emitStage(phase: string, pct: number, chunk?: number, chunks?: number):
   })
 }
 
-function startJob(file: string, presetId: string): { job_id: string; started: boolean } {
+const startJob = (file: string, presetId: string): { job_id: string; started: boolean } => {
   clearJob()
   seq += 1
-  const id = 'mock-job-' + seq
+  const id = `mock-job-${seq}`
   const timers: number[] = []
   job = { id, file, phase: 'load', pct: 0, timers, cancelled: false }
   const later = (ms: number, fn: () => void) => timers.push(window.setTimeout(fn, ms))
@@ -259,7 +281,7 @@ function startJob(file: string, presetId: string): { job_id: string; started: bo
   return { job_id: id, started: true }
 }
 
-function summaryResponse(file: string): unknown {
+const summaryResponse = (_file: string): unknown => {
   const active = job
     ? {
         job_id: job.id,
@@ -291,15 +313,16 @@ function summaryResponse(file: string): unknown {
   }
 }
 
-function parseBody(init?: RequestInit): Record<string, unknown> {
+const parseBody = (init?: RequestInit): Record<string, unknown> => {
   try {
-    return JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+    const parsed: unknown = JSON.parse(String(init?.body || '{}'))
+    return isRecord(parsed) ? parsed : {}
   } catch {
     return {}
   }
 }
 
-export async function request(path: string, init?: RequestInit): Promise<unknown> {
+export const request = async (path: string, init?: RequestInit): Promise<unknown> => {
   const url = new URL(path, 'http://mock.local')
   if (url.pathname === '/api/summary') {
     return summaryResponse(url.searchParams.get('file') || '')
@@ -312,7 +335,7 @@ export async function request(path: string, init?: RequestInit): Promise<unknown
       const body = parseBody(init)
       if (typeof body.auto_suggest === 'boolean') settings.auto_suggest = body.auto_suggest
       if (body.default_preset === null || typeof body.default_preset === 'string') {
-        settings.default_preset = body.default_preset as string | null
+        settings.default_preset = body.default_preset
       }
       if (body.detail === 'short' || body.detail === 'normal' || body.detail === 'long') {
         settings.detail = body.detail
@@ -344,7 +367,12 @@ export async function request(path: string, init?: RequestInit): Promise<unknown
     return { ok: true, ...mocks.gpu }
   }
   if (url.pathname === '/api/summary/classify') {
-    return { ok: true, classification: classification(), source_rev: 'mock-rev-1', cache_hit: false }
+    return {
+      ok: true,
+      classification: classification(),
+      source_rev: 'mock-rev-1',
+      cache_hit: false,
+    }
   }
   if (url.pathname === '/api/summary/generate') {
     const body = parseBody(init)

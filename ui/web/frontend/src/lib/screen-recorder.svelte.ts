@@ -2,7 +2,7 @@
 // Захват экрана и склейка выполняются нативно на стороне Rust-ядра.
 import { toast } from './toast.svelte.ts'
 
-export interface ScreenRecorderState {
+export type ScreenRecorderState = {
   enabled: boolean
   active: boolean
   error: string | null
@@ -16,7 +16,7 @@ export const screenRecorder = $state<ScreenRecorderState>({
   supported: true,
 })
 
-export function isScreenCaptureSupported(): boolean {
+export const isScreenCaptureSupported = (): boolean => {
   if (typeof window === 'undefined') return false
   if (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
     return false
@@ -24,11 +24,11 @@ export function isScreenCaptureSupported(): boolean {
   return screenRecorder.supported
 }
 
-export function updateScreenSupport(supported: boolean): void {
+export const updateScreenSupport = (supported: boolean): void => {
   screenRecorder.supported = supported
 }
 
-export function toggleScreenCapture(): boolean {
+export const toggleScreenCapture = (): boolean => {
   screenRecorder.enabled = !screenRecorder.enabled
   if (screenRecorder.enabled) {
     toast('Запись экрана включена')
@@ -38,7 +38,7 @@ export function toggleScreenCapture(): boolean {
   return screenRecorder.enabled
 }
 
-export function cancelScreenSelection(): void {
+export const cancelScreenSelection = (): void => {
   screenRecorder.enabled = false
   screenRecorder.active = false
   toast('Запись экрана выключена')

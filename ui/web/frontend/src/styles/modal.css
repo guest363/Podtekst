@@ -6,29 +6,72 @@ body:has(.app-drawer-overlay) {
 
 .modal-overlay {
   /* Выше шторок (45–46): модалка, открытая из настроек/списка, должна быть видна. */
-  display: none; position: fixed; inset: 0; z-index: 80;
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 80;
   background: rgba(15, 30, 51, 0.55);
   backdrop-filter: blur(6px);
-  align-items: flex-start; justify-content: center;
+  align-items: flex-start;
+  justify-content: center;
   padding: 28px 16px;
   overflow-y: auto;
 }
-.modal-overlay.open { display: flex; animation: fadeIn 220ms var(--ease-spring); }
-@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.modal-overlay.open {
+  display: flex;
+  animation: fadeIn 220ms var(--ease-spring);
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
 .modal-box {
-  background: #fff; border-radius: var(--radius-card); padding: 22px;
-  max-width: 520px; width: 100%;
-  display: flex; flex-direction: column; gap: 14px;
+  background: #fff;
+  border-radius: var(--radius-card);
+  padding: 22px;
+  max-width: 520px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   box-shadow: var(--shadow-modal);
   animation: riseIn 320ms var(--ease-spring);
   margin: auto;
 }
-@keyframes riseIn { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
-.modal-title { font-size: 16px; font-weight: 800; letter-spacing: -0.01em; }
-.modal-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-.modal-top .modal-title { flex: 1; }
-.donate-box { max-width: 440px; }
-.intro-box { max-width: 580px; }
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.modal-title {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.modal-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.modal-top .modal-title {
+  flex: 1;
+}
+.donate-box {
+  max-width: 440px;
+}
+.intro-box {
+  max-width: 580px;
+}
 
 /* ---------- Унифицированные шторки (Drawers) ---------- */
 .app-drawer-overlay {
