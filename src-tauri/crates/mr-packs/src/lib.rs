@@ -4,7 +4,7 @@ pub mod transfer;
 
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 pub use manifest::{
     create_pack, create_pack_with_space, delete_pack, ensure_default_pack, get_active_packs,
@@ -166,6 +166,29 @@ pub(crate) fn validate_pack_id(pack_id: &str) -> Result<&str> {
         )));
     }
     Ok(pack_id)
+}
+
+/// Путь сниппета из `voiceprints.json` (в том числе импортированного пакета):
+/// только относительный путь из обычных компонентов.
+pub(crate) fn safe_snippet_rel(rel: &str) -> Option<&Path> {
+    let path = Path::new(rel);
+    if rel.is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_)))
+    {
+        return None;
+    }
+    Some(path)
+}
+
+/// Сниппет существует и после канонизации лежит внутри каталога пакета.
+pub fn safe_snippet_path(pack_dir: &Path, rel: &str) -> Option<PathBuf> {
+    let rel = safe_snippet_rel(rel)?;
+    let root = pack_dir.canonicalize().ok()?;
+    let candidate = pack_dir.join(rel).canonicalize().ok()?;
+    (candidate.starts_with(&root) && candidate.is_file()).then_some(candidate)
 }
 
 /// Атомарная запись JSON (tmp + rename): крах процесса не оставляет битый файл.

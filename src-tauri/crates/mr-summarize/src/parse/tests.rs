@@ -38,6 +38,15 @@ fn tolerant_parser_recovers_lists_and_labels() {
 }
 
 #[test]
+fn label_only_task_does_not_underflow() {
+    let output = "## Задачи\nЗадача: Кто: Анна\n- Срок: завтра\n- Подготовить отчёт.\n";
+    let parsed = parse(output, p("meeting")).unwrap();
+    let tasks = &parsed.sections[2];
+    assert_eq!(tasks.items.len(), 1);
+    assert_eq!(tasks.items[0].text, "Подготовить отчёт.");
+}
+
+#[test]
 fn plain_lines_are_recovered_never_dropped() {
     let output = "## Кратко\nОбычная строка без маркера.\nВторая строка.\n";
     let parsed = parse(output, p("meeting")).unwrap();

@@ -174,6 +174,7 @@ pub fn write_stereo_wav(
 
 pub mod capture;
 pub mod decode;
+pub mod dsp;
 pub mod echo;
 pub mod tools;
 pub use decode::has_audio_track;
