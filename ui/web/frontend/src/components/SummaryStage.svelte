@@ -95,7 +95,7 @@
       <div class="vu-bar" style={`width: ${summaryState.pct}%`}></div>
     </div>
     <div class="summary-progress-foot">
-      <span class="help-text">Итоги появятся после завершения. Прошло {summaryElapsed(summaryState.elapsedSec)}.</span>
+      <span class="help-text">Прошло {summaryElapsed(summaryState.elapsedSec)}</span>
       <button
         class="btn-secondary btn-sm"
         disabled={!summaryState.jobId}

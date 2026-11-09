@@ -45,12 +45,6 @@
     }
   })
 
-  $effect(() => {
-    if (!summaryState.expanded) {
-      summaryState.expanded = true
-    }
-  })
-
   const visible = $derived(
     !isAndroid &&
       settings.summaryFeature !== false &&
@@ -130,6 +124,15 @@
     }
     return ''
   })
+  const hasVisibleBadges = $derived(
+    Boolean(
+      (currentPreset && summaryState.record) ||
+      (summaryState.phase === 'result' && summaryState.record) ||
+      (currentPreset?.sensitive && summaryState.record) ||
+      summaryState.stale ||
+      warnings.length > 0,
+    ),
+  )
   const liveText = $derived.by(() => {
     if (summaryState.phase === 'generating') return summaryState.stage || 'Собираю итоги'
     if (summaryState.phase === 'result' && summaryState.record) return 'Итоги готовы'
@@ -200,44 +203,48 @@
     aria-busy={summaryState.generating}
     bind:this={panelEl}
   >
-    <div class="summary-bar">
-      <div class="summary-head">
-        <h2 class="summary-title" id="summary-title">Итоги встречи</h2>
-        <div class="summary-badges">
-          {#if currentPreset && summaryState.record}
-            <span class="summary-badge preset">{currentPreset.label}</span>
+    {#if !summaryState.expanded || hasVisibleBadges}
+      <div class="summary-bar">
+        <div class="summary-head">
+          <h2 class="summary-title" id="summary-title">Итоги встречи</h2>
+          {#if hasVisibleBadges}
+            <div class="summary-badges">
+              {#if currentPreset && summaryState.record}
+                <span class="summary-badge preset">{currentPreset.label}</span>
+              {/if}
+              {#if summaryState.phase === 'result' && summaryState.record}
+                <span class="summary-badge ok">Сгенерировано</span>
+              {/if}
+              {#if currentPreset?.sensitive && summaryState.record}
+                <span class="summary-badge draft">Черновик</span>
+              {/if}
+              {#if summaryState.stale}
+                <span class="summary-badge warn">Расшифровка изменена</span>
+              {/if}
+              {#if warnings.length > 0}
+                <span class="summary-badge warn">Есть замечания</span>
+              {/if}
+            </div>
           {/if}
-          {#if summaryState.phase === 'result' && summaryState.record}
-            <span class="summary-badge ok">Сгенерировано</span>
-          {/if}
-          {#if currentPreset?.sensitive && summaryState.record}
-            <span class="summary-badge draft">Черновик</span>
-          {/if}
-          {#if summaryState.stale}
-            <span class="summary-badge warn">Расшифровка изменена</span>
-          {/if}
-          {#if warnings.length > 0}
-            <span class="summary-badge warn">Есть замечания</span>
-          {/if}
+          <button
+            type="button"
+            class="summary-toggle"
+            aria-expanded={summaryState.expanded}
+            aria-controls="summary-body"
+            bind:this={toggleBtn}
+            onclick={toggleSummary}
+          >
+            <span>{summaryState.expanded ? 'Свернуть' : 'Открыть'}</span>
+            <svg class="summary-toggle-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m6 9 6 6 6-6"></path>
+            </svg>
+          </button>
         </div>
-        <button
-          type="button"
-          class="summary-toggle"
-          aria-expanded={summaryState.expanded}
-          aria-controls="summary-body"
-          bind:this={toggleBtn}
-          onclick={toggleSummary}
-        >
-          <span>{summaryState.expanded ? 'Свернуть' : 'Открыть'}</span>
-          <svg class="summary-toggle-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="m6 9 6 6 6-6"></path>
-          </svg>
-        </button>
+        {#if barStatus && !summaryState.expanded}
+          <div class="summary-status">{barStatus}</div>
+        {/if}
       </div>
-      {#if barStatus}
-        <div class="summary-status">{barStatus}</div>
-      {/if}
-    </div>
+    {/if}
 
     {#if summaryState.expanded}
       <div class="summary-body" id="summary-body">
@@ -294,7 +301,8 @@
     border-radius: var(--radius-inner); padding: 10px 12px; min-width: 0;
   }
   :global(.transcript-summary-wrap) .summary-title,
-  :global(.transcript-summary-wrap) .summary-toggle {
+  :global(.transcript-summary-wrap) .summary-toggle,
+  :global(.transcript-summary-wrap) .summary-status {
     display: none;
   }
   :global(.transcript-summary-wrap) .summary-block {

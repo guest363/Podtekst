@@ -70,7 +70,24 @@ function resetForFile(): void {
   summaryState.sourceRev = transcript.rev
 }
 
-function applyResponse(d: SummaryResponse, opts: { openResult?: boolean }): void {
+function summaryReady(d: SummaryResponse): boolean {
+  const hard =
+    d.block_reason === 'too_short' ||
+    d.block_reason === 'unsupported' ||
+    d.block_reason === 'runtime_missing' ||
+    d.block_reason === 'low_memory'
+  const modelMissing =
+    d.block_reason === 'model_missing' ||
+    d.block_reason === 'model_download' ||
+    d.model?.is_installed === false
+  return d.capabilities.summary_supported !== false && !hard && !modelMissing
+}
+
+function applyResponse(
+  d: SummaryResponse,
+  opts: { openResult?: boolean; silent?: boolean },
+  freshFile: boolean,
+): void {
   const wasGenerating = summaryState.generating
   summaryState.settings = d.settings
   summaryState.model = d.model
@@ -91,7 +108,7 @@ function applyResponse(d: SummaryResponse, opts: { openResult?: boolean }): void
       sameRecording(d.active.file, summaryState.file))
   ) {
     summaryState.phase = 'generating'
-    summaryState.expanded = true
+    if (freshFile || !opts.silent) summaryState.expanded = true
     summaryState.generating = true
     summaryState.jobId = d.active.job_id
     summaryState.jobFile = d.active.file || summaryState.file
@@ -125,14 +142,16 @@ function applyResponse(d: SummaryResponse, opts: { openResult?: boolean }): void
     summaryState.phase = 'result'
     summaryState.notice = ''
     summaryState.stale = d.summary.source_rev !== (d.source_rev || summaryState.sourceRev)
-    summaryState.expanded = opts.openResult ?? false
+    summaryState.expanded = opts.openResult ?? (freshFile || summaryState.expanded)
     summaryState.chosenPresetId = d.summary.preset_id
     summaryState.manualChoice = d.classification?.user_override === true
     return
   }
 
   summaryState.phase = 'suggest'
-  summaryState.expanded = d.settings.auto_suggest !== false
+  if (freshFile) {
+    summaryState.expanded = summaryReady(d) && d.settings.auto_suggest !== false
+  }
   summaryState.stale = false
   if (wasGenerating) summaryState.notice = 'Сборка остановлена.'
   const suggested =
@@ -168,7 +187,7 @@ export async function loadSummary(
       signal: abort.signal,
     })
     if (id !== loadSeq) return
-    applyResponse(d, opts)
+    applyResponse(d, opts, freshFile)
   } catch (e) {
     if (id !== loadSeq || (e as Error)?.name === 'AbortError') return
     const code = (e as SummaryApiError).code || 'internal'
