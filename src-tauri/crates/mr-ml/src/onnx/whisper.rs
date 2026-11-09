@@ -231,8 +231,7 @@ impl Whisper {
     }
 }
 
-/// Уровень цифровой тишины в нормализованной мел-шкале Whisper: отсечка
-/// динамики `global_max - 8 дБ`, затем `(x + 4) / 4` (см. `whisper_mel`).
+/// Контракт `whisper_mel`: тишина — `global_max - 8 дБ`, затем `(x + 4) / 4`.
 fn whisper_silence_floor(mel: &[Vec<f32>]) -> f32 {
     let max = mel
         .iter()
