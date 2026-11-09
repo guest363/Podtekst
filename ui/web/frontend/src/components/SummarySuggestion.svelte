@@ -103,28 +103,23 @@
 
   <div class="summary-actions">
     {#if primaryPreset && !modelMissing}
-      <div class="summary-split">
-        <button
-          class="summary-cta-main"
-          disabled={!canGenerate}
-          onclick={() => void pickPreset(primaryPreset.id)}
-        >
-          Сделать по шаблону «{primaryPreset.label}»
-        </button>
-        <button
-          type="button"
-          class="summary-cta-caret"
-          aria-label="Изменить шаблон"
-          aria-haspopup="dialog"
-          onclick={(e) => onopenpickerat(e)}
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="m6 9 6 6 6-6"></path>
-          </svg>
-        </button>
-      </div>
+      <button
+        class="btn-primary"
+        disabled={!canGenerate}
+        title={!canGenerate && blockingText ? blockingText : undefined}
+        onclick={() => void pickPreset(primaryPreset.id)}
+      >
+        Собрать по шаблону «{primaryPreset.label}»
+      </button>
+      <button
+        type="button"
+        class="btn-secondary"
+        onclick={(e) => onopenpickerat(e)}
+      >
+        Сменить шаблон
+      </button>
     {:else if !modelMissing}
-      <button class="summary-ghost" onclick={(e) => onopenpickerat(e)}>Выбрать шаблон</button>
+      <button class="btn-primary" onclick={(e) => onopenpickerat(e)}>Выбрать шаблон</button>
     {/if}
   </div>
 
@@ -210,76 +205,9 @@
   .summary-actions {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     flex-wrap: wrap;
   }
-
-  .summary-split {
-    display: inline-flex;
-    align-items: stretch;
-    max-width: 100%;
-    min-height: 34px;
-    border: 1px solid var(--accent-blue);
-    border-radius: var(--radius-inner);
-    background: var(--accent-blue);
-    box-shadow: 0 1px 2px rgba(15, 30, 51, 0.08);
-    overflow: hidden;
-  }
-  .summary-cta-main {
-    display: inline-flex;
-    align-items: center;
-    min-width: 0;
-    padding: 6px 12px;
-    border: 0;
-    background: transparent;
-    color: #fff;
-    font: inherit;
-    font-size: 12.5px;
-    font-weight: 600;
-    line-height: 1.35;
-    text-align: left;
-    cursor: pointer;
-    transition: background 160ms var(--ease-spring), opacity 160ms var(--ease-spring);
-  }
-  .summary-cta-main:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
-  .summary-cta-main:active:not(:disabled) { background: rgba(255, 255, 255, 0.2); }
-  .summary-cta-main:disabled { opacity: 0.5; cursor: wait; }
-  .summary-cta-caret {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    flex-shrink: 0;
-    border: 0;
-    border-left: 1px solid rgba(255, 255, 255, 0.25);
-    background: transparent;
-    color: #fff;
-    cursor: pointer;
-    transition: background 160ms var(--ease-spring);
-  }
-  .summary-cta-caret:hover { background: rgba(255, 255, 255, 0.12); }
-  .summary-cta-caret:active { background: rgba(255, 255, 255, 0.2); }
-
-  .summary-ghost {
-    display: inline-flex;
-    align-items: center;
-    min-height: 38px;
-    padding: 7px 14px;
-    border: 1px solid rgba(15, 30, 51, 0.12);
-    border-radius: var(--radius-pill);
-    background: #fff;
-    color: #334155;
-    font: inherit;
-    font-size: 12.5px;
-    font-weight: 600;
-    cursor: pointer;
-    transition:
-      background 200ms var(--ease-spring),
-      border-color 200ms var(--ease-spring),
-      transform 200ms var(--ease-spring);
-  }
-  .summary-ghost:hover { background: #f8fafc; border-color: rgba(15, 30, 51, 0.2); }
-  .summary-ghost:active { transform: scale(0.985); }
 
   .summary-why {
     padding-top: 10px;
@@ -327,9 +255,6 @@
   }
   .summary-privacy svg { flex-shrink: 0; margin-top: 1px; opacity: 0.8; }
 
-  .summary-cta-main:focus-visible,
-  .summary-cta-caret:focus-visible,
-  .summary-ghost:focus-visible,
   .summary-why summary:focus-visible,
   .summary-model-download:focus-visible {
     outline: 2px solid var(--accent-blue);
@@ -339,14 +264,16 @@
   @media (max-width: 720px) {
     .summary-suggest { gap: 12px; }
     .summary-actions { flex-direction: column; align-items: stretch; }
-    .summary-split, .summary-ghost { width: 100%; }
-    .summary-cta-main { flex: 1; justify-content: flex-start; min-height: 42px; }
-    .summary-cta-caret { width: 44px; }
+    .summary-actions .btn-primary,
+    .summary-actions .btn-secondary {
+      width: 100%;
+      min-height: 40px;
+      justify-content: center;
+    }
     .summary-model > .btn-primary { width: 100%; min-height: 40px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .summary-cta-main, .summary-cta-caret, .summary-ghost,
     .summary-why-chevron { transition: none; }
   }
 </style>
