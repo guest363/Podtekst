@@ -134,15 +134,34 @@ pub(crate) fn extract_utterance_embedding(
     if !mr_audio::has_audio_track(audio) {
         return Err("Файл не содержит аудиодорожки".to_string());
     }
-    let channels = decode_to_channels_16k_auto(audio).map_err(|e| e.to_string())?;
-    let ch = channel.unwrap_or(0).max(0) as usize;
-    let samples = channels
-        .get(ch)
-        .or(channels.first())
-        .ok_or_else(|| "Файл не содержит аудиодорожки".to_string())?;
-    let lo = ((start.max(0.0) * 16000.0) as usize).min(samples.len());
-    let hi = ((end.max(start).max(0.0) * 16000.0) as usize).min(samples.len());
-    if hi.saturating_sub(lo) < (16000.0 * 0.4) as usize {
+    let snippet = audio
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("wav"))
+        .then(|| {
+            mr_audio::decode::decode_wav_range_16k(
+                audio,
+                start,
+                end,
+                channel.map(|c| c.max(0) as usize),
+            )
+            .ok()
+        })
+        .flatten();
+    let samples: Vec<f32> = match snippet {
+        Some(samples) => samples,
+        None => {
+            let channels = decode_to_channels_16k_auto(audio).map_err(|e| e.to_string())?;
+            let ch = channel.unwrap_or(0).max(0) as usize;
+            let samples = channels
+                .get(ch)
+                .or(channels.first())
+                .ok_or_else(|| "Файл не содержит аудиодорожки".to_string())?;
+            let lo = ((start.max(0.0) * 16000.0) as usize).min(samples.len());
+            let hi = ((end.max(start).max(0.0) * 16000.0) as usize).min(samples.len());
+            samples[lo..hi].to_vec()
+        }
+    };
+    if samples.len() < (16000.0 * 0.4) as usize {
         return Err("Фрагмент короче 0.4 с: голос не извлечь".to_string());
     }
     let mut models = ModelsGuard::take()?;
@@ -152,7 +171,7 @@ pub(crate) fn extract_utterance_embedding(
         .ok_or_else(|| {
             "Нет модели голосовых отпечатков. Скачайте её во вкладке «Компоненты»".to_string()
         })?
-        .embed(&samples[lo..hi])?;
+        .embed(&samples)?;
     emb.ok_or_else(|| "Голос не извлечь: тишина или шум".to_string())
 }
 

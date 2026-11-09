@@ -165,9 +165,9 @@ pub(crate) fn read_profiles_file(file: &std::path::Path) -> Vec<SpeakerProfile> 
         }
         prof.prototypes
             .retain(|x| x.embedding.len() == mr_ml::EMBEDDING_DIM);
-        if prof.embedding.len() != mr_ml::EMBEDDING_DIM
-            || prof.embedding.iter().all(|x| x.abs() < 1e-12)
-        {
+        // Прототипы — источник истины: старые файлы хранят центроид,
+        // посчитанный скользящим средним с уже вытесненными образцами.
+        if !prof.prototypes.is_empty() {
             let vecs: Vec<Vec<f64>> = prof
                 .prototypes
                 .iter()
@@ -232,6 +232,15 @@ pub(crate) fn load_profiles() -> Vec<SpeakerProfile> {
 /// на окнах 0.6 с сходство со своим голосом 0.41–0.79, с чужим — 0.04–0.19.
 /// Короче 1 с эмбеддинг слишком шумный и становится отдельным «голосом».
 const CORE_MIN_DUR: f64 = 1.0;
+
+/// Порог привязки короткой реплики к центроиду. На 0.6 с ERes2NetV2 даёт
+/// 0.41–0.79 к своему голосу (`onnx_real`), поэтому общий порог 0.65
+/// отправлял почти все «да»/«угу» к ближайшему по времени спикеру.
+fn short_join_threshold(dur: f64) -> f64 {
+    const MIN: f64 = 0.36;
+    const SPAN: f64 = 0.12;
+    MIN + SPAN * ((dur - 0.4) / 0.8).clamp(0.0, 1.0)
+}
 
 /// Кластеры короче 2% речи — обычно шумные короткие эмбеддинги. Клеим их
 /// к ближайшему крупному голосу (косинус ≥ 0.45), а непохожие оставляем:
@@ -617,7 +626,7 @@ pub(crate) fn diarize_channel(
                 best = (score, lbl);
             }
         }
-        if best.0 >= 0.65 {
+        if best.0 >= short_join_threshold(durs[si]) {
             label_of.insert(si, best.1);
             centroids = recompute(&label_of);
             anchor(&mut centroids);
@@ -1194,9 +1203,21 @@ pub(crate) fn reconcile_channels(infos: &mut Vec<SpeakerInfo>, utterances: &mut 
         if merged.matched_name.is_none() {
             merged.matched_name = members.iter().find_map(|&m| infos[m].matched_name.clone());
         }
-        if merged.embedding.is_none() {
-            merged.embedding = members.iter().find_map(|&m| infos[m].embedding.clone());
-        }
+        let weighted: Vec<(Vec<f64>, f64)> = members
+            .iter()
+            .filter_map(|&m| {
+                infos[m]
+                    .embedding
+                    .clone()
+                    .map(|vector| (vector, infos[m].total_speech_sec.max(0.1)))
+            })
+            .collect();
+        merged.embedding = if weighted.is_empty() {
+            None
+        } else {
+            let (vecs, ws): (Vec<Vec<f64>>, Vec<f64>) = weighted.into_iter().unzip();
+            Some(mr_ml::weighted_centroid(&vecs, &ws))
+        };
         for &m in &members {
             for (name, score) in &infos[m].candidates {
                 if !merged
@@ -1742,8 +1763,8 @@ mod tests {
     use super::{
         dedupe_cross_channel, fill_labels_by_time, group_segments, merge_quiet_short,
         merge_tiny_clusters, merge_utterances, move_boundary_words, profile_anchors,
-        read_profiles_file, reconcile_channels, refresh_speaker_stats, speaker_change_cuts,
-        split_at_pauses, split_words_by_bounds, SpeakerInfo, Utterance,
+        read_profiles_file, reconcile_channels, refresh_speaker_stats, short_join_threshold,
+        speaker_change_cuts, split_at_pauses, split_words_by_bounds, SpeakerInfo, Utterance,
     };
     use crate::transcribe::WordConf;
 
@@ -1840,6 +1861,26 @@ mod tests {
         dedupe_cross_channel(&mut utts);
         assert_eq!(utts.len(), 1);
         assert_eq!(utts[0].channel, Some(1));
+    }
+
+    #[test]
+    fn merged_channels_centroid_uses_both_embeddings() {
+        let a = mr_ml::l2_normalize(&[1.0, 0.0]);
+        let b = mr_ml::l2_normalize(&[0.9, 0.1]);
+        let mut infos = vec![
+            info("Участник 2", 0, a.clone(), 1, 1.0),
+            info("Собеседник 1", 1, b.clone(), 1, 9.0),
+        ];
+        let mut utts = vec![
+            utt(1.0, 5.0, "Участник 2", 0, "нейтральная тестовая фраза"),
+            utt(1.0, 5.0, "Собеседник 1", 1, "нейтральная тестовая фраза"),
+        ];
+        reconcile_channels(&mut infos, &mut utts);
+        assert_eq!(infos.len(), 1);
+        let embedding = infos[0].embedding.clone().expect("центроид");
+        let expected = mr_ml::weighted_centroid(&[a, b], &[1.0, 9.0]);
+        let sim = mr_ml::cosine_similarity(&embedding, &expected);
+        assert!(sim > 0.999, "слияние потеряло второй вектор: {sim}");
     }
 
     #[test]
@@ -2116,6 +2157,14 @@ mod tests {
     }
 
     #[test]
+    fn short_join_threshold_follows_embedding_calibration() {
+        assert!((short_join_threshold(0.4) - 0.36).abs() < 1e-9);
+        assert!((short_join_threshold(1.0) - 0.45).abs() < 1e-9);
+        assert!((short_join_threshold(1.5) - 0.48).abs() < 1e-9);
+        assert!(short_join_threshold(0.6) < 0.65);
+    }
+
+    #[test]
     fn profile_loader_skips_foreign_embedding_space_and_uses_prototypes() {
         let dir = std::env::temp_dir().join(format!("mr-vp-space-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
@@ -2152,6 +2201,42 @@ mod tests {
         let got = read_profiles_file(&file);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].embedding.len(), mr_ml::EMBEDDING_DIM);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn profile_loader_recomputes_drifted_centroid_from_prototypes() {
+        let dir = std::env::temp_dir().join(format!("mr-vp-drift-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("voiceprints.json");
+        let mut a = vec![0.0f64; mr_ml::EMBEDDING_DIM];
+        a[0] = 1.0;
+        let mut b = vec![0.0f64; mr_ml::EMBEDDING_DIM];
+        b[1] = 1.0;
+        std::fs::write(
+            &file,
+            serde_json::to_string(&serde_json::json!({
+                "version": 3,
+                "embedding_space": mr_ml::EMBEDDING_SPACE,
+                "profiles": [{
+                    "name": "Свой",
+                    "embedding": a.clone(),
+                    "samples_count": 2,
+                    "prototypes": [
+                        {"id": "p1", "embedding": a, "duration_sec": 4.0, "quality": 1.0, "created_at": ""},
+                        {"id": "p2", "embedding": b, "duration_sec": 4.0, "quality": 1.0, "created_at": ""},
+                    ]
+                }],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let got = read_profiles_file(&file);
+        assert_eq!(got.len(), 1);
+        let expected = mr_ml::weighted_centroid(&[vec![1.0, 0.0], vec![0.0, 1.0]], &[4.0, 4.0]);
+        let flat: Vec<f64> = got[0].embedding[..2].to_vec();
+        assert!(mr_ml::cosine_similarity(&flat, &expected) > 0.999);
+        assert!((flat[0] - flat[1]).abs() < 1e-12);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -12,3 +12,7 @@ pub(crate) fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
 pub(crate) fn l2_normalize(v: &[f64]) -> Vec<f64> {
     mr_ml::l2_normalize(v)
 }
+
+pub(crate) fn weighted_centroid(vecs: &[Vec<f64>], weights: &[f64]) -> Vec<f64> {
+    mr_ml::weighted_centroid(vecs, weights)
+}
