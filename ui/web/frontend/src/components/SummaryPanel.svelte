@@ -399,7 +399,8 @@
   }
   .summary-blocked {
     font-size: 12px; color: var(--accent-amber); background: var(--accent-amber-bg);
-    border: 1px solid #e8d6a8; border-radius: var(--radius-sm); padding: 6px 9px;
+    border: 1px solid #e8d6a8; border-radius: var(--radius-inner); padding: 8px 12px;
+    line-height: 1.45;
   }
   .sr-only {
     position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;

@@ -57,26 +57,12 @@
 <div class="summary-suggest">
   {#if blockingText}
     <div class="summary-callout" role="status">
-      <span class="summary-callout-icon" aria-hidden="true">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="9"></circle>
-          <path d="M12 8v4.5"></path>
-          <path d="M12 16h.01"></path>
-        </svg>
-      </span>
       <span class="summary-callout-text">{blockingText}</span>
     </div>
   {/if}
 
   {#if shortSource}
     <div class="summary-callout" role="status">
-      <span class="summary-callout-icon" aria-hidden="true">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="9"></circle>
-          <path d="M12 8v4.5"></path>
-          <path d="M12 16h.01"></path>
-        </svg>
-      </span>
       <span class="summary-callout-text">
         <strong>Короткая запись.</strong> Итоги могут быть неточными.
       </span>
@@ -179,29 +165,19 @@
 
   .summary-callout {
     display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 10px 12px 10px 10px;
-    border: 1px solid rgba(138, 90, 0, 0.16);
-    border-radius: 12px;
-    background: linear-gradient(90deg, #fffaf0 0%, #fffdf8 100%);
-    box-shadow: inset 3px 0 0 #d9a441;
-    color: #6b4a00;
-  }
-  .summary-callout-icon {
-    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    flex: 0 0 22px;
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    background: #f6e6c4;
-    color: #8a5a00;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px solid #e8d6a8;
+    border-radius: var(--radius-inner);
+    background: var(--accent-amber-bg);
+    color: var(--accent-amber);
+    font-size: 12px;
+    line-height: 1.45;
   }
   .summary-callout-text {
-    font-size: 12.5px;
-    line-height: 1.55;
+    font-size: 12px;
+    line-height: 1.45;
   }
   .summary-callout-text strong { font-weight: 700; }
 
@@ -215,12 +191,11 @@
   .summary-model {
     display: flex;
     flex-direction: column;
-    gap: 9px;
-    padding: 13px 14px;
-    border: 1px solid rgba(15, 30, 51, 0.07);
-    border-radius: 12px;
-    background: linear-gradient(180deg, #fbfcfe 0%, #f8fafc 100%);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-inner);
+    background: var(--bg-inset);
     font-size: 12.5px;
     line-height: 1.5;
     color: var(--text-primary);
