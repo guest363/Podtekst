@@ -274,13 +274,6 @@
                 <div class="guide-section-step">
                   <span class="guide-step-num">{idx + 1}</span>
                   <span class="guide-step-title">{sec.title}</span>
-                  {#if sec.role === 'task'}
-                    <span class="guide-step-tag task">задачи</span>
-                  {:else if sec.role === 'decision'}
-                    <span class="guide-step-tag decision">решения</span>
-                  {:else if sec.role === 'status'}
-                    <span class="guide-step-tag status">статус</span>
-                  {/if}
                 </div>
               {/each}
             </div>
@@ -500,25 +493,6 @@
   .guide-step-title {
     font-weight: 500;
     color: var(--text-primary);
-  }
-  .guide-step-tag {
-    font-family: var(--font-mono);
-    font-size: 9.5px;
-    padding: 0 4px;
-    border-radius: 3px;
-    line-height: 1.4;
-  }
-  .guide-step-tag.task {
-    color: var(--accent-blue);
-    background: rgba(36, 86, 198, 0.08);
-  }
-  .guide-step-tag.decision {
-    color: var(--accent-ok);
-    background: rgba(14, 122, 85, 0.08);
-  }
-  .guide-step-tag.status {
-    color: var(--text-muted);
-    background: rgba(100, 116, 139, 0.1);
   }
   .guide-prompt-block {
     display: flex;
