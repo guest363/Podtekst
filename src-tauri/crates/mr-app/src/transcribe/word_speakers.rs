@@ -243,6 +243,8 @@ pub(crate) fn split_utterance_by_word_speakers(
     }
 
     // Одиночное слово от шумного кадра не должно создавать нового спикера.
+    // Но короткий ответ после паузы или точки — это реплика другого
+    // человека, а не шум: приклеивать его к предыдущему нельзя.
     let mut i = 0;
     while i < assigned.len() {
         let start = i;
@@ -252,9 +254,13 @@ pub(crate) fn split_utterance_by_word_speakers(
         }
         let duration = assigned[i - 1].2 - assigned[start].1;
         if duration < 0.5 && start > 0 && assigned[start - 1].3 != speaker {
-            let previous = assigned[start - 1].3.clone();
-            for word in &mut assigned[start..i] {
-                word.3 = previous.clone();
+            let gap = assigned[start].1 - assigned[start - 1].2;
+            let sentence_end = assigned[start - 1].0.ends_with(['.', '!', '?']);
+            if gap < 0.15 && !sentence_end {
+                let previous = assigned[start - 1].3.clone();
+                for word in &mut assigned[start..i] {
+                    word.3 = previous.clone();
+                }
             }
         }
     }
@@ -351,6 +357,35 @@ mod tests {
             source.text
         );
         assert_eq!(out[0].end, out[1].start);
+    }
+
+    #[test]
+    fn short_reply_after_pause_keeps_its_speaker() {
+        let tree = DiarIntervalTree::new(&[
+            utt(0.0, 4.0, "A", "a"),
+            utt(4.25, 4.55, "B", "b"),
+            utt(4.8, 6.2, "A", "a"),
+        ]);
+        let mut source = utt(
+            0.0,
+            6.2,
+            "unknown",
+            "первая фраза говорит да продолжение речи",
+        );
+        source.words = vec![
+            timed_word("первая", 0.2, 0.7),
+            timed_word("фраза", 0.8, 1.3),
+            timed_word("говорит", 1.4, 1.9),
+            timed_word("да", 4.25, 4.55),
+            timed_word("продолжение", 4.8, 5.5),
+            timed_word("речи", 5.6, 6.0),
+        ];
+        let out = split_utterance_by_word_speakers(&source, &tree);
+        assert!(
+            out.iter()
+                .any(|u| u.speaker == "B" && u.text.contains("да")),
+            "короткий ответ после паузы потерял спикера: {out:?}"
+        );
     }
 
     #[test]

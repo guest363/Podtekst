@@ -141,6 +141,62 @@ pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
         .collect())
 }
 
+/// Читает только запрошенный интервал WAV 16 кГц: обучение голоса на часовой
+/// записи не должно декодировать весь файл в память ради 3 секунд.
+pub fn decode_wav_range_16k(
+    path: &Path,
+    start_sec: f64,
+    end_sec: f64,
+    channel: Option<usize>,
+) -> Result<Vec<f32>> {
+    let mut reader =
+        hound::WavReader::open(path).map_err(|e| AudioError::Other(format!("wav: {e}")))?;
+    let spec = reader.spec();
+    if spec.sample_rate != 16_000 {
+        return Err(AudioError::Other("WAV не 16 кГц".to_string()));
+    }
+    let channels = spec.channels as usize;
+    if channels == 0 {
+        return Err(AudioError::Other("в WAV нет каналов".to_string()));
+    }
+    let duration = reader.duration();
+    let first = ((start_sec.max(0.0) * 16_000.0).floor() as u32).min(duration);
+    let last = ((end_sec.max(start_sec) * 16_000.0).ceil() as u32).min(duration);
+    if last <= first {
+        return Err(AudioError::Other("пустой фрагмент WAV".to_string()));
+    }
+    let target = channel.filter(|ch| *ch < channels).unwrap_or(0);
+    reader
+        .seek(first)
+        .map_err(|e| AudioError::Other(format!("wav seek: {e}")))?;
+    let need = (last - first) as usize * channels;
+    let mut out = Vec::with_capacity((last - first) as usize);
+    match spec.sample_format {
+        hound::SampleFormat::Float => {
+            for (index, sample) in reader.samples::<f32>().take(need).enumerate() {
+                let sample = sample.map_err(|e| AudioError::Other(format!("wav: {e}")))?;
+                if index % channels == target {
+                    out.push(sample.clamp(-1.0, 1.0));
+                }
+            }
+        }
+        hound::SampleFormat::Int => {
+            let bits = spec.bits_per_sample.clamp(1, 32);
+            let scale = 1.0 / (1i64 << (bits - 1)) as f32;
+            for (index, sample) in reader.samples::<i32>().take(need).enumerate() {
+                let sample = sample.map_err(|e| AudioError::Other(format!("wav: {e}")))?;
+                if index % channels == target {
+                    out.push((sample as f32 * scale).clamp(-1.0, 1.0));
+                }
+            }
+        }
+    }
+    if out.is_empty() {
+        return Err(AudioError::Other("пустой фрагмент WAV".to_string()));
+    }
+    Ok(out)
+}
+
 pub fn decode_to_mono_16k(path: &Path) -> Result<Vec<f32>> {
     let chans = decode_to_channels_16k(path)?;
     let n = chans.iter().map(|c| c.len()).max().unwrap_or(0);
@@ -364,6 +420,43 @@ fn ffmpeg_extract_to_wav(path: &Path) -> Result<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wav_range_reads_only_requested_slice() {
+        let dir = std::env::temp_dir().join(format!(
+            "mr-wav-range-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("stereo.wav");
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate: 16_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+        for i in 0..16_000 * 2 {
+            let left = ((i % 1000) + 1) as i16;
+            writer.write_sample(left).unwrap();
+            writer.write_sample(-left).unwrap();
+        }
+        writer.finalize().unwrap();
+
+        let left = decode_wav_range_16k(&path, 0.5, 1.0, Some(0)).expect("левый канал");
+        let right = decode_wav_range_16k(&path, 0.5, 1.0, Some(1)).expect("правый канал");
+        assert_eq!(left.len(), 8_000);
+        assert_eq!(right.len(), 8_000);
+        assert!((left[0] * 32_768.0 - 1.0).abs() < 1e-3);
+        assert!((left[0] + right[0]).abs() < 1e-9);
+        assert!(decode_wav_range_16k(&path, 5.0, 6.0, None).is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn decode_missing_file_errors() {

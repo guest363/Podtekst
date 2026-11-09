@@ -10,7 +10,8 @@ use super::media::inside_save_dir;
 use crate::config::{app_data_dir, save_dir};
 use crate::fsutil::write_atomic;
 use crate::voiceprints::{
-    cosine_similarity, l2_normalize, EMBEDDING_DIM, EMBEDDING_SPACE, MAX_PROTOTYPES,
+    cosine_similarity, l2_normalize, weighted_centroid, EMBEDDING_DIM, EMBEDDING_SPACE,
+    MAX_PROTOTYPES,
 };
 
 /// Сериализует read-modify-write `voiceprints.json`: иначе два параллельных
@@ -457,6 +458,51 @@ pub(crate) fn sync_voiceprint_people() {
     }
 }
 
+fn prototype_duration(start: Option<f64>, end: Option<f64>) -> f64 {
+    match (start, end) {
+        (Some(s), Some(e)) if e > s => (e - s).clamp(0.4, 15.0),
+        _ => 4.0,
+    }
+}
+
+/// Центроид профиля — только по актуальным прототипам: скользящее среднее
+/// помнит вытесненные образцы и после десятка сохранений перестаёт
+/// соответствовать массиву `prototypes`.
+fn prototypes_centroid(protos: &[serde_json::Value]) -> (Vec<f64>, usize) {
+    let (vecs, weights): (Vec<Vec<f64>>, Vec<f64>) = protos
+        .iter()
+        .filter_map(|x| {
+            let vec: Vec<f64> = x
+                .get("embedding")?
+                .as_array()?
+                .iter()
+                .filter_map(|n| n.as_f64())
+                .collect();
+            if vec.len() != EMBEDDING_DIM {
+                return None;
+            }
+            let duration = x
+                .get("duration_sec")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(4.0)
+                .max(0.1);
+            let quality = x
+                .get("quality")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(1.0)
+                .max(0.1);
+            Some((vec, duration * quality))
+        })
+        .unzip();
+    let count = vecs.len();
+    let centroid = if count == 0 {
+        vec![]
+    } else {
+        weighted_centroid(&vecs, &weights)
+    };
+    (centroid, count)
+}
+
 fn store_voiceprint(
     name: &str,
     target_pack_id: Option<&str>,
@@ -503,6 +549,7 @@ fn store_voiceprint(
         })
         .unwrap_or_default();
     profiles.retain(voiceprint_usable);
+    let duration_sec = prototype_duration(sample_start, sample_end);
     let mut duplicate = false;
     if let Some(p) = profiles.iter_mut().find(|p| {
         p.get("name")
@@ -510,22 +557,6 @@ fn store_voiceprint(
             .map(|n| same_name(n, name))
             .unwrap_or(false)
     }) {
-        let old: Vec<f64> = p
-            .get("embedding")
-            .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|x| x.as_f64()).collect())
-            .unwrap_or_default();
-        let cnt = p.get("samples_count").and_then(|x| x.as_u64()).unwrap_or(1) as f64;
-        let merged = if old.len() == norm.len() {
-            l2_normalize(
-                &old.iter()
-                    .zip(norm.iter())
-                    .map(|(o, n)| (o * cnt + n) / (cnt + 1.0))
-                    .collect::<Vec<_>>(),
-            )
-        } else {
-            norm.clone()
-        };
         let mut protos: Vec<serde_json::Value> = p
             .get("prototypes")
             .and_then(|v| v.as_array())
@@ -550,17 +581,20 @@ fn store_voiceprint(
             protos.push(json!({
                 "id": new_id,
                 "embedding": norm,
-                "duration_sec": 4.0,
+                "duration_sec": duration_sec,
                 "quality": 1.0,
                 "created_at": now_iso.clone(),
                 "snippet_relpath": snippet_rel.clone(),
             }));
-            p["embedding"] = json!(merged);
-            p["samples_count"] = json!(cnt as u64 + 1);
         }
         if protos.len() > MAX_PROTOTYPES {
             let drop_n = protos.len() - MAX_PROTOTYPES;
             protos.drain(0..drop_n);
+        }
+        let (centroid, count) = prototypes_centroid(&protos);
+        if count > 0 {
+            p["embedding"] = json!(centroid);
+            p["samples_count"] = json!(count as u64);
         }
         p["name"] = json!(name);
         p["prototypes"] = json!(protos);
@@ -574,7 +608,7 @@ fn store_voiceprint(
             "prototypes": [{
                 "id": new_id,
                 "embedding": norm,
-                "duration_sec": 4.0,
+                "duration_sec": duration_sec,
                 "quality": 1.0,
                 "created_at": now_iso,
                 "snippet_relpath": snippet_rel.clone(),
@@ -1200,30 +1234,12 @@ fn remove_prototype(
         .get("snippet_relpath")
         .and_then(|v| v.as_str())
         .map(str::to_string);
-    let remaining: Vec<Vec<f64>> = arr
-        .iter()
-        .filter_map(|x| {
-            x.get("embedding")
-                .and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|n| n.as_f64()).collect())
-        })
-        .filter(|v: &Vec<f64>| v.len() == EMBEDDING_DIM)
-        .collect();
-    if remaining.is_empty() {
+    let (centroid, count) = prototypes_centroid(arr);
+    if count == 0 {
         return Some((snippet, true));
     }
-    let mut mean = vec![0.0; EMBEDDING_DIM];
-    for v in &remaining {
-        for (i, x) in v.iter().enumerate() {
-            mean[i] += x;
-        }
-    }
-    let n = remaining.len() as f64;
-    for x in mean.iter_mut() {
-        *x /= n;
-    }
-    profile["embedding"] = json!(l2_normalize(&mean));
-    profile["samples_count"] = json!(remaining.len() as u64);
+    profile["embedding"] = json!(centroid);
+    profile["samples_count"] = json!(count as u64);
     Some((snippet, false))
 }
 
@@ -1564,6 +1580,59 @@ mod tests {
         let norm: f64 = emb.iter().map(|x| x * x).sum::<f64>().sqrt();
         assert!((norm - 1.0).abs() < 1e-9);
         assert!((emb[0] - emb[100]).abs() < 1e-12);
+    }
+
+    #[test]
+    fn store_voiceprint_centroid_follows_retained_prototypes() {
+        let _guard = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!(
+            "mr-voiceprint-centroid-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let prev = std::env::var("MEETING_RECORDER_DATA_DIR").ok();
+        std::env::set_var("MEETING_RECORDER_DATA_DIR", &dir);
+
+        let name = "Тест-Дрейф";
+        for i in 0..15 {
+            let mut v = vec![0.01; EMBEDDING_DIM];
+            v[i] += 1.0;
+            store_voiceprint(
+                name,
+                Some("default"),
+                l2_normalize(&v),
+                "",
+                Some(1.0),
+                Some(3.0),
+                None,
+            );
+        }
+        let vp = load_all_voiceprints()
+            .into_iter()
+            .find(|v| same_name(v.get("name").and_then(|x| x.as_str()).unwrap_or(""), name))
+            .expect("профиль сохранён");
+        let protos = vp["prototypes"].as_array().expect("prototypes");
+        assert_eq!(protos.len(), MAX_PROTOTYPES);
+        assert_eq!(vp["samples_count"], MAX_PROTOTYPES as u64);
+        assert!((protos[0]["duration_sec"].as_f64().unwrap() - 2.0).abs() < 1e-9);
+        let stored: Vec<f64> = serde_json::from_value(vp["embedding"].clone()).unwrap();
+        let (expected, count) = prototypes_centroid(protos);
+        assert_eq!(count, MAX_PROTOTYPES);
+        for (a, b) in stored.iter().zip(expected.iter()) {
+            assert!((a - b).abs() < 1e-12, "центроид не совпал: {a} vs {b}");
+        }
+
+        if let Some(p) = prev {
+            std::env::set_var("MEETING_RECORDER_DATA_DIR", p);
+        } else {
+            std::env::remove_var("MEETING_RECORDER_DATA_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
