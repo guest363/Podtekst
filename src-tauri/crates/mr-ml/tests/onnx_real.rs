@@ -36,6 +36,22 @@ fn embedding_model_file(dir: &std::path::Path) -> Option<PathBuf> {
     .find_map(|f| model_file(dir, f))
 }
 
+/// Каталог Whisper: плоский тестовый или app-раскладка `models/<id>/`.
+fn whisper_model_dir(dir: &std::path::Path) -> Option<PathBuf> {
+    ["", "asr-whisper-large-v3-turbo-q"]
+        .iter()
+        .map(|sub| dir.join(sub))
+        .find(|d| {
+            [
+                "whisper_enc_q.onnx",
+                "whisper_dec_merged_q.onnx",
+                "whisper_tokenizer.json",
+            ]
+            .iter()
+            .all(|f| model_file(d, f).is_some())
+        })
+}
+
 fn segmentation_model_file(dir: &std::path::Path) -> Option<PathBuf> {
     [
         "pyannote-segmentation-3.0.onnx",
@@ -259,6 +275,62 @@ fn whisper_transcribes_russian_fallback() {
     let text = ws.transcribe_segment(chunk, "ru").expect("whisper");
     println!("whisper: «{text}»");
     assert!(!text.trim().is_empty(), "Whisper вернул пустой текст");
+}
+
+fn normalized_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_lowercase())
+        .collect()
+}
+
+fn word_error_rate(reference: &[String], hypothesis: &[String]) -> f64 {
+    let mut prev: Vec<usize> = (0..=hypothesis.len()).collect();
+    let mut cur = vec![0usize; hypothesis.len() + 1];
+    for (i, r) in reference.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, h) in hypothesis.iter().enumerate() {
+            cur[j + 1] = (prev[j] + usize::from(r != h))
+                .min(prev[j + 1] + 1)
+                .min(cur[j] + 1);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[hypothesis.len()] as f64 / reference.len().max(1) as f64
+}
+
+/// Живой приёмочный прогон Whisper: `MR_WHISPER_WAV` (16 кГц) и
+/// `MR_WHISPER_REF` (эталонный текст), язык — `MR_WHISPER_LANG` (по умолчанию en).
+/// Без переменных тест пропускается, чтобы CI не зависел от датасетов.
+#[test]
+fn whisper_matches_expected_text() {
+    let Some(dir) = models_dir() else {
+        eprintln!("SKIP: нет моделей");
+        return;
+    };
+    let Some(model_dir) = whisper_model_dir(&dir) else {
+        eprintln!("SKIP: нет файлов Whisper");
+        return;
+    };
+    let (Ok(wav_path), Ok(reference)) = (
+        std::env::var("MR_WHISPER_WAV"),
+        std::env::var("MR_WHISPER_REF"),
+    ) else {
+        eprintln!("SKIP: нет MR_WHISPER_WAV/MR_WHISPER_REF");
+        return;
+    };
+    let Some((wav, _)) = read_wav_mono16(std::path::Path::new(&wav_path)) else {
+        eprintln!("SKIP: WAV не 16 кГц/16 бит");
+        return;
+    };
+    let language = std::env::var("MR_WHISPER_LANG").unwrap_or_else(|_| "en".to_string());
+    let mut ws = mr_ml::onnx::whisper::Whisper::load(&model_dir).expect("whisper load");
+    let text = ws.transcribe_segment(&wav, &language).expect("whisper");
+    let reference = normalized_words(&reference);
+    let wer = word_error_rate(&reference, &normalized_words(&text));
+    println!("whisper: WER={wer:.3} «{text}»");
+    assert!(!reference.is_empty(), "MR_WHISPER_REF пуст");
+    assert!(wer <= 0.2, "WER {wer:.3} выше 20%: «{text}»");
 }
 
 #[test]

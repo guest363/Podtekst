@@ -168,11 +168,17 @@ impl Whisper {
             );
             let mut i64_in = HashMap::new();
             i64_in.insert(self.ids_input.clone(), (vec![1i64, t_ids], ids));
-            let (logits, present) = self.dec_step(f32_in, i64_in, &mut kv_cache, first, t_enc)?;
+            let (logits, present) = self.dec_step(f32_in, i64_in, &kv_cache, first, t_enc)?;
             let vocab = logits.len() / t_ids as usize;
             let last = &logits[(t_ids as usize - 1) * vocab..t_ids as usize * vocab];
             let next = argmax(last) as i64;
-            kv_cache = present;
+            // В cache-ветке merged-декодер отдаёт present encoder пустым:
+            // состояния энкодера не меняются, и их нельзя затирать.
+            for (name, value) in present {
+                if !value.1.is_empty() {
+                    kv_cache.insert(name, value);
+                }
+            }
             if next == self.eot {
                 break;
             }
@@ -190,7 +196,7 @@ impl Whisper {
         &mut self,
         mut f32_all: NamedTensors,
         i64_in: HashMap<String, ShapeDataI64>,
-        kv_cache: &mut NamedTensors,
+        kv_cache: &NamedTensors,
         first: bool,
         t_enc: i64,
     ) -> Result<(Vec<f32>, NamedTensors), String> {
@@ -200,16 +206,16 @@ impl Whisper {
             if past.contains(".decoder.") {
                 if first {
                     f32_all.insert(past.clone(), (vec![1i64, 20, 0, 64], vec![]));
-                } else if let Some(v) = kv_cache.remove(&present_of(past)) {
-                    f32_all.insert(past.clone(), v);
+                } else if let Some(v) = kv_cache.get(&present_of(past)) {
+                    f32_all.insert(past.clone(), v.clone());
                 } else {
                     return Err(format!("нет кэша для {past}"));
                 }
             } else if first {
                 let n = (20 * t_enc * 64) as usize;
                 f32_all.insert(past.clone(), (vec![1i64, 20, t_enc, 64], vec![0.0; n]));
-            } else if let Some(v) = kv_cache.remove(&present_of(past)) {
-                f32_all.insert(past.clone(), v);
+            } else if let Some(v) = kv_cache.get(&present_of(past)) {
+                f32_all.insert(past.clone(), v.clone());
             } else {
                 return Err(format!("нет кэша для {past}"));
             }
