@@ -36,11 +36,10 @@ pub fn transcribe_file(
     opts: &TranscribeOptions,
     on_event: &dyn Fn(u8, &str),
 ) -> Result<TranscribeReport, String> {
-    let run_id = crate::logging::begin_run();
+    let _run_id = crate::logging::begin_run();
     let started = Instant::now();
     log::info!(
         target: "run",
-        run = run_id.clone(),
         file = crate::logging::file_token(audio_path),
         engine = opts.engine.clone(),
         language = opts.language.clone(),
@@ -60,7 +59,6 @@ pub fn transcribe_file(
                 .unwrap_or(0);
             log::info!(
                 target: "run",
-                run = run_id,
                 utts = report.utterances,
                 words = report.words,
                 speakers_n = report.speakers.len(),
@@ -74,8 +72,6 @@ pub fn transcribe_file(
             let stage = crate::logging::current_stage();
             log::error!(
                 target: "run",
-                run = run_id,
-                stage = stage.clone(),
                 error = error.clone(),
                 elapsed_ms = started.elapsed().as_millis() as u64;
                 "ev=run.error"
