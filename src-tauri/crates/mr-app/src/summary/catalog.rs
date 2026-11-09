@@ -6,8 +6,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use super::config::{
-    self, ClassifierMode, ESTIMATE_PEAK_MB, MAX_CHARS, MAX_SECONDS, MIN_SYSTEM_RAM_MB, MODEL_ID,
-    RECOMMENDED_RAM_MB, REQUIRED_FREE_MB, WARN_CHARS,
+    self, ClassifierMode, GpuMode, ESTIMATE_PEAK_MB, MAX_CHARS, MAX_SECONDS, MIN_SYSTEM_RAM_MB,
+    MODEL_ID, RECOMMENDED_RAM_MB, REQUIRED_FREE_MB, WARN_CHARS,
 };
 use super::{runtime_ready, ApiError};
 
@@ -176,6 +176,7 @@ pub fn settings_view() -> Value {
         "system_prompt_base": pj["system_prompt_base"],
         "model": model_status_json(),
         "capabilities": capabilities(),
+        "gpu": super::gpu::status_json(),
     })
 }
 
@@ -205,6 +206,10 @@ pub fn update_settings(body: &Value) -> Result<Value, ApiError> {
     if let Some(detail) = body.get("detail").and_then(Value::as_str) {
         settings.detail = Detail::parse(detail)
             .map_err(|_| ApiError::new(400, "invalid_detail", "Неизвестная подробность."))?;
+    }
+    if let Some(gpu) = body.get("gpu").and_then(Value::as_str) {
+        settings.gpu = GpuMode::parse(gpu)
+            .ok_or_else(|| ApiError::new(400, "invalid_gpu_mode", "Неизвестный режим GPU."))?;
     }
     config::save(&settings).map_err(|_| {
         ApiError::new(

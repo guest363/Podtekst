@@ -57,6 +57,34 @@ fn default_true() -> bool {
     true
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GpuMode {
+    Auto,
+    Off,
+}
+
+impl GpuMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Off => "off",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+}
+
+fn default_gpu() -> GpuMode {
+    GpuMode::Auto
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default = "default_true")]
@@ -69,6 +97,8 @@ pub struct Settings {
     pub classifier: ClassifierMode,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default = "default_gpu")]
+    pub gpu: GpuMode,
 }
 
 fn default_detail() -> mr_summarize::Detail {
@@ -83,6 +113,7 @@ impl Default for Settings {
             detail: default_detail(),
             classifier: default_classifier(),
             enabled: true,
+            gpu: default_gpu(),
         }
     }
 }
@@ -93,6 +124,7 @@ impl Settings {
             "auto_suggest": self.auto_suggest,
             "default_preset": self.default_preset,
             "detail": self.detail,
+            "gpu": self.gpu.as_str(),
         })
     }
 }
@@ -180,6 +212,7 @@ mod tests {
         assert_eq!(s.classifier, ClassifierMode::Heuristic);
         assert!(s.enabled);
         assert!(s.default_preset.is_none());
+        assert_eq!(s.gpu, GpuMode::Auto);
     }
 
     #[test]
@@ -187,7 +220,15 @@ mod tests {
         let value = Settings::default().public_json();
         assert_eq!(value["detail"], "normal");
         assert_eq!(value["auto_suggest"], true);
+        assert_eq!(value["gpu"], "auto");
         assert!(value.get("classifier").is_none());
+    }
+
+    #[test]
+    fn gpu_mode_parses_only_known_values() {
+        assert_eq!(GpuMode::parse("auto"), Some(GpuMode::Auto));
+        assert_eq!(GpuMode::parse(" OFF "), Some(GpuMode::Off));
+        assert_eq!(GpuMode::parse("cuda"), None);
     }
     #[test]
     fn env_override_is_not_persisted_by_settings_update() {

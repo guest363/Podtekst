@@ -17,6 +17,8 @@
     "--api-key-file",
     "--log-disable",
     "--n-gpu-layers",
+    "--list-devices",
+    "--fit",
     "--parallel",
     "--ctx-size",
     "-b",

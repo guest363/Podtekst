@@ -212,6 +212,14 @@ pub fn generate(input: &GenerateInput, recording: bool) -> Result<StartOutcome, 
             "Идёт расшифровка. Итоги можно собрать после её окончания.",
         ));
     }
+    #[cfg(not(target_os = "android"))]
+    if super::gpu::is_installing() {
+        return Err(ApiError::new(
+            409,
+            "gpu_installing",
+            "Устанавливается ускорение GPU. Дождитесь окончания.",
+        ));
+    }
     let preset = mr_summarize::preset::get(&input.preset_id)
         .ok_or_else(|| ApiError::new(400, "invalid_preset", "Неизвестный шаблон."))?;
     let detail = Detail::parse(&input.detail)

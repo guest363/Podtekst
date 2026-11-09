@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "runtime": "llama.cpp",
+  "version": "b12182",
+  "build": "12182",
+  "commit": "fd27b2034",
+  "license": "MIT",
+  "license_url": "https://github.com/ggml-org/llama.cpp/blob/master/LICENSE",
+  "notes": "Необязательный GPU-пакет: только backend-библиотека Vulkan. Базовый llama-server остаётся CPU-сборкой; пакет подключается через GGML_BACKEND_PATH и проверяется по SHA-256.",
+  "packs": {
+    "linux-x86_64": {
+      "id": "linux-x86_64-vulkan",
+      "backend": "vulkan",
+      "title": "Vulkan (Intel, AMD, NVIDIA)",
+      "description": "Ускорение итогов через Vulkan. Нужен драйвер Vulkan: на Intel — mesa-vulkan-drivers.",
+      "asset": "llama-b12182-bin-ubuntu-vulkan-x64.tar.gz",
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12182/llama-b12182-bin-ubuntu-vulkan-x64.tar.gz",
+      "sha256": "48e5be53921e4213991b6210727941f8a0645c75099d6e1594a126d6d5428fcf",
+      "compressed_bytes": 35871160,
+      "installed_bytes": 41209848,
+      "format": "tar.gz",
+      "library": "libggml-vulkan.so",
+      "min_free_mb": 256
+    },
+    "windows-x86_64": {
+      "id": "windows-x86_64-vulkan",
+      "backend": "vulkan",
+      "title": "Vulkan (Intel, AMD, NVIDIA)",
+      "description": "Ускорение итогов через Vulkan. Нужен драйвер видеокарты с поддержкой Vulkan.",
+      "asset": "llama-b12182-bin-win-vulkan-x64.zip",
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12182/llama-b12182-bin-win-vulkan-x64.zip",
+      "sha256": "f75238d0cbd2a9e1ff66074ae368246f5bf91c8f6cd8c1f78b3bc6f6f3a1aa8f",
+      "compressed_bytes": 37709766,
+      "installed_bytes": 42002432,
+      "format": "zip",
+      "library": "ggml-vulkan.dll",
+      "min_free_mb": 256
+    }
+  }
+}

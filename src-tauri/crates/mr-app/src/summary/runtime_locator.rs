@@ -49,8 +49,7 @@ fn exe_name() -> &'static str {
     }
 }
 
-#[cfg(test)]
-fn target_key() -> &'static str {
+pub fn target_key() -> &'static str {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
         "linux-x86_64"
@@ -161,35 +160,75 @@ fn discover() -> Result<RuntimeInfo, RuntimeError> {
     discover_from(candidate_dirs())
 }
 
+/// Проверить конкретный каталог runtime: версию, commit и обязательные флаги.
+pub fn validate_dir(dir: &Path) -> Result<RuntimeInfo, RuntimeError> {
+    let manifest = manifest();
+    let exe = dir.join(exe_name());
+    if !exe.is_file() {
+        return Err(RuntimeError::NotFound);
+    }
+    let probe = probe(&exe, dir)?;
+    if probe.build != manifest.build || probe.commit != manifest.commit {
+        return Err(RuntimeError::VersionMismatch {
+            version: probe.version,
+            commit: probe.commit,
+        });
+    }
+    if !probe.help_ok {
+        return Err(RuntimeError::MissingFlags(manifest.required_flags.clone()));
+    }
+    Ok(RuntimeInfo {
+        dir: dir.to_path_buf(),
+        exe,
+        version: manifest.version.clone(),
+        commit: manifest.commit.clone(),
+    })
+}
+
+/// `llama-server --list-devices`: единственный дешёвый способ отличить
+/// рабочую GPU-сборку от установленной, но без драйвера.
+pub fn list_devices(exe: &Path, dir: &Path) -> Result<String, RuntimeError> {
+    list_devices_with_backend(exe, dir, None)
+}
+
+/// То же, но с подключённым внешним backend-плагином (`GGML_BACKEND_PATH`).
+/// Плагин живёт в app data и не требует второй копии llama-server.
+pub fn list_devices_with_backend(
+    exe: &Path,
+    dir: &Path,
+    backend: Option<&Path>,
+) -> Result<String, RuntimeError> {
+    let mut cmd = probe_with_env(exe, dir);
+    if let Some(backend) = backend {
+        cmd.env("GGML_BACKEND_PATH", backend);
+        if let Some(parent) = backend.parent() {
+            let key = if cfg!(target_os = "macos") {
+                "DYLD_LIBRARY_PATH"
+            } else {
+                "LD_LIBRARY_PATH"
+            };
+            let prev = std::env::var(key).unwrap_or_default();
+            let joined = if prev.is_empty() {
+                parent.to_string_lossy().to_string()
+            } else {
+                format!("{}:{prev}", parent.to_string_lossy())
+            };
+            cmd.env(key, joined);
+        }
+    }
+    run_output(cmd.arg("--list-devices"), PROBE_TIMEOUT)
+}
+
 /// Один битый кандидат не должен скрывать рабочий runtime за ним:
 /// идём по всем каталогам и возвращаем последнюю содержательную ошибку.
 fn discover_from(dirs: Vec<PathBuf>) -> Result<RuntimeInfo, RuntimeError> {
-    let manifest = manifest();
     let mut last = RuntimeError::NotFound;
     for dir in dirs {
-        let exe = dir.join(exe_name());
-        if !exe.is_file() {
+        if !dir.join(exe_name()).is_file() {
             continue;
         }
-        match probe(&exe, &dir) {
-            Ok(probe) if probe.build == manifest.build && probe.commit == manifest.commit => {
-                if !probe.help_ok {
-                    last = RuntimeError::MissingFlags(manifest.required_flags.clone());
-                    continue;
-                }
-                return Ok(RuntimeInfo {
-                    dir,
-                    exe,
-                    version: manifest.version.clone(),
-                    commit: manifest.commit.clone(),
-                });
-            }
-            Ok(probe) => {
-                last = RuntimeError::VersionMismatch {
-                    version: probe.version,
-                    commit: probe.commit,
-                };
-            }
+        match validate_dir(&dir) {
+            Ok(info) => return Ok(info),
             Err(error) => last = error,
         }
     }

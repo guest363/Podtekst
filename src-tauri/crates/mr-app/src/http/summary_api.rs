@@ -197,6 +197,50 @@ pub(super) fn dispatch(
             );
             Ok(())
         }
+        (tiny_http::Method::Get, "/api/summary/gpu") => {
+            if let Err(error) = summary::ensure_enabled() {
+                error_response(request, error);
+                return;
+            }
+            json_response(request, merge_ok(summary::gpu_status()), 200);
+            Ok(())
+        }
+        (tiny_http::Method::Post, "/api/summary/gpu/install") => {
+            if let Err(error) = summary::ensure_enabled() {
+                error_response(request, error);
+                return;
+            }
+            match summary::gpu_install() {
+                Ok(()) => {
+                    json_response(request, json!({"ok": true, "started": true}), 202);
+                }
+                Err(error) => error_response(request, error),
+            }
+            Ok(())
+        }
+        (tiny_http::Method::Post, "/api/summary/gpu/cancel") => {
+            if let Err(error) = summary::ensure_enabled() {
+                error_response(request, error);
+                return;
+            }
+            json_response(
+                request,
+                json!({"ok": true, "cancelled": summary::gpu_cancel()}),
+                200,
+            );
+            Ok(())
+        }
+        (tiny_http::Method::Post, "/api/summary/gpu/remove") => {
+            if let Err(error) = summary::ensure_enabled() {
+                error_response(request, error);
+                return;
+            }
+            match summary::gpu_remove() {
+                Ok(view) => json_response(request, merge_ok(view), 200),
+                Err(error) => error_response(request, error),
+            }
+            Ok(())
+        }
         (tiny_http::Method::Get, "/api/summary/settings") => {
             if let Err(error) = summary::ensure_enabled() {
                 error_response(request, error);
