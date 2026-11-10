@@ -299,6 +299,49 @@ fn word_error_rate(reference: &[String], hypothesis: &[String]) -> f64 {
     prev[hypothesis.len()] as f64 / reference.len().max(1) as f64
 }
 
+/// Регрессия: на коротком шумном сегменте жадный декодер уходил в повтор и
+/// упирался в предел 448 позиций модели (Reshape с пустым тензором). Сегменты
+/// режутся VAD как в конвейере; файл — `MR_WHISPER_WAV`, язык — `MR_WHISPER_LANG`.
+#[test]
+fn whisper_transcribes_every_vad_segment() {
+    let Some(dir) = models_dir() else {
+        eprintln!("SKIP: нет моделей");
+        return;
+    };
+    let Some(model_dir) = whisper_model_dir(&dir) else {
+        eprintln!("SKIP: нет файлов Whisper");
+        return;
+    };
+    let Some(vad_path) = vad_model_file(&dir) else {
+        eprintln!("SKIP: нет VAD");
+        return;
+    };
+    let Ok(wav_path) = std::env::var("MR_WHISPER_WAV") else {
+        eprintln!("SKIP: нет MR_WHISPER_WAV");
+        return;
+    };
+    let Some((wav, _)) = read_wav_mono16(std::path::Path::new(&wav_path)) else {
+        eprintln!("SKIP: WAV не 16 кГц/16 бит");
+        return;
+    };
+    let language = std::env::var("MR_WHISPER_LANG").unwrap_or_else(|_| "en".to_string());
+    let mut vad = mr_ml::onnx::vad::SileroVad::load(&vad_path).expect("vad load");
+    let probs = vad.process_all(&wav).expect("vad run");
+    // Пороги как в конвейере приложения (diag.rs).
+    let segments = mr_ml::onnx::vad::vad_segments_from_probs(&probs, 0.25, 0.25, 0.5);
+    assert!(!segments.is_empty(), "VAD не нашёл речь");
+    let mut ws = mr_ml::onnx::whisper::Whisper::load(&model_dir).expect("whisper load");
+    for (i, (s, e)) in segments.iter().enumerate() {
+        let lo = (*s * 16000.0) as usize;
+        let hi = ((*e * 16000.0) as usize).min(wav.len());
+        if hi <= lo {
+            continue;
+        }
+        ws.transcribe_segment(&wav[lo..hi], &language)
+            .unwrap_or_else(|error| panic!("сегмент {i} {s:.2}-{e:.2} с: {error}"));
+    }
+}
+
 /// Живой приёмочный прогон Whisper: `MR_WHISPER_WAV` (16 кГц) и
 /// `MR_WHISPER_REF` (эталонный текст), язык — `MR_WHISPER_LANG` (по умолчанию en).
 /// Без переменных тест пропускается, чтобы CI не зависел от датасетов.

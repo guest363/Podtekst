@@ -150,8 +150,13 @@ impl Whisper {
         tokens.push(self.no_timestamps);
         let prompt_len = tokens.len();
         let mut kv_cache: NamedTensors = HashMap::new();
+        // Контракт модели: 448 позиций на prompt + генерацию (max_target_positions
+        // Whisper). На 448-й прошлой позиции merged-декодер отдаёт пустой тензор
+        // и падает на Reshape позиционных эмбеддингов.
+        const MAX_TOKENS: usize = 448;
+        let max_steps = MAX_TOKENS.saturating_sub(prompt_len);
 
-        for step in 0..448 {
+        for step in 0..max_steps {
             let first = step == 0;
             let ids: Vec<i64> = if first {
                 tokens.clone()
