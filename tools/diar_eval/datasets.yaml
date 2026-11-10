@@ -1,0 +1,87 @@
+# Шаблон манифеста наборов для tools/diar_eval.
+# Данные здесь не скачиваются. samples: null означает "уточнить после подготовки".
+schema: 1
+updated: "2026-11-09"
+notes: |
+  Пути к аудио и эталонам задаются в manifest.json прогона, а не здесь.
+  Перед публикацией цифр проверить лицензию каждого набора.
+
+datasets:
+  - id: golos
+    title: Golos
+    language: ru
+    tasks: [asr]
+    license: "Golos Terms of Use; проверить условия публикации"
+    reference: "https://github.com/salute-developers/Golos"
+    samples: null
+    subsets:
+      - name: crowd/test
+        samples: null
+        notes: "основная русская проверка ASR"
+      - name: farfield/test
+        samples: null
+        notes: "дальнее поле, шум"
+    prepare: "16 кГц, моно; эталонный текст из разметки набора"
+    rttm: null
+
+  - id: fleurs
+    title: FLEURS
+    language: [ru, en, de, fr, es, zh]
+    tasks: [asr]
+    license: "CC BY 4.0"
+    reference: "https://huggingface.co/datasets/google/fleurs"
+    samples: null
+    subsets:
+      - name: ru_ru/test
+      - name: en_us/test
+      - name: de_de/test
+      - name: fr_fr/test
+      - name: es_419/test
+      - name: cmn_hans_cn/test
+    prepare: "официальный test split; 16 кГц, моно"
+    rttm: null
+
+  - id: ami-ihm
+    title: AMI IHM
+    language: en
+    tasks: [diarization, asr]
+    license: "CC BY 4.0"
+    reference: "https://groups.inf.ed.ac.uk/ami/corpus/"
+    annotations: "https://github.com/BUTSpeechFIT/AMI-diarization-setup"
+    samples: 16
+    subsets:
+      - name: test
+        samples: 16
+        notes: "официальный test; вариант only_words"
+    prepare: "готовый микс головных микрофонов; 16 кГц, моно; RTTM из only_words"
+    rttm: "AMI-diarization-setup/only_words/rttms/test"
+
+  - id: ami-sdm
+    title: AMI SDM
+    language: en
+    tasks: [diarization, asr]
+    license: "CC BY 4.0"
+    reference: "https://groups.inf.ed.ac.uk/ami/corpus/"
+    annotations: "https://github.com/BUTSpeechFIT/AMI-diarization-setup"
+    samples: 16
+    subsets:
+      - name: test
+        samples: 16
+        notes: "официальный test; микрофонный массив, канал 1"
+    prepare: "канал 1 массива; 16 кГц, моно; RTTM из only_words"
+    rttm: "AMI-diarization-setup/only_words/rttms/test"
+
+  - id: voxconverse
+    title: VoxConverse
+    language: en
+    tasks: [diarization]
+    license: "CC BY 4.0"
+    reference: "https://github.com/joonson/voxconverse"
+    samples: 232
+    subsets:
+      - name: test
+        samples: 232
+        version: "v0.3"
+        notes: "видео, перекрытия; RTTM версии 0.3"
+    prepare: "аудио из видео; 16 кГц, моно"
+    rttm: "voxconverse/test"

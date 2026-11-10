@@ -1,96 +1,221 @@
 #!/usr/bin/env python3
-"""Convert Podtekst .transcript.json to RTTM for offline DER evaluation.
-
-Only the standard library is used. Speaker names are remapped to SPEAKER_NN
-by total speech time, because RTTM labels must be space-free and the evaluation
-only cares about who is who, not the UI name.
-"""
+"""Конвертер `.transcript.json` Podtekst в RTTM для оценки диаризации."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
+import re
 import sys
 import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
-def _utterances(path: Path) -> list[dict]:
+@dataclass
+class RttmConversion:
+    lines: list[str] = field(default_factory=list)
+    speakers: dict[str, str] = field(default_factory=dict)
+    skipped: int = 0
+
+
+def default_output(transcript: Path) -> Path:
+    name = transcript.name
+    if name.endswith(".transcript.json"):
+        name = name[: -len(".transcript.json")] + ".rttm"
+    else:
+        name = transcript.stem + ".rttm"
+    return transcript.with_name(name)
+
+
+def default_file_id(transcript: Path) -> str:
+    name = transcript.name
+    if name.endswith(".transcript.json"):
+        return name[: -len(".transcript.json")]
+    return transcript.stem
+
+
+def _safe_file_id(value: str) -> str:
+    # RTTM не допускает пробелы в file id; pyannote сопоставляет файлы по этому полю.
+    cleaned = re.sub(r"\s+", "_", str(value).strip())
+    return cleaned or "audio"
+
+
+def _read_utterances(path: Path) -> list[dict]:
     doc = json.loads(path.read_text(encoding="utf-8"))
-    utterances = doc.get("utterances")
+    if isinstance(doc, list):
+        utterances = doc
+    elif isinstance(doc, dict):
+        utterances = doc.get("utterances")
+    else:
+        raise ValueError(f"{path}: ожидался объект или массив")
     if not isinstance(utterances, list):
-        raise SystemExit(f"{path}: нет массива utterances")
-    return [u for u in utterances if isinstance(u, dict)]
+        raise ValueError(f"{path}: нет массива utterances")
+    return [item for item in utterances if isinstance(item, dict)]
 
 
-def speaker_labels(utterances: list[dict]) -> dict[str, str]:
+def _number(value: object) -> float | None:
+    try:
+        parsed = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _speaker_labels(rows: list[tuple[float, float, str]]) -> dict[str, str]:
     totals: dict[str, float] = {}
-    first: dict[str, float] = {}
-    for u in utterances:
-        name = str(u.get("speaker", ""))
-        start = float(u.get("start", 0.0))
-        end = float(u.get("end", 0.0))
-        totals[name] = totals.get(name, 0.0) + max(0.0, end - start)
-        first[name] = min(first.get(name, start), start)
-    ordered = sorted(totals, key=lambda name: (-totals[name], first[name], name))
+    first_start: dict[str, float] = {}
+    for start, end, speaker in rows:
+        totals[speaker] = totals.get(speaker, 0.0) + (end - start)
+        first_start[speaker] = min(first_start.get(speaker, start), start)
+    ordered = sorted(totals, key=lambda name: (-totals[name], first_start[name], name))
     return {name: f"SPEAKER_{index:02d}" for index, name in enumerate(ordered, 1)}
 
 
-def to_rttm(utterances: list[dict], file_id: str) -> list[str]:
-    labels = speaker_labels(utterances)
-    lines = []
-    for u in sorted(utterances, key=lambda x: (float(x.get("start", 0.0)), float(x.get("end", 0.0)))):
-        start = float(u.get("start", 0.0))
-        end = float(u.get("end", 0.0))
-        if end <= start:
+def convert_transcript(doc: object, file_id: str) -> RttmConversion:
+    if isinstance(doc, list):
+        utterances = doc
+    elif isinstance(doc, dict):
+        utterances = doc.get("utterances")
+    else:
+        raise ValueError("ожидался объект или массив utterances")
+    if not isinstance(utterances, list):
+        raise ValueError("нет массива utterances")
+
+    rows: list[tuple[float, float, str]] = []
+    skipped = 0
+    for item in utterances:
+        if not isinstance(item, dict):
+            skipped += 1
             continue
-        speaker = labels[str(u.get("speaker", ""))]
-        lines.append(
-            f"SPEAKER {file_id} 1 {start:.3f} {end - start:.3f} "
-            f"<NA> <NA> {speaker} <NA> <NA>"
+        start = _number(item.get("start"))
+        end = _number(item.get("end"))
+        if start is None or end is None:
+            skipped += 1
+            continue
+        start = max(0.0, start)
+        if end <= start:
+            skipped += 1
+            continue
+        rows.append((start, end, str(item.get("speaker", ""))))
+
+    result = RttmConversion(skipped=skipped)
+    result.speakers = _speaker_labels(rows)
+    uri = _safe_file_id(file_id)
+    for start, end, speaker in sorted(rows, key=lambda row: (row[0], row[1])):
+        label = result.speakers[speaker]
+        result.lines.append(
+            f"SPEAKER {uri} 1 {start:.3f} {end - start:.3f} <NA> <NA> {label} <NA> <NA>"
         )
-    return lines
+    return result
 
 
-def _self_test() -> None:
-    utterances = [
-        {"start": 0.0, "end": 2.5, "speaker": "A"},
-        {"start": 2.5, "end": 4.0, "speaker": "B"},
-        {"start": 4.0, "end": 5.0, "speaker": "A"},
-    ]
-    lines = to_rttm(utterances, "fixture")
-    assert len(lines) == 3, lines
-    first = lines[0].split()
-    second = lines[1].split()
-    assert first[0] == "SPEAKER" and first[1] == "fixture" and first[2] == "1"
-    assert first[3] == "0.000" and first[4] == "2.500"
-    assert first[7] == "SPEAKER_01" and second[7] == "SPEAKER_02"
+def write_rttm(path: Path, lines: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+
+def speaker_labels(utterances: list[dict]) -> dict[str, str]:
+    rows: list[tuple[float, float, str]] = []
+    for item in utterances:
+        if not isinstance(item, dict):
+            continue
+        start = _number(item.get("start"))
+        end = _number(item.get("end"))
+        if start is None or end is None:
+            continue
+        start = max(0.0, start)
+        if end > start:
+            rows.append((start, end, str(item.get("speaker", ""))))
+    return _speaker_labels(rows)
+
+
+def to_rttm(utterances: list[dict], file_id: str) -> list[str]:
+    return convert_transcript(utterances, file_id).lines
+
+
+def _self_test() -> int:
+    doc = {
+        "utterances": [
+            {"start": 0.0, "end": 2.0, "speaker": "B"},
+            {"start": 2.0, "end": 7.0, "speaker": "A"},
+            {"start": 7.0, "end": 8.0, "speaker": "B"},
+            {"start": 8.0, "end": 8.0, "speaker": "A"},
+            {"start": "bad", "end": 9.0, "speaker": "A"},
+            {"start": 9.0, "end": 10.0, "speaker": ""},
+        ]
+    }
+    result = convert_transcript(doc, "meeting one")
+    assert result.skipped == 2, result.skipped
+    assert result.speakers["A"] == "SPEAKER_01", result.speakers
+    assert result.speakers["B"] == "SPEAKER_02", result.speakers
+    assert result.speakers[""] == "SPEAKER_03", result.speakers
+    assert len(result.lines) == 4, result.lines
+    fields = result.lines[0].split()
+    assert len(fields) == 10, fields
+    assert fields[0] == "SPEAKER"
+    assert fields[1] == "meeting_one", fields[1]
+    assert fields[2] == "1"
+    assert fields[3] == "0.000"
+    assert fields[4] == "2.000"
+    assert fields[7] == "SPEAKER_02"
+    assert result.lines[1].split()[7] == "SPEAKER_01"
+
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "t.rttm"
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        assert len(path.read_text(encoding="utf-8").splitlines()) == 3
-    print("self-test ok", file=sys.stderr)
+        transcript = Path(tmp) / "sample.transcript.json"
+        transcript.write_text(json.dumps(doc), encoding="utf-8")
+        assert default_output(transcript) == Path(tmp) / "sample.rttm"
+        assert default_file_id(transcript) == "sample"
+        output = default_output(transcript)
+        write_rttm(output, result.lines)
+        assert len(output.read_text(encoding="utf-8").splitlines()) == 4
+
+    empty = convert_transcript({"utterances": []}, "empty")
+    assert empty.lines == [] and empty.speakers == {}
+
+    print("self-test ok")
+    return 0
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("transcript", nargs="?", type=Path)
-    parser.add_argument("output", nargs="?", type=Path)
-    parser.add_argument("--id", help="RTTM file id (по умолчанию — имя транскрипта)")
+    parser.add_argument("transcript", nargs="?", type=Path, help="входной .transcript.json")
+    parser.add_argument("output", nargs="?", type=Path, help="выходной RTTM")
+    parser.add_argument("--id", help="RTTM file id (по умолчанию имя транскрипта)")
     parser.add_argument("--self-test", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+
     if args.self_test:
-        _self_test()
-        return
+        return _self_test()
     if args.transcript is None:
         parser.error("нужен путь к .transcript.json")
-    utterances = _utterances(args.transcript)
-    output = args.output or args.transcript.with_suffix(".rttm")
-    file_id = args.id or args.transcript.stem.replace(" ", "_")
-    lines = to_rttm(utterances, file_id)
-    output.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
-    print(f"{output}: {len(lines)} сегментов, {len(set(speaker_labels(utterances).values()))} спикеров")
+
+    try:
+        utterances = _read_utterances(args.transcript)
+        result = convert_transcript(utterances, args.id or default_file_id(args.transcript))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"ошибка: {exc}", file=sys.stderr)
+        return 2
+
+    output = args.output or default_output(args.transcript)
+    if output.resolve() == args.transcript.resolve():
+        print("ошибка: выходной RTTM совпадает с входным JSON", file=sys.stderr)
+        return 2
+    try:
+        write_rttm(output, result.lines)
+    except OSError as exc:
+        print(f"ошибка записи {output}: {exc}", file=sys.stderr)
+        return 2
+
+    print(
+        f"{output}: {len(result.lines)} сегментов, "
+        f"{len(result.speakers)} спикеров, пропущено {result.skipped}"
+    )
+    if result.skipped:
+        print(f"предупреждение: пропущено сегментов {result.skipped}", file=sys.stderr)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

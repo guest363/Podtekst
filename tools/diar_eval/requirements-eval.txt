@@ -1,0 +1,12 @@
+# Python 3.13. Dev-only зависимости, в рантайм приложения не попадают.
+# Установка:
+#   python3.13 -m venv ~/.cache/podtekst-bench/venv
+#   uv pip install --python ~/.cache/podtekst-bench/venv/bin/python -r tools/diar_eval/requirements-eval.txt
+datasets==5.1.0
+jiwer==4.0.0
+numpy==2.5.4
+pandas==3.1.1
+pyannote.metrics==4.2.0
+pyarrow==26.0.1
+scipy==1.18.1
+soundfile==0.14.0
