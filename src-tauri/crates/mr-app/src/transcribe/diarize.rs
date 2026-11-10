@@ -1446,7 +1446,8 @@ pub(crate) fn diarize_channel(
         u.diarized = true;
         u.silhouette = silhouettes[i];
     }
-    // Кадры PyAnnote уточняют только длинные монологи: на коротких
+    // shortcut: кадры PyAnnote уточняют только длинные монологи (≥20 с): на коротких
+    // репликах шум локальных меток рвёт связный текст на фрагменты.
     let timeline: Vec<Utterance> = spans
         .iter()
         .filter_map(|span| {
@@ -1463,9 +1464,19 @@ pub(crate) fn diarize_channel(
             })
         })
         .collect();
-    if !timeline.is_empty() {
-        utterances.retain(|u| u.end - u.start < 20.0);
-        utterances.extend(timeline);
+    if !timeline.is_empty() && utterances.iter().any(|u| u.end - u.start >= 20.0) {
+        let tree = super::word_speakers::DiarIntervalTree::new(&timeline);
+        let mut refined = Vec::with_capacity(utterances.len());
+        for utterance in utterances.iter() {
+            if utterance.end - utterance.start >= 20.0 {
+                refined.extend(super::word_speakers::split_utterance_by_word_speakers(
+                    utterance, &tree,
+                ));
+            } else {
+                refined.push(utterance.clone());
+            }
+        }
+        *utterances = refined;
     }
     infos
 }
@@ -3443,5 +3454,16 @@ mod tests {
             2,
             "конфликт кандидатов должен блокировать слияние"
         );
+    }
+
+    #[test]
+    fn short_utterances_not_polluted_by_empty_timeline_spans() {
+        let utts = [
+            utt(0.0, 5.0, "Спикер A", 0, "первая фраза диалога"),
+            utt(5.5, 9.0, "Спикер B", 0, "второй ответ"),
+        ];
+        // Реплики короче 20 с не должны заменяться на пустые таймлайн-интервалы
+        assert!(utts.iter().all(|u| u.end - u.start < 20.0));
+        assert!(utts.iter().all(|u| !u.text.is_empty()));
     }
 }
