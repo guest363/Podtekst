@@ -242,20 +242,40 @@ pub(crate) fn suppress_mic_bleed(mic: &[f32], system: &[f32], vad_probs: &mut [f
     suppress_mic_bleed_with_stats(mic, system, vad_probs).suppressed
 }
 
+fn best_bleed_probe(mic: &[f32], system: &[f32]) -> Option<(usize, f32)> {
+    let len = mic.len().min(system.len());
+    let window = (BLEED_PROBE_SEC * 16000).min(len);
+    if window < 16000 * 2 {
+        return None;
+    }
+    let mut best: Option<(usize, f32)> = None;
+    for fraction in [0.0, 0.25, 0.5, 0.75, 0.9] {
+        let start = ((len - window) as f64 * fraction) as usize;
+        let end = start + window;
+        if let Some((delay, prominence)) =
+            mr_audio::echo::delay::estimate(&mic[start..end], &system[start..end], 8000)
+        {
+            if best.is_none_or(|(_, best_prominence)| prominence > best_prominence) {
+                best = Some((delay, prominence));
+            }
+        }
+    }
+    best
+}
+
 pub(crate) fn suppress_mic_bleed_with_stats(
     mic: &[f32],
     system: &[f32],
     vad_probs: &mut [f32],
 ) -> BleedStats {
     let mut stats = BleedStats::default();
-    let probe = mic.len().min(system.len()).min(BLEED_PROBE_SEC * 16000);
+    let len = mic.len().min(system.len());
+    let probe = len.min(BLEED_PROBE_SEC * 16000);
     stats.probe_sec = probe as f64 / 16000.0;
     if probe < 16000 * 2 {
         return stats;
     }
-    let Some((delay, prominence)) =
-        mr_audio::echo::delay::estimate(&mic[..probe], &system[..probe], 8000)
-    else {
+    let Some((delay, prominence)) = best_bleed_probe(mic, system) else {
         return stats;
     };
     stats.delay = delay;
@@ -433,6 +453,24 @@ mod tests {
         let (chosen, stats) = mixed_stereo_with_stats(&[vec![0.0; 100], vec![0.0; 100]]);
         assert!(chosen.is_none());
         assert_eq!(stats.len, 100);
+    }
+
+    #[test]
+    fn bleed_is_found_after_silent_first_minute() {
+        let len = 16_000 * 130;
+        let spans = [(66.0, 69.0), (72.0, 76.0), (100.0, 103.0)];
+        let system = chirp_bursts(len, &spans, 0.2);
+        let delay = 1000usize;
+        let mut mic = vec![0.0f32; delay];
+        mic.extend(system[..system.len() - delay].iter().map(|x| x * 0.1));
+        let mut probs = vec![1.0f32; len.div_ceil(VAD_FRAME)];
+        let stats = suppress_mic_bleed_with_stats(&mic, &system, &mut probs);
+        assert!(stats.suppressed > 0, "позднее эхо не найдено");
+        let late = 60 * 16_000 / VAD_FRAME;
+        assert!(
+            probs[late..].iter().any(|&p| p <= 0.20),
+            "эхо после первой минуты не подавлено"
+        );
     }
 
     #[test]

@@ -1905,6 +1905,28 @@ fn append_overlap_text(last: &mut String, next: &str) {
     }
 }
 
+fn utterance_rms(
+    samples: &HashMap<usize, Vec<f32>>,
+    u: &Utterance,
+    start: f64,
+    end: f64,
+) -> Option<f32> {
+    let channel = u.channel? as usize;
+    let data = samples.get(&channel)?;
+    let sr = 16000.0;
+    let lo = (start.max(0.0) * sr) as usize;
+    let hi = (end.max(0.0) * sr) as usize;
+    let hi = hi.min(data.len());
+    if hi <= lo {
+        return Some(0.0);
+    }
+    let sum = data[lo..hi]
+        .iter()
+        .map(|&x| (x as f64) * (x as f64))
+        .sum::<f64>();
+    Some((sum / (hi - lo) as f64).sqrt() as f32)
+}
+
 fn better_utterance(a: &Utterance, b: &Utterance) -> bool {
     let wa = word_count(&a.text);
     let wb = word_count(&b.text);
@@ -1925,11 +1947,23 @@ fn better_utterance(a: &Utterance, b: &Utterance) -> bool {
 }
 
 /// Одна и та же фраза, попавшая в оба канала (эхо), остаётся в одном виде.
-pub(crate) fn dedupe_cross_channel(utterances: &mut Vec<Utterance>) {
+/// Канал-источник определяется по уровню речи: пролезание в соседний канал
+/// тише оригинала. Разные уверенно распознанные голоса при близких уровнях
+/// не удаляем — иначе теряется один из спикеров.
+pub(crate) fn dedupe_cross_channel(
+    utterances: &mut Vec<Utterance>,
+    speakers: &[SpeakerInfo],
+    channel_samples: &HashMap<usize, Vec<f32>>,
+) {
     let before = utterances.len();
     if utterances.len() < 2 {
         return;
     }
+    let matched: HashSet<&str> = speakers
+        .iter()
+        .filter(|speaker| speaker.matched)
+        .map(|speaker| speaker.name.as_str())
+        .collect();
     let mut order: Vec<usize> = (0..utterances.len()).collect();
     order.sort_by(|&a, &b| utterances[a].start.total_cmp(&utterances[b].start));
     let mut keep = vec![true; utterances.len()];
@@ -1956,11 +1990,42 @@ pub(crate) fn dedupe_cross_channel(utterances: &mut Vec<Utterance>) {
             if text_similarity(&utterances[i].text, &utterances[j].text) < 0.55 {
                 continue;
             }
-            if better_utterance(&utterances[j], &utterances[i]) {
+            let rms_i = utterance_rms(
+                channel_samples,
+                &utterances[i],
+                utterances[i].start.max(utterances[j].start),
+                utterances[i].end.min(utterances[j].end),
+            )
+            .unwrap_or(0.0);
+            let rms_j = utterance_rms(
+                channel_samples,
+                &utterances[j],
+                utterances[i].start.max(utterances[j].start),
+                utterances[i].end.min(utterances[j].end),
+            )
+            .unwrap_or(0.0);
+            let loudest = rms_i.max(rms_j);
+            let clear_level = loudest > 1e-6 && (rms_i - rms_j).abs() > loudest * 0.10;
+            let both_matched = matched.contains(utterances[i].speaker.as_str())
+                && matched.contains(utterances[j].speaker.as_str());
+            let i_matched = matched.contains(utterances[i].speaker.as_str());
+            let j_matched = matched.contains(utterances[j].speaker.as_str());
+            if both_matched && utterances[i].speaker != utterances[j].speaker && !clear_level {
+                continue;
+            }
+            let i_better = if i_matched != j_matched {
+                i_matched
+            } else if clear_level {
+                rms_i > rms_j
+            } else {
+                better_utterance(&utterances[i], &utterances[j])
+            };
+            if i_better {
+                keep[j] = false;
+            } else {
                 keep[i] = false;
                 break;
             }
-            keep[j] = false;
         }
     }
     let mut idx = 0usize;
@@ -2738,7 +2803,7 @@ mod tests {
         assert_eq!(infos.len(), 1);
         assert_eq!(infos[0].name, "Собеседник 1");
         assert_eq!(utts[0].speaker, "Собеседник 1");
-        dedupe_cross_channel(&mut utts);
+        dedupe_cross_channel(&mut utts, &[], &HashMap::new());
         assert_eq!(utts.len(), 1);
         assert_eq!(utts[0].channel, Some(1));
     }
@@ -2769,10 +2834,56 @@ mod tests {
             utt(1.0, 5.0, "Спикер B", 1, "нейтральная тестовая фраза"),
             utt(1.1, 5.1, "Спикер A", 0, "нейтральная тестовая фраза"),
         ];
-        dedupe_cross_channel(&mut utts);
+        dedupe_cross_channel(&mut utts, &[], &HashMap::new());
         assert_eq!(utts.len(), 1);
         assert_eq!(utts[0].speaker, "Спикер B");
         assert_eq!(utts[0].channel, Some(1));
+    }
+
+    #[test]
+    fn dedupe_keeps_different_matched_speakers() {
+        let mut a = info("Спикер A", 0, vec![1.0, 0.0], 5, 10.0);
+        a.matched = true;
+        let mut b = info("Спикер B", 1, vec![0.0, 1.0], 5, 10.0);
+        b.matched = true;
+        let mut utts = vec![
+            utt(1.0, 5.0, "Спикер B", 1, "нейтральная тестовая фраза"),
+            utt(1.1, 5.1, "Спикер A", 0, "нейтральная тестовая фраза"),
+        ];
+        dedupe_cross_channel(&mut utts, &[a, b], &HashMap::new());
+        assert_eq!(utts.len(), 2);
+    }
+
+    #[test]
+    fn dedupe_prefers_louder_channel_as_source() {
+        let mut samples = HashMap::new();
+        samples.insert(0usize, vec![0.5f32; 16_000 * 6]);
+        samples.insert(1usize, vec![0.1f32; 16_000 * 6]);
+        let mut utts = vec![
+            utt(1.0, 5.0, "Спикер B", 1, "нейтральная тестовая фраза"),
+            utt(1.1, 5.1, "Спикер A", 0, "нейтральная тестовая фраза"),
+        ];
+        dedupe_cross_channel(&mut utts, &[], &samples);
+        assert_eq!(utts.len(), 1);
+        assert_eq!(utts[0].speaker, "Спикер A");
+        assert_eq!(utts[0].channel, Some(0));
+    }
+
+    #[test]
+    fn dedupe_keeps_matched_over_louder_unmatched_echo() {
+        let mut a = info("Спикер A", 0, vec![1.0, 0.0], 5, 10.0);
+        a.matched = true;
+        let mut samples = HashMap::new();
+        samples.insert(0usize, vec![0.1f32; 16_000 * 6]);
+        samples.insert(1usize, vec![0.5f32; 16_000 * 6]);
+        let mut utts = vec![
+            utt(1.0, 5.0, "Собеседник 1", 1, "нейтральная тестовая фраза"),
+            utt(1.1, 5.1, "Спикер A", 0, "нейтральная тестовая фраза"),
+        ];
+        dedupe_cross_channel(&mut utts, &[a], &samples);
+        assert_eq!(utts.len(), 1);
+        assert_eq!(utts[0].speaker, "Спикер A");
+        assert_eq!(utts[0].channel, Some(0));
     }
 
     #[test]
@@ -2794,7 +2905,7 @@ mod tests {
             ),
             utt(2.0, 2.5, "Спикер A", 0, "да"),
         ];
-        dedupe_cross_channel(&mut utts);
+        dedupe_cross_channel(&mut utts, &[], &HashMap::new());
         assert_eq!(utts.len(), 2);
         assert_eq!(utts[1].speaker, "Спикер A");
     }
@@ -2805,7 +2916,7 @@ mod tests {
             utt(1.0, 5.0, "Спикер B", 1, "нейтральная тестовая фраза"),
             utt(1.1, 5.1, "Спикер A", 0, "нейтральная тестовая фраза"),
         ];
-        dedupe_cross_channel(&mut utts);
+        dedupe_cross_channel(&mut utts, &[], &HashMap::new());
         assert_eq!(utts.len(), 1);
         assert_eq!(utts[0].speaker, "Спикер B");
     }
