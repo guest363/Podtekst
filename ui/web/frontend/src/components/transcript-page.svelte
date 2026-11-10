@@ -24,7 +24,20 @@ let speakersOpen = $state(
   typeof localStorage !== 'undefined' ? localStorage.getItem('mr_speakers_open') !== 'false' : true,
 )
 
-let summaryOpen = $state(!isMobile)
+// v2: старый ключ хранил «скрыто» по умолчанию и не должен отменять новый дефолт.
+const SUMMARY_OPEN_KEY = 'mr_summary_open_v2'
+const storedSummaryOpen =
+  typeof localStorage !== 'undefined' ? localStorage.getItem(SUMMARY_OPEN_KEY) : null
+
+let summaryOpen = $state(storedSummaryOpen === null ? !isMobile : storedSummaryOpen === 'true')
+
+$effect(() => {
+  try {
+    localStorage.setItem(SUMMARY_OPEN_KEY, String(summaryOpen))
+  } catch {
+    /* ignore */
+  }
+})
 
 let summaryAvailable = $derived(
   !isAndroid &&
