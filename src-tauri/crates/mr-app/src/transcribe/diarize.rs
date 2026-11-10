@@ -2307,7 +2307,7 @@ fn find_speaker_cut_point(
                 let rms = rms_at(cut_t);
                 let pause = (gap_end - gap_start).max(0.0);
                 let dist = (cut_t - mid_expected).abs();
-                let score = rms * 10.0 - pause * 0.5 + dist * 0.05;
+                let score = rms * 10.0 - pause * 2.0 + dist * 1.5;
                 if score < best_score {
                     best_score = score;
                     best_cut = Some(cut_t);
@@ -2322,15 +2322,18 @@ fn find_speaker_cut_point(
     let lo = (search_lo * sr) as usize;
     let hi = (search_hi * sr) as usize;
     if hi > lo + frame_len && hi <= samples.len() {
-        let mut min_rms = f64::INFINITY;
+        let mut min_score = f64::INFINITY;
         let mut best_sec = mid_expected;
         for chunk_start in (lo..hi - frame_len).step_by(frame_len / 2) {
             let slice = &samples[chunk_start..chunk_start + frame_len];
             let sum_sq: f64 = slice.iter().map(|&x| (x as f64) * (x as f64)).sum();
             let rms = (sum_sq / slice.len() as f64).sqrt();
-            if rms < min_rms {
-                min_rms = rms;
-                best_sec = (chunk_start + frame_len / 2) as f64 / sr;
+            let sec = (chunk_start + frame_len / 2) as f64 / sr;
+            let dist = (sec - mid_expected).abs();
+            let score = rms * 10.0 + dist * 0.5;
+            if score < min_score {
+                min_score = score;
+                best_sec = sec;
             }
         }
         return best_sec.clamp(start + 1.0, end - 1.0);
@@ -2364,6 +2367,27 @@ fn speaker_change_cuts(
         if cuts.last().map(|&c| b - c >= 1.0).unwrap_or(true) {
             cuts.push((b * 100.0).round() / 100.0);
         }
+    }
+    if wins.len() >= 3 {
+        let sims2: Vec<f64> = (0..wins.len() - 2)
+            .map(|i| mr_ml::cosine_similarity(&wins[i].1, &wins[i + 2].1))
+            .collect();
+        for (i, &s2) in sims2.iter().enumerate() {
+            if s2 >= 0.35 {
+                continue;
+            }
+            let prev = if i > 0 { sims2[i - 1] } else { 1.0 };
+            let next = sims2.get(i + 1).copied().unwrap_or(1.0);
+            if s2 > prev || s2 > next {
+                continue;
+            }
+            let b = find_speaker_cut_point(samples, start, end, wins[i].0, wins[i + 2].0, words);
+            let b_rounded = (b * 100.0).round() / 100.0;
+            if cuts.iter().all(|&c| (b_rounded - c).abs() >= 1.0) {
+                cuts.push(b_rounded);
+            }
+        }
+        cuts.sort_by(|a, b| a.total_cmp(b));
     }
     cuts
 }
@@ -3736,5 +3760,24 @@ mod tests {
         let echo = "ну че на сегодня с проектом полностью сделано прямо развалилось";
         let original = "что на сегодня проект полностью сделано прямо развалилось вот давай смотреть в одиннадцать по трафику ничего не прилетело надо изучить";
         assert!(text_similarity(echo, original) >= 0.85);
+    }
+
+    #[test]
+    fn speaker_change_cuts_detects_transition_window_stride_two() {
+        let a = vec![1.0, 0.0];
+        let b = vec![0.0, 1.0];
+        let mix = vec![
+            std::f64::consts::FRAC_1_SQRT_2,
+            std::f64::consts::FRAC_1_SQRT_2,
+        ];
+        let wins: Vec<(f64, Vec<f64>)> = vec![
+            (0.0, a),
+            (1.0, mix),
+            (2.0, b.clone()),
+            (3.0, b),
+        ];
+        let cuts = speaker_change_cuts(&[], 0.0, 5.0, &wins, &[]);
+        assert_eq!(cuts.len(), 1);
+        assert!((1.5..=3.0).contains(&cuts[0]), "{cuts:?}");
     }
 }
