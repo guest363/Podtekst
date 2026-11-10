@@ -439,7 +439,12 @@ pub(super) fn load_all_voiceprints() -> Vec<serde_json::Value> {
 pub(super) fn resolve_target_pack(name: &str, preferred_pack_id: Option<&str>) -> String {
     if let Some(pid) = preferred_pack_id {
         let clean = pid.trim();
-        if !clean.is_empty() {
+        let path = Path::new(clean);
+        let mut parts = path.components();
+        let single = !path.is_absolute()
+            && matches!(parts.next(), Some(Component::Normal(_)))
+            && parts.next().is_none();
+        if single {
             let root = packs::packs_root_dir(&app_data_dir());
             if root.join(clean).is_dir() {
                 return clean.to_string();
@@ -1195,28 +1200,8 @@ fn snippet_for_new_prototype(
     Some(format!("snippets/{proto_id}.wav"))
 }
 
-/// Путь сниппета приходит из `voiceprints.json` (в т.ч. импортированного пакета),
-/// поэтому доверять ему нельзя: только относительный путь, канонизированный
-/// внутри каталога пакета.
-fn safe_snippet_path(pack_dir: &Path, rel: &str) -> Option<PathBuf> {
-    let rel_path = Path::new(rel);
-    if rel_path.is_absolute()
-        || rel_path.components().any(|c| {
-            matches!(
-                c,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        })
-    {
-        return None;
-    }
-    let root = pack_dir.canonicalize().ok()?;
-    let candidate = pack_dir.join(rel_path).canonicalize().ok()?;
-    (candidate.starts_with(&root) && candidate.is_file()).then_some(candidate)
-}
-
 fn remove_snippet(pack_dir: &Path, rel: &str) {
-    if let Some(path) = safe_snippet_path(pack_dir, rel) {
+    if let Some(path) = packs::safe_snippet_path(pack_dir, rel) {
         let _ = std::fs::remove_file(path);
     }
 }
@@ -1345,7 +1330,7 @@ pub(super) fn serve_voiceprint_detail(request: tiny_http::Request, query: &str) 
                         } else {
                             mr_packs::packs_root_dir(&app_data_dir()).join(&pack_id)
                         };
-                        safe_snippet_path(&base, r).is_some()
+                        packs::safe_snippet_path(&base, r).is_some()
                     });
                     json!({
                         "id": x.get("id"),
@@ -1807,9 +1792,9 @@ mod tests {
         ));
         std::fs::create_dir_all(dir.join("snippets")).unwrap();
         std::fs::write(dir.join("snippets/a.wav"), b"x").unwrap();
-        assert!(safe_snippet_path(&dir, "snippets/a.wav").is_some());
-        assert!(safe_snippet_path(&dir, "../a.wav").is_none());
-        assert!(safe_snippet_path(&dir, "/etc/passwd").is_none());
+        assert!(packs::safe_snippet_path(&dir, "snippets/a.wav").is_some());
+        assert!(packs::safe_snippet_path(&dir, "../a.wav").is_none());
+        assert!(packs::safe_snippet_path(&dir, "/etc/passwd").is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1884,6 +1869,11 @@ mod tests {
         assert_eq!(resolve_target_pack("Инженер 1", None), custom.id);
         assert_eq!(resolve_target_pack("Новый", None), "default");
         assert_eq!(resolve_target_pack("Новый", Some(&custom.id)), custom.id);
+        assert_eq!(
+            resolve_target_pack("Новый", Some(&dir.to_string_lossy())),
+            "default"
+        );
+        assert_eq!(resolve_target_pack("Новый", Some("../evil")), "default");
 
         let custom2 = mr_packs::create_pack(&dir, "Команда Бета", "").unwrap();
         let ok = update_people(

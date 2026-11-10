@@ -1,2 +1,3 @@
 ui/web/frontend/** text=auto eol=lf
 ui/web/static/** text=auto eol=lf
+src-tauri/crates/mr-summarize/** text=auto eol=lf

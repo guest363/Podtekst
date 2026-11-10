@@ -4,7 +4,8 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 use super::{
-    packs_root_dir, validate_pack_id, voiceprints_v3, write_json_atomic, PacksError, Result,
+    packs_root_dir, safe_snippet_rel, validate_pack_id, voiceprints_v3, write_json_atomic,
+    PacksError, Result,
 };
 
 fn same_name(a: &str, b: &str) -> bool {
@@ -27,8 +28,9 @@ pub fn add_person_to_pack(app_data: &Path, pack_id: &str, mut person: Value) -> 
     }
     let file = dir.join("people.json");
     let mut list: Vec<Value> = match fs::read_to_string(&file) {
-        Ok(t) => serde_json::from_str(&t).unwrap_or_default(),
-        Err(_) => vec![],
+        Ok(text) => serde_json::from_str(&text)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => vec![],
+        Err(error) => return Err(error.into()),
     };
     let mut found = false;
     for p in &mut list {
@@ -97,10 +99,11 @@ pub fn move_person_pack(
 
     // 1. Извлекаем и удаляем человека из from_dir/people.json
     let from_people_file = from_dir.join("people.json");
-    let from_people: Vec<Value> = fs::read_to_string(&from_people_file)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default();
+    let from_people: Vec<Value> = match fs::read_to_string(&from_people_file) {
+        Ok(text) => serde_json::from_str(&text)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => vec![],
+        Err(error) => return Err(error.into()),
+    };
     let mut moved_person = None;
     let kept_people: Vec<Value> = from_people
         .into_iter()
@@ -167,16 +170,29 @@ pub fn move_person_pack(
         if let Some(protos) = prof.get("prototypes").and_then(|x| x.as_array()) {
             for proto in protos {
                 if let Some(rel) = proto.get("snippet_relpath").and_then(|x| x.as_str()) {
+                    let Some(rel) = safe_snippet_rel(rel) else {
+                        continue;
+                    };
                     let from_wav = source_vp_dir.join(rel);
                     let to_wav = to_dir.join(rel);
-                    if from_wav.is_file() {
-                        if let Some(p) = to_wav.parent() {
-                            let _ = fs::create_dir_all(p);
-                        }
-                        let _ = fs::rename(&from_wav, &to_wav)
-                            .or_else(|_| fs::copy(&from_wav, &to_wav).map(|_| ()));
-                        let _ = fs::remove_file(&from_wav);
+                    if !from_wav.is_file() {
+                        continue;
                     }
+                    let Some(root) = source_vp_dir.canonicalize().ok() else {
+                        continue;
+                    };
+                    let Some(real) = from_wav.canonicalize().ok() else {
+                        continue;
+                    };
+                    if !real.starts_with(&root) {
+                        continue;
+                    }
+                    if let Some(p) = to_wav.parent() {
+                        let _ = fs::create_dir_all(p);
+                    }
+                    let _ = fs::rename(&real, &to_wav)
+                        .or_else(|_| fs::copy(&real, &to_wav).map(|_| ()));
+                    let _ = fs::remove_file(&real);
                 }
             }
         }
@@ -191,8 +207,9 @@ pub fn move_person_pack(
         let to_vp_file = to_dir.join("voiceprints.json");
         let mut to_profiles = vec![];
         let mut to_space = "eres2netv2-192d".to_string();
-        if let Ok(text) = fs::read_to_string(&to_vp_file) {
-            if let Ok(v) = serde_json::from_str::<Value>(&text) {
+        match fs::read_to_string(&to_vp_file) {
+            Ok(text) => {
+                let v: Value = serde_json::from_str(&text)?;
                 if let Some(s) = v.get("embedding_space").and_then(|x| x.as_str()) {
                     to_space = s.to_string();
                 }
@@ -200,6 +217,8 @@ pub fn move_person_pack(
                     to_profiles = arr.clone();
                 }
             }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
         to_profiles
             .retain(|p| !same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), name));
@@ -215,6 +234,84 @@ mod tests {
     use super::*;
     use crate::manifest::create_pack;
     use crate::testutil::tmp_app;
+
+    #[test]
+    fn move_keeps_snippets_inside_pack() {
+        let (_g, app) = tmp_app("move-snippet-traversal");
+        let p1 = create_pack(&app, "Отдел 1", "").unwrap();
+        let p2 = create_pack(&app, "Отдел 2", "").unwrap();
+        add_person_to_pack(&app, &p1.id, json!({"name": "Инженер 2"})).unwrap();
+
+        let absolute = app.join("absolute.txt");
+        let relative = app.join("packs").join("relative.txt");
+        fs::write(&absolute, b"keep").unwrap();
+        fs::write(&relative, b"keep").unwrap();
+        let vp = voiceprints_v3(
+            vec![json!({
+                "name": "Инженер 2",
+                "prototypes": [
+                    {"id": "p1", "embedding": [], "snippet_relpath": absolute.to_string_lossy()},
+                    {"id": "p2", "embedding": [], "snippet_relpath": "../relative.txt"}
+                ]
+            })],
+            "eres2netv2-192d",
+        );
+        fs::write(
+            app.join("packs").join(&p1.id).join("voiceprints.json"),
+            serde_json::to_string(&vp).unwrap(),
+        )
+        .unwrap();
+
+        move_person_pack(&app, "Инженер 2", &p1.id, &p2.id).unwrap();
+
+        assert!(absolute.exists());
+        assert!(relative.exists());
+    }
+
+    #[test]
+    fn corrupt_people_json_is_not_overwritten() {
+        let (_g, app) = tmp_app("corrupt-people");
+        let pack = create_pack(&app, "Отдел", "").unwrap();
+        let file = app.join("packs").join(&pack.id).join("people.json");
+        fs::write(&file, "{ broken").unwrap();
+
+        assert!(add_person_to_pack(&app, &pack.id, json!({"name": "Новый"})).is_err());
+        assert_eq!(fs::read_to_string(&file).unwrap(), "{ broken");
+    }
+
+    #[test]
+    fn corrupt_target_voiceprints_blocks_move() {
+        let (_g, app) = tmp_app("corrupt-target-vp");
+        let p1 = create_pack(&app, "Отдел 1", "").unwrap();
+        let p2 = create_pack(&app, "Отдел 2", "").unwrap();
+        add_person_to_pack(&app, &p1.id, json!({"name": "Инженер 3"})).unwrap();
+        let vp = voiceprints_v3(
+            vec![json!({"name": "Инженер 3", "prototypes": []})],
+            "eres2netv2-192d",
+        );
+        fs::write(
+            app.join("packs").join(&p1.id).join("voiceprints.json"),
+            serde_json::to_string(&vp).unwrap(),
+        )
+        .unwrap();
+        let target = app.join("packs").join(&p2.id).join("voiceprints.json");
+        fs::write(&target, "{ broken").unwrap();
+
+        assert!(move_person_pack(&app, "Инженер 3", &p1.id, &p2.id).is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "{ broken");
+    }
+
+    #[test]
+    fn corrupt_people_json_blocks_move() {
+        let (_g, app) = tmp_app("corrupt-move");
+        let p1 = create_pack(&app, "Отдел 1", "").unwrap();
+        let p2 = create_pack(&app, "Отдел 2", "").unwrap();
+        let file = app.join("packs").join(&p1.id).join("people.json");
+        fs::write(&file, "{ broken").unwrap();
+
+        assert!(move_person_pack(&app, "Новый", &p1.id, &p2.id).is_err());
+        assert_eq!(fs::read_to_string(&file).unwrap(), "{ broken");
+    }
 
     #[test]
     fn add_and_move_person_between_packs() {

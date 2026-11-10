@@ -504,7 +504,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
             ✕
           </button>
         </div>
-        <SpeakersPane speakers={transcript.speakers} />
+        <SpeakersPane speakers={transcript.speakers} onseek={seekTo} />
       </div>
 
       <TranscriptDoc

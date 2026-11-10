@@ -129,13 +129,14 @@ pub fn parse(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErro
             }
             match label.as_str() {
                 "задача" | "что" | "task" | "what" => {
+                    let before = sections[current].items.len();
                     if role == SectionRole::Task {
                         let (text, task) = parse_task(&value);
                         push_item(&mut sections[current], text, role, task);
                     } else {
                         push_item(&mut sections[current], value, role, None);
                     }
-                    last = Some((current, sections[current].items.len() - 1));
+                    last = (sections[current].items.len() > before).then_some((current, before));
                 }
                 "решение" | "decision" => {
                     push_item(&mut sections[current], value, role, None);
@@ -175,8 +176,9 @@ pub fn parse(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErro
             } else {
                 (text, None)
             };
+            let before = sections[current].items.len();
             push_item(&mut sections[current], text, role, task);
-            last = Some((current, sections[current].items.len() - 1));
+            last = (sections[current].items.len() > before).then_some((current, before));
             last_raw = trimmed.to_owned();
             continue;
         }
@@ -221,8 +223,9 @@ pub fn parse(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErro
                 } else {
                     (text, None)
                 };
+                let before = sections[current].items.len();
                 push_item(&mut sections[current], text, role, task);
-                last = Some((current, sections[current].items.len() - 1));
+                last = (sections[current].items.len() > before).then_some((current, before));
                 recovered += 1;
             }
         }

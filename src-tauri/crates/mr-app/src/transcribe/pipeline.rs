@@ -19,9 +19,9 @@ mod asr;
 mod speakers;
 mod vad;
 
-const MAX_SEGMENT_SEC: f32 = 20.0;
-const SEGMENT_GAP_SEC: f32 = 0.5;
-const SEGMENT_PAD_SEC: f64 = 0.25;
+const MAX_SEGMENT_SEC: f32 = 12.0;
+const SEGMENT_GAP_SEC: f32 = 0.4;
+const SEGMENT_PAD_SEC: f64 = 0.0;
 
 pub(super) fn quiet_blank_penalty(duration_sec: f64, rms: f32) -> f32 {
     if duration_sec <= 4.0 && (0.0015..0.015).contains(&rms) {
@@ -282,14 +282,17 @@ fn transcribe_file_inner(
         (vec![(0usize, opts.speaker_right.clone())], "общая запись")
     };
 
-    // Каналы отдаём как есть: `channels` больше нигде не нужен, поэтому
-    // раскладываем его по индексам без копий (иначе длинная запись занимала
-    // вдвое больше памяти).
-    let channel_samples: HashMap<usize, Vec<f32>> = channels
+    // Каналы раскладываем по индексам без лишних копий.
+    let mut channel_samples: HashMap<usize, Vec<f32>> = channels
         .into_iter()
         .enumerate()
         .filter(|(i, _)| chan_list.iter().any(|(ch, _)| ch == i))
         .collect();
+
+    // Выравниваем громкость скользящим RMS перед VAD и ASR, чтобы тихие реплики не отсекались порогом.
+    for samples in channel_samples.values_mut() {
+        mr_audio::dsp::agc_rms_16k(samples);
+    }
 
     let (channel_vad, channel_grouped) = vad::run(
         &channel_samples,
@@ -315,7 +318,6 @@ fn transcribe_file_inner(
         models: &mut models,
         opts,
         is_stereo,
-        mixed_channels,
         on_event,
     });
     let words = merged

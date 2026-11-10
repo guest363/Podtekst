@@ -46,7 +46,24 @@ pub(super) fn run(
             }
             let lo = (a * 16000.0) as usize;
             let hi = ((b * 16000.0) as usize).min(samples.len());
-            let chunk = &samples[lo..hi];
+            let raw_chunk = &samples[lo..hi];
+
+            // По-чанковая нормализация до пика 0.9 перед ASR:
+            // полный динамический диапазон для INT8 квантованных моделей (GigaAM / Whisper).
+            const NOISE_FLOOR: f32 = 0.002;
+            const TARGET_PEAK: f32 = 0.9;
+            let peak = raw_chunk.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+            let normalized_buf: Vec<f32>;
+            let chunk: &[f32] = if peak > NOISE_FLOOR && (peak - TARGET_PEAK).abs() > 0.05 {
+                let scale = TARGET_PEAK / peak;
+                normalized_buf = raw_chunk
+                    .iter()
+                    .map(|&x| (x * scale).clamp(-1.0, 1.0))
+                    .collect();
+                &normalized_buf
+            } else {
+                raw_chunk
+            };
             let rms = (chunk.iter().map(|x| x * x).sum::<f32>() / chunk.len().max(1) as f32).sqrt();
             // Длительность — до padding-а, иначе короткая реплика у границы
             // 4 секунд теряет штраф из-за добавленных 0.5 с.

@@ -207,8 +207,10 @@ pub(crate) fn suppress_mic_bleed_with_stats(
         if sys_level < 0.005 || mic_level < 0.001 || mic_level > sys_level * 0.35 {
             continue;
         }
+        const SUPPRESSION_FLOOR: f32 = 0.20;
         if window_corr(&mic_env, &sys_env, frame, other, 10) > 0.7 {
-            vad_probs[frame] = 0.0;
+            // shortcut: suppression floor 0.20 (-14 dB) сохраняет непрерывность речи при перебивании
+            vad_probs[frame] = vad_probs[frame].min(SUPPRESSION_FLOOR);
             suppressed += 1;
         }
     }
@@ -269,7 +271,7 @@ mod tests {
         let suppressed = suppress_mic_bleed(&mic, &system, &mut probs);
         assert!(suppressed > 0, "пролезание не найдено");
         let quiet = 20usize;
-        assert_eq!(probs[quiet], 0.0, "дальний спикер остался в микрофоне");
+        assert!(probs[quiet] <= 0.20, "дальний спикер остался в микрофоне");
     }
 
     #[test]
