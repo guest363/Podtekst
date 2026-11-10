@@ -1,0 +1,12 @@
+# Pre-push повторяет гейты CI: ошибки формата и линта ловятся до отправки ветки.
+pre-push:
+  parallel: true
+  commands:
+    rust-fmt:
+      run: cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
+    rust-clippy:
+      run: cargo clippy --workspace --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
+    rust-tests:
+      run: cargo test --workspace --locked --manifest-path src-tauri/Cargo.toml
+    frontend:
+      run: bash ./scripts/check-frontend.sh

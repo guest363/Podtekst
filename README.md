@@ -246,7 +246,7 @@ cargo clippy --workspace --all-targets --locked --manifest-path src-tauri/Cargo.
 cd ui/web/frontend && yarn install --immutable && yarn lint && yarn check && yarn build
 ```
 
-Подробное описание архитектуры, внутренних крейтов и правил разработки находится в [AGENTS.md](AGENTS.md). Правила участия в разработке - в [CONTRIBUTING.md](CONTRIBUTING.md).
+Подробное описание архитектуры, внутренних крейтов и правил разработки находится в [AGENTS.md](AGENTS.md). Правила участия в разработке - в [CONTRIBUTING.md](CONTRIBUTING.md), там же установка lefthook: те же проверки запускаются перед `git push`.
 
 ---
 

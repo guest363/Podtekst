@@ -20,6 +20,19 @@ cd ui/web/frontend && corepack enable && yarn install --immutable && yarn lint &
 После изменения исходников фронта пересоберите статику (`yarn build`) и
 закоммитьте её вместе с `ui/web/static/.mr-stamp` - так чистый клон запускается без Node.
 
+## Git hooks (lefthook)
+
+`lefthook.yml` повторяет гейты CI перед `git push`: `cargo fmt --check`, clippy,
+тесты, `yarn lint`, `yarn check`, `yarn build` и проверку закоммиченной статики.
+Установка один раз:
+
+```bash
+go install github.com/evilmartians/lefthook@latest   # или npm i -g lefthook / brew install lefthook
+lefthook install
+```
+
+Осознанный обход без проверок - `git push --no-verify`.
+
 ## Правила
 
 * Отправляя PR, вы соглашаетесь распространять свой вклад на условиях MIT
