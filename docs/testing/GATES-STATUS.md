@@ -1,7 +1,7 @@
 # Статус гейтов бенчмарка Podtekst
 
-Снимок на 10.11.2026. Ветка `fix/benchmark-gates`, HEAD `e6c8cc5`; в рабочем дереве
-auto-k с нижней границей 2, без guard cannot-link (не закоммичено).
+Снимок на 10.11.2026. Ветка `fix/benchmark-gates`, HEAD `84f718d`;
+автоопределение числа спикеров (auto-k) закоммичено в `b03ac04`.
 Цифры взяты из готовых артефактов `~/.cache/podtekst-bench/runs/`; новых прогонов
 для этого документа не делалось. Подробные таблицы и оговорки - в
 `docs/testing/BENCHMARK-REPORT.md`, критерии приёмки - в `docs/testing/OPEN-DATASETS-TZ.md`.
