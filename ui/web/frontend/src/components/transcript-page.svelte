@@ -24,9 +24,7 @@ let speakersOpen = $state(
   typeof localStorage !== 'undefined' ? localStorage.getItem('mr_speakers_open') !== 'false' : true,
 )
 
-let summaryOpen = $state(
-  typeof localStorage !== 'undefined' ? localStorage.getItem('mr_summary_open') === 'true' : false,
-)
+let summaryOpen = $state(!isMobile)
 
 let summaryAvailable = $derived(
   !isAndroid &&
@@ -49,11 +47,6 @@ const toggleSummaryPanel = (): void => {
   summaryOpen = !summaryOpen
   if (summaryOpen) {
     summaryState.expanded = true
-  }
-  try {
-    localStorage.setItem('mr_summary_open', String(summaryOpen))
-  } catch {
-    /* ignore */
   }
 }
 

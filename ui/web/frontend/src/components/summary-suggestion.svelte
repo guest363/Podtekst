@@ -122,7 +122,14 @@ const shortSource = $derived(
 
   {#if classification && !manualOnly}
     <details class="summary-why">
-      <summary>Почему так решили</summary>
+      <summary>
+        <span>Почему так решили</span>
+        <span class="summary-why-chev" aria-hidden="true">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m6 9 6 6 6-6"></path>
+          </svg>
+        </span>
+      </summary>
       <p class="summary-why-text">
         <span>{recommendation}</span>
         <span class="summary-why-signals">
@@ -253,13 +260,36 @@ const shortSource = $derived(
     color: var(--text-muted);
   }
   .summary-why summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
     cursor: pointer;
     font-weight: 600;
     color: var(--text-muted);
     user-select: none;
+    list-style: none;
+  }
+  .summary-why summary::-webkit-details-marker {
+    display: none;
+  }
+  .summary-why summary::marker {
+    content: '';
   }
   .summary-why summary:hover {
     color: var(--text-primary);
+  }
+  .summary-why-chev {
+    display: inline-flex;
+    flex-shrink: 0;
+    color: var(--text-faint);
+    transition: transform 160ms var(--ease-spring);
+  }
+  .summary-why summary:hover .summary-why-chev {
+    color: var(--text-muted);
+  }
+  .summary-why[open] .summary-why-chev {
+    transform: rotate(180deg);
   }
   .summary-why-text {
     margin: 8px 0 0;
@@ -298,5 +328,8 @@ const shortSource = $derived(
       justify-content: center;
     }
     .summary-model > .btn-primary { width: 100%; min-height: 40px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .summary-why-chev { transition: none; }
   }
 </style>
