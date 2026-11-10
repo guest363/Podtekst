@@ -600,9 +600,13 @@ fn fill_labels_by_time(utterances: &[Utterance], label_of: &mut HashMap<usize, u
     }
 }
 
-fn cannot_link_pairs(
+/// Cannot-link по 1,8-секундным кускам, а не по репликам: длинная VAD-реплика
+/// на встрече содержит нескольких собеседников, и запрет на её слияние с самой
+/// собой разрывает дерево на лишние голоса.
+fn cannot_link_units(
     segmentation: Option<&Segmentation>,
-    utterances: &[Utterance],
+    units: &[AcoustUnit],
+    core_pos: &HashMap<usize, usize>,
 ) -> Vec<(usize, usize)> {
     let Some(segmentation) = segmentation else {
         return vec![];
@@ -617,9 +621,10 @@ fn cannot_link_pairs(
             as f64
             / SR;
         let mut members: [Vec<usize>; 3] = Default::default();
-        for (index, utterance) in utterances.iter().enumerate() {
-            let start = utterance.start.max(window_start);
-            let end = utterance.end.min(window_end);
+        for (&index, &position) in core_pos {
+            let unit = &units[index];
+            let start = unit.start.max(window_start);
+            let end = unit.end.min(window_end);
             if end <= start {
                 continue;
             }
@@ -637,30 +642,15 @@ fn cannot_link_pairs(
             else {
                 continue;
             };
-            if total > 0.0 && best / total >= 0.5 {
-                members[local].push(index);
+            if total > 0.0 && best / total >= 0.6 {
+                members[local].push(position);
             }
         }
         for a in 0..3 {
             for b in (a + 1)..3 {
                 for &i in &members[a] {
                     for &j in &members[b] {
-                        if i == j {
-                            continue;
-                        }
-                        // Cannot-link справедлив только для действительно перекрывающихся
-                        // или вплотную примыкающих реплик: если между ними пауза,
-                        // это может быть один и тот же диктор в разные моменты окна.
-                        let gap = if utterances[i].end <= utterances[j].start {
-                            utterances[j].start - utterances[i].end
-                        } else if utterances[j].end <= utterances[i].start {
-                            utterances[i].start - utterances[j].end
-                        } else {
-                            0.0
-                        };
-                        if gap <= frame_sec {
-                            pairs.insert((i.min(j), i.max(j)));
-                        }
+                        pairs.insert((i.min(j), i.max(j)));
                     }
                 }
             }
@@ -969,29 +959,7 @@ pub(crate) fn diarize_channel(
         .enumerate()
         .map(|(position, &index)| (index, position))
         .collect();
-    let mut constraints = vec![];
-    if let Some(segmentation) = segmentation {
-        let blocked: HashSet<(usize, usize)> = cannot_link_pairs(Some(segmentation), utterances)
-            .into_iter()
-            .collect();
-        let mut by_utterance: HashMap<usize, Vec<usize>> = HashMap::new();
-        for &index in &core_units {
-            by_utterance
-                .entry(units[index].utterance)
-                .or_default()
-                .push(core_pos[&index]);
-        }
-        for (a, b) in blocked {
-            let (Some(left), Some(right)) = (by_utterance.get(&a), by_utterance.get(&b)) else {
-                continue;
-            };
-            for &pa in left {
-                for &pb in right {
-                    constraints.push((pa.min(pb), pa.max(pb)));
-                }
-            }
-        }
-    }
+    let constraints = cannot_link_units(segmentation, &units, &core_pos);
     let mut core_labels = if let Some(k) = k {
         agglomerative_weighted(&core_vecs, &core_weights, &constraints, 0.52, Some(k))
     } else {
@@ -1477,6 +1445,25 @@ pub(crate) fn diarize_channel(
             }
         }
         *utterances = refined;
+    }
+    if cfg!(debug_assertions) {
+        // Метрика диаризации не должна зависеть от того, вернул ли ASR текст:
+        // харнесс считает DER по этим отрезкам, а не по документу.
+        let segments: Vec<serde_json::Value> = utterances
+            .iter()
+            .map(|u| {
+                serde_json::json!({
+                    "start": u.start,
+                    "end": u.end,
+                    "speaker": crate::logging::speaker_token(&u.speaker),
+                    "channel": channel_idx,
+                })
+            })
+            .collect();
+        crate::logging::write_artifact_json(
+            &format!("diar/ch{ch}.segments.json"),
+            &serde_json::json!({ "segments": segments }),
+        );
     }
     infos
 }
@@ -2540,13 +2527,14 @@ pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::{
-        cannot_link_pairs, dedupe_cross_channel, fill_labels_by_time, group_segments,
+        cannot_link_units, dedupe_cross_channel, fill_labels_by_time, group_segments,
         merge_quiet_short, merge_tiny_clusters, merge_utterances, move_boundary_words,
         profile_anchors, read_profiles_file, reconcile_channels, refresh_speaker_stats,
         short_join_threshold, speaker_change_cuts, split_at_pauses, split_utterance_by_bounds,
-        split_words_by_bounds, switch_penalty, SpeakerInfo, Utterance,
+        split_words_by_bounds, switch_penalty, AcoustUnit, SpeakerInfo, Utterance,
     };
     use crate::transcribe::WordConf;
+    use std::collections::HashMap;
 
     fn info(name: &str, ch: i32, emb: Vec<f64>, count: usize, sec: f64) -> SpeakerInfo {
         SpeakerInfo {
@@ -3094,7 +3082,7 @@ mod tests {
     }
 
     #[test]
-    fn cannot_link_pairs_follow_local_pyannote_speakers() {
+    fn cannot_link_units_separates_voices_inside_one_utterance() {
         let frame = mr_ml::onnx::segmentation::FRAME_SAMPLES;
         let mut classes = vec![1u8; 2];
         classes.extend(vec![2u8; 2]);
@@ -3106,13 +3094,25 @@ mod tests {
             }],
         };
         let frame_sec = frame as f64 / 16000.0;
-        let utts = vec![
-            utt(0.0, 2.0 * frame_sec, "A", 0, "первая"),
-            utt(2.0 * frame_sec, 4.0 * frame_sec, "B", 0, "вторая"),
+        let unit = |utterance: usize, from: f64, to: f64| AcoustUnit {
+            utterance,
+            start: from,
+            end: to,
+            dur: to - from,
+            quality: 1.0,
+            embedding: vec![],
+        };
+        // Два куска одной длинной реплики: PyAnnote видит в них разных людей.
+        let units = vec![
+            unit(0, 0.0, 2.0 * frame_sec),
+            unit(0, 2.0 * frame_sec, 4.0 * frame_sec),
         ];
-        let pairs = cannot_link_pairs(Some(&segmentation), &utts);
-        assert_eq!(pairs, vec![(0, 1)]);
-        assert!(cannot_link_pairs(None, &utts).is_empty());
+        let core_pos = HashMap::from([(0usize, 0usize), (1, 1)]);
+        assert_eq!(
+            cannot_link_units(Some(&segmentation), &units, &core_pos),
+            vec![(0, 1)]
+        );
+        assert!(cannot_link_units(None, &units, &core_pos).is_empty());
     }
 
     #[test]
@@ -3572,16 +3572,5 @@ mod tests {
             2,
             "конфликт кандидатов должен блокировать слияние"
         );
-    }
-
-    #[test]
-    fn short_utterances_not_polluted_by_empty_timeline_spans() {
-        let utts = [
-            utt(0.0, 5.0, "Спикер A", 0, "первая фраза диалога"),
-            utt(5.5, 9.0, "Спикер B", 0, "второй ответ"),
-        ];
-        // Реплики короче 20 с не должны заменяться на пустые таймлайн-интервалы
-        assert!(utts.iter().all(|u| u.end - u.start < 20.0));
-        assert!(utts.iter().all(|u| !u.text.is_empty()));
     }
 }

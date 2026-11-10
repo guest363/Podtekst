@@ -310,13 +310,8 @@ fn transcribe_file_inner(
     }
 
     let vad = models.ensure_vad()?;
-    let (channel_vad, channel_grouped) = vad::run(
-        &channel_samples,
-        &chan_list,
-        is_stereo,
-        vad,
-        on_event,
-    )?;
+    let (channel_vad, channel_grouped) =
+        vad::run(&channel_samples, &chan_list, is_stereo, vad, on_event)?;
     let (channel_utts, ctc_used_any) = asr::run(
         &channel_grouped,
         &channel_samples,

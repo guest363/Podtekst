@@ -230,8 +230,11 @@ pub fn agglomerative_gap(
             gap = gap;
             "ev=cluster.auto_k"
         );
-        let max_merge_dist = (distance_threshold * 1.3).min(1.2);
-        return labels_with_limit(n, &merges, k, max_merge_dist);
+        // Разрыв уже выбрал k. Порог расстояния не должен молча оставить
+        // больше кластеров: на реальных встречах auto-k просил 4, а cap 0.68
+        // возвращал 7 (AMI 4 -> 7). cannot-link всегда стоит в дереве на
+        // высоте CANNOT_LINK_DISTANCE, поэтому слияния до k его не задевают.
+        return labels_with_limit(n, &merges, k, f64::INFINITY);
     }
     log::debug!(
         target: "cluster",

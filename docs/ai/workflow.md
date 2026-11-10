@@ -49,13 +49,12 @@ cd ../..
 root="$(git rev-parse --show-toplevel)"
 expected="$(cd "$root" && find ui/web/frontend/src ui/web/frontend/index.html ui/web/frontend/package.json ui/web/frontend/yarn.lock ui/web/frontend/vite.config.ts -type f -print | LC_ALL=C sort | while IFS= read -r f; do sha256sum "$f"; done | sha256sum | cut -d' ' -f1)"
 printf '%s\n' "$expected" > "$root/ui/web/static/.mr-stamp"
-```
 
 # 5. P11-аудит комментариев (всегда, до коммита)
-./scripts/p11-diff.sh
-# Каждая показанная строка обязана быть «зачем» (ограничение платформы,
-# контракт формата, калибровка порога), SAFETY:/shortcut: или ссылкой на
-# правило (P3/P9…); пересказ кода — удалить, а не перефразировать.
+./scripts/p11-diff.sh --check
+```
+
+Каждая показанная строка обязана быть «зачем» (ограничение платформы, контракт формата, калибровка порога), `SAFETY:`/`shortcut:` или ссылкой на правило (`P3`/`P9`…); пересказ кода и английский текст блокируются с `exit 1` — их нужно удалить, а не перефразировать.
 
 ---
 

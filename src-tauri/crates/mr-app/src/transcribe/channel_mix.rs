@@ -47,6 +47,40 @@ fn correlation(a: &[f32], b: &[f32]) -> f64 {
     cov / (var_a.sqrt() * var_b.sqrt())
 }
 
+fn sample_correlation(a: &[f32], b: &[f32]) -> f64 {
+    let n = a.len().min(b.len());
+    if n < 1000 {
+        return 0.0;
+    }
+    let mut sum_a = 0.0;
+    let mut sum_b = 0.0;
+    let mut count = 0usize;
+    for (&x, &y) in a[..n].iter().zip(&b[..n]).step_by(8) {
+        sum_a += x as f64;
+        sum_b += y as f64;
+        count += 1;
+    }
+    if count == 0 {
+        return 0.0;
+    }
+    let mean_a = sum_a / count as f64;
+    let mean_b = sum_b / count as f64;
+    let mut cov = 0.0;
+    let mut var_a = 0.0;
+    let mut var_b = 0.0;
+    for (&x, &y) in a[..n].iter().zip(&b[..n]).step_by(8) {
+        let dx = x as f64 - mean_a;
+        let dy = y as f64 - mean_b;
+        cov += dx * dy;
+        var_a += dx * dx;
+        var_b += dy * dy;
+    }
+    if var_a < 1e-12 || var_b < 1e-12 {
+        return 0.0;
+    }
+    cov / (var_a.sqrt() * var_b.sqrt())
+}
+
 /// Метрики решения «каналы дублируют речь»: без них не видно, какой порог
 /// свернул стерео в моно.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -98,16 +132,25 @@ pub(crate) fn mixed_stereo_with_stats(channels: &[Vec<f32>]) -> (Option<usize>, 
     let union =
         active0.iter().filter(|&&a| a).count() + active1.iter().filter(|&&b| b).count() - overlap;
     stats.jaccard = overlap as f64 / union.max(1) as f64;
-    // Высокий Jaccard означает, что почти вся речь есть в обоих каналах.
-    // Для реального split с наушниками локальный и удалённый голоса
-    // чередуются, поэтому пересечение активности заметно ниже.
-    // shortcut: 0.70/0.85/0.75 — стартовые пороги без размеченного набора;
-    // откалибровать на записях в наушниках и с колонками.
+    // shortcut: 0.70/0.85/0.75 — стартовые огибающие пороги отсечения независимой активности.
     if stats.corr < 0.70 || stats.containment < 0.85 || stats.jaccard < 0.75 {
         return (None, stats);
     }
-    // Канал 0 — микрофон: он слышит комнату и остаётся основным источником.
-    // Системный канал при дубле — обработанный loopback той же речи.
+    let probe = len.min(BLEED_PROBE_SEC * 16000);
+    if let Some((delay, prominence)) =
+        mr_audio::echo::delay::estimate(&channels[0][..probe], &channels[1][..probe], 8000)
+    {
+        // shortcut: delay >= 64 (4 мс) и prominence >= 8.0 фиксируют акустическое
+        // эхо из динамиков в микрофон (не моно-дубль); каналы сохраняются для suppress_mic_bleed.
+        if prominence >= 8.0 && delay >= 64 {
+            return (None, stats);
+        }
+    }
+    // shortcut: порог 0.70 корреляции сэмплов отделяет идентичный электрический/цифровой
+    // сигнал от акустического пролезания через воздух с фазовым сдвигом.
+    if sample_correlation(&channels[0][..len], &channels[1][..len]) < 0.70 {
+        return (None, stats);
+    }
     stats.chosen = Some(0);
     (Some(0), stats)
 }
@@ -369,5 +412,16 @@ mod tests {
         let a = bursts(len, &[(0.0, 2.0)], 0.2, 5);
         assert!(mixed_stereo(std::slice::from_ref(&a)).is_none());
         assert!(mixed_stereo(&[a.clone(), a.clone(), a]).is_none());
+    }
+
+    #[test]
+    fn delayed_bleed_is_not_mixed() {
+        let len = 16_000 * 8;
+        let spans = [(0.5, 2.5), (3.0, 5.0), (5.5, 7.5)];
+        let system = chirp_bursts(len, &spans, 0.3);
+        let delay = 900usize;
+        let mut mic = vec![0.0f32; delay];
+        mic.extend(system[..system.len() - delay].iter().map(|x| x * 0.4));
+        assert!(mixed_stereo(&[mic, system]).is_none());
     }
 }
