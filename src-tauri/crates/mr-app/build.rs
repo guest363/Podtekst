@@ -2,9 +2,9 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// pyke's macOS ONNX Runtime is a CoreML build; its Objective-C `@available`
-/// checks reference `___isPlatformVersionAtLeast` from clang's compiler-rt.
-/// rustc links with `-nodefaultlibs`, so add that archive on Apple targets.
+/// Ограничение macOS: сборка ONNX Runtime от pyke с CoreML обращается к
+/// `___isPlatformVersionAtLeast` из clang compiler-rt. Так как rustc линкует с
+/// `-nodefaultlibs`, на Apple-таргетах добавляем этот архив вручную.
 fn link_clang_rt_on_apple() {
     if env::var("CARGO_CFG_TARGET_VENDOR").as_deref() != Ok("apple") {
         return;

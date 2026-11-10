@@ -57,7 +57,7 @@ pub fn ffmpeg_available() -> bool {
     cache.0
 }
 
-/// Проверка запуском `-version` без кэша (сразу после установки или удаления).
+/// Контракт: опрос `-version` в обход кэша после установки или удаления бинарника.
 pub fn ffmpeg_available_now() -> bool {
     std::process::Command::new(ffmpeg_path())
         .arg("-version")

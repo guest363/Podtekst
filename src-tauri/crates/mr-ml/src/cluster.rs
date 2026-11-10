@@ -214,11 +214,12 @@ pub fn agglomerative_gap(
         if k < gap_floor || k > max_k {
             continue;
         }
-        // Ограничиваем искусственную высоту cannot-link реальным диапазоном расстояний
-        // косинуса [0..1.2], чтобы прыжок в 10.0 не маскировал акустические разрывы.
-        let d_curr = merges[i].0.min(1.2);
-        let d_next = merges[i + 1].0.min(1.2);
-        let gap = d_next - d_curr;
+        // shortcut: слияния >= 2.0 вызваны искусственным CANNOT_LINK_DISTANCE (10.0),
+        // искусственный скачок не является акустическим разрывом в дендрограмме.
+        if merges[i + 1].0 >= 2.0 {
+            continue;
+        }
+        let gap = merges[i + 1].0 - merges[i].0;
         if best.is_none_or(|(best_gap, _)| gap > best_gap) {
             best = Some((gap, k));
         }
@@ -230,9 +231,8 @@ pub fn agglomerative_gap(
             gap = gap;
             "ev=cluster.auto_k"
         );
-        // Разрыв уже выбрал k. Порог расстояния не должен молча оставить
-        // больше кластеров: на реальных встречах auto-k просил 4, а cap 0.68
-        // возвращал 7 (AMI 4 -> 7). cannot-link всегда стоит в дереве на
+        // Калибровка: auto-k выбрал k, порог расстояния не должен молча возвращать больше
+        // кластеров (на AMI auto-k просил 4, а cap 0.68 возвращал 7). cannot-link стоит на
         // высоте CANNOT_LINK_DISTANCE, поэтому слияния до k его не задевают.
         return labels_with_limit(n, &merges, k, f64::INFINITY);
     }

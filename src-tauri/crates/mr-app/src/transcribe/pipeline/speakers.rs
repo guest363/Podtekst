@@ -33,7 +33,6 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
     stage_begin("diar");
     models.ensure_diar();
     let profiles = diarize::load_profiles();
-    // Заимствуем модели на время диаризации: guard вернёт их в кэш на выходе.
     let mut speakers_info: Vec<SpeakerInfo> = vec![];
     let mut all_utts: Vec<Utterance> = vec![];
     for (ch, _label) in chan_list.iter() {

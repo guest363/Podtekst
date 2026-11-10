@@ -15,8 +15,7 @@ const MAX_RATE: u32 = 384_000;
 /// Верхняя граница каналов: файл с сотней каналов — это атака на память, не музыка.
 const MAX_CHANNELS: usize = 8;
 
-/// Декодирует аудиодорожку в поканальные моно-дорожки 16 кГц `[-1, 1]`.
-/// Возвращает Vec по каналам (обычно 1–2). Стерео-записи встреч: [0] = микрофон, [1] = система.
+/// Контракт формата: моно-дорожки 16 кГц `[-1, 1]`. В стерео: [0] = микрофон, [1] = система.
 pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
     let file = std::fs::File::open(path).map_err(AudioError::Io)?;
     let mss = symphonia::core::io::MediaSourceStream::new(Box::new(file), Default::default());
@@ -218,7 +217,6 @@ pub fn is_video_path(path: &Path) -> bool {
 
 /// Длительность и число каналов без полного декодирования: WAV — из заголовка,
 /// остальные контейнеры — `ffprobe` (он уже нужен для MKV/WebM/MOV/AVI).
-/// Возвращает `None`, если метаданные недоступны.
 pub fn media_info(path: &Path) -> Option<(f64, usize)> {
     let is_wav = path
         .extension()

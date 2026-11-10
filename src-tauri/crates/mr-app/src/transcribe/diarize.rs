@@ -343,9 +343,8 @@ const CORE_MIN_DUR: f64 = 1.0;
 /// Верхняя граница auto-k, если пользователь не задал max_speakers: защита от
 /// дробления шума на десятки «голосов». shortcut: 12 без размеченного набора.
 const AUTO_K_MAX_SPEAKERS: usize = 12;
-/// Порог косинуса центроидов для финального слияния. ERes2NetV2: разные
-/// дикторы ≤ 0.22, один голос ≥ 0.48 на фрагментах, у центроидов того же
-/// голоса сходство выше (обычно ≥ 0.70). Порог 0.70 предотвращает ложное
+/// Калибровка слияния центроидов (ERes2NetV2): разные дикторы ≤ 0.22,
+/// один голос ≥ 0.48 на фрагментах. Порог 0.70 предотвращает ложное
 /// слияние разных собеседников с похожей акустикой комнаты.
 const CENTROID_MERGE_SIM: f64 = 0.70;
 
@@ -600,9 +599,8 @@ fn fill_labels_by_time(utterances: &[Utterance], label_of: &mut HashMap<usize, u
     }
 }
 
-/// Cannot-link по 1,8-секундным кускам, а не по репликам: длинная VAD-реплика
-/// на встрече содержит нескольких собеседников, и запрет на её слияние с самой
-/// собой разрывает дерево на лишние голоса.
+/// Ограничение VAD: длинная реплика содержит нескольких собеседников; cannot-link
+/// по акустическим кускам 1.8 с предотвращает разрыв дерева на лишние голоса.
 fn cannot_link_units(
     segmentation: Option<&Segmentation>,
     units: &[AcoustUnit],
@@ -620,7 +618,7 @@ fn cannot_link_units(
             + window.classes.len() * mr_ml::onnx::segmentation::FRAME_SAMPLES)
             as f64
             / SR;
-        let mut members: [Vec<usize>; 3] = Default::default();
+        let mut members: [Vec<(usize, usize)>; 3] = Default::default();
         for (&index, &position) in core_pos {
             let unit = &units[index];
             let start = unit.start.max(window_start);
@@ -643,14 +641,16 @@ fn cannot_link_units(
                 continue;
             };
             if total > 0.0 && best / total >= 0.6 {
-                members[local].push(position);
+                members[local].push((position, unit.utterance));
             }
         }
         for a in 0..3 {
             for b in (a + 1)..3 {
-                for &i in &members[a] {
-                    for &j in &members[b] {
-                        pairs.insert((i.min(j), i.max(j)));
+                for &(i, utt_a) in &members[a] {
+                    for &(j, utt_b) in &members[b] {
+                        if utt_a == utt_b {
+                            pairs.insert((i.min(j), i.max(j)));
+                        }
                     }
                 }
             }
@@ -944,8 +944,7 @@ pub(crate) fn diarize_channel(
     } else {
         None
     };
-    // Если min_speakers не задан (0), в авто-режиме разрешаем естественное
-    // определение 1..max_speakers (монологи не принуждаются к 2 спикерам).
+    // Калибровка: авто-режим допускает монологи 1..max_speakers без принуждения к 2 спикерам.
     let min_auto = if min_speakers == 0 { 1 } else { min_speakers };
     // Замеры ERes2NetV2 (`onnx_real`): разные дикторы ≤ 0.22 (dist ≥ 0.78),
     // один голос ≥ 0.48 (dist ≤ 0.52). shortcut: порог 0.52 перенесён с
@@ -1447,8 +1446,7 @@ pub(crate) fn diarize_channel(
         *utterances = refined;
     }
     if cfg!(debug_assertions) {
-        // Метрика диаризации не должна зависеть от того, вернул ли ASR текст:
-        // харнесс считает DER по этим отрезкам, а не по документу.
+        // Контракт бенчмарка: харнесс считает DER по отрезкам диаризации независимо от ASR-текста.
         let segments: Vec<serde_json::Value> = utterances
             .iter()
             .map(|u| {
@@ -1524,7 +1522,12 @@ pub(crate) fn move_boundary_words(utterances: &mut Vec<Utterance>) {
 fn words_of(text: &str) -> HashSet<String> {
     text.split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
-        .map(str::to_lowercase)
+        .map(|w| {
+            w.to_lowercase()
+                .chars()
+                .map(|c| if c == 'ё' { 'е' } else { c })
+                .collect()
+        })
         .collect()
 }
 
@@ -1549,11 +1552,16 @@ pub(crate) fn text_similarity(a: &str, b: &str) -> f64 {
     let inter = wa.intersection(&wb).count() as f64;
     let union = wa.union(&wb).count() as f64;
     let j = inter / union.max(1.0);
-    // ASR в двух каналах может добавить/потерять служебные слова. Короткие
-    // реплики («да», «угу») — это ответы, а не эхо: подмножество даёт буст
-    // только от трёх слов, иначе встречная реплика стиралась бы как дубль.
+    // shortcut: порог 0.75 включения слов для реплик >= 3 слов подавляет эхо
+    // при небольших расхождениях ASR (например, потеря союза или предлога).
+    let min_len = wa.len().min(wb.len());
     let subset = wa.is_subset(&wb) || wb.is_subset(&wa);
-    if subset && wa.len().min(wb.len()) >= 3 {
+    let containment = if min_len > 0 {
+        inter / min_len as f64
+    } else {
+        0.0
+    };
+    if (subset || containment >= 0.75) && min_len >= 3 {
         j.max(0.85)
     } else {
         j
@@ -1984,10 +1992,8 @@ pub(crate) fn merge_utterances(utterances: Vec<Utterance>) -> Vec<Utterance> {
                     continue;
                 }
                 if u.start - last.end <= 1.0 {
-                    // В одном канале соседние куски — это разные слова,
-                    // даже если второй целиком повторяет слова первого.
-                    // Проверка на вложенность нужна только для эха между
-                    // каналами.
+                    // В одном канале соседние куски — это разные слова, даже если второй целиком повторяет
+                    // слова первого; вложенность отсекается только для эха между разными каналами.
                     if u.channel == last.channel || !words_contained(&u.text, &last.text) {
                         last.text = format!("{} {}", last.text, u.text).trim().to_string();
                         if last.words.is_empty() || u.words.is_empty() {
@@ -2531,7 +2537,7 @@ mod tests {
         merge_quiet_short, merge_tiny_clusters, merge_utterances, move_boundary_words,
         profile_anchors, read_profiles_file, reconcile_channels, refresh_speaker_stats,
         short_join_threshold, speaker_change_cuts, split_at_pauses, split_utterance_by_bounds,
-        split_words_by_bounds, switch_penalty, AcoustUnit, SpeakerInfo, Utterance,
+        split_words_by_bounds, switch_penalty, text_similarity, AcoustUnit, SpeakerInfo, Utterance,
     };
     use crate::transcribe::WordConf;
     use std::collections::HashMap;
@@ -2661,6 +2667,13 @@ mod tests {
         assert_eq!(utts.len(), 1);
         assert_eq!(utts[0].speaker, "Спикер B");
         assert_eq!(utts[0].channel, Some(1));
+    }
+
+    #[test]
+    fn text_similarity_folds_yo_and_detects_containment() {
+        let echo = "А чё, я ей всё написал, чё ещё там надо? Да.";
+        let original = "Мне нужно будет там для КП данные подготовить. Это Альфа, да? А что я ей все написал, че еще там надо? Да. Окей. Хмм.";
+        assert!(text_similarity(echo, original) >= 0.85);
     }
 
     #[test]
@@ -3102,7 +3115,7 @@ mod tests {
             quality: 1.0,
             embedding: vec![],
         };
-        // Два куска одной длинной реплики: PyAnnote видит в них разных людей.
+        // Калибровка теста: PyAnnote размечает два куска одной реплики на разных людей.
         let units = vec![
             unit(0, 0.0, 2.0 * frame_sec),
             unit(0, 2.0 * frame_sec, 4.0 * frame_sec),

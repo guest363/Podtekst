@@ -22,8 +22,8 @@ pub(crate) fn fits(need: u64, available: u64) -> bool {
     need as f64 <= available as f64 * SHARE
 }
 
-/// Проверка файла до декодирования. Если длительность, каналы или объём
-/// доступной памяти неизвестны — не мешаем: сработает только физический предел.
+/// Защита от OOM до декодирования. При неизвестных метаданных пропускаем,
+/// опираясь на физический предел памяти.
 pub(crate) fn check(path: &Path) -> Result<(), String> {
     let Some((duration, channels)) = mr_audio::decode::media_info(path) else {
         return Ok(());
