@@ -410,9 +410,10 @@ fn merge_tiny_clusters(
             mr_ml::weighted_centroid(&vs, &ws)
         };
         let cs = centroid(small);
-        if profiles.iter().any(|p| {
-            mr_ml::cosine_similarity(&cs, &p.embedding) >= mr_ml::DEFAULT_MATCH_THRESHOLD
-        }) {
+        if profiles
+            .iter()
+            .any(|p| mr_ml::cosine_similarity(&cs, &p.embedding) >= mr_ml::DEFAULT_MATCH_THRESHOLD)
+        {
             protected.insert(small);
             continue;
         }
@@ -1584,7 +1585,10 @@ pub(crate) fn text_similarity(a: &str, b: &str) -> f64 {
     } else {
         (&wb, &wa)
     };
-    let matched = small.iter().filter(|sw| big.iter().any(|bw| words_match(sw, bw))).count();
+    let matched = small
+        .iter()
+        .filter(|sw| big.iter().any(|bw| words_match(sw, bw)))
+        .count();
     let containment = matched as f64 / small.len() as f64;
     if containment >= 0.65 && small.len() >= 2 {
         j.max(0.85)
@@ -2630,8 +2634,8 @@ mod tests {
         merge_quiet_short, merge_tiny_clusters, merge_utterances, move_boundary_words,
         profile_anchors, read_profiles_file, reconcile_channels, refresh_speaker_stats,
         short_join_threshold, speaker_change_cuts, split_at_pauses, split_by_word_pauses,
-        split_utterance_by_bounds,
-        split_words_by_bounds, switch_penalty, text_similarity, AcoustUnit, SpeakerInfo, Utterance,
+        split_utterance_by_bounds, split_words_by_bounds, switch_penalty, text_similarity,
+        AcoustUnit, SpeakerInfo, Utterance,
     };
     use crate::transcribe::WordConf;
     use std::collections::HashMap;
@@ -3770,12 +3774,7 @@ mod tests {
             std::f64::consts::FRAC_1_SQRT_2,
             std::f64::consts::FRAC_1_SQRT_2,
         ];
-        let wins: Vec<(f64, Vec<f64>)> = vec![
-            (0.0, a),
-            (1.0, mix),
-            (2.0, b.clone()),
-            (3.0, b),
-        ];
+        let wins: Vec<(f64, Vec<f64>)> = vec![(0.0, a), (1.0, mix), (2.0, b.clone()), (3.0, b)];
         let cuts = speaker_change_cuts(&[], 0.0, 5.0, &wins, &[]);
         assert_eq!(cuts.len(), 1);
         assert!((1.5..=3.0).contains(&cuts[0]), "{cuts:?}");
