@@ -10,7 +10,7 @@ wall time, p50/p95, VmHWM sidecar, cancel и результатами прове
 только по явному `--full`. Не запущенные кейсы всегда перечислены в
 `not_run`, бюджеты не приписываются непроверенным кейсам.
 
-`--budget-profile ci-loaded` применяет один измеренный бюджет: 10-мин <=600 s
+`--budget-profile ci-loaded` применяет один измеренный бюджет: 10-мин <=660 s
 для обоих tier; 30/60/120 в этом профиле бюджета не имеют. `--runs LONG/SHORT`
 задаёт разное число прогонов, например `1/3`.
 """
@@ -44,17 +44,18 @@ BUDGET_PROFILES = {
         60: (480, 900),
         120: (900, 1800),
     },
-    # Один замер 10-мин кейса под нагрузкой: 595.68 s (20 logical, 8 threads,
-    # source_chars 7854). 30/60/120 в этом профиле не измерены, бюджета нет.
+    # Замеры 10-мин кейса под нагрузкой: 595.68 s и повторные 625-637 s на
+    # GitHub runner (source_chars 7854). 660 s — запас 10% на вариативность.
+    # 30/60/120 в этом профиле не измерены, бюджета нет.
     "ci-loaded": {
-        10: (600, 600),
+        10: (660, 660),
     },
 }
 
 BUDGET_PROFILE_NOTES = {
     "spec": "SPEC §15: справочные значения, в CI не применяются",
     "ci-loaded": (
-        "ci-loaded: 10-мин <=600 s для 4-7 и >=8 logical; "
+        "ci-loaded: 10-мин <=660 s для 4-7 и >=8 logical; "
         "30/60/120 не измерены и бюджета не имеют"
     ),
 }
@@ -547,7 +548,7 @@ def main():
         "--budget-profile",
         choices=sorted(BUDGET_PROFILES),
         default="ci-loaded",
-        help="ci-loaded — 10-мин <=600 s; spec — справочный SPEC §15",
+        help="ci-loaded — 10-мин <=660 s; spec — справочный SPEC §15",
     )
     parser.add_argument("--enforce-budget", action="store_true")
     args = parser.parse_args()
