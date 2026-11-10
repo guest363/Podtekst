@@ -22,7 +22,7 @@ pub const EMBEDDING_DIM: usize = 192;
 /// примерах 3D-Speaker и реальных встречах: разные дикторы ≤ 0.22, один голос ≥ 0.48
 /// (фрагменты от 1.5 с); у самой модели в карточке порог 0.365.
 pub const DEFAULT_MATCH_THRESHOLD: f64 = 0.45;
-pub const DEFAULT_MIN_MARGIN: f64 = 0.06;
+pub const DEFAULT_MIN_MARGIN: f64 = 0.03;
 // shortcut: 1.8/0.04 — стартовые значения без размеченного набора; перекалибровать на реальных ложных срабатываниях.
 const MIN_COHORT_Z: f64 = 1.8;
 const MIN_COHORT_SIGMA: f64 = 0.04;
@@ -459,7 +459,7 @@ pub fn match_voiceprints_matrix(
         results[r].similarity = (s * 1000.0).round() / 1000.0;
         results[r].margin = (margin.max(0.0) * 1000.0).round() / 1000.0;
     }
-    let assigned: std::collections::HashMap<usize, usize> = results
+    let mut assigned: std::collections::HashMap<usize, usize> = results
         .iter()
         .enumerate()
         .filter(|(_, x)| x.matched)
@@ -470,6 +470,7 @@ pub fn match_voiceprints_matrix(
                 .map(|pi| (pi, ri))
         })
         .collect();
+    let mut candidates: Vec<(usize, usize, f64, f64)> = Vec::new();
     for i in 0..n {
         if results[i].matched {
             continue;
@@ -484,26 +485,54 @@ pub fn match_voiceprints_matrix(
         }
         if let Some(pi) = best_pi {
             if best_s >= threshold {
-                if let Some(owner) = assigned.get(&pi) {
-                    let inter =
-                        cosine_similarity(&cluster_embeddings[i], &cluster_embeddings[*owner]);
-                    if inter >= SAME_SPEAKER_MERGE_SIM {
-                        results[i].matched = true;
-                        results[i].name = Some(profiles[pi].name.clone());
-                        results[i].pack_id = if profiles[pi].pack_id.is_empty() {
-                            None
-                        } else {
-                            Some(profiles[pi].pack_id.clone())
-                        };
-                        results[i].pack_name = if profiles[pi].pack_name.is_empty() {
-                            None
-                        } else {
-                            Some(profiles[pi].pack_name.clone())
-                        };
-                        results[i].similarity = (best_s * 1000.0).round() / 1000.0;
-                    }
+                let other_max = sim[i]
+                    .iter()
+                    .enumerate()
+                    .filter(|&(idx, _)| idx != pi)
+                    .map(|(_, &val)| val)
+                    .fold(f64::NEG_INFINITY, f64::max);
+                let margin = best_s - other_max;
+                if profiles.len() > 1
+                    && (margin < MIN_MATCH_MARGIN_FLOOR
+                        || (margin < min_margin && best_s < HIGH_CONFIDENCE_THRESHOLD))
+                {
+                    continue;
                 }
+                if profiles.len() >= 4 && cohort_z_score(&sim[i], pi, best_s) < MIN_COHORT_Z {
+                    continue;
+                }
+                candidates.push((i, pi, best_s, margin));
             }
+        }
+    }
+    candidates.sort_by(|a, b| b.2.total_cmp(&a.2));
+    for (i, pi, best_s, margin) in candidates {
+        if results[i].matched {
+            continue;
+        }
+        let can_assign = match assigned.get(&pi) {
+            Some(&owner) => {
+                let inter = cosine_similarity(&cluster_embeddings[i], &cluster_embeddings[owner]);
+                inter >= SAME_SPEAKER_MERGE_SIM
+            }
+            None => true,
+        };
+        if can_assign {
+            assigned.entry(pi).or_insert(i);
+            results[i].matched = true;
+            results[i].name = Some(profiles[pi].name.clone());
+            results[i].pack_id = if profiles[pi].pack_id.is_empty() {
+                None
+            } else {
+                Some(profiles[pi].pack_id.clone())
+            };
+            results[i].pack_name = if profiles[pi].pack_name.is_empty() {
+                None
+            } else {
+                Some(profiles[pi].pack_name.clone())
+            };
+            results[i].similarity = (best_s * 1000.0).round() / 1000.0;
+            results[i].margin = (margin.max(0.0) * 1000.0).round() / 1000.0;
         }
     }
     results
@@ -585,6 +614,35 @@ mod tests {
         assert_eq!(res.len(), 2);
         assert_eq!(res[0].name.as_deref(), Some("Профиль A"));
         assert_ne!(res[1].name.as_deref(), Some("Профиль B"));
+    }
+
+    #[test]
+    fn unassigned_profile_claimed_by_clean_cluster() {
+        let mk = |name: &str, v: Vec<f64>| SpeakerProfile {
+            name: name.to_string(),
+            pack_id: String::new(),
+            pack_name: String::new(),
+            embedding: v.clone(),
+            samples_count: 1,
+            updated_at: String::new(),
+            prototypes: vec![Prototype {
+                id: "p1".to_string(),
+                embedding: v,
+                duration_sec: 4.0,
+                quality: 1.0,
+                created_at: String::new(),
+                snippet_relpath: None,
+            }],
+        };
+        let p_a = mk("Диктор A", unit(8, 0));
+        let p_b = mk("Диктор B", unit(8, 1));
+        let c1 = unit(8, 0);
+        let c2 = unit(8, 1);
+        let res = match_voiceprints_matrix(&[c1, c2], &[p_a, p_b], 0.45, 0.03);
+        assert!(res[0].matched);
+        assert_eq!(res[0].name.as_deref(), Some("Диктор A"));
+        assert!(res[1].matched);
+        assert_eq!(res[1].name.as_deref(), Some("Диктор B"));
     }
 
     #[test]

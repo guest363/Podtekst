@@ -202,6 +202,13 @@ pub fn agglomerative_gap(
         return vec![];
     }
     let merges = chain_merges(embeddings, weights, cannot_link);
+    let top_merges: Vec<(f64, usize, usize)> = merges.iter().rev().take(10).copied().collect();
+    log::debug!(
+        target: "cluster",
+        n = n,
+        merges_tail = format!("{top_merges:?}").as_str();
+        "ev=cluster.merges_tail"
+    );
     let min_k = min_clusters.clamp(1, n);
     let max_k = max_clusters.clamp(min_k, n);
     // k=1 — это «один голос», его даёт fallback по порогу расстояния, а не
@@ -212,6 +219,11 @@ pub fn agglomerative_gap(
     for i in 0..merges.len().saturating_sub(1) {
         let k = n - (i + 1);
         if k < gap_floor || k > max_k {
+            continue;
+        }
+        // shortcut: слияния >= 2.0 вызваны искусственным CANNOT_LINK_DISTANCE (10.0),
+        // искусственный скачок не является акустическим разрывом в дендрограмме.
+        if merges[i + 1].0 >= 2.0 {
             continue;
         }
         let gap = merges[i + 1].0 - merges[i].0;
@@ -226,6 +238,9 @@ pub fn agglomerative_gap(
             gap = gap;
             "ev=cluster.auto_k"
         );
+        // Калибровка: auto-k выбрал k, порог расстояния не должен молча возвращать больше
+        // кластеров (на AMI auto-k просил 4, а cap 0.68 возвращал 7). cannot-link стоит на
+        // высоте CANNOT_LINK_DISTANCE, поэтому слияния до k его не задевают.
         return labels_with_limit(n, &merges, k, f64::INFINITY);
     }
     log::debug!(

@@ -147,7 +147,7 @@ cd podtekst
 - **С Whisper:** около 1,4 ГБ.
 - **Linux:** Ubuntu 22.04+ или glibc 2.35+. Для сборки нативного окна установите библиотеки:
   ```bash
-  sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+  sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev
   ```
 - **Форматы:** MP3, WAV, M4A, OGG, Opus, FLAC и MP4 декодируются нативно через Symphonia. Для MKV, WebM, MOV и AVI нужен системный `ffmpeg`.
 

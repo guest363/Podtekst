@@ -219,7 +219,7 @@ fn try_install(url: &str, wanted: &[&str], dest_bin: &Path) -> Result<Vec<String
         let dest = dest_bin.join(bin_name(name));
         std::fs::copy(&src, &dest).map_err(|e| format!("копия {name}: {e}"))?;
         make_executable(&dest);
-        // Проверка делом: скопированный бинарник должен запуститься
+        // Ограничение ОС: скопированный бинарник обязан успешно стартовать.
         let runs = std::process::Command::new(&dest)
             .arg("-version")
             .stdin(std::process::Stdio::null())

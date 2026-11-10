@@ -32,6 +32,15 @@ fn release_config_adds_runtime_resources() {
 }
 
 #[test]
+fn appimage_bundles_media_framework() {
+    let conf = json(include_str!("../tauri.conf.json"));
+    assert_eq!(
+        conf["bundle"]["linux"]["appimage"]["bundleMediaFramework"],
+        true
+    );
+}
+
+#[test]
 fn runtime_manifest_is_complete_per_target() {
     let manifest = json(include_str!("../summary-runtime-manifest.json"));
     assert_eq!(manifest["layout"], "resources_dir");

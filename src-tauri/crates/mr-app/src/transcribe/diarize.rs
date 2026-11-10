@@ -343,11 +343,10 @@ const CORE_MIN_DUR: f64 = 1.0;
 /// Верхняя граница auto-k, если пользователь не задал max_speakers: защита от
 /// дробления шума на десятки «голосов». shortcut: 12 без размеченного набора.
 const AUTO_K_MAX_SPEAKERS: usize = 12;
-/// Порог косинуса центроидов для финального слияния. ERes2NetV2: разные
-/// дикторы ≤ 0.22, один голос ≥ 0.48 на фрагментах, у центроидов того же
-/// голоса сходство выше. shortcut: 0.62; на VoxConverse проверено, на AMI
-/// слияние не маскирует ошибку k (см. docs/testing/BENCHMARK-REPORT.md).
-const CENTROID_MERGE_SIM: f64 = 0.62;
+/// Калибровка слияния центроидов (ERes2NetV2): разные дикторы ≤ 0.22,
+/// один голос ≥ 0.48 на фрагментах. Порог 0.70 предотвращает ложное
+/// слияние разных собеседников с похожей акустикой комнаты.
+const CENTROID_MERGE_SIM: f64 = 0.70;
 
 fn short_join_threshold(dur: f64) -> f64 {
     const MIN: f64 = 0.36;
@@ -358,7 +357,13 @@ fn short_join_threshold(dur: f64) -> f64 {
 /// Кластеры короче 2% речи — обычно шумные короткие эмбеддинги. Клеим их
 /// к ближайшему крупному голосу (косинус ≥ 0.45), а непохожие оставляем:
 /// это может быть третий человек, сказавший пару слов.
-fn merge_tiny_clusters(vecs: &[Vec<f64>], labels: &mut [usize], weights: &[f64], min_keep: usize) {
+fn merge_tiny_clusters(
+    vecs: &[Vec<f64>],
+    labels: &mut [usize],
+    weights: &[f64],
+    min_keep: usize,
+    profiles: &[SpeakerProfile],
+) {
     let total: f64 = weights.iter().sum();
     if total <= 0.0 {
         return;
@@ -405,6 +410,13 @@ fn merge_tiny_clusters(vecs: &[Vec<f64>], labels: &mut [usize], weights: &[f64],
             mr_ml::weighted_centroid(&vs, &ws)
         };
         let cs = centroid(small);
+        if profiles
+            .iter()
+            .any(|p| mr_ml::cosine_similarity(&cs, &p.embedding) >= mr_ml::DEFAULT_MATCH_THRESHOLD)
+        {
+            protected.insert(small);
+            continue;
+        }
         let mut best = (0usize, -2.0f64);
         for &l in totals.keys() {
             if l == small {
@@ -600,9 +612,12 @@ fn fill_labels_by_time(utterances: &[Utterance], label_of: &mut HashMap<usize, u
     }
 }
 
-fn cannot_link_pairs(
+/// Ограничение VAD: длинная реплика содержит нескольких собеседников; cannot-link
+/// по акустическим кускам 1.8 с предотвращает разрыв дерева на лишние голоса.
+fn cannot_link_units(
     segmentation: Option<&Segmentation>,
-    utterances: &[Utterance],
+    units: &[AcoustUnit],
+    core_pos: &HashMap<usize, usize>,
 ) -> Vec<(usize, usize)> {
     let Some(segmentation) = segmentation else {
         return vec![];
@@ -616,10 +631,11 @@ fn cannot_link_pairs(
             + window.classes.len() * mr_ml::onnx::segmentation::FRAME_SAMPLES)
             as f64
             / SR;
-        let mut members: [Vec<usize>; 3] = Default::default();
-        for (index, utterance) in utterances.iter().enumerate() {
-            let start = utterance.start.max(window_start);
-            let end = utterance.end.min(window_end);
+        let mut members: [Vec<(usize, usize)>; 3] = Default::default();
+        for (&index, &position) in core_pos {
+            let unit = &units[index];
+            let start = unit.start.max(window_start);
+            let end = unit.end.min(window_end);
             if end <= start {
                 continue;
             }
@@ -637,15 +653,15 @@ fn cannot_link_pairs(
             else {
                 continue;
             };
-            if total > 0.0 && best / total >= 0.5 {
-                members[local].push(index);
+            if total > 0.0 && best / total >= 0.6 {
+                members[local].push((position, unit.utterance));
             }
         }
         for a in 0..3 {
             for b in (a + 1)..3 {
-                for &i in &members[a] {
-                    for &j in &members[b] {
-                        if i != j {
+                for &(i, utt_a) in &members[a] {
+                    for &(j, utt_b) in &members[b] {
+                        if utt_a == utt_b {
                             pairs.insert((i.min(j), i.max(j)));
                         }
                     }
@@ -941,10 +957,8 @@ pub(crate) fn diarize_channel(
     } else {
         None
     };
-    // Встреча без явного min_speakers не может быть одноголосой: один спикер
-    // пользователь задаёт явно (`--min-speakers 1`). Иначе auto-k и слияния
-    // схлопывают длинную встречу в один кластер.
-    let min_auto = if min_speakers == 0 { 2 } else { min_speakers };
+    // Калибровка: авто-режим допускает монологи 1..max_speakers без принуждения к 2 спикерам.
+    let min_auto = if min_speakers == 0 { 1 } else { min_speakers };
     // Замеры ERes2NetV2 (`onnx_real`): разные дикторы ≤ 0.22 (dist ≥ 0.78),
     // один голос ≥ 0.48 (dist ≤ 0.52). shortcut: порог 0.52 перенесён с
     // complete linkage без замера average; перекалибровать на встречах.
@@ -957,29 +971,7 @@ pub(crate) fn diarize_channel(
         .enumerate()
         .map(|(position, &index)| (index, position))
         .collect();
-    let mut constraints = vec![];
-    if let Some(segmentation) = segmentation {
-        let blocked: HashSet<(usize, usize)> = cannot_link_pairs(Some(segmentation), utterances)
-            .into_iter()
-            .collect();
-        let mut by_utterance: HashMap<usize, Vec<usize>> = HashMap::new();
-        for &index in &core_units {
-            by_utterance
-                .entry(units[index].utterance)
-                .or_default()
-                .push(core_pos[&index]);
-        }
-        for (a, b) in blocked {
-            let (Some(left), Some(right)) = (by_utterance.get(&a), by_utterance.get(&b)) else {
-                continue;
-            };
-            for &pa in left {
-                for &pb in right {
-                    constraints.push((pa.min(pb), pa.max(pb)));
-                }
-            }
-        }
-    }
+    let constraints = cannot_link_units(segmentation, &units, &core_pos);
     let mut core_labels = if let Some(k) = k {
         agglomerative_weighted(&core_vecs, &core_weights, &constraints, 0.52, Some(k))
     } else {
@@ -1000,7 +992,7 @@ pub(crate) fn diarize_channel(
     // ближайшим похожим голосом (косинус ≥ 0.45) как в моно, так и в стерео.
     if k.is_none() {
         let weights: Vec<f64> = core_units.iter().map(|&index| units[index].dur).collect();
-        merge_tiny_clusters(&core_vecs, &mut core_labels, &weights, min_auto);
+        merge_tiny_clusters(&core_vecs, &mut core_labels, &weights, min_auto, profiles);
     }
     if k.is_none() {
         let mut uniq: Vec<usize> = core_labels.clone();
@@ -1292,7 +1284,7 @@ pub(crate) fn diarize_channel(
         cluster_name.insert(raw_clusters[0], default_name.to_string());
     } else {
         let mut used: std::collections::HashSet<String> = cluster_name.values().cloned().collect();
-        let default_used = used.contains(default_name);
+        let default_used = used.contains(default_name) || !cluster_name.is_empty();
         let mut next_num = 1usize;
         for (idx, c) in unmatched.into_iter().enumerate() {
             let name = if idx == 0 && !default_used && !generic.contains(&default_name) {
@@ -1434,7 +1426,8 @@ pub(crate) fn diarize_channel(
         u.diarized = true;
         u.silhouette = silhouettes[i];
     }
-    // Кадры PyAnnote уточняют только длинные монологи: на коротких
+    // shortcut: кадры PyAnnote уточняют только длинные монологи (≥20 с): на коротких
+    // репликах шум локальных меток рвёт связный текст на фрагменты.
     let timeline: Vec<Utterance> = spans
         .iter()
         .filter_map(|span| {
@@ -1451,9 +1444,37 @@ pub(crate) fn diarize_channel(
             })
         })
         .collect();
-    if !timeline.is_empty() {
-        utterances.retain(|u| u.end - u.start < 20.0);
-        utterances.extend(timeline);
+    if !timeline.is_empty() && utterances.iter().any(|u| u.end - u.start >= 20.0) {
+        let tree = super::word_speakers::DiarIntervalTree::new(&timeline);
+        let mut refined = Vec::with_capacity(utterances.len());
+        for utterance in utterances.iter() {
+            if utterance.end - utterance.start >= 20.0 {
+                refined.extend(super::word_speakers::split_utterance_by_word_speakers(
+                    utterance, &tree,
+                ));
+            } else {
+                refined.push(utterance.clone());
+            }
+        }
+        *utterances = refined;
+    }
+    if cfg!(debug_assertions) {
+        // Контракт бенчмарка: харнесс считает DER по отрезкам диаризации независимо от ASR-текста.
+        let segments: Vec<serde_json::Value> = utterances
+            .iter()
+            .map(|u| {
+                serde_json::json!({
+                    "start": u.start,
+                    "end": u.end,
+                    "speaker": crate::logging::speaker_token(&u.speaker),
+                    "channel": channel_idx,
+                })
+            })
+            .collect();
+        crate::logging::write_artifact_json(
+            &format!("diar/ch{ch}.segments.json"),
+            &serde_json::json!({ "segments": segments }),
+        );
     }
     infos
 }
@@ -1514,7 +1535,12 @@ pub(crate) fn move_boundary_words(utterances: &mut Vec<Utterance>) {
 fn words_of(text: &str) -> HashSet<String> {
     text.split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
-        .map(str::to_lowercase)
+        .map(|w| {
+            w.to_lowercase()
+                .chars()
+                .map(|c| if c == 'ё' { 'е' } else { c })
+                .collect()
+        })
         .collect()
 }
 
@@ -1528,6 +1554,19 @@ fn words_contained(small: &str, big: &str) -> bool {
     !a.is_empty() && a.is_subset(&b)
 }
 
+fn words_match(a: &str, b: &str) -> bool {
+    if a == b || (a == "че" && b == "что") || (a == "что" && b == "че") {
+        return true;
+    }
+    let ca: Vec<char> = a.chars().collect();
+    let cb: Vec<char> = b.chars().collect();
+    if ca.len() >= 4 && cb.len() >= 4 && ca.len().abs_diff(cb.len()) <= 3 {
+        ca[..4] == cb[..4]
+    } else {
+        false
+    }
+}
+
 /// Похожесть двух распознанных фраз (Jaccard по словам). Эхо одной и той же
 /// речи в двух каналах обычно даёт 0.6+, разные фразы — заметно меньше.
 pub(crate) fn text_similarity(a: &str, b: &str) -> f64 {
@@ -1539,11 +1578,19 @@ pub(crate) fn text_similarity(a: &str, b: &str) -> f64 {
     let inter = wa.intersection(&wb).count() as f64;
     let union = wa.union(&wb).count() as f64;
     let j = inter / union.max(1.0);
-    // ASR в двух каналах может добавить/потерять служебные слова. Короткие
-    // реплики («да», «угу») — это ответы, а не эхо: подмножество даёт буст
-    // только от трёх слов, иначе встречная реплика стиралась бы как дубль.
-    let subset = wa.is_subset(&wb) || wb.is_subset(&wa);
-    if subset && wa.len().min(wb.len()) >= 3 {
+    // shortcut: порог 0.65 включения слов для реплик >= 2 слов подавляет эхо
+    // при небольших расхождениях ASR (например, искажение 1-2 слов в акустическом тракте).
+    let (small, big) = if wa.len() <= wb.len() {
+        (&wa, &wb)
+    } else {
+        (&wb, &wa)
+    };
+    let matched = small
+        .iter()
+        .filter(|sw| big.iter().any(|bw| words_match(sw, bw)))
+        .count();
+    let containment = matched as f64 / small.len() as f64;
+    if containment >= 0.65 && small.len() >= 2 {
         j.max(0.85)
     } else {
         j
@@ -1974,10 +2021,8 @@ pub(crate) fn merge_utterances(utterances: Vec<Utterance>) -> Vec<Utterance> {
                     continue;
                 }
                 if u.start - last.end <= 1.0 {
-                    // В одном канале соседние куски — это разные слова,
-                    // даже если второй целиком повторяет слова первого.
-                    // Проверка на вложенность нужна только для эха между
-                    // каналами.
+                    // В одном канале соседние куски — это разные слова, даже если второй целиком повторяет
+                    // слова первого; вложенность отсекается только для эха между разными каналами.
                     if u.channel == last.channel || !words_contained(&u.text, &last.text) {
                         last.text = format!("{} {}", last.text, u.text).trim().to_string();
                         if last.words.is_empty() || u.words.is_empty() {
@@ -2160,6 +2205,50 @@ pub(crate) fn split_at_pauses(samples: &[f32], utterances: &[Utterance]) -> Vec<
     out
 }
 
+pub(crate) fn split_by_word_pauses(utterances: &[Utterance], min_gap_sec: f64) -> Vec<Utterance> {
+    const MIN_UNIT_SEC: f64 = 1.0;
+    let mut out = Vec::with_capacity(utterances.len());
+    for u in utterances {
+        if u.words.is_empty() || u.end - u.start < MIN_UNIT_SEC * 2.0 {
+            out.push(u.clone());
+            continue;
+        }
+        let timed: Vec<(f64, f64)> = u
+            .words
+            .iter()
+            .filter(|w| w.end_sec > w.start_sec)
+            .map(|w| (w.start_sec, w.end_sec))
+            .collect();
+        if timed.len() < 2 {
+            out.push(u.clone());
+            continue;
+        }
+        let mut bounds = vec![u.start];
+        for w in timed.windows(2) {
+            let gap = w[1].0 - w[0].1;
+            if gap >= min_gap_sec {
+                let cut = (w[0].1 + w[1].0) / 2.0;
+                let from = *bounds.last().unwrap();
+                if cut - from >= MIN_UNIT_SEC && u.end - cut >= MIN_UNIT_SEC {
+                    bounds.push((cut * 100.0).round() / 100.0);
+                }
+            }
+        }
+        if bounds.len() <= 1 {
+            out.push(u.clone());
+            continue;
+        }
+        bounds.push(u.end);
+        let parts = split_utterance_by_bounds(u, &bounds);
+        if parts.is_empty() {
+            out.push(u.clone());
+        } else {
+            out.extend(parts);
+        }
+    }
+    out
+}
+
 /// Эмбеддинг на ARM стоит сотни миллисекунд: короткие реплики не режем,
 /// число окон ограничиваем.
 const SPLIT_MIN_DUR: f64 = 3.0;
@@ -2173,9 +2262,97 @@ fn split_step(duration: f64) -> f64 {
     (span / (SPLIT_MAX_WINDOWS - 1) as f64).max(0.5)
 }
 
-/// +0.8 с компенсирует отставание окна: эмбеддинг 1.6 с «видит» обоих
-/// говорящих ещё какое-то время после стыка.
-fn speaker_change_cuts(start: f64, end: f64, wins: &[(f64, Vec<f64>)]) -> Vec<f64> {
+fn find_speaker_cut_point(
+    samples: &[f32],
+    start: f64,
+    end: f64,
+    w_start_a: f64,
+    w_start_b: f64,
+    words: &[WordConf],
+) -> f64 {
+    let search_lo = (w_start_a - 0.2).max(start);
+    let search_hi = (w_start_b + SPLIT_WINDOW_SEC + 0.2).min(end);
+    let mid_expected = (w_start_a + w_start_b + SPLIT_WINDOW_SEC) / 2.0;
+
+    let timed: Vec<(f64, f64)> = words
+        .iter()
+        .filter(|w| w.end_sec > w.start_sec)
+        .map(|w| (w.start_sec, w.end_sec))
+        .collect();
+
+    let sr = 16000.0;
+    let frame_len = (0.05 * sr) as usize;
+
+    let rms_at = |time_sec: f64| -> f64 {
+        if samples.is_empty() {
+            return 0.0;
+        }
+        let center = (time_sec * sr) as usize;
+        let half = frame_len / 2;
+        let lo = center.saturating_sub(half);
+        let hi = (center + half).min(samples.len());
+        if hi <= lo {
+            return 0.0;
+        }
+        let slice = &samples[lo..hi];
+        let sum_sq: f64 = slice.iter().map(|&x| (x as f64) * (x as f64)).sum();
+        (sum_sq / slice.len() as f64).sqrt()
+    };
+
+    if !timed.is_empty() {
+        let mut best_cut = None;
+        let mut best_score = f64::MAX;
+
+        for w in timed.windows(2) {
+            let gap_start = w[0].1;
+            let gap_end = w[1].0;
+            let cut_t = (gap_start + gap_end) / 2.0;
+            if cut_t >= search_lo && cut_t <= search_hi {
+                let rms = rms_at(cut_t);
+                let pause = (gap_end - gap_start).max(0.0);
+                let dist = (cut_t - mid_expected).abs();
+                let score = rms * 10.0 - pause * 2.0 + dist * 1.5;
+                if score < best_score {
+                    best_score = score;
+                    best_cut = Some(cut_t);
+                }
+            }
+        }
+        if let Some(cut) = best_cut {
+            return cut.clamp(start + 1.0, end - 1.0);
+        }
+    }
+
+    let lo = (search_lo * sr) as usize;
+    let hi = (search_hi * sr) as usize;
+    if hi > lo + frame_len && hi <= samples.len() {
+        let mut min_score = f64::INFINITY;
+        let mut best_sec = mid_expected;
+        for chunk_start in (lo..hi - frame_len).step_by(frame_len / 2) {
+            let slice = &samples[chunk_start..chunk_start + frame_len];
+            let sum_sq: f64 = slice.iter().map(|&x| (x as f64) * (x as f64)).sum();
+            let rms = (sum_sq / slice.len() as f64).sqrt();
+            let sec = (chunk_start + frame_len / 2) as f64 / sr;
+            let dist = (sec - mid_expected).abs();
+            let score = rms * 10.0 + dist * 0.5;
+            if score < min_score {
+                min_score = score;
+                best_sec = sec;
+            }
+        }
+        return best_sec.clamp(start + 1.0, end - 1.0);
+    }
+
+    mid_expected.clamp(start + 1.0, end - 1.0)
+}
+
+fn speaker_change_cuts(
+    samples: &[f32],
+    start: f64,
+    end: f64,
+    wins: &[(f64, Vec<f64>)],
+    words: &[WordConf],
+) -> Vec<f64> {
     let sims: Vec<f64> = wins
         .windows(2)
         .map(|w| mr_ml::cosine_similarity(&w[0].1, &w[1].1))
@@ -2190,10 +2367,31 @@ fn speaker_change_cuts(start: f64, end: f64, wins: &[(f64, Vec<f64>)]) -> Vec<f6
         if s > prev || s > next {
             continue;
         }
-        let b = ((wins[i].0 + wins[i + 1].0) / 2.0 + 0.8).clamp(start + 0.5, end - 0.5);
+        let b = find_speaker_cut_point(samples, start, end, wins[i].0, wins[i + 1].0, words);
         if cuts.last().map(|&c| b - c >= 1.0).unwrap_or(true) {
             cuts.push((b * 100.0).round() / 100.0);
         }
+    }
+    if wins.len() >= 3 {
+        let sims2: Vec<f64> = (0..wins.len() - 2)
+            .map(|i| mr_ml::cosine_similarity(&wins[i].1, &wins[i + 2].1))
+            .collect();
+        for (i, &s2) in sims2.iter().enumerate() {
+            if s2 >= 0.35 {
+                continue;
+            }
+            let prev = if i > 0 { sims2[i - 1] } else { 1.0 };
+            let next = sims2.get(i + 1).copied().unwrap_or(1.0);
+            if s2 > prev || s2 > next {
+                continue;
+            }
+            let b = find_speaker_cut_point(samples, start, end, wins[i].0, wins[i + 2].0, words);
+            let b_rounded = (b * 100.0).round() / 100.0;
+            if cuts.iter().all(|&c| (b_rounded - c).abs() >= 1.0) {
+                cuts.push(b_rounded);
+            }
+        }
+        cuts.sort_by(|a, b| a.total_cmp(b));
     }
     cuts
 }
@@ -2258,7 +2456,7 @@ pub(crate) fn split_long_by_speaker_change(
             out.push(u);
             continue;
         }
-        let cuts = speaker_change_cuts(u.start, u.end, &wins);
+        let cuts = speaker_change_cuts(samples, u.start, u.end, &wins, &u.words);
         log::debug!(
             target: "diar",
             i = index,
@@ -2432,13 +2630,15 @@ pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::{
-        cannot_link_pairs, dedupe_cross_channel, fill_labels_by_time, group_segments,
+        cannot_link_units, dedupe_cross_channel, fill_labels_by_time, group_segments,
         merge_quiet_short, merge_tiny_clusters, merge_utterances, move_boundary_words,
         profile_anchors, read_profiles_file, reconcile_channels, refresh_speaker_stats,
-        short_join_threshold, speaker_change_cuts, split_at_pauses, split_utterance_by_bounds,
-        split_words_by_bounds, switch_penalty, SpeakerInfo, Utterance,
+        short_join_threshold, speaker_change_cuts, split_at_pauses, split_by_word_pauses,
+        split_utterance_by_bounds, split_words_by_bounds, switch_penalty, text_similarity,
+        AcoustUnit, SpeakerInfo, Utterance,
     };
     use crate::transcribe::WordConf;
+    use std::collections::HashMap;
 
     fn info(name: &str, ch: i32, emb: Vec<f64>, count: usize, sec: f64) -> SpeakerInfo {
         SpeakerInfo {
@@ -2565,6 +2765,13 @@ mod tests {
         assert_eq!(utts.len(), 1);
         assert_eq!(utts[0].speaker, "Спикер B");
         assert_eq!(utts[0].channel, Some(1));
+    }
+
+    #[test]
+    fn text_similarity_folds_yo_and_detects_containment() {
+        let echo = "А чё, я ей всё написал, чё ещё там надо? Да.";
+        let original = "Мне нужно будет там для КП данные подготовить. Это Альфа, да? А что я ей все написал, че еще там надо? Да. Окей. Хмм.";
+        assert!(text_similarity(echo, original) >= 0.85);
     }
 
     #[test]
@@ -2986,7 +3193,7 @@ mod tests {
     }
 
     #[test]
-    fn cannot_link_pairs_follow_local_pyannote_speakers() {
+    fn cannot_link_units_separates_voices_inside_one_utterance() {
         let frame = mr_ml::onnx::segmentation::FRAME_SAMPLES;
         let mut classes = vec![1u8; 2];
         classes.extend(vec![2u8; 2]);
@@ -2998,13 +3205,25 @@ mod tests {
             }],
         };
         let frame_sec = frame as f64 / 16000.0;
-        let utts = vec![
-            utt(0.0, 2.0 * frame_sec, "A", 0, "первая"),
-            utt(2.0 * frame_sec, 4.0 * frame_sec, "B", 0, "вторая"),
+        let unit = |utterance: usize, from: f64, to: f64| AcoustUnit {
+            utterance,
+            start: from,
+            end: to,
+            dur: to - from,
+            quality: 1.0,
+            embedding: vec![],
+        };
+        // Калибровка теста: PyAnnote размечает два куска одной реплики на разных людей.
+        let units = vec![
+            unit(0, 0.0, 2.0 * frame_sec),
+            unit(0, 2.0 * frame_sec, 4.0 * frame_sec),
         ];
-        let pairs = cannot_link_pairs(Some(&segmentation), &utts);
-        assert_eq!(pairs, vec![(0, 1)]);
-        assert!(cannot_link_pairs(None, &utts).is_empty());
+        let core_pos = HashMap::from([(0usize, 0usize), (1, 1)]);
+        assert_eq!(
+            cannot_link_units(Some(&segmentation), &units, &core_pos),
+            vec![(0, 1)]
+        );
+        assert!(cannot_link_units(None, &units, &core_pos).is_empty());
     }
 
     #[test]
@@ -3015,9 +3234,42 @@ mod tests {
             .into_iter()
             .map(|t| (t, if t < 2.0 { a.clone() } else { b.clone() }))
             .collect();
-        let cuts = speaker_change_cuts(0.0, 4.0, &wins);
+        let cuts = speaker_change_cuts(&[], 0.0, 4.0, &wins, &[]);
         assert_eq!(cuts.len(), 1);
         assert!((2.0..=2.9).contains(&cuts[0]), "{cuts:?}");
+    }
+
+    #[test]
+    fn speaker_change_cuts_snaps_to_inter_word_pause() {
+        let a = vec![1.0, 0.0];
+        let b = vec![0.0, 1.0];
+        let wins: Vec<(f64, Vec<f64>)> = vec![
+            (0.0, a.clone()),
+            (1.0, a.clone()),
+            (2.0, a),
+            (3.0, b.clone()),
+            (4.0, b),
+        ];
+        let words = vec![
+            WordConf {
+                w: "первый".to_string(),
+                conf: 1.0,
+                needs_review: false,
+                start_sec: 0.5,
+                end_sec: 2.2,
+            },
+            WordConf {
+                w: "второй".to_string(),
+                conf: 1.0,
+                needs_review: false,
+                start_sec: 2.8,
+                end_sec: 4.5,
+            },
+        ];
+        let samples = vec![0.0f32; 16000 * 5];
+        let cuts = speaker_change_cuts(&samples, 0.0, 5.0, &wins, &words);
+        assert_eq!(cuts.len(), 1);
+        assert_eq!(cuts[0], 2.5);
     }
 
     #[test]
@@ -3079,13 +3331,37 @@ mod tests {
         ];
         let weights = vec![10.0, 10.0, 10.0, 10.0, 1.0];
         let mut labels = vec![0usize, 0, 1, 1, 2];
-        merge_tiny_clusters(&vecs, &mut labels, &weights, 1);
+        merge_tiny_clusters(&vecs, &mut labels, &weights, 1, &[]);
         assert!(labels[4] == 0 || labels[4] == 1);
         let mut distinct = vec![0usize, 0, 1, 1, 2];
         let mut vecs2 = vecs.clone();
         vecs2[4] = vec![-1.0, 0.0];
-        merge_tiny_clusters(&vecs2, &mut distinct, &weights, 1);
+        merge_tiny_clusters(&vecs2, &mut distinct, &weights, 1, &[]);
         assert_eq!(distinct[4], 2);
+    }
+
+    #[test]
+    fn tiny_cluster_matching_known_profile_is_protected() {
+        let vecs = vec![
+            vec![1.0, 0.0],
+            vec![1.0, 0.0],
+            vec![0.0, 1.0],
+            vec![0.0, 1.0],
+            vec![0.7, 0.7],
+        ];
+        let weights = vec![10.0, 10.0, 10.0, 10.0, 1.0];
+        let mut labels = vec![0usize, 0, 1, 1, 2];
+        let profile = mr_ml::SpeakerProfile {
+            name: "Известный Спикер".to_string(),
+            embedding: vec![0.7, 0.7],
+            pack_id: String::new(),
+            pack_name: String::new(),
+            samples_count: 1,
+            updated_at: String::new(),
+            prototypes: vec![],
+        };
+        merge_tiny_clusters(&vecs, &mut labels, &weights, 1, &[profile]);
+        assert_eq!(labels[4], 2);
     }
 
     #[test]
@@ -3099,7 +3375,7 @@ mod tests {
         ];
         let weights = vec![40.0, 40.0, 40.0, 0.5, 0.5];
         let mut labels = vec![0usize, 0, 0, 1, 1];
-        merge_tiny_clusters(&vecs, &mut labels, &weights, 1);
+        merge_tiny_clusters(&vecs, &mut labels, &weights, 1, &[]);
         assert_eq!(labels[3], 1);
         assert_eq!(labels[4], 1);
     }
@@ -3431,5 +3707,76 @@ mod tests {
             2,
             "конфликт кандидатов должен блокировать слияние"
         );
+    }
+
+    #[test]
+    fn split_by_word_pauses_splits_turn_exchanges() {
+        let u = Utterance {
+            start: 0.0,
+            end: 8.0,
+            speaker: "X".to_string(),
+            channel: Some(0),
+            text: "слово1 слово2 слово3 слово4".to_string(),
+            diarized: false,
+            silhouette: 0.0,
+            words: vec![
+                crate::transcribe::WordConf {
+                    w: "слово1".to_string(),
+                    conf: 0.99,
+                    needs_review: false,
+                    start_sec: 0.5,
+                    end_sec: 1.5,
+                },
+                crate::transcribe::WordConf {
+                    w: "слово2".to_string(),
+                    conf: 0.98,
+                    needs_review: false,
+                    start_sec: 1.6,
+                    end_sec: 2.5,
+                },
+                crate::transcribe::WordConf {
+                    w: "слово3".to_string(),
+                    conf: 0.97,
+                    needs_review: false,
+                    start_sec: 3.6,
+                    end_sec: 5.0,
+                },
+                crate::transcribe::WordConf {
+                    w: "слово4".to_string(),
+                    conf: 0.96,
+                    needs_review: false,
+                    start_sec: 5.2,
+                    end_sec: 6.5,
+                },
+            ],
+            ctc_used: true,
+        };
+        let out = split_by_word_pauses(&[u], 0.8);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].text, "слово1 слово2");
+        assert_eq!(out[1].text, "слово3 слово4");
+        assert!((out[0].end - 3.05).abs() < 0.02);
+        assert!((out[1].start - 3.05).abs() < 0.02);
+    }
+
+    #[test]
+    fn text_similarity_detects_containment_on_bleed() {
+        let echo = "ну че на сегодня с проектом полностью сделано прямо развалилось";
+        let original = "что на сегодня проект полностью сделано прямо развалилось вот давай смотреть в одиннадцать по трафику ничего не прилетело надо изучить";
+        assert!(text_similarity(echo, original) >= 0.85);
+    }
+
+    #[test]
+    fn speaker_change_cuts_detects_transition_window_stride_two() {
+        let a = vec![1.0, 0.0];
+        let b = vec![0.0, 1.0];
+        let mix = vec![
+            std::f64::consts::FRAC_1_SQRT_2,
+            std::f64::consts::FRAC_1_SQRT_2,
+        ];
+        let wins: Vec<(f64, Vec<f64>)> = vec![(0.0, a), (1.0, mix), (2.0, b.clone()), (3.0, b)];
+        let cuts = speaker_change_cuts(&[], 0.0, 5.0, &wins, &[]);
+        assert_eq!(cuts.len(), 1);
+        assert!((1.5..=3.0).contains(&cuts[0]), "{cuts:?}");
     }
 }

@@ -66,7 +66,7 @@ if [ "$WANT_DEV" = 1 ]; then
         TARGET_DIR="target/dev$SUFFIX"
     fi
     BIN="$SCRIPT_DIR/src-tauri/$TARGET_DIR/dev-opt/podtekst"
-    export MR_LOG="${MR_LOG:-info,vad=debug,asr=debug,diar=debug,json=debug}"
+    export MR_LOG="${MR_LOG:-info,vad=debug,asr=debug,diar=debug,cluster=debug,json=debug}"
     export MR_DIAG_DUMP="${MR_DIAG_DUMP:-1}"
 else
     TARGET_DIR=""

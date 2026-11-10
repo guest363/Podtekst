@@ -160,7 +160,6 @@ fn discover() -> Result<RuntimeInfo, RuntimeError> {
     discover_from(candidate_dirs())
 }
 
-/// Проверить конкретный каталог runtime: версию, commit и обязательные флаги.
 pub fn validate_dir(dir: &Path) -> Result<RuntimeInfo, RuntimeError> {
     let manifest = manifest();
     let exe = dir.join(exe_name());
