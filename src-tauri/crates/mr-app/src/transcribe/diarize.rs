@@ -2262,6 +2262,13 @@ fn split_step(duration: f64) -> f64 {
     (span / (SPLIT_MAX_WINDOWS - 1) as f64).max(0.5)
 }
 
+/// Веса выбора разреза: тишина решает, длинная пауза перевешивает смещение
+/// от середины, а кадру без длительности паузы смещение стоит дешевле.
+const CUT_SCORE_RMS: f64 = 10.0;
+const CUT_SCORE_PAUSE: f64 = 2.0;
+const CUT_SCORE_WORD_DIST: f64 = 1.5;
+const CUT_SCORE_FRAME_DIST: f64 = 0.5;
+
 fn find_speaker_cut_point(
     samples: &[f32],
     start: f64,
@@ -2311,7 +2318,8 @@ fn find_speaker_cut_point(
                 let rms = rms_at(cut_t);
                 let pause = (gap_end - gap_start).max(0.0);
                 let dist = (cut_t - mid_expected).abs();
-                let score = rms * 10.0 - pause * 2.0 + dist * 1.5;
+                let score =
+                    rms * CUT_SCORE_RMS - pause * CUT_SCORE_PAUSE + dist * CUT_SCORE_WORD_DIST;
                 if score < best_score {
                     best_score = score;
                     best_cut = Some(cut_t);
@@ -2334,7 +2342,7 @@ fn find_speaker_cut_point(
             let rms = (sum_sq / slice.len() as f64).sqrt();
             let sec = (chunk_start + frame_len / 2) as f64 / sr;
             let dist = (sec - mid_expected).abs();
-            let score = rms * 10.0 + dist * 0.5;
+            let score = rms * CUT_SCORE_RMS + dist * CUT_SCORE_FRAME_DIST;
             if score < min_score {
                 min_score = score;
                 best_sec = sec;
@@ -3227,16 +3235,20 @@ mod tests {
     }
 
     #[test]
-    fn split_long_finds_one_voice_change_in_four_seconds() {
+    fn speaker_change_cuts_snaps_cut_to_quiet_frame_between_windows() {
         let a = vec![1.0, 0.0];
         let b = vec![0.0, 1.0];
         let wins: Vec<(f64, Vec<f64>)> = [0.0, 0.5, 1.0, 1.5, 2.0]
             .into_iter()
             .map(|t| (t, if t < 2.0 { a.clone() } else { b.clone() }))
             .collect();
-        let cuts = speaker_change_cuts(&[], 0.0, 4.0, &wins, &[]);
+        let mut samples = vec![0.2f32; 16000 * 5];
+        for x in samples[16000 * 19 / 10..16000 * 21 / 10].iter_mut() {
+            *x = 0.0;
+        }
+        let cuts = speaker_change_cuts(&samples, 0.0, 5.0, &wins, &[]);
         assert_eq!(cuts.len(), 1);
-        assert!((2.0..=2.9).contains(&cuts[0]), "{cuts:?}");
+        assert!((1.9..=2.1).contains(&cuts[0]), "{cuts:?}");
     }
 
     #[test]
@@ -3256,20 +3268,57 @@ mod tests {
                 conf: 1.0,
                 needs_review: false,
                 start_sec: 0.5,
-                end_sec: 2.2,
+                end_sec: 1.9,
             },
             WordConf {
                 w: "второй".to_string(),
                 conf: 1.0,
                 needs_review: false,
-                start_sec: 2.8,
+                start_sec: 3.2,
+                end_sec: 3.3,
+            },
+            WordConf {
+                w: "третий".to_string(),
+                conf: 1.0,
+                needs_review: false,
+                start_sec: 3.4,
                 end_sec: 4.5,
             },
         ];
         let samples = vec![0.0f32; 16000 * 5];
         let cuts = speaker_change_cuts(&samples, 0.0, 5.0, &wins, &words);
         assert_eq!(cuts.len(), 1);
-        assert_eq!(cuts[0], 2.5);
+        // Длинная пауза 1.3 с дальше от середины 3.3, но перевешивает короткую 0.1 с.
+        assert_eq!(cuts[0], 2.55);
+    }
+
+    #[test]
+    fn speaker_change_cuts_prefers_quiet_gap_over_loud_long_pause() {
+        let a = vec![1.0, 0.0];
+        let b = vec![0.0, 1.0];
+        let wins: Vec<(f64, Vec<f64>)> = vec![
+            (0.0, a.clone()),
+            (1.0, a.clone()),
+            (2.0, a),
+            (3.0, b.clone()),
+            (4.0, b),
+        ];
+        let word = |start_sec: f64, end_sec: f64| WordConf {
+            w: "слово".to_string(),
+            conf: 1.0,
+            needs_review: false,
+            start_sec,
+            end_sec,
+        };
+        let words = vec![word(0.5, 1.9), word(3.2, 3.3), word(3.4, 4.5)];
+        let mut samples = vec![0.0f32; 16000 * 5];
+        for x in samples[16000 * 2525 / 1000..16000 * 2575 / 1000].iter_mut() {
+            *x = 0.5;
+        }
+        let cuts = speaker_change_cuts(&samples, 0.0, 5.0, &wins, &words);
+        assert_eq!(cuts.len(), 1);
+        // Тишина важнее длительности: короткая тихая пауза у 3.35 выигрывает у громкой длинной 2.55.
+        assert_eq!(cuts[0], 3.35);
     }
 
     #[test]
@@ -3775,8 +3824,12 @@ mod tests {
             std::f64::consts::FRAC_1_SQRT_2,
         ];
         let wins: Vec<(f64, Vec<f64>)> = vec![(0.0, a), (1.0, mix), (2.0, b.clone()), (3.0, b)];
-        let cuts = speaker_change_cuts(&[], 0.0, 5.0, &wins, &[]);
+        let mut samples = vec![0.2f32; 16000 * 5];
+        for x in samples[16000 * 25 / 10..16000 * 27 / 10].iter_mut() {
+            *x = 0.0;
+        }
+        let cuts = speaker_change_cuts(&samples, 0.0, 5.0, &wins, &[]);
         assert_eq!(cuts.len(), 1);
-        assert!((1.5..=3.0).contains(&cuts[0]), "{cuts:?}");
+        assert!((2.5..=2.7).contains(&cuts[0]), "{cuts:?}");
     }
 }
