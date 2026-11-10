@@ -202,6 +202,13 @@ pub fn agglomerative_gap(
         return vec![];
     }
     let merges = chain_merges(embeddings, weights, cannot_link);
+    let top_merges: Vec<(f64, usize, usize)> = merges.iter().rev().take(10).copied().collect();
+    log::debug!(
+        target: "cluster",
+        n = n,
+        merges_tail = format!("{top_merges:?}").as_str();
+        "ev=cluster.merges_tail"
+    );
     let min_k = min_clusters.clamp(1, n);
     let max_k = max_clusters.clamp(min_k, n);
     // k=1 — это «один голос», его даёт fallback по порогу расстояния, а не

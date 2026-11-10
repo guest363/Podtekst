@@ -1271,7 +1271,7 @@ pub(crate) fn diarize_channel(
         cluster_name.insert(raw_clusters[0], default_name.to_string());
     } else {
         let mut used: std::collections::HashSet<String> = cluster_name.values().cloned().collect();
-        let default_used = used.contains(default_name);
+        let default_used = used.contains(default_name) || !cluster_name.is_empty();
         let mut next_num = 1usize;
         for (idx, c) in unmatched.into_iter().enumerate() {
             let name = if idx == 0 && !default_used && !generic.contains(&default_name) {
