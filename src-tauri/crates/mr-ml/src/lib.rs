@@ -22,14 +22,17 @@ pub const EMBEDDING_DIM: usize = 192;
 /// примерах 3D-Speaker и реальных встречах: разные дикторы ≤ 0.22, один голос ≥ 0.48
 /// (фрагменты от 1.5 с); у самой модели в карточке порог 0.365.
 pub const DEFAULT_MATCH_THRESHOLD: f64 = 0.45;
-pub const DEFAULT_MIN_MARGIN: f64 = 0.03;
+/// Калибровка на живом кейсе: лучший 0.585, второй 0.566 (margin 0.019) — оба
+/// выше порога, и при 0.03 голос ошибочно оставался без имени. 0.015 сохраняет
+/// отсечку для совсем близких кандидатов.
+pub const DEFAULT_MIN_MARGIN: f64 = 0.015;
 // shortcut: 1.8/0.04 — стартовые значения без размеченного набора; перекалибровать на реальных ложных срабатываниях.
 const MIN_COHORT_Z: f64 = 1.8;
 const MIN_COHORT_SIGMA: f64 = 0.04;
 const COHORT_TOP_K: usize = 5;
-/// shortcut: 0.03 — эмпирический пол без опубликованного замера; перепроверить
+/// shortcut: 0.015 — эмпирический пол по живому кейсу margin 0.019; перепроверить
 /// на размеченном наборе при смене модели.
-const MIN_MATCH_MARGIN_FLOOR: f64 = 0.03;
+const MIN_MATCH_MARGIN_FLOOR: f64 = 0.015;
 pub const HIGH_CONFIDENCE_THRESHOLD: f64 = 0.78;
 pub const SAME_SPEAKER_MERGE_SIM: f64 = 0.55;
 pub const MAX_PROTOTYPES: usize = 10;
@@ -673,6 +676,38 @@ mod tests {
         } else {
             assert!(res[0].similarity >= 0.78);
         }
+    }
+
+    #[test]
+    fn margin_gate_allows_close_top_candidate() {
+        let mk = |name: &str, v: Vec<f64>| SpeakerProfile {
+            name: name.to_string(),
+            pack_id: String::new(),
+            pack_name: String::new(),
+            embedding: v.clone(),
+            samples_count: 1,
+            updated_at: String::new(),
+            prototypes: vec![Prototype {
+                id: "p1".to_string(),
+                embedding: v,
+                duration_sec: 4.0,
+                quality: 1.0,
+                created_at: String::new(),
+                snippet_relpath: None,
+            }],
+        };
+        let first = mk("Спикер A", l2(vec![0.585, 0.811, 0.0, 0.0]));
+        let second = mk("Спикер B", l2(vec![0.566, 0.824, 0.0, 0.0]));
+        let query = l2(vec![1.0, 0.0, 0.0, 0.0]);
+        let res =
+            match_voiceprints_matrix(std::slice::from_ref(&query), &[first, second], 0.45, 0.015);
+        assert!(res[0].matched);
+        assert_eq!(res[0].name.as_deref(), Some("Спикер A"));
+
+        let too_close = mk("Спикер B", l2(vec![0.575, 0.818, 0.0, 0.0]));
+        let first = mk("Спикер A", l2(vec![0.585, 0.811, 0.0, 0.0]));
+        let res = match_voiceprints_matrix(&[query], &[first, too_close], 0.45, 0.015);
+        assert!(!res[0].matched);
     }
 
     fn profile(name: &str, v: Vec<f64>) -> SpeakerProfile {
