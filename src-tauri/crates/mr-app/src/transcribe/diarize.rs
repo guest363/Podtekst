@@ -357,7 +357,13 @@ fn short_join_threshold(dur: f64) -> f64 {
 /// Кластеры короче 2% речи — обычно шумные короткие эмбеддинги. Клеим их
 /// к ближайшему крупному голосу (косинус ≥ 0.45), а непохожие оставляем:
 /// это может быть третий человек, сказавший пару слов.
-fn merge_tiny_clusters(vecs: &[Vec<f64>], labels: &mut [usize], weights: &[f64], min_keep: usize) {
+fn merge_tiny_clusters(
+    vecs: &[Vec<f64>],
+    labels: &mut [usize],
+    weights: &[f64],
+    min_keep: usize,
+    profiles: &[SpeakerProfile],
+) {
     let total: f64 = weights.iter().sum();
     if total <= 0.0 {
         return;
@@ -404,6 +410,12 @@ fn merge_tiny_clusters(vecs: &[Vec<f64>], labels: &mut [usize], weights: &[f64],
             mr_ml::weighted_centroid(&vs, &ws)
         };
         let cs = centroid(small);
+        if profiles.iter().any(|p| {
+            mr_ml::cosine_similarity(&cs, &p.embedding) >= mr_ml::DEFAULT_MATCH_THRESHOLD
+        }) {
+            protected.insert(small);
+            continue;
+        }
         let mut best = (0usize, -2.0f64);
         for &l in totals.keys() {
             if l == small {
@@ -979,7 +991,7 @@ pub(crate) fn diarize_channel(
     // ближайшим похожим голосом (косинус ≥ 0.45) как в моно, так и в стерео.
     if k.is_none() {
         let weights: Vec<f64> = core_units.iter().map(|&index| units[index].dur).collect();
-        merge_tiny_clusters(&core_vecs, &mut core_labels, &weights, min_auto);
+        merge_tiny_clusters(&core_vecs, &mut core_labels, &weights, min_auto, profiles);
     }
     if k.is_none() {
         let mut uniq: Vec<usize> = core_labels.clone();
@@ -1541,6 +1553,19 @@ fn words_contained(small: &str, big: &str) -> bool {
     !a.is_empty() && a.is_subset(&b)
 }
 
+fn words_match(a: &str, b: &str) -> bool {
+    if a == b || (a == "че" && b == "что") || (a == "что" && b == "че") {
+        return true;
+    }
+    let ca: Vec<char> = a.chars().collect();
+    let cb: Vec<char> = b.chars().collect();
+    if ca.len() >= 4 && cb.len() >= 4 && ca.len().abs_diff(cb.len()) <= 3 {
+        ca[..4] == cb[..4]
+    } else {
+        false
+    }
+}
+
 /// Похожесть двух распознанных фраз (Jaccard по словам). Эхо одной и той же
 /// речи в двух каналах обычно даёт 0.6+, разные фразы — заметно меньше.
 pub(crate) fn text_similarity(a: &str, b: &str) -> f64 {
@@ -1552,16 +1577,16 @@ pub(crate) fn text_similarity(a: &str, b: &str) -> f64 {
     let inter = wa.intersection(&wb).count() as f64;
     let union = wa.union(&wb).count() as f64;
     let j = inter / union.max(1.0);
-    // shortcut: порог 0.75 включения слов для реплик >= 3 слов подавляет эхо
-    // при небольших расхождениях ASR (например, потеря союза или предлога).
-    let min_len = wa.len().min(wb.len());
-    let subset = wa.is_subset(&wb) || wb.is_subset(&wa);
-    let containment = if min_len > 0 {
-        inter / min_len as f64
+    // shortcut: порог 0.65 включения слов для реплик >= 2 слов подавляет эхо
+    // при небольших расхождениях ASR (например, искажение 1-2 слов в акустическом тракте).
+    let (small, big) = if wa.len() <= wb.len() {
+        (&wa, &wb)
     } else {
-        0.0
+        (&wb, &wa)
     };
-    if (subset || containment >= 0.75) && min_len >= 3 {
+    let matched = small.iter().filter(|sw| big.iter().any(|bw| words_match(sw, bw))).count();
+    let containment = matched as f64 / small.len() as f64;
+    if containment >= 0.65 && small.len() >= 2 {
         j.max(0.85)
     } else {
         j
@@ -2176,6 +2201,50 @@ pub(crate) fn split_at_pauses(samples: &[f32], utterances: &[Utterance]) -> Vec<
     out
 }
 
+pub(crate) fn split_by_word_pauses(utterances: &[Utterance], min_gap_sec: f64) -> Vec<Utterance> {
+    const MIN_UNIT_SEC: f64 = 1.0;
+    let mut out = Vec::with_capacity(utterances.len());
+    for u in utterances {
+        if u.words.is_empty() || u.end - u.start < MIN_UNIT_SEC * 2.0 {
+            out.push(u.clone());
+            continue;
+        }
+        let timed: Vec<(f64, f64)> = u
+            .words
+            .iter()
+            .filter(|w| w.end_sec > w.start_sec)
+            .map(|w| (w.start_sec, w.end_sec))
+            .collect();
+        if timed.len() < 2 {
+            out.push(u.clone());
+            continue;
+        }
+        let mut bounds = vec![u.start];
+        for w in timed.windows(2) {
+            let gap = w[1].0 - w[0].1;
+            if gap >= min_gap_sec {
+                let cut = (w[0].1 + w[1].0) / 2.0;
+                let from = *bounds.last().unwrap();
+                if cut - from >= MIN_UNIT_SEC && u.end - cut >= MIN_UNIT_SEC {
+                    bounds.push((cut * 100.0).round() / 100.0);
+                }
+            }
+        }
+        if bounds.len() <= 1 {
+            out.push(u.clone());
+            continue;
+        }
+        bounds.push(u.end);
+        let parts = split_utterance_by_bounds(u, &bounds);
+        if parts.is_empty() {
+            out.push(u.clone());
+        } else {
+            out.extend(parts);
+        }
+    }
+    out
+}
+
 /// Эмбеддинг на ARM стоит сотни миллисекунд: короткие реплики не режем,
 /// число окон ограничиваем.
 const SPLIT_MIN_DUR: f64 = 3.0;
@@ -2246,7 +2315,7 @@ fn find_speaker_cut_point(
             }
         }
         if let Some(cut) = best_cut {
-            return cut.clamp(start + 0.5, end - 0.5);
+            return cut.clamp(start + 1.0, end - 1.0);
         }
     }
 
@@ -2264,10 +2333,10 @@ fn find_speaker_cut_point(
                 best_sec = (chunk_start + frame_len / 2) as f64 / sr;
             }
         }
-        return best_sec.clamp(start + 0.5, end - 0.5);
+        return best_sec.clamp(start + 1.0, end - 1.0);
     }
 
-    mid_expected.clamp(start + 0.5, end - 0.5)
+    mid_expected.clamp(start + 1.0, end - 1.0)
 }
 
 fn speaker_change_cuts(
@@ -2283,7 +2352,7 @@ fn speaker_change_cuts(
         .collect();
     let mut cuts = vec![];
     for (i, &s) in sims.iter().enumerate() {
-        if s >= 0.42 {
+        if s >= 0.35 {
             continue;
         }
         let prev = if i > 0 { sims[i - 1] } else { 1.0 };
@@ -2536,7 +2605,8 @@ mod tests {
         cannot_link_units, dedupe_cross_channel, fill_labels_by_time, group_segments,
         merge_quiet_short, merge_tiny_clusters, merge_utterances, move_boundary_words,
         profile_anchors, read_profiles_file, reconcile_channels, refresh_speaker_stats,
-        short_join_threshold, speaker_change_cuts, split_at_pauses, split_utterance_by_bounds,
+        short_join_threshold, speaker_change_cuts, split_at_pauses, split_by_word_pauses,
+        split_utterance_by_bounds,
         split_words_by_bounds, switch_penalty, text_similarity, AcoustUnit, SpeakerInfo, Utterance,
     };
     use crate::transcribe::WordConf;
@@ -3233,13 +3303,37 @@ mod tests {
         ];
         let weights = vec![10.0, 10.0, 10.0, 10.0, 1.0];
         let mut labels = vec![0usize, 0, 1, 1, 2];
-        merge_tiny_clusters(&vecs, &mut labels, &weights, 1);
+        merge_tiny_clusters(&vecs, &mut labels, &weights, 1, &[]);
         assert!(labels[4] == 0 || labels[4] == 1);
         let mut distinct = vec![0usize, 0, 1, 1, 2];
         let mut vecs2 = vecs.clone();
         vecs2[4] = vec![-1.0, 0.0];
-        merge_tiny_clusters(&vecs2, &mut distinct, &weights, 1);
+        merge_tiny_clusters(&vecs2, &mut distinct, &weights, 1, &[]);
         assert_eq!(distinct[4], 2);
+    }
+
+    #[test]
+    fn tiny_cluster_matching_known_profile_is_protected() {
+        let vecs = vec![
+            vec![1.0, 0.0],
+            vec![1.0, 0.0],
+            vec![0.0, 1.0],
+            vec![0.0, 1.0],
+            vec![0.7, 0.7],
+        ];
+        let weights = vec![10.0, 10.0, 10.0, 10.0, 1.0];
+        let mut labels = vec![0usize, 0, 1, 1, 2];
+        let profile = mr_ml::SpeakerProfile {
+            name: "Известный Спикер".to_string(),
+            embedding: vec![0.7, 0.7],
+            pack_id: String::new(),
+            pack_name: String::new(),
+            samples_count: 1,
+            updated_at: String::new(),
+            prototypes: vec![],
+        };
+        merge_tiny_clusters(&vecs, &mut labels, &weights, 1, &[profile]);
+        assert_eq!(labels[4], 2);
     }
 
     #[test]
@@ -3253,7 +3347,7 @@ mod tests {
         ];
         let weights = vec![40.0, 40.0, 40.0, 0.5, 0.5];
         let mut labels = vec![0usize, 0, 0, 1, 1];
-        merge_tiny_clusters(&vecs, &mut labels, &weights, 1);
+        merge_tiny_clusters(&vecs, &mut labels, &weights, 1, &[]);
         assert_eq!(labels[3], 1);
         assert_eq!(labels[4], 1);
     }
@@ -3585,5 +3679,62 @@ mod tests {
             2,
             "конфликт кандидатов должен блокировать слияние"
         );
+    }
+
+    #[test]
+    fn split_by_word_pauses_splits_turn_exchanges() {
+        let u = Utterance {
+            start: 0.0,
+            end: 8.0,
+            speaker: "X".to_string(),
+            channel: Some(0),
+            text: "слово1 слово2 слово3 слово4".to_string(),
+            diarized: false,
+            silhouette: 0.0,
+            words: vec![
+                crate::transcribe::WordConf {
+                    w: "слово1".to_string(),
+                    conf: 0.99,
+                    needs_review: false,
+                    start_sec: 0.5,
+                    end_sec: 1.5,
+                },
+                crate::transcribe::WordConf {
+                    w: "слово2".to_string(),
+                    conf: 0.98,
+                    needs_review: false,
+                    start_sec: 1.6,
+                    end_sec: 2.5,
+                },
+                crate::transcribe::WordConf {
+                    w: "слово3".to_string(),
+                    conf: 0.97,
+                    needs_review: false,
+                    start_sec: 3.6,
+                    end_sec: 5.0,
+                },
+                crate::transcribe::WordConf {
+                    w: "слово4".to_string(),
+                    conf: 0.96,
+                    needs_review: false,
+                    start_sec: 5.2,
+                    end_sec: 6.5,
+                },
+            ],
+            ctc_used: true,
+        };
+        let out = split_by_word_pauses(&[u], 0.8);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].text, "слово1 слово2");
+        assert_eq!(out[1].text, "слово3 слово4");
+        assert!((out[0].end - 3.05).abs() < 0.02);
+        assert!((out[1].start - 3.05).abs() < 0.02);
+    }
+
+    #[test]
+    fn text_similarity_detects_containment_on_bleed() {
+        let echo = "ну че на сегодня с проектом полностью сделано прямо развалилось";
+        let original = "что на сегодня проект полностью сделано прямо развалилось вот давай смотреть в одиннадцать по трафику ничего не прилетело надо изучить";
+        assert!(text_similarity(echo, original) >= 0.85);
     }
 }

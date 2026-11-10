@@ -247,15 +247,28 @@ pub(crate) fn suppress_mic_bleed_with_stats(
         }
         let mic_level = mic_env[frame];
         let sys_level = sys_env[other];
-        if sys_level < 0.005 || mic_level < 0.001 || mic_level > sys_level * 0.35 {
+        if sys_level < 0.005 || mic_level < 0.001 {
             continue;
         }
-        const SUPPRESSION_FLOOR: f32 = 0.20;
-        if window_corr(&mic_env, &sys_env, frame, other, 10) > 0.7 {
-            // shortcut: suppression floor 0.20 (-14 dB) сохраняет непрерывность речи при перебивании
-            vad_probs[frame] = vad_probs[frame].min(SUPPRESSION_FLOOR);
-            suppressed += 1;
+        const SUPPRESSION_FLOOR: f32 = 0.05;
+        let corr = window_corr(&mic_env, &sys_env, frame, other, 10);
+        let corr_prev = if other > 0 {
+            window_corr(&mic_env, &sys_env, frame, other - 1, 10)
+        } else {
+            0.0
+        };
+        let corr_next = if other + 1 < sys_env.len() {
+            window_corr(&mic_env, &sys_env, frame, other + 1, 10)
+        } else {
+            0.0
+        };
+        let high_corr = corr.max(corr_prev).max(corr_next);
+        let max_ratio = if high_corr > 0.75 { 3.0 } else { 1.2 };
+        if mic_level > sys_level * max_ratio || high_corr <= 0.65 {
+            continue;
         }
+        vad_probs[frame] = vad_probs[frame].min(SUPPRESSION_FLOOR);
+        suppressed += 1;
     }
     stats.suppressed = suppressed;
     stats

@@ -298,16 +298,11 @@ fn transcribe_file_inner(
     };
 
     // Каналы раскладываем по индексам без лишних копий.
-    let mut channel_samples: HashMap<usize, Vec<f32>> = channels
+    let channel_samples: HashMap<usize, Vec<f32>> = channels
         .into_iter()
         .enumerate()
         .filter(|(i, _)| chan_list.iter().any(|(ch, _)| ch == i))
         .collect();
-
-    // Выравниваем громкость скользящим RMS перед VAD и ASR, чтобы тихие реплики не отсекались порогом.
-    for samples in channel_samples.values_mut() {
-        mr_audio::dsp::agc_rms_16k(samples);
-    }
 
     let vad = models.ensure_vad()?;
     let (channel_vad, channel_grouped) =

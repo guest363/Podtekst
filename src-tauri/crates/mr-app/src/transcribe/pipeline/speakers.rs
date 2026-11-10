@@ -77,14 +77,12 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
         } else {
             None
         };
-        // В раздельном стерео каналы уже разделены по голосам.
-        // В моно-миксе речь нескольких участников в одном микрофоне
-        // обязательно делим по паузам, иначе диалог склеивается в одну реплику.
+        let paused_utts = diarize::split_by_word_pauses(&source_utts, 0.8);
         let mut diar_utts = if is_stereo {
-            source_utts.clone()
+            paused_utts
         } else {
             on_event(80, "Делю речь на паузы для спикеров…");
-            diarize::split_at_pauses(samples, &source_utts)
+            diarize::split_at_pauses(samples, &paused_utts)
         };
         on_event(80, "Ищу смену голоса внутри реплик…");
         diar_utts = diarize::split_long_by_speaker_change(
