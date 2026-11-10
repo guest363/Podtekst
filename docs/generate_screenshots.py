@@ -178,9 +178,40 @@ async def main():
         await client.set_viewport(1240, 820, 2.0)
         await client.evaluate("window.location.hash = 'transcript'; updateRoute();")
         await asyncio.sleep(0.3)
-        await client.capture_screenshot(
-            os.path.join(SCREENSHOTS_DIR, "transcript-view.png")
+        transcript_png = os.path.join(SCREENSHOTS_DIR, "transcript-view.png")
+        await client.capture_screenshot(transcript_png)
+
+        # Конвертация в WebP для лендинга (2160 x 1428)
+        site_webp = os.path.join(ROOT_DIR, "site/assets/screenshots/transcript.webp")
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                transcript_png,
+                "-vf",
+                "scale=2160:-1",
+                "-q:v",
+                "85",
+                site_webp,
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
+        print(f"site/assets/screenshots/transcript.webp обновлён: {os.path.getsize(site_webp)} байт")
+
+        # Соцпревью og-image.png из docs/og-template.html
+        og_html = f"file://{DOCS_DIR}/og-template.html"
+        await client.navigate(og_html)
+        await client.set_viewport(1200, 630, 1.0)
+        await asyncio.sleep(0.3)
+        og_site_path = os.path.join(ROOT_DIR, "site/assets/og-image.png")
+        await client.capture_screenshot(og_site_path)
+        print(f"site/assets/og-image.png обновлён: {os.path.getsize(og_site_path)} байт")
+
+        # Возвращаем шаблон для GIF
+        await client.navigate(f"{HTML_URL}#main-console")
 
         # 5. demo-walkthrough.gif (880 x 609, 28 кадров + 1 финальный)
         print("[6/6] Рендеринг demo-walkthrough.gif и screen-recording-demo.gif…")

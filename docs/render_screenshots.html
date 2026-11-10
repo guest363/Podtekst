@@ -410,6 +410,23 @@
     .transcript-speakers-wrap {
       width: 275px !important;
     }
+    .transcript-grid.sidebar-open.summary-open {
+      grid-template-columns: 250px minmax(0, 1fr) 290px !important;
+      gap: 16px;
+    }
+    .transcript-grid.sidebar-open.summary-open .transcript-speakers-wrap {
+      width: 250px !important;
+    }
+    .transcript-summary-wrap {
+      width: 290px !important;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      height: 100%;
+      box-sizing: border-box;
+      border-left: 1px solid var(--border-soft);
+      padding-left: 16px;
+    }
     body.gif-mode .transcript-grid {
       grid-template-columns: 240px minmax(0, 1fr) !important;
     }
@@ -770,6 +787,11 @@
                 <span>Спикеры · 3</span>
                 <span class="spk-notify-dot ok"></span>
               </button>
+              <button class="btn-secondary btn-sm btn-summary-toggle active">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><line x1="10" y1="9" x2="8" y2="9"></line></svg>
+                <span>Итоги</span>
+                <span class="spk-notify-dot ok"></span>
+              </button>
               <button class="btn-primary btn-sm btn-transcribe-header">Повторить расшифровку</button>
               <button class="btn-secondary btn-sm">DOCX</button>
               <button class="btn-secondary btn-sm">PDF</button>
@@ -779,7 +801,7 @@
           <div class="transcript-sub-player is-expanded">
             <div class="video-player-container">
               <div class="mock-video-slide">
-                <h3>Подтекст (Podtekst) — Локальная архитектура v0.6.0</h3>
+                <h3>Подтекст (Podtekst) - Локальная архитектура v0.7.1</h3>
                 <p>GigaAM RNNT int8 • CTC Hotwords • Silero VAD • ERes2NetV2 192-dim • Tauri v2</p>
                 <div class="play-overlay-badge">▶ 00:18 / 14:22 • Слайд 3: Модули диаризации</div>
               </div>
@@ -791,7 +813,7 @@
           </div>
         </header>
 
-        <div class="transcript-grid sidebar-open">
+        <div class="transcript-grid sidebar-open summary-open">
           <aside class="transcript-speakers-wrap">
             <div class="transcript-speakers">
               <div class="speakers-deck">
@@ -824,15 +846,58 @@
                 </div>
               </div>
               <div class="markdown-body">
-                <div class="utt utterance" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.06);"><button class="utt-time-btn">00:02</button><div class="utt-body"><div class="utt-speaker">Алексей Смирнов (Team Lead)</div><div class="utt-text">Всем привет! Сверяемся по архитектуре локального распознавания и релизу версии 0.6.0.</div></div></div>
+                <div class="utt utterance" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.06);"><button class="utt-time-btn">00:02</button><div class="utt-body"><div class="utt-speaker">Алексей Смирнов (Team Lead)</div><div class="utt-text">Всем привет! Сверяемся по архитектуре локального распознавания и релизу версии 0.7.1.</div></div></div>
                 <div class="utt utterance" style="--spk: #0e7a55; --spk-bg: rgba(14, 122, 85, 0.06);"><button class="utt-time-btn">00:09</button><div class="utt-body"><div class="utt-speaker">Иван Петров (Backend Lead)</div><div class="utt-text">GigaAM RNNT в int8 готов. Второй проход CTC со словарём терминов даёт точные названия и уверенность каждого слова. Инференс полностью на CPU.</div></div></div>
                 <div class="utt utterance active" style="--spk: #d97706; --spk-bg: rgba(217, 119, 6, 0.06);"><button class="utt-time-btn">00:18</button><div class="utt-body"><div class="utt-speaker">Мария Сидорова (QA Lead)</div><div class="utt-text">Проверили диаризацию на стереозаписях: ERes2NetV2 разделяет спикеров без ошибок даже при наложении фраз.</div></div></div>
                 <div class="utt utterance" style="--spk: #0e7a55; --spk-bg: rgba(14, 122, 85, 0.06);"><button class="utt-time-btn">00:27</button><div class="utt-body"><div class="utt-speaker">Иван Петров (Backend Lead)</div><div class="utt-text">Мульти-прототипные отпечатки устойчивы. Голосовые пакеты можно подключать и переносить между машинами через Voice Packs.</div></div></div>
-                <div class="utt utterance" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.06);"><button class="utt-time-btn">00:36</button><div class="utt-body"><div class="utt-speaker">Алексей Смирнов (Team Lead)</div><div class="utt-text">Отлично. Главное — 100% приватность: ни один байт аудио или текста не уходит в облако. Экспорт в Markdown сохраняется прямо в папку встречи.</div></div></div>
+                <div class="utt utterance" style="--spk: #2563eb; --spk-bg: rgba(37, 99, 235, 0.06);"><button class="utt-time-btn">00:36</button><div class="utt-body"><div class="utt-speaker">Алексей Смирнов (Team Lead)</div><div class="utt-text">Отлично. Главное - 100% приватность: ни один байт аудио или текста не уходит в облако. Экспорт в Markdown сохраняется прямо в папку встречи.</div></div></div>
                 <div class="utt utterance" style="--spk: #d97706; --spk-bg: rgba(217, 119, 6, 0.06);"><button class="utt-time-btn">00:45</button><div class="utt-body"><div class="utt-speaker">Мария Сидорова (QA Lead)</div><div class="utt-text">Все автотесты в CI зелёные на Linux, macOS и Windows. Можем открывать релиз и публиковать документацию.</div></div></div>
               </div>
             </div>
           </main>
+
+          <aside class="transcript-summary-wrap open drawer-open">
+            <div class="summary-drawer-top">
+              <span class="card-title" style="font-size: 13.5px; font-weight: 700;">Итоги встречи</span>
+              <button class="btn-close-page" style="background: none; border: none; font-size: 14px; cursor: pointer; color: var(--text-faint);">✕</button>
+            </div>
+            <div class="summary-subhead" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <button type="button" class="summary-preset-chip" style="display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-card); background: #fff; font-size: 11.5px; font-weight: 600; color: var(--text-primary); cursor: pointer;">
+                  <span>Встреча</span>
+                  <span style="font-size: 10px; color: var(--text-faint);">▾</span>
+                </button>
+                <span style="font-size: 10.5px; color: var(--accent-ok); background: rgba(14, 122, 85, 0.08); padding: 2px 6px; border-radius: 999px; font-weight: 600;">● Готово</span>
+              </div>
+              <button type="button" class="btn-secondary btn-sm" style="font-size: 11px; padding: 2px 8px;">Копировать</button>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 8px; font-size: 12px; line-height: 1.45;">
+              <section style="background: var(--bg-inset); border: 1px solid var(--border-soft); border-radius: var(--radius-inner); padding: 8px 10px;">
+                <h4 style="margin: 0 0 4px; font-size: 12px; font-weight: 700; color: var(--text-primary);">Кратко</h4>
+                <ul style="margin: 0; padding-left: 14px; color: var(--text-secondary);">
+                  <li>Релиз v0.7.1: локальные итоги встреч и диаризация v2.</li>
+                  <li>Все модели работают локально на CPU без сети.</li>
+                </ul>
+              </section>
+              <section style="background: var(--bg-inset); border: 1px solid var(--border-soft); border-radius: var(--radius-inner); padding: 8px 10px;">
+                <h4 style="margin: 0 0 4px; font-size: 12px; font-weight: 700; color: var(--text-primary);">Решения</h4>
+                <ul style="margin: 0; padding-left: 14px; color: var(--text-secondary);">
+                  <li>Модель итогов - Qwen3-4B Instruct (Q4_K_M).</li>
+                  <li>Стереоканалы сводятся без дублирования реплик.</li>
+                </ul>
+              </section>
+              <section style="background: var(--bg-inset); border: 1px solid var(--border-soft); border-radius: var(--radius-inner); padding: 8px 10px;">
+                <h4 style="margin: 0 0 4px; font-size: 12px; font-weight: 700; color: var(--text-primary);">Задачи</h4>
+                <ul style="margin: 0; padding-left: 14px; color: var(--text-secondary); display: flex; flex-direction: column; gap: 3px;">
+                  <li><strong style="color: var(--text-primary);">Мария Сидорова:</strong> прогнать автотесты на Linux и macOS.</li>
+                  <li><strong style="color: var(--text-primary);">Иван Петров:</strong> подготовить бинарники v0.7.1.</li>
+                </ul>
+              </section>
+              <div style="font-size: 10.5px; color: var(--text-faint); margin-top: 2px;">
+                Собрано моделью Qwen3-4B Instruct за 38 с
+              </div>
+            </div>
+          </aside>
         </div>
       </div>
     </div>
@@ -904,13 +969,14 @@
           <div class="settings-page-card">
             <div class="settings-heading">
               <h2 class="modal-title" style="margin: 0; font-size: 18px; font-weight: 800;">Настройки</h2>
-              <div class="settings-version">Версия 0.6.0 · <span style="color: var(--accent-blue); cursor: pointer;">Проверить обновления</span></div>
+              <div class="settings-version">Версия 0.7.1 · <span style="color: var(--accent-blue); cursor: pointer;">Проверить обновления</span></div>
             </div>
 
             <div class="settings-tabs" role="tablist">
               <button class="settings-tab">Запись и звук</button>
               <button class="settings-tab">Голосовые пакеты</button>
               <button class="settings-tab active">Модели ИИ</button>
+              <button class="settings-tab">Итоги</button>
               <button class="settings-tab">Система и логи</button>
             </div>
 
@@ -967,7 +1033,7 @@
                 <div class="rec-item" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 11px 15px; background: var(--bg-inset); border-radius: var(--radius-inner); border: 1px solid var(--border-soft);">
                   <div style="flex: 1;">
                     <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 2px;">Whisper large-v3-turbo (мультиязычный fallback, 30+ языков)</div>
-                    <div style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">Мультиязычное распознавание — запасной движок, когда GigaAM не подходит.</div>
+                    <div style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">Мультиязычное распознавание - запасной движок, когда GigaAM не подходит.</div>
                   </div>
                   <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;">
                     <span class="status-chip info" style="font-size: 11px; padding: 3px 8px; border-radius: 999px; background: rgba(37, 99, 235, 0.1); color: var(--accent-blue); font-weight: 600;">● 1037 МБ</span>
@@ -992,6 +1058,16 @@
                   </div>
                   <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;">
                     <span class="status-chip ok" style="font-size: 11px; padding: 3px 8px; border-radius: 999px; background: rgba(14, 122, 85, 0.1); color: var(--accent-ok); font-weight: 600;">● Скачана v2.0.0</span>
+                  </div>
+                </div>
+
+                <div class="rec-item" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 11px 15px; background: var(--bg-inset); border-radius: var(--radius-inner); border: 1px solid var(--border-soft);">
+                  <div style="flex: 1;">
+                    <div style="font-weight: 700; font-size: 13.5px; margin-bottom: 2px;">Qwen3-4B Instruct 2507 (итоги, Q4_K_M)</div>
+                    <div style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">Локальные итоги встреч: тезисы, ключевые решения и задачи без отправки данных в сеть (2,33 ГБ).</div>
+                  </div>
+                  <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;">
+                    <span class="status-chip ok" style="font-size: 11px; padding: 3px 8px; border-radius: 999px; background: rgba(14, 122, 85, 0.1); color: var(--accent-ok); font-weight: 600;">● Скачана v2507-q4km</span>
                   </div>
                 </div>
               </div>
@@ -1482,7 +1558,7 @@
                 <div class="rec-item" id="wt-card-whisper" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 8px 12px; background: var(--bg-inset); border-radius: var(--radius-inner);">
                   <div style="flex: 1;">
                     <div style="font-weight: 700; font-size: 12px; margin-bottom: 2px;">Whisper large-v3-turbo (мультиязычный, 30+ языков)</div>
-                    <div style="font-size: 10.5px; color: var(--text-muted); line-height: 1.3;">Мультиязычное распознавание — запасной движок, когда GigaAM не подходит.</div>
+                    <div style="font-size: 10.5px; color: var(--text-muted); line-height: 1.3;">Мультиязычное распознавание - запасной движок, когда GigaAM не подходит.</div>
                   </div>
                   <div style="display: flex; gap: 6px; align-items: center; flex-shrink: 0;">
                     <span class="status-chip info" style="font-size: 10px; padding: 2px 6px; border-radius: 999px; background: rgba(37, 99, 235, 0.1); color: var(--accent-blue); font-weight: 600;">● 1037 МБ</span>
