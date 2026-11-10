@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use mr_ml::onnx::vad::{vad_segments_from_probs, VadRunStats, VAD_WINDOW};
 
-use super::models::models_root;
+use super::asr_engine::models_root;
 
 pub(super) const VAD_THRESHOLD: f32 = 0.30;
 pub(super) const VAD_NEG_THRESHOLD: f32 = 0.15;

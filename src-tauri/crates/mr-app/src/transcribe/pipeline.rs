@@ -6,6 +6,7 @@ use mr_audio::decode::{decode_to_channels_16k_auto, is_video_path};
 use mr_ml::hotwords::{sanitize_hotwords, DEFAULT_CONFIDENCE_THRESHOLD};
 
 use super::artifacts::{write_run_manifest, write_transcript_doc};
+use super::asr_engine::{pick_asr_engine, AsrEngine};
 use super::channel_mix;
 use super::diag::{audio_stats, stage_begin, stage_end, AudioStats};
 use super::document::{unique_speech_sec, Meta, Stats, TranscriptDoc};
@@ -219,22 +220,39 @@ fn transcribe_file_inner(
     let models_stage = Instant::now();
     stage_begin("models");
     events::emit_stage(2, "Загружаю модели…");
-    let mut models = ModelsGuard::take()?;
-    let use_gigaam = models.gigaam.is_some() && opts.engine != "whisper";
-    let mut engine_name = if use_gigaam {
-        "GigaAM-v3 (русский язык)".to_string()
-    } else {
-        "Whisper large-v3-turbo (30+ языков)".to_string()
+    let mut engine = pick_asr_engine(
+        &opts.engine,
+        &opts.language,
+        AsrEngine::Gigaam.installed(),
+        AsrEngine::Whisper.installed(),
+    )?;
+    let mut models = match ModelsGuard::take(Some(engine), opts.ctc_enabled) {
+        Ok(models) => models,
+        Err(error) if opts.engine.eq_ignore_ascii_case("auto") => {
+            // Битые веса основного движка не должны ронять auto, если второй установлен.
+            let fallback = engine.other();
+            if !fallback.installed() {
+                return Err(error);
+            }
+            log::warn!(
+                target: "model",
+                from = engine.id(),
+                to = fallback.id(),
+                error = error;
+                "ev=model.fallback"
+            );
+            engine = fallback;
+            ModelsGuard::take(Some(engine), opts.ctc_enabled)?
+        }
+        Err(error) => return Err(error),
     };
+    let use_gigaam = engine.uses_gigaam();
+    let mut engine_name = engine.display_name().to_string();
     events::emit_stage(6, &format!("Модели готовы: {engine_name}"));
     log::info!(
         target: "asr",
-        engine = if use_gigaam { "gigaam" } else { "whisper" },
-        model = if use_gigaam {
-            "gigaam-v3-rnnt-int8"
-        } else {
-            "whisper-large-v3-turbo-q"
-        },
+        engine = engine.id(),
+        model = engine.model_id(),
         lang = opts.language.clone(),
         ctc = opts.ctc_enabled,
         hotwords_n = opts.hotwords.len();
@@ -247,10 +265,7 @@ fn transcribe_file_inner(
                 reason = "ctc_disabled";
                 "ev=asr.ctc.skip"
             );
-            on_event(
-                6,
-                "Словарь терминов не применён: второй проход выключен в «Модели ИИ»",
-            );
+            on_event(6, "Словарь терминов не применён: CTC-уточнение выключено");
         } else if models.ctc.is_none() {
             log::warn!(
                 target: "asr",

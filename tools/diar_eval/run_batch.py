@@ -385,6 +385,8 @@ def _run_record(
         "--language",
         language,
     ]
+    if options.ctc:
+        command += ["--ctc", options.ctc]
     try:
         run = _run_process(command, options.timeout, time_bin)
     except OSError as exc:
@@ -572,6 +574,7 @@ def _write_run_manifest(
         "app": str(app),
         "engine_override": engine_override or "from manifest",
         "language": options.language or "from manifest",
+        "ctc": options.ctc or "auto",
         "collar": options.collar,
         "skip_overlap": bool(options.skip_overlap),
         "timeout_sec": options.timeout,
@@ -766,6 +769,7 @@ def _self_test() -> int:
             app=str(fake_app),
             engine=None,
             language=None,
+            ctc=None,
             limit=None,
             timeout=60.0,
             collar=0.0,
@@ -804,6 +808,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--app", type=Path, help="release-бинарник podtekst")
     parser.add_argument("--engine", choices=["auto", "gigaam", "whisper"])
     parser.add_argument("--language")
+    parser.add_argument("--ctc", choices=["auto", "off"], help="CTC-уточнение GigaAM")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--timeout", type=float, default=3600.0)
     parser.add_argument("--collar", type=float, default=0.0)

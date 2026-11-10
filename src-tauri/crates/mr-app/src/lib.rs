@@ -79,12 +79,67 @@ struct Cli {
     speaker_l: String,
     #[arg(long, default_value = "Собеседник")]
     speaker_r: String,
+    #[arg(long, default_value_t = 0, help = "Минимум спикеров (0 — авто)")]
+    min_speakers: usize,
+    #[arg(long, default_value_t = 0, help = "Максимум спикеров (0 — авто)")]
+    max_speakers: usize,
+    #[arg(
+        long,
+        value_enum,
+        default_value = "auto",
+        help = "CTC-уточнение GigaAM: auto — как в настройках, off — без уточнения"
+    )]
+    ctc: CtcMode,
     #[arg(long, hide = true)]
     macos_selftest: bool,
     #[arg(long, help = "Собрать отчёт диагностики и выйти")]
     diagnostics: bool,
     #[arg(long, help = "Добавить в отчёт хвост dev-логов (только dev-сборка)")]
     with_dev_logs: bool,
+}
+
+impl Cli {
+    fn validate_speakers(&self) -> Result<(), String> {
+        if self.min_speakers > 0 && self.max_speakers > 0 && self.min_speakers > self.max_speakers {
+            return Err(format!(
+                "--min-speakers ({}) не может быть больше --max-speakers ({})",
+                self.min_speakers, self.max_speakers
+            ));
+        }
+        Ok(())
+    }
+
+    /// Опции конвейера собираются в одном месте: иначе новый флаг легко потерять
+    /// между разбором командной строки и расшифровкой.
+    fn transcribe_options(&self) -> transcribe::TranscribeOptions {
+        transcribe::TranscribeOptions {
+            speaker_left: self.speaker_l.clone(),
+            speaker_right: self.speaker_r.clone(),
+            engine: self.engine.clone(),
+            language: self.language.to_lowercase(),
+            min_speakers: self.min_speakers,
+            max_speakers: self.max_speakers,
+            hotwords: crate::config::configured_hotwords(),
+            ctc_enabled: self.ctc.allows(crate::config::configured_ctc_enabled()),
+        }
+    }
+}
+
+/// A/B CTC-уточнения GigaAM: `auto` уважает переключатель из «Настроек», `off`
+/// выключает его в CLI-прогоне.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum CtcMode {
+    Auto,
+    Off,
+}
+
+impl CtcMode {
+    fn allows(self, configured: bool) -> bool {
+        match self {
+            Self::Auto => configured,
+            Self::Off => false,
+        }
+    }
 }
 
 const DEFAULT_HTTP_PORT: u16 = 8765;
@@ -206,6 +261,10 @@ pub fn run_cli() {
     let cli = Cli::parse();
     logging::init();
     crash::install_hook();
+    if let Err(e) = cli.validate_speakers() {
+        crate::note!("{e}");
+        exit_now(2);
+    }
     if cli.diagnostics {
         match diagnostics::collect(cli.with_dev_logs) {
             Ok(path) => println!("{}", path.display()),
@@ -228,16 +287,7 @@ pub fn run_cli() {
     // Локальная ONNX-расшифровка из CLI (потоковый вывод JSON-событий в stdout)
     #[cfg(feature = "onnx")]
     if let Some(ref audio) = cli.transcribe {
-        let opts = transcribe::TranscribeOptions {
-            speaker_left: cli.speaker_l.clone(),
-            speaker_right: cli.speaker_r.clone(),
-            engine: cli.engine.clone(),
-            language: cli.language.to_lowercase(),
-            min_speakers: 0,
-            max_speakers: 0,
-            hotwords: crate::config::configured_hotwords(),
-            ctc_enabled: crate::config::configured_ctc_enabled(),
-        };
+        let opts = cli.transcribe_options();
         match transcribe::transcribe_file(audio, &opts, &|pct, msg| {
             println!(
                 "{}",
@@ -472,6 +522,103 @@ mod tests {
     fn cli_parses_toggle() {
         let cli = Cli::try_parse_from(["podtekst", "--toggle"]).unwrap();
         assert!(cli.toggle);
+    }
+
+    #[test]
+    fn cli_speakers_default_to_auto() {
+        let cli = Cli::try_parse_from(["podtekst"]).unwrap();
+        assert_eq!((cli.min_speakers, cli.max_speakers), (0, 0));
+        assert!(cli.validate_speakers().is_ok());
+    }
+
+    #[test]
+    fn cli_speakers_accept_bounds() {
+        let fixed = Cli::try_parse_from([
+            "podtekst",
+            "--transcribe",
+            "a.wav",
+            "--min-speakers",
+            "2",
+            "--max-speakers",
+            "2",
+        ])
+        .unwrap();
+        assert_eq!((fixed.min_speakers, fixed.max_speakers), (2, 2));
+        assert!(fixed.validate_speakers().is_ok());
+
+        let range = Cli::try_parse_from([
+            "podtekst",
+            "--transcribe",
+            "a.wav",
+            "--min-speakers",
+            "2",
+            "--max-speakers",
+            "5",
+        ])
+        .unwrap();
+        assert!(range.validate_speakers().is_ok());
+
+        let lower_only =
+            Cli::try_parse_from(["podtekst", "--transcribe", "a.wav", "--min-speakers", "3"])
+                .unwrap();
+        assert!(lower_only.validate_speakers().is_ok());
+    }
+
+    #[test]
+    fn cli_rejects_min_above_max() {
+        let cli = Cli::try_parse_from([
+            "podtekst",
+            "--transcribe",
+            "a.wav",
+            "--min-speakers",
+            "5",
+            "--max-speakers",
+            "2",
+        ])
+        .unwrap();
+        let err = cli.validate_speakers().unwrap_err();
+        assert!(err.contains("--min-speakers"), "{err}");
+        assert!(err.contains("--max-speakers"), "{err}");
+    }
+
+    #[test]
+    fn cli_ctc_defaults_to_auto_and_follows_settings() {
+        let cli = Cli::try_parse_from(["podtekst"]).unwrap();
+        assert_eq!(cli.ctc, CtcMode::Auto);
+        assert!(CtcMode::Auto.allows(true));
+        assert!(!CtcMode::Auto.allows(false), "auto — текущее поведение");
+        assert!(!CtcMode::Off.allows(true));
+        assert!(!CtcMode::Off.allows(false));
+    }
+
+    #[test]
+    fn cli_ctc_off_reaches_transcribe_options() {
+        let cli = Cli::try_parse_from([
+            "podtekst",
+            "--transcribe",
+            "a.wav",
+            "--engine",
+            "gigaam",
+            "--language",
+            "RU",
+            "--ctc",
+            "off",
+        ])
+        .unwrap();
+        let opts = cli.transcribe_options();
+        assert!(!opts.ctc_enabled);
+        assert_eq!(opts.engine, "gigaam");
+        assert_eq!(opts.language, "ru");
+    }
+
+    #[test]
+    fn cli_ctc_rejects_unknown_value() {
+        for value in ["maybe", "on", "true"] {
+            assert!(
+                Cli::try_parse_from(["podtekst", "--ctc", value]).is_err(),
+                "--ctc {value} должен быть отвергнут"
+            );
+        }
     }
 
     #[test]

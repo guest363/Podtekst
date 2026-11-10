@@ -22,6 +22,8 @@ PY=~/.cache/podtekst-bench/venv/bin/python
 $PY tools/diar_eval/transcript_to_rttm.py --self-test
 $PY tools/diar_eval/evaluate.py --self-test
 $PY tools/diar_eval/metrics.py --self-test
+$PY tools/diar_eval/synth_meetings.py --self-test
+$PY tools/diar_eval/normalize_wer.py --self-test
 $PY tools/diar_eval/run_batch.py --self-test
 $PY tools/diar_eval/report.py --self-test
 ```
@@ -164,7 +166,59 @@ $PY tools/diar_eval/metrics.py --ref ref.txt --hyp hyp.transcript.json --json
   гипотезы» на совпавших словах, Hungarian (`scipy`, есть запасная
   реализация), доля верных. Считается только при ≥2 спикерах в эталоне.
 
-## 7. Отчёт
+## 7. Нормализованный WER
+
+```bash
+$PY tools/diar_eval/normalize_wer.py \
+  --metrics ~/.cache/podtekst-bench/runs/golos-crowd-100/metrics.csv \
+  --manifest ~/.cache/podtekst-bench/data/manifest-run.json \
+  --data-root ~/.cache/podtekst-bench/data \
+  --out ~/.cache/podtekst-bench/runs/golos-crowd-100/metrics_norm.csv
+```
+
+Скрипт читает `metrics.csv`, заново собирает эталон и гипотезу по записям
+манифеста (`ref_text` и `transcript`) и дописывает к каждой строке `WER_norm`,
+`CER_norm`, `norm_method`. Исходные колонки, включая `WER` и `CER`, не
+меняются: raw-метрика остаётся точкой отсчёта. Строки без `WER` копируются с
+пустыми новыми полями. Если для строки не нашлась запись манифеста или файл, в
+`norm_method` пишется `error: ...`, а код возврата становится `1`.
+
+Конвейер (`norm_method = numbers+latin+vowel-fold`):
+
+1. `normalize_text` из `metrics.py`: NFKC, нижний регистр, `ё` → `е`, без
+   пунктуации.
+2. `normalize_numbers`: цифры и числительные 0-1000, тысячи, проценты и слова
+   десятичных дробей заменяются на `<num>`, подряд идущие `<num>`
+   схлопываются в один. Границы слов проверяются по токенам, поэтому
+   `одиннадцать` маскируется, а `одиннадцати` - нет.
+3. `transliterate_latin`: посимвольная транслитерация латиницы в кириллицу
+   (`joy` → `джой`).
+4. `fold_vowels`: подряд идущие гласные стягиваются в одну, конечная гласная
+   отбрасывается (`home` → `хоме` → `хом`, `хоум` → `хом`).
+
+Шаги 3-4 - эвристика, а не лингвистическая транслитерация: она уравнивает
+`joy`/`джой` и `home`/`хоум`, но бренды с нерегулярным чтением (`synergy` и
+`синергия`, `youtube` и `ютуб`) остаются ошибками. `fold_vowels` сокращает и
+часть настоящих различий: `была` и `был` сравниваются как `был` и `был`.
+Поэтому `WER_norm` - метрика с точностью до формата чисел и записи латиницы, а
+не «настоящий» WER.
+
+Маскирование чисел проверяет только наличие числа, но не его значение:
+`500` и `250` в `WER_norm` неразличимы. Числа нужно оценивать отдельно.
+
+`CER_norm` считается на том же нормализованном тексте, поэтому символов в нём
+меньше, а значение ниже raw CER. Сравнивать `CER_norm` можно только с
+`CER_norm`.
+
+Self-test на синтетике: `21:00` = `двадцать один ноль ноль`, `866 663` =
+`восемьсот шестьдесят шесть шестьсот шестьдесят три`, `joy home` = `джой хоум`,
+обычный текст не маскируется.
+
+```bash
+$PY tools/diar_eval/normalize_wer.py --self-test
+```
+
+## 8. Отчёт
 
 ```bash
 $PY tools/diar_eval/report.py \
@@ -174,7 +228,9 @@ $PY tools/diar_eval/report.py \
 
 `--run` ищет `metrics.csv`, пишет `report.md` рядом. Можно `--csv path` и
 `--out path`. Отчёт содержит micro WER/CER/DER, SCA, MAE, cpWER, attribution,
-RTF p50/p95, peak RSS, список ошибок и сравнение с baseline.
+RTF p50/p95, peak RSS, список ошибок, 95% доверительные интервалы
+(`bootstrap_ci`: ресэмплинг файлов с возвращением, 1000 повторов, seed
+`20261109`) и сравнение с baseline.
 
 Формат `baseline.json` (ключи - `dataset/subset`):
 
@@ -199,7 +255,7 @@ RTF p50/p95, peak RSS, список ошибок и сравнение с baseli
 attribution - больше 3 п.п.; RTF - +15%; peak RSS - +20%. Это правила
 раздела 9 ТЗ.
 
-## 8. Ограничения
+## 9. Ограничения
 
 - `prepare.py` и скачивание наборов в этот PR не входят. `datasets.yaml` -
   шаблон: данные, SHA-256 и подготовка заполняются отдельно.
@@ -208,11 +264,30 @@ attribution - больше 3 п.п.; RTF - +15%; peak RSS - +20%. Это пра�
 - cpWER ограничен 8 спикерами, attribution требует эталонный текст с
   метками спикеров.
 - SCA в отчёте общий; разбивка по группам 2-4 и 5-8 спикеров не делается.
-- Доверительные интервалы (бутстрэп) не считаются.
+- Доверительные интервалы - bootstrap по файлам (1000 ресэмплов, seed
+  `20261109`); при одном файле в наборе или нулевом знаменателе пишется `n/a`.
 - Первый файл каждого набора не исключается из RTF (прогрев не реализован).
 - Peak RSS только Linux; для macOS/Windows нужен отдельный замер.
 - `run_batch.py` не скачивает модели и не собирает приложение.
 - Аудио, эталоны, транскрипты и каталог `runs/` не коммитятся.
+
+## 10. Синтетические встречи
+
+```bash
+$PY tools/diar_eval/synth_meetings.py \
+  --clips-dir ~/.cache/podtekst-bench/data/fleurs/ru_ru \
+  --out ~/.cache/podtekst-bench/synth/ru-2spk-60s-ov0 \
+  --speakers 2 --duration 60 --overlap 0 --seed 20261109 \
+  --manifest-out ~/.cache/podtekst-bench/synth/manifest.json
+```
+
+Один клип FLEURS = один диктор: клип повторяется, но разные дикторы внутри
+сегмента не смешиваются. Реплики чередуются с паузами 0,2-0,5 с, `--overlap`
+- процент от длительности предыдущей реплики. Пишутся `meeting.wav`
+(16 кГц моно), `meeting.rttm`, `meeting.ref.json` с текстом реплик и запись
+manifest для `run_batch.py` (`ref_rttm`, `ref_text`, `language`, `engine`:
+`whisper` для `en`, `gigaam` для `ru`). `--manifest-out` накапливает записи
+нескольких сценариев в один общий манифест.
 
 ## P12
 

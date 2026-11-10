@@ -204,11 +204,11 @@ pub(super) fn run(
             let mut ctc_hyp_chars = 0usize;
             let mut ctc_conf_p50 = 0.0f32;
             let mut ctc_conf_min = 0.0f32;
+            let mut words: Vec<WordConf> = Vec::new();
+            let mut ctc_used = false;
+            let mut final_text = text;
             // Зацикленный вывод жадного декодера на шуме — не речь.
-            if !text.is_empty() && !looped {
-                let mut words: Vec<WordConf> = Vec::new();
-                let mut ctc_used = false;
-                let mut final_text = text;
+            if !final_text.is_empty() && !looped {
                 if use_gigaam && opts.ctc_enabled {
                     if let Some(ctc) = models.ctc.as_mut() {
                         match ctc
@@ -303,79 +303,68 @@ pub(super) fn run(
                         "ev=asr.ctc"
                     );
                 }
-                let words_count = final_text.split_whitespace().count();
-                utts.push(Utterance {
-                    start: (a * 100.0).round() / 100.0,
-                    end: (b * 100.0).round() / 100.0,
-                    speaker: label.clone(),
-                    channel: Some(*ch as i32),
-                    text: final_text,
-                    diarized: false,
-                    silhouette: 0.0,
-                    words,
-                    ctc_used,
-                });
-                log::debug!(
-                    target: "asr",
-                    i = seg_index,
-                    ch = *ch as i64,
-                    dur_ms = infer_ms,
-                    tokens = tokens,
-                    blank_ratio = blank_ratio,
-                    chars = utts.last().map(|u| u.text.chars().count()).unwrap_or(0),
-                    words = words_count,
-                    text_preview = utts
-                        .last()
-                        .map(|u| crate::logging::text_preview(&u.text))
-                        .unwrap_or_default(),
-                    loop = looped;
-                    "ev=asr.seg.done"
-                );
-                if let Some(utterance) = utts.last() {
-                    if cfg!(debug_assertions) && crate::logging::dump_enabled() {
-                        crate::logging::append_artifact_jsonl(
-                            "asr/segments.jsonl",
-                            &serde_json::json!({
-                                "i": seg_index,
-                                "ch": *ch as i32,
-                                "start_sec": utterance.start,
-                                "end_sec": utterance.end,
-                                "rms": rms,
-                                "blank_penalty": blank_penalty,
-                                "mel_frames": mel_frames,
-                                "tokens": tokens,
-                                "blank_ratio": blank_ratio,
-                                "chars": utterance.text.chars().count(),
-                                "words": utterance.text.split_whitespace().count(),
-                                "text": crate::logging::text_preview(&utterance.text),
-                                "ctc_used": utterance.ctc_used,
-                                "ctc_applied": ctc_applied,
-                                "ctc_skipped": ctc_skipped,
-                                "ctc_changed_words": ctc_changed,
-                                "infer_ms": infer_ms,
-                            }),
-                        );
-                    }
-                    log::trace!(
-                        target: "asr",
-                        i = seg_index,
-                        text = crate::logging::text_preview(&utterance.text);
-                        "ev=asr.text"
+            }
+            // VAD-группа без текста (плохой ASR, зацикленный вывод) всё равно
+            // нужна диаризации как акустический образец голоса; пустыми
+            // репликами её в документ не пускает сборка speakers.
+            let words_count = final_text.split_whitespace().count();
+            utts.push(Utterance {
+                start: (a * 100.0).round() / 100.0,
+                end: (b * 100.0).round() / 100.0,
+                speaker: label.clone(),
+                channel: Some(*ch as i32),
+                text: final_text,
+                diarized: false,
+                silhouette: 0.0,
+                words,
+                ctc_used,
+            });
+            log::debug!(
+                target: "asr",
+                i = seg_index,
+                ch = *ch as i64,
+                dur_ms = infer_ms,
+                tokens = tokens,
+                blank_ratio = blank_ratio,
+                chars = utts.last().map(|u| u.text.chars().count()).unwrap_or(0),
+                words = words_count,
+                text_preview = utts
+                    .last()
+                    .map(|u| crate::logging::text_preview(&u.text))
+                    .unwrap_or_default(),
+                loop = looped;
+                "ev=asr.seg.done"
+            );
+            if let Some(utterance) = utts.last() {
+                if cfg!(debug_assertions) && crate::logging::dump_enabled() {
+                    crate::logging::append_artifact_jsonl(
+                        "asr/segments.jsonl",
+                        &serde_json::json!({
+                            "i": seg_index,
+                            "ch": *ch as i32,
+                            "start_sec": utterance.start,
+                            "end_sec": utterance.end,
+                            "rms": rms,
+                            "blank_penalty": blank_penalty,
+                            "mel_frames": mel_frames,
+                            "tokens": tokens,
+                            "blank_ratio": blank_ratio,
+                            "chars": utterance.text.chars().count(),
+                            "words": utterance.text.split_whitespace().count(),
+                            "text": crate::logging::text_preview(&utterance.text),
+                            "ctc_used": utterance.ctc_used,
+                            "ctc_applied": ctc_applied,
+                            "ctc_skipped": ctc_skipped,
+                            "ctc_changed_words": ctc_changed,
+                            "infer_ms": infer_ms,
+                        }),
                     );
                 }
-            } else {
-                log::debug!(
+                log::trace!(
                     target: "asr",
                     i = seg_index,
-                    ch = *ch as i64,
-                    dur_ms = infer_ms,
-                    tokens = tokens,
-                    blank_ratio = blank_ratio,
-                    chars = text.chars().count(),
-                    words = metrics.words,
-                    text_preview = crate::logging::text_preview(&text),
-                    loop = looped;
-                    "ev=asr.seg.done"
+                    text = crate::logging::text_preview(&utterance.text);
+                    "ev=asr.text"
                 );
             }
             seg_index += 1;

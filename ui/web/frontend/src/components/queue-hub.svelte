@@ -5,6 +5,7 @@ import { baseName, encPath, fmtClock, readJsonSafe } from '../lib/api'
 import { errText } from '../lib/guards.ts'
 import { clearQueue, loadQueue, queueState, removeFromQueue } from '../lib/queue.svelte.ts'
 import { loadRecordings, recordings } from '../lib/recordings.svelte.ts'
+import { setSpeakers, settings } from '../lib/settings.svelte.ts'
 import { toast } from '../lib/toast.svelte.ts'
 import { engine, startTranscription, syncEngineFromStatus } from '../lib/transcript.svelte.ts'
 import { openTranscript } from '../lib/ui.svelte.ts'
@@ -125,6 +126,20 @@ const unparsedRecordings = $derived(
     </div>
 
     <div class="queue-head-actions">
+      <label class="speakers-pick">
+        <span>Спикеров</span>
+        <select
+          class="input-field speakers-select"
+          value={String(settings.speakers)}
+          aria-label="Сколько спикеров"
+          onchange={(e) => setSpeakers(Number(e.currentTarget.value))}
+        >
+          <option value="0">Авто</option>
+          {#each [2, 3, 4, 5, 6] as n (n)}
+            <option value={String(n)}>{n}</option>
+          {/each}
+        </select>
+      </label>
       {#if queueState.items.length > 0}
         <button
           type="button"
@@ -319,6 +334,19 @@ const unparsedRecordings = $derived(
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-wrap: wrap;
+  }
+  .speakers-pick {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .speakers-select {
+    width: auto;
+    padding: 5px 8px;
+    font-size: 12px;
   }
   .queue-dropzone {
     display: flex;

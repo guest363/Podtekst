@@ -37,8 +37,8 @@ impl DistanceMatrix {
 
 const CANNOT_LINK_DISTANCE: f64 = 10.0;
 /// Минимальный абсолютный разрыв между высотами слияний, при котором
-/// автоматический выбор k считается уверенным. shortcut: 0.04 без
-/// размеченного набора; калибровать через tools/diar_eval.
+/// автоматический выбор k считается уверенным. shortcut: 0.04; проверено на
+/// VoxConverse и AMI через tools/diar_eval, см. docs/testing/BENCHMARK-REPORT.md.
 const MIN_AUTO_K_GAP: f64 = 0.04;
 
 pub fn agglomerative(
@@ -204,10 +204,14 @@ pub fn agglomerative_gap(
     let merges = chain_merges(embeddings, weights, cannot_link);
     let min_k = min_clusters.clamp(1, n);
     let max_k = max_clusters.clamp(min_k, n);
+    // k=1 — это «один голос», его даёт fallback по порогу расстояния, а не
+    // разрыв в дереве; иначе искусственная высота cannot-link и шумовая пара
+    // тянут k вниз, вплоть до одного кластера после слияний.
+    let gap_floor = if min_k <= 1 { 2 } else { min_k };
     let mut best: Option<(f64, usize)> = None;
     for i in 0..merges.len().saturating_sub(1) {
         let k = n - (i + 1);
-        if k < min_k || k > max_k {
+        if k < gap_floor || k > max_k {
             continue;
         }
         let gap = merges[i + 1].0 - merges[i].0;
@@ -549,6 +553,32 @@ mod tests {
         ];
         let labels = agglomerative_gap(&embs, &[1.0; 6], &[], 0.52, 1, 2);
         assert_eq!(unique_labels(&labels), 2);
+    }
+
+    #[test]
+    fn gap_clustering_keeps_cannot_link_apart() {
+        let embs = vec![unit(4, 0); 4];
+        let weights = [1.0; 4];
+        let free = agglomerative_gap(&embs, &weights, &[], 0.52, 1, 4);
+        assert_eq!(unique_labels(&free), 1);
+        let blocked = agglomerative_gap(&embs, &weights, &[(0, 1)], 0.52, 1, 4);
+        assert_ne!(blocked[0], blocked[1]);
+    }
+
+    #[test]
+    fn gap_keeps_split_with_noise_instead_of_one_cluster() {
+        let at = |deg: f64| vec![deg.to_radians().cos(), deg.to_radians().sin()];
+        let embs = vec![
+            at(0.0),
+            at(2.0),
+            at(-2.0),
+            at(180.0),
+            at(178.0),
+            at(182.0),
+            at(60.0),
+        ];
+        let labels = agglomerative_gap(&embs, &[1.0; 7], &[], 0.52, 1, 7);
+        assert!(unique_labels(&labels) >= 2);
     }
 
     #[test]

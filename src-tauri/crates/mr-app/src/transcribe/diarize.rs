@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use mr_ml::onnx::embed::{EmbeddingExtractor, EMBED_BATCH};
+use mr_ml::onnx::embed::EmbeddingExtractor;
 use mr_ml::onnx::segmentation::Segmentation;
 use mr_ml::{interval_gap, match_voiceprints_matrix, SpeakerProfile};
 use mr_packs as packs;
@@ -345,8 +345,8 @@ const CORE_MIN_DUR: f64 = 1.0;
 const AUTO_K_MAX_SPEAKERS: usize = 12;
 /// Порог косинуса центроидов для финального слияния. ERes2NetV2: разные
 /// дикторы ≤ 0.22, один голос ≥ 0.48 на фрагментах, у центроидов того же
-/// голоса сходство выше. shortcut: 0.62 без размеченного набора;
-/// калибровать через tools/diar_eval.
+/// голоса сходство выше. shortcut: 0.62; на VoxConverse проверено, на AMI
+/// слияние не маскирует ошибку k (см. docs/testing/BENCHMARK-REPORT.md).
 const CENTROID_MERGE_SIM: f64 = 0.62;
 
 fn short_join_threshold(dur: f64) -> f64 {
@@ -665,60 +665,6 @@ struct AcoustUnit {
     embedding: Vec<f64>,
 }
 
-struct PendingUnit {
-    utterance: usize,
-    start: f64,
-    end: f64,
-    chunk: Vec<f32>,
-    clean_len: usize,
-}
-
-fn flush_units(
-    ext: &mut EmbeddingExtractor,
-    pending: &mut Vec<PendingUnit>,
-    units: &mut Vec<AcoustUnit>,
-) {
-    if pending.is_empty() {
-        return;
-    }
-    let started = std::time::Instant::now();
-    let refs: Vec<&[f32]> = pending
-        .iter()
-        .map(|item| &item.chunk[..item.clean_len])
-        .collect();
-    let results: Vec<Result<Option<Vec<f64>>, String>> = match ext.embed_batch(&refs) {
-        Ok(results) => results.into_iter().map(Ok).collect(),
-        Err(error) => {
-            log::warn!(
-                target: "diar",
-                n = refs.len(),
-                error = error;
-                "ev=diar.embed_batch"
-            );
-            refs.iter().map(|chunk| ext.embed(chunk)).collect()
-        }
-    };
-    log::trace!(
-        target: "diar",
-        n = refs.len(),
-        elapsed_ms = started.elapsed().as_millis() as u64;
-        "ev=diar.embed_batch"
-    );
-    for (item, result) in pending.drain(..).zip(results) {
-        if let Ok(Some(embedding)) = result {
-            let clean = &item.chunk[..item.clean_len];
-            units.push(AcoustUnit {
-                utterance: item.utterance,
-                start: item.start,
-                end: item.end,
-                dur: item.clean_len as f64 / 16_000.0,
-                quality: rms_quality(clean),
-                embedding,
-            });
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn build_acoust_units(
     samples: &[f32],
@@ -737,7 +683,6 @@ fn build_acoust_units(
     };
     let total = utterances.len();
     let mut units = vec![];
-    let mut pending = Vec::with_capacity(EMBED_BATCH);
     for (index, utterance) in utterances.iter().enumerate() {
         let duration = (utterance.end - utterance.start).max(0.0);
         if duration >= MIN_UNIT_SEC {
@@ -767,15 +712,39 @@ fn build_acoust_units(
                     .map(|seg| seg.exclude_overlap(&mut chunk, lo))
                     .unwrap_or(chunk.len());
                 if clean_len >= (SR * MIN_UNIT_SEC) as usize {
-                    pending.push(PendingUnit {
-                        utterance: index,
-                        start,
-                        end,
-                        chunk,
-                        clean_len,
-                    });
-                    if pending.len() >= EMBED_BATCH {
-                        flush_units(ext, &mut pending, &mut units);
+                    let clean = &chunk[..clean_len];
+                    let started = std::time::Instant::now();
+                    let result = ext.embed(clean);
+                    if log::log_enabled!(target: "diar", log::Level::Trace) {
+                        let (outcome, dim, norm) = match &result {
+                            Ok(Some(embedding)) => (
+                                "ok",
+                                embedding.len(),
+                                embedding.iter().map(|x| x * x).sum::<f64>().sqrt(),
+                            ),
+                            Ok(None) => ("none", 0, 0.0),
+                            Err(_) => ("error", 0, 0.0),
+                        };
+                        log::trace!(
+                            target: "diar",
+                            unit = index,
+                            dur_sec = clean_len as f64 / SR,
+                            dim = dim,
+                            norm = norm,
+                            result = outcome,
+                            elapsed_ms = started.elapsed().as_millis() as u64;
+                            "ev=diar.embed"
+                        );
+                    }
+                    if let Ok(Some(embedding)) = result {
+                        units.push(AcoustUnit {
+                            utterance: index,
+                            start,
+                            end,
+                            dur: clean_len as f64 / SR,
+                            quality: rms_quality(clean),
+                            embedding,
+                        });
                     }
                 }
             }
@@ -787,7 +756,6 @@ fn build_acoust_units(
             );
         }
     }
-    flush_units(ext, &mut pending, &mut units);
     units
 }
 
@@ -883,22 +851,6 @@ fn log_cluster_summary(
     );
 }
 
-const IMPURE_CLUSTER_MIN_MEMBERS: usize = 3;
-// Порог эмпирический: выше него в кластере смешаны голоса и профиль доверять нельзя.
-const IMPURE_CLUSTER_MAX_DISTANCE: f64 = 0.35;
-
-fn cluster_is_impure(members: &[&Vec<f64>], centroid: &[f64]) -> bool {
-    if members.len() < IMPURE_CLUSTER_MIN_MEMBERS {
-        return false;
-    }
-    let avg_dist = members
-        .iter()
-        .map(|vector| 1.0 - mr_ml::cosine_similarity(vector, centroid))
-        .sum::<f64>()
-        / members.len() as f64;
-    avg_dist > IMPURE_CLUSTER_MAX_DISTANCE
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn diarize_channel(
     samples: &[f32],
@@ -989,6 +941,10 @@ pub(crate) fn diarize_channel(
     } else {
         None
     };
+    // Встреча без явного min_speakers не может быть одноголосой: один спикер
+    // пользователь задаёт явно (`--min-speakers 1`). Иначе auto-k и слияния
+    // схлопывают длинную встречу в один кластер.
+    let min_auto = if min_speakers == 0 { 2 } else { min_speakers };
     // Замеры ERes2NetV2 (`onnx_real`): разные дикторы ≤ 0.22 (dist ≥ 0.78),
     // один голос ≥ 0.48 (dist ≤ 0.52). shortcut: порог 0.52 перенесён с
     // complete linkage без замера average; перекалибровать на встречах.
@@ -1032,7 +988,7 @@ pub(crate) fn diarize_channel(
             &core_weights,
             &constraints,
             0.52,
-            min_speakers.max(1),
+            min_auto,
             if max_speakers > 0 {
                 max_speakers
             } else {
@@ -1044,7 +1000,7 @@ pub(crate) fn diarize_channel(
     // ближайшим похожим голосом (косинус ≥ 0.45) как в моно, так и в стерео.
     if k.is_none() {
         let weights: Vec<f64> = core_units.iter().map(|&index| units[index].dur).collect();
-        merge_tiny_clusters(&core_vecs, &mut core_labels, &weights, min_speakers.max(1));
+        merge_tiny_clusters(&core_vecs, &mut core_labels, &weights, min_auto);
     }
     if k.is_none() {
         let mut uniq: Vec<usize> = core_labels.clone();
@@ -1091,7 +1047,7 @@ pub(crate) fn diarize_channel(
             &mut core_labels,
             &constraints,
             CENTROID_MERGE_SIM,
-            min_speakers.max(1),
+            min_auto,
         );
     }
     log_cluster_summary(ch, k, &core_vecs, &core_labels, constraints.len());
@@ -1295,31 +1251,12 @@ pub(crate) fn diarize_channel(
     for (k, &c) in raw_clusters.iter().enumerate() {
         if matches[k].matched {
             let m_name = matches[k].name.clone().unwrap();
-            let members: Vec<usize> = label_of
-                .iter()
-                .filter(|(_, &l)| l == c)
-                .map(|(&i, _)| i)
-                .collect();
-            let member_embs: Vec<&Vec<f64>> =
-                members.iter().filter_map(|&i| embs[i].as_ref()).collect();
-            let impure = cluster_is_impure(&member_embs, &ordered_centroids[k]);
-            if !impure {
-                cluster_name.insert(c, m_name);
-                if let Some(pid) = &matches[k].pack_id {
-                    cluster_pack_id.insert(c, pid.clone());
-                }
-                if let Some(pname) = &matches[k].pack_name {
-                    cluster_pack_name.insert(c, pname.clone());
-                }
-            } else {
-                log::info!(
-                    target: "diar",
-                    cluster = c,
-                    profile = crate::logging::speaker_token(&m_name),
-                    members = member_embs.len();
-                    "ev=diar.voiceprint.rejected_impure_cluster"
-                );
-                unmatched.push(c);
+            cluster_name.insert(c, m_name);
+            if let Some(pid) = &matches[k].pack_id {
+                cluster_pack_id.insert(c, pid.clone());
+            }
+            if let Some(pname) = &matches[k].pack_name {
+                cluster_pack_name.insert(c, pname.clone());
             }
         } else {
             unmatched.push(c);
@@ -2290,7 +2227,7 @@ pub(crate) fn split_long_by_speaker_change(
             continue;
         }
         let step = split_step(dur);
-        let mut windows: Vec<(f64, Vec<f32>, usize)> = vec![];
+        let mut wins: Vec<(f64, Vec<f64>)> = vec![];
         let mut t = u.start;
         while t + SPLIT_WINDOW_SEC <= u.end + 1e-6 {
             let lo = (t * sr) as usize;
@@ -2301,35 +2238,12 @@ pub(crate) fn split_long_by_speaker_change(
                     .map(|seg| seg.exclude_overlap(&mut chunk, lo))
                     .unwrap_or(chunk.len());
                 if clean_len >= (sr * 0.4) as usize {
-                    windows.push((t, chunk, clean_len));
+                    if let Ok(Some(e)) = ext.embed(&chunk[..clean_len]) {
+                        wins.push((t, e));
+                    }
                 }
             }
             t += step;
-        }
-        let mut wins: Vec<(f64, Vec<f64>)> = vec![];
-        if !windows.is_empty() {
-            let refs: Vec<&[f32]> = windows
-                .iter()
-                .map(|(_, chunk, len)| &chunk[..*len])
-                .collect();
-            let results: Vec<Result<Option<Vec<f64>>, String>> = match ext.embed_batch(&refs) {
-                Ok(results) => results.into_iter().map(Ok).collect(),
-                Err(error) => {
-                    log::warn!(
-                        target: "diar",
-                        i = index,
-                        n = refs.len(),
-                        error = error;
-                        "ev=diar.embed_batch"
-                    );
-                    refs.iter().map(|chunk| ext.embed(chunk)).collect()
-                }
-            };
-            for ((start, _, _), result) in windows.into_iter().zip(results) {
-                if let Ok(Some(embedding)) = result {
-                    wins.push((start, embedding));
-                }
-            }
         }
         if wins.len() < 3 {
             log::debug!(
@@ -2518,11 +2432,11 @@ pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::{
-        cannot_link_pairs, cluster_is_impure, dedupe_cross_channel, fill_labels_by_time,
-        group_segments, merge_quiet_short, merge_tiny_clusters, merge_utterances,
-        move_boundary_words, profile_anchors, read_profiles_file, reconcile_channels,
-        refresh_speaker_stats, short_join_threshold, speaker_change_cuts, split_at_pauses,
-        split_utterance_by_bounds, split_words_by_bounds, switch_penalty, SpeakerInfo, Utterance,
+        cannot_link_pairs, dedupe_cross_channel, fill_labels_by_time, group_segments,
+        merge_quiet_short, merge_tiny_clusters, merge_utterances, move_boundary_words,
+        profile_anchors, read_profiles_file, reconcile_channels, refresh_speaker_stats,
+        short_join_threshold, speaker_change_cuts, split_at_pauses, split_utterance_by_bounds,
+        split_words_by_bounds, switch_penalty, SpeakerInfo, Utterance,
     };
     use crate::transcribe::WordConf;
 
@@ -3517,20 +3431,5 @@ mod tests {
             2,
             "конфликт кандидатов должен блокировать слияние"
         );
-    }
-
-    #[test]
-    fn impure_cluster_needs_three_members_and_distance() {
-        let a = vec![1.0, 0.0];
-        let b = vec![1.0, 0.0];
-        let centroid = vec![1.0, 0.0];
-        assert!(!cluster_is_impure(&[&a, &b], &centroid));
-
-        let far = vec![0.0, 1.0];
-        let far2 = vec![0.0, 1.0];
-        assert!(cluster_is_impure(&[&a, &far, &far2], &centroid));
-
-        let close = vec![0.99, 0.01];
-        assert!(!cluster_is_impure(&[&a, &b, &close], &centroid));
     }
 }

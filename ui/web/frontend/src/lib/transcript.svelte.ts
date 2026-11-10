@@ -296,7 +296,12 @@ export const startTranscription = async (rawPath: string): Promise<void> => {
     const r = await fetch('/api/transcribe/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file: rawPath, engine: 'auto' }),
+      body: JSON.stringify({
+        file: rawPath,
+        engine: 'auto',
+        min_speakers: settings.speakers,
+        max_speakers: settings.speakers,
+      }),
     })
     const d = await readJsonSafe<TranscribeStartResponse>(r)
     if (!d.ok) throw new Error(d.error || 'движок отклонил запуск')
