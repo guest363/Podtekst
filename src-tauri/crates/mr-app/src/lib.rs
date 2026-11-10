@@ -87,7 +87,7 @@ struct Cli {
         long,
         value_enum,
         default_value = "auto",
-        help = "CTC-уточнение GigaAM: auto — как в настройках (по умолчанию выкл), off — без уточнения, on — принудительно"
+        help = "CTC-уточнение GigaAM: auto — как в настройках (по умолчанию вкл), off — без уточнения, on — принудительно"
     )]
     ctc: CtcMode,
     #[arg(long, hide = true)]
@@ -125,7 +125,7 @@ impl Cli {
     }
 }
 
-/// A/B CTC-уточнения GigaAM: `auto` уважает переключатель из «Настроек» (по умолчанию выкл),
+/// A/B CTC-уточнения GigaAM: `auto` уважает переключатель из «Настроек» (по умолчанию вкл),
 /// `off` принудительно выключает, `on` принудительно включает в CLI-прогоне.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 enum CtcMode {

@@ -304,67 +304,82 @@ pub(super) fn run(
                     );
                 }
             }
-            // VAD-группа без текста (плохой ASR, зацикленный вывод) всё равно
-            // нужна диаризации как акустический образец голоса; пустыми
-            // репликами её в документ не пускает сборка speakers.
+            // Фрагменты без распознанного текста и зацикливания на шуме отбрасываем:
+            // акустические эмбеддинги шума создают ложные кластеры дикторов при диаризации.
             let words_count = final_text.split_whitespace().count();
-            utts.push(Utterance {
-                start: (a * 100.0).round() / 100.0,
-                end: (b * 100.0).round() / 100.0,
-                speaker: label.clone(),
-                channel: Some(*ch as i32),
-                text: final_text,
-                diarized: false,
-                silhouette: 0.0,
-                words,
-                ctc_used,
-            });
-            log::debug!(
-                target: "asr",
-                i = seg_index,
-                ch = *ch as i64,
-                dur_ms = infer_ms,
-                tokens = tokens,
-                blank_ratio = blank_ratio,
-                chars = utts.last().map(|u| u.text.chars().count()).unwrap_or(0),
-                words = words_count,
-                text_preview = utts
-                    .last()
-                    .map(|u| crate::logging::text_preview(&u.text))
-                    .unwrap_or_default(),
-                loop = looped;
-                "ev=asr.seg.done"
-            );
-            if let Some(utterance) = utts.last() {
-                if cfg!(debug_assertions) && crate::logging::dump_enabled() {
-                    crate::logging::append_artifact_jsonl(
-                        "asr/segments.jsonl",
-                        &serde_json::json!({
-                            "i": seg_index,
-                            "ch": *ch as i32,
-                            "start_sec": utterance.start,
-                            "end_sec": utterance.end,
-                            "rms": rms,
-                            "blank_penalty": blank_penalty,
-                            "mel_frames": mel_frames,
-                            "tokens": tokens,
-                            "blank_ratio": blank_ratio,
-                            "chars": utterance.text.chars().count(),
-                            "words": utterance.text.split_whitespace().count(),
-                            "text": crate::logging::text_preview(&utterance.text),
-                            "ctc_used": utterance.ctc_used,
-                            "ctc_applied": ctc_applied,
-                            "ctc_skipped": ctc_skipped,
-                            "ctc_changed_words": ctc_changed,
-                            "infer_ms": infer_ms,
-                        }),
-                    );
-                }
-                log::trace!(
+            if !final_text.trim().is_empty() && !looped {
+                utts.push(Utterance {
+                    start: (a * 100.0).round() / 100.0,
+                    end: (b * 100.0).round() / 100.0,
+                    speaker: label.clone(),
+                    channel: Some(*ch as i32),
+                    text: final_text,
+                    diarized: false,
+                    silhouette: 0.0,
+                    words,
+                    ctc_used,
+                });
+                log::debug!(
                     target: "asr",
                     i = seg_index,
-                    text = crate::logging::text_preview(&utterance.text);
-                    "ev=asr.text"
+                    ch = *ch as i64,
+                    dur_ms = infer_ms,
+                    tokens = tokens,
+                    blank_ratio = blank_ratio,
+                    chars = utts.last().map(|u| u.text.chars().count()).unwrap_or(0),
+                    words = words_count,
+                    text_preview = utts
+                        .last()
+                        .map(|u| crate::logging::text_preview(&u.text))
+                        .unwrap_or_default(),
+                    loop = looped;
+                    "ev=asr.seg.done"
+                );
+                if let Some(utterance) = utts.last() {
+                    if cfg!(debug_assertions) && crate::logging::dump_enabled() {
+                        crate::logging::append_artifact_jsonl(
+                            "asr/segments.jsonl",
+                            &serde_json::json!({
+                                "i": seg_index,
+                                "ch": *ch as i32,
+                                "start_sec": utterance.start,
+                                "end_sec": utterance.end,
+                                "rms": rms,
+                                "blank_penalty": blank_penalty,
+                                "mel_frames": mel_frames,
+                                "tokens": tokens,
+                                "blank_ratio": blank_ratio,
+                                "chars": utterance.text.chars().count(),
+                                "words": utterance.text.split_whitespace().count(),
+                                "text": crate::logging::text_preview(&utterance.text),
+                                "ctc_used": utterance.ctc_used,
+                                "ctc_applied": ctc_applied,
+                                "ctc_skipped": ctc_skipped,
+                                "ctc_changed_words": ctc_changed,
+                                "infer_ms": infer_ms,
+                            }),
+                        );
+                    }
+                    log::trace!(
+                        target: "asr",
+                        i = seg_index,
+                        text = crate::logging::text_preview(&utterance.text);
+                        "ev=asr.text"
+                    );
+                }
+            } else {
+                log::debug!(
+                    target: "asr",
+                    i = seg_index,
+                    ch = *ch as i64,
+                    dur_ms = infer_ms,
+                    tokens = tokens,
+                    blank_ratio = blank_ratio,
+                    chars = final_text.chars().count(),
+                    words = words_count,
+                    text_preview = crate::logging::text_preview(&final_text),
+                    loop = looped;
+                    "ev=asr.seg.skip"
                 );
             }
             seg_index += 1;

@@ -86,7 +86,7 @@ pub(crate) fn configured_ctc_enabled() -> bool {
     load_config()
         .get("ctc_enabled")
         .and_then(|x| x.as_bool())
-        .unwrap_or(false)
+        .unwrap_or(true)
 }
 
 #[cfg(feature = "onnx")]
