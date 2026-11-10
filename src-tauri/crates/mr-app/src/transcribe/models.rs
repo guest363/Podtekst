@@ -50,12 +50,13 @@ fn find_model_file(model_id: &str, needle: &str) -> Option<PathBuf> {
 }
 
 pub(super) struct ModelSet {
-    pub(super) vad: SileroVad,
+    pub(super) vad: Option<SileroVad>,
     pub(super) gigaam: Option<GigaAM>,
     pub(super) ctc: Option<GigaCTC>,
     pub(super) whisper: Option<Whisper>,
     pub(super) embed: Option<EmbeddingExtractor>,
     pub(super) segmentation: Option<SegmentationModel>,
+    pub(super) diar_loaded: bool,
 }
 
 /// Кэш моделей процесса: веса в сотни МБ читаются с диска один раз,
@@ -179,6 +180,7 @@ pub(crate) fn extract_utterance_embedding(
         return Err("Фрагмент короче 0.4 с: голос не извлечь".to_string());
     }
     let mut models = ModelsGuard::take(None, false)?;
+    models.ensure_diar();
     let mut clean_samples = samples;
     if let Some(segmentation) = models.segmentation.as_mut() {
         if let Ok(seg) = segmentation.segment(&clean_samples) {
@@ -213,18 +215,6 @@ pub(crate) fn extract_utterance_embedding(
 
 impl ModelSet {
     fn load(plan: LoadPlan) -> Result<Self, String> {
-        let vad_path = find_model_file("vad-silero-v6", ".onnx")
-            .ok_or_else(|| "Модель Silero VAD не скачана. Откройте «Настройки» → «Модели ИИ» и нажмите «Скачать».".to_string())?;
-        let vad = SileroVad::load(&vad_path).map_err(|error| {
-            log::error!(
-                target: "model",
-                id = "vad-silero-v6",
-                file = vad_path.display().to_string(),
-                error = error;
-                "ev=model.load_failed"
-            );
-            error
-        })?;
         let gigaam = match plan.asr {
             Some(AsrEngine::Gigaam) => {
                 let dir = models_root().join(GIGAAM_DIR);
@@ -281,10 +271,45 @@ impl ModelSet {
             }
             _ => None,
         };
+        Ok(Self {
+            vad: None,
+            gigaam,
+            ctc,
+            whisper,
+            embed: None,
+            segmentation: None,
+            diar_loaded: false,
+        })
+    }
+
+    pub(super) fn ensure_vad(&mut self) -> Result<&mut SileroVad, String> {
+        if self.vad.is_none() {
+            let vad_path = find_model_file("vad-silero-v6", ".onnx")
+                .ok_or_else(|| "Модель Silero VAD не скачана. Откройте «Настройки» → «Модели ИИ» и нажмите «Скачать».".to_string())?;
+            let vad = SileroVad::load(&vad_path).map_err(|error| {
+                log::error!(
+                    target: "model",
+                    id = "vad-silero-v6",
+                    file = vad_path.display().to_string(),
+                    error = error;
+                    "ev=model.load_failed"
+                );
+                error
+            })?;
+            self.vad = Some(vad);
+        }
+        Ok(self.vad.as_mut().expect("только что загрузили"))
+    }
+
+    pub(super) fn ensure_diar(&mut self) {
+        if self.diar_loaded {
+            return;
+        }
+        self.diar_loaded = true;
         let emb_path = find_model_file("diar-eres2netv2-emb", ".onnx")
             .or_else(|| find_model_file("diar-pyannote-emb", ".onnx"))
             .or_else(|| find_model_file("diar-wespeaker-resnet34", ".onnx"));
-        let embed = emb_path.and_then(|path| match EmbeddingExtractor::load(&path) {
+        self.embed = emb_path.and_then(|path| match EmbeddingExtractor::load(&path) {
             Ok(model) => Some(model),
             Err(error) => {
                 log::warn!(
@@ -297,7 +322,7 @@ impl ModelSet {
                 None
             }
         });
-        let segmentation =
+        self.segmentation =
             find_model_file("diar-pyannote-segmentation-3", ".onnx").and_then(|path| {
                 match SegmentationModel::load(&path) {
                     Ok(model) => Some(model),
@@ -313,13 +338,5 @@ impl ModelSet {
                     }
                 }
             });
-        Ok(Self {
-            vad,
-            gigaam,
-            ctc,
-            whisper,
-            embed,
-            segmentation,
-        })
     }
 }

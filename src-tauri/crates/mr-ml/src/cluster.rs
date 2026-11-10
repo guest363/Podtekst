@@ -214,7 +214,11 @@ pub fn agglomerative_gap(
         if k < gap_floor || k > max_k {
             continue;
         }
-        let gap = merges[i + 1].0 - merges[i].0;
+        // Ограничиваем искусственную высоту cannot-link реальным диапазоном расстояний
+        // косинуса [0..1.2], чтобы прыжок в 10.0 не маскировал акустические разрывы.
+        let d_curr = merges[i].0.min(1.2);
+        let d_next = merges[i + 1].0.min(1.2);
+        let gap = d_next - d_curr;
         if best.is_none_or(|(best_gap, _)| gap > best_gap) {
             best = Some((gap, k));
         }
@@ -226,7 +230,8 @@ pub fn agglomerative_gap(
             gap = gap;
             "ev=cluster.auto_k"
         );
-        return labels_with_limit(n, &merges, k, f64::INFINITY);
+        let max_merge_dist = (distance_threshold * 1.3).min(1.2);
+        return labels_with_limit(n, &merges, k, max_merge_dist);
     }
     log::debug!(
         target: "cluster",

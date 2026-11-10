@@ -309,11 +309,12 @@ fn transcribe_file_inner(
         mr_audio::dsp::agc_rms_16k(samples);
     }
 
+    let vad = models.ensure_vad()?;
     let (channel_vad, channel_grouped) = vad::run(
         &channel_samples,
         &chan_list,
         is_stereo,
-        &mut models.vad,
+        vad,
         on_event,
     )?;
     let (channel_utts, ctc_used_any) = asr::run(

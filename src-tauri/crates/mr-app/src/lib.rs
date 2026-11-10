@@ -87,7 +87,7 @@ struct Cli {
         long,
         value_enum,
         default_value = "auto",
-        help = "CTC-уточнение GigaAM: auto — как в настройках, off — без уточнения"
+        help = "CTC-уточнение GigaAM: auto — как в настройках (по умолчанию выкл), off — без уточнения, on — принудительно"
     )]
     ctc: CtcMode,
     #[arg(long, hide = true)]
@@ -125,12 +125,13 @@ impl Cli {
     }
 }
 
-/// A/B CTC-уточнения GigaAM: `auto` уважает переключатель из «Настроек», `off`
-/// выключает его в CLI-прогоне.
+/// A/B CTC-уточнения GigaAM: `auto` уважает переключатель из «Настроек» (по умолчанию выкл),
+/// `off` принудительно выключает, `on` принудительно включает в CLI-прогоне.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 enum CtcMode {
     Auto,
     Off,
+    On,
 }
 
 impl CtcMode {
@@ -138,6 +139,7 @@ impl CtcMode {
         match self {
             Self::Auto => configured,
             Self::Off => false,
+            Self::On => true,
         }
     }
 }
@@ -589,11 +591,13 @@ mod tests {
         assert!(!CtcMode::Auto.allows(false), "auto — текущее поведение");
         assert!(!CtcMode::Off.allows(true));
         assert!(!CtcMode::Off.allows(false));
+        assert!(CtcMode::On.allows(true));
+        assert!(CtcMode::On.allows(false));
     }
 
     #[test]
-    fn cli_ctc_off_reaches_transcribe_options() {
-        let cli = Cli::try_parse_from([
+    fn cli_ctc_modes_reach_transcribe_options() {
+        let cli_off = Cli::try_parse_from([
             "podtekst",
             "--transcribe",
             "a.wav",
@@ -605,15 +609,30 @@ mod tests {
             "off",
         ])
         .unwrap();
-        let opts = cli.transcribe_options();
-        assert!(!opts.ctc_enabled);
-        assert_eq!(opts.engine, "gigaam");
-        assert_eq!(opts.language, "ru");
+        let opts_off = cli_off.transcribe_options();
+        assert!(!opts_off.ctc_enabled);
+        assert_eq!(opts_off.engine, "gigaam");
+        assert_eq!(opts_off.language, "ru");
+
+        let cli_on = Cli::try_parse_from([
+            "podtekst",
+            "--transcribe",
+            "a.wav",
+            "--engine",
+            "gigaam",
+            "--language",
+            "RU",
+            "--ctc",
+            "on",
+        ])
+        .unwrap();
+        let opts_on = cli_on.transcribe_options();
+        assert!(opts_on.ctc_enabled);
     }
 
     #[test]
     fn cli_ctc_rejects_unknown_value() {
-        for value in ["maybe", "on", "true"] {
+        for value in ["maybe", "1", "true"] {
             assert!(
                 Cli::try_parse_from(["podtekst", "--ctc", value]).is_err(),
                 "--ctc {value} должен быть отвергнут"

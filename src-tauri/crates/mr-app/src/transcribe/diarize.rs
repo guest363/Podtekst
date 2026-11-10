@@ -345,9 +345,9 @@ const CORE_MIN_DUR: f64 = 1.0;
 const AUTO_K_MAX_SPEAKERS: usize = 12;
 /// Порог косинуса центроидов для финального слияния. ERes2NetV2: разные
 /// дикторы ≤ 0.22, один голос ≥ 0.48 на фрагментах, у центроидов того же
-/// голоса сходство выше. shortcut: 0.62; на VoxConverse проверено, на AMI
-/// слияние не маскирует ошибку k (см. docs/testing/BENCHMARK-REPORT.md).
-const CENTROID_MERGE_SIM: f64 = 0.62;
+/// голоса сходство выше (обычно ≥ 0.70). Порог 0.70 предотвращает ложное
+/// слияние разных собеседников с похожей акустикой комнаты.
+const CENTROID_MERGE_SIM: f64 = 0.70;
 
 fn short_join_threshold(dur: f64) -> f64 {
     const MIN: f64 = 0.36;
@@ -645,7 +645,20 @@ fn cannot_link_pairs(
             for b in (a + 1)..3 {
                 for &i in &members[a] {
                     for &j in &members[b] {
-                        if i != j {
+                        if i == j {
+                            continue;
+                        }
+                        // Cannot-link справедлив только для действительно перекрывающихся
+                        // или вплотную примыкающих реплик: если между ними пауза,
+                        // это может быть один и тот же диктор в разные моменты окна.
+                        let gap = if utterances[i].end <= utterances[j].start {
+                            utterances[j].start - utterances[i].end
+                        } else if utterances[j].end <= utterances[i].start {
+                            utterances[i].start - utterances[j].end
+                        } else {
+                            0.0
+                        };
+                        if gap <= frame_sec {
                             pairs.insert((i.min(j), i.max(j)));
                         }
                     }
@@ -941,10 +954,9 @@ pub(crate) fn diarize_channel(
     } else {
         None
     };
-    // Встреча без явного min_speakers не может быть одноголосой: один спикер
-    // пользователь задаёт явно (`--min-speakers 1`). Иначе auto-k и слияния
-    // схлопывают длинную встречу в один кластер.
-    let min_auto = if min_speakers == 0 { 2 } else { min_speakers };
+    // Если min_speakers не задан (0), в авто-режиме разрешаем естественное
+    // определение 1..max_speakers (монологи не принуждаются к 2 спикерам).
+    let min_auto = if min_speakers == 0 { 1 } else { min_speakers };
     // Замеры ERes2NetV2 (`onnx_real`): разные дикторы ≤ 0.22 (dist ≥ 0.78),
     // один голос ≥ 0.48 (dist ≤ 0.52). shortcut: порог 0.52 перенесён с
     // complete linkage без замера average; перекалибровать на встречах.

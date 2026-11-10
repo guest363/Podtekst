@@ -66,7 +66,7 @@ export const settings: SettingsState = $state({
   autoTranscribe: true,
   speakers: storedSpeakers(),
   hotwords: [],
-  ctcEnabled: true,
+  ctcEnabled: false,
   hotwordsLoaded: false,
   summaryFeature: null,
 })
@@ -291,7 +291,7 @@ export const saveHotwords = async (hotwords: string[], ctcEnabled: boolean): Pro
     settings.hotwords = Array.isArray(d.hotwords)
       ? d.hotwords.filter((x): x is string => typeof x === 'string')
       : []
-    settings.ctcEnabled = d.ctc_enabled !== false
+    settings.ctcEnabled = d.ctc_enabled === true
     settings.hotwordsLoaded = true
     return true
   } catch (e) {
