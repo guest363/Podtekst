@@ -340,6 +340,14 @@ pub(crate) fn load_profiles() -> Vec<SpeakerProfile> {
 
 // Калибровка ERes2NetV2 (onnx_real): на 0.6 с сходство со своим голосом 0.41–0.79.
 const CORE_MIN_DUR: f64 = 1.0;
+/// Верхняя граница auto-k, если пользователь не задал max_speakers: защита от
+/// дробления шума на десятки «голосов». shortcut: 12 без размеченного набора.
+const AUTO_K_MAX_SPEAKERS: usize = 12;
+/// Порог косинуса центроидов для финального слияния. ERes2NetV2: разные
+/// дикторы ≤ 0.22, один голос ≥ 0.48 на фрагментах, у центроидов того же
+/// голоса сходство выше. shortcut: 0.62; на VoxConverse проверено, на AMI
+/// слияние не маскирует ошибку k (см. docs/testing/BENCHMARK-REPORT.md).
+const CENTROID_MERGE_SIM: f64 = 0.62;
 
 fn short_join_threshold(dur: f64) -> f64 {
     const MIN: f64 = 0.36;
@@ -857,7 +865,8 @@ pub(crate) fn diarize_channel(
     max_speakers: usize,
     on_event: &dyn Fn(u8, &str),
 ) -> Vec<SpeakerInfo> {
-    use mr_ml::{cluster::agglomerative_weighted, cosine_similarity};
+    use mr_ml::cluster::{agglomerative_gap, agglomerative_weighted, merge_by_centroid_cosine};
+    use mr_ml::cosine_similarity;
     let n = utterances.len();
     if n == 0 {
         return vec![];
@@ -932,6 +941,10 @@ pub(crate) fn diarize_channel(
     } else {
         None
     };
+    // Встреча без явного min_speakers не может быть одноголосой: один спикер
+    // пользователь задаёт явно (`--min-speakers 1`). Иначе auto-k и слияния
+    // схлопывают длинную встречу в один кластер.
+    let min_auto = if min_speakers == 0 { 2 } else { min_speakers };
     // Замеры ERes2NetV2 (`onnx_real`): разные дикторы ≤ 0.22 (dist ≥ 0.78),
     // один голос ≥ 0.48 (dist ≤ 0.52). shortcut: порог 0.52 перенесён с
     // complete linkage без замера average; перекалибровать на встречах.
@@ -967,12 +980,27 @@ pub(crate) fn diarize_channel(
             }
         }
     }
-    let mut core_labels = agglomerative_weighted(&core_vecs, &core_weights, &constraints, 0.52, k);
+    let mut core_labels = if let Some(k) = k {
+        agglomerative_weighted(&core_vecs, &core_weights, &constraints, 0.52, Some(k))
+    } else {
+        agglomerative_gap(
+            &core_vecs,
+            &core_weights,
+            &constraints,
+            0.52,
+            min_auto,
+            if max_speakers > 0 {
+                max_speakers
+            } else {
+                AUTO_K_MAX_SPEAKERS
+            },
+        )
+    };
     // Короткие шумные куски часто образуют ложные «голоса». Сливаем их с
     // ближайшим похожим голосом (косинус ≥ 0.45) как в моно, так и в стерео.
     if k.is_none() {
         let weights: Vec<f64> = core_units.iter().map(|&index| units[index].dur).collect();
-        merge_tiny_clusters(&core_vecs, &mut core_labels, &weights, min_speakers.max(1));
+        merge_tiny_clusters(&core_vecs, &mut core_labels, &weights, min_auto);
     }
     if k.is_none() {
         let mut uniq: Vec<usize> = core_labels.clone();
@@ -1011,6 +1039,16 @@ pub(crate) fn diarize_channel(
                 Some(min_speakers),
             );
         }
+    }
+    if k.is_none() {
+        merge_by_centroid_cosine(
+            &core_vecs,
+            &core_weights,
+            &mut core_labels,
+            &constraints,
+            CENTROID_MERGE_SIM,
+            min_auto,
+        );
     }
     log_cluster_summary(ch, k, &core_vecs, &core_labels, constraints.len());
     on_event(88, "Голоса разделены по спикерам");
