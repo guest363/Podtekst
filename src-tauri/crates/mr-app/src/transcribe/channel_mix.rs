@@ -1,4 +1,7 @@
 const FRAME_SAMPLES: usize = 8_000;
+const MAX_DUP_LAG: i64 = 64;
+const DUP_LAG_PROBE_SEC: usize = 30;
+const DUP_SAMPLE_CORR: f64 = 0.70;
 
 fn envelope(samples: &[f32]) -> Vec<f32> {
     samples
@@ -47,15 +50,26 @@ fn correlation(a: &[f32], b: &[f32]) -> f64 {
     cov / (var_a.sqrt() * var_b.sqrt())
 }
 
-fn sample_correlation(a: &[f32], b: &[f32]) -> f64 {
+fn sample_correlation_at_lag(a: &[f32], b: &[f32], lag: i64) -> f64 {
     let n = a.len().min(b.len());
-    if n < 1000 {
+    let (a_start, b_start) = if lag >= 0 {
+        (lag as usize, 0)
+    } else {
+        (0, (-lag) as usize)
+    };
+    if a_start >= n || b_start >= n {
         return 0.0;
     }
+    let len = n - a_start.max(b_start);
+    if len < 1000 {
+        return 0.0;
+    }
+    let a = &a[a_start..a_start + len];
+    let b = &b[b_start..b_start + len];
     let mut sum_a = 0.0;
     let mut sum_b = 0.0;
     let mut count = 0usize;
-    for (&x, &y) in a[..n].iter().zip(&b[..n]).step_by(8) {
+    for (&x, &y) in a.iter().zip(b).step_by(8) {
         sum_a += x as f64;
         sum_b += y as f64;
         count += 1;
@@ -68,7 +82,7 @@ fn sample_correlation(a: &[f32], b: &[f32]) -> f64 {
     let mut cov = 0.0;
     let mut var_a = 0.0;
     let mut var_b = 0.0;
-    for (&x, &y) in a[..n].iter().zip(&b[..n]).step_by(8) {
+    for (&x, &y) in a.iter().zip(b).step_by(8) {
         let dx = x as f64 - mean_a;
         let dy = y as f64 - mean_b;
         cov += dx * dy;
@@ -81,6 +95,21 @@ fn sample_correlation(a: &[f32], b: &[f32]) -> f64 {
     cov / (var_a.sqrt() * var_b.sqrt())
 }
 
+fn best_lag_sample_correlation(a: &[f32], b: &[f32]) -> (f64, i64) {
+    let probe = a.len().min(b.len()).min(DUP_LAG_PROBE_SEC * 16000);
+    let mut best = (sample_correlation_at_lag(&a[..probe], &b[..probe], 0), 0);
+    for lag in 1..=MAX_DUP_LAG {
+        for candidate in [lag, -lag] {
+            let corr = sample_correlation_at_lag(&a[..probe], &b[..probe], candidate);
+            if corr > best.0 {
+                best = (corr, candidate);
+            }
+        }
+    }
+    let full = sample_correlation_at_lag(a, b, best.1);
+    (full, best.1)
+}
+
 /// Метрики решения «каналы дублируют речь»: без них не видно, какой порог
 /// свернул стерео в моно.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -89,6 +118,8 @@ pub(crate) struct MixStats {
     pub corr: f64,
     pub containment: f64,
     pub jaccard: f64,
+    pub sample_corr: f64,
+    pub lag: i64,
     pub th0: f32,
     pub th1: f32,
     pub chosen: Option<usize>,
@@ -146,13 +177,16 @@ pub(crate) fn mixed_stereo_with_stats(channels: &[Vec<f32>]) -> (Option<usize>, 
             return (None, stats);
         }
     }
-    // shortcut: порог 0.70 корреляции сэмплов отделяет идентичный электрический/цифровой
-    // сигнал от акустического пролезания через воздух с фазовым сдвигом.
-    if sample_correlation(&channels[0][..len], &channels[1][..len]) < 0.70 {
+    // Нулевой лаг не ловит цифровой дубль со сдвигом в несколько сэмплов:
+    // ищем максимум в пределах 4 мс, дальше это уже акустическое эхо.
+    let (sample_corr, lag) = best_lag_sample_correlation(&channels[0][..len], &channels[1][..len]);
+    stats.sample_corr = sample_corr;
+    stats.lag = lag;
+    if sample_corr < DUP_SAMPLE_CORR {
         return (None, stats);
     }
-    stats.chosen = Some(0);
-    (Some(0), stats)
+    stats.chosen = Some(if stats.th1 > stats.th0 { 1 } else { 0 });
+    (stats.chosen, stats)
 }
 
 const VAD_FRAME: usize = 512;
@@ -365,7 +399,23 @@ mod tests {
             .iter()
             .map(|x| x * 0.8)
             .collect();
-        assert_eq!(mixed_stereo(&[a, b]), Some(0));
+        assert_eq!(mixed_stereo(&[a, b]), Some(1));
+    }
+
+    #[test]
+    fn delayed_gained_duplicate_is_detected() {
+        let len = 16_000 * 8;
+        let spans = [(0.0, 2.0), (2.5, 4.0), (5.0, 7.5)];
+        let a = bursts(len, &spans, 0.2, 21);
+        let delay = 6usize;
+        let mut b = vec![0.0f32; len];
+        for i in delay..len {
+            b[i] = a[i - delay] * 1.8;
+        }
+        let (chosen, stats) = mixed_stereo_with_stats(&[a, b]);
+        assert_eq!(chosen, Some(1));
+        assert_eq!(stats.lag.abs(), delay as i64);
+        assert!(stats.sample_corr >= DUP_SAMPLE_CORR, "{stats:?}");
     }
 
     #[test]
@@ -375,9 +425,10 @@ mod tests {
         let a = bursts(len, &spans, 0.2, 11);
         let b = bursts(len, &spans, 0.3, 12);
         let (chosen, stats) = mixed_stereo_with_stats(&[a, b]);
-        assert_eq!(chosen, Some(0));
+        assert_eq!(chosen, Some(1));
         assert!(stats.corr >= 0.7 && stats.containment >= 0.85 && stats.jaccard >= 0.75);
-        assert_eq!(stats.chosen, Some(0));
+        assert_eq!(stats.chosen, Some(1));
+        assert!(stats.sample_corr >= DUP_SAMPLE_CORR, "{stats:?}");
 
         let (chosen, stats) = mixed_stereo_with_stats(&[vec![0.0; 100], vec![0.0; 100]]);
         assert!(chosen.is_none());

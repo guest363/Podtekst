@@ -203,6 +203,8 @@ fn transcribe_file_inner(
             corr = mix_stats.corr,
             containment = mix_stats.containment,
             jaccard = mix_stats.jaccard,
+            sample_corr = mix_stats.sample_corr,
+            lag = mix_stats.lag,
             th_active0 = mix_stats.th0,
             th_active1 = mix_stats.th1;
             "ev=audio.mix"
@@ -291,7 +293,7 @@ fn transcribe_file_inner(
     } else if mixed_channels.is_some() {
         (
             vec![(0usize, opts.speaker_left.clone())],
-            "общий микс (каналы дублируют речь, оставлен микрофон)",
+            "общий микс (каналы дублируют речь, оставлен один канал)",
         )
     } else {
         (vec![(0usize, opts.speaker_right.clone())], "общая запись")
