@@ -2196,16 +2196,101 @@ fn split_step(duration: f64) -> f64 {
     (span / (SPLIT_MAX_WINDOWS - 1) as f64).max(0.5)
 }
 
-/// +0.8 с компенсирует отставание окна: эмбеддинг 1.6 с «видит» обоих
-/// говорящих ещё какое-то время после стыка.
-fn speaker_change_cuts(start: f64, end: f64, wins: &[(f64, Vec<f64>)]) -> Vec<f64> {
+fn find_speaker_cut_point(
+    samples: &[f32],
+    start: f64,
+    end: f64,
+    w_start_a: f64,
+    w_start_b: f64,
+    words: &[WordConf],
+) -> f64 {
+    let search_lo = (w_start_a - 0.2).max(start);
+    let search_hi = (w_start_b + SPLIT_WINDOW_SEC + 0.2).min(end);
+    let mid_expected = (w_start_a + w_start_b + SPLIT_WINDOW_SEC) / 2.0;
+
+    let timed: Vec<(f64, f64)> = words
+        .iter()
+        .filter(|w| w.end_sec > w.start_sec)
+        .map(|w| (w.start_sec, w.end_sec))
+        .collect();
+
+    let sr = 16000.0;
+    let frame_len = (0.05 * sr) as usize;
+
+    let rms_at = |time_sec: f64| -> f64 {
+        if samples.is_empty() {
+            return 0.0;
+        }
+        let center = (time_sec * sr) as usize;
+        let half = frame_len / 2;
+        let lo = center.saturating_sub(half);
+        let hi = (center + half).min(samples.len());
+        if hi <= lo {
+            return 0.0;
+        }
+        let slice = &samples[lo..hi];
+        let sum_sq: f64 = slice.iter().map(|&x| (x as f64) * (x as f64)).sum();
+        (sum_sq / slice.len() as f64).sqrt()
+    };
+
+    if !timed.is_empty() {
+        let mut best_cut = None;
+        let mut best_score = f64::MAX;
+
+        for w in timed.windows(2) {
+            let gap_start = w[0].1;
+            let gap_end = w[1].0;
+            let cut_t = (gap_start + gap_end) / 2.0;
+            if cut_t >= search_lo && cut_t <= search_hi {
+                let rms = rms_at(cut_t);
+                let pause = (gap_end - gap_start).max(0.0);
+                let dist = (cut_t - mid_expected).abs();
+                let score = rms * 10.0 - pause * 0.5 + dist * 0.05;
+                if score < best_score {
+                    best_score = score;
+                    best_cut = Some(cut_t);
+                }
+            }
+        }
+        if let Some(cut) = best_cut {
+            return cut.clamp(start + 0.5, end - 0.5);
+        }
+    }
+
+    let lo = (search_lo * sr) as usize;
+    let hi = (search_hi * sr) as usize;
+    if hi > lo + frame_len && hi <= samples.len() {
+        let mut min_rms = f64::INFINITY;
+        let mut best_sec = mid_expected;
+        for chunk_start in (lo..hi - frame_len).step_by(frame_len / 2) {
+            let slice = &samples[chunk_start..chunk_start + frame_len];
+            let sum_sq: f64 = slice.iter().map(|&x| (x as f64) * (x as f64)).sum();
+            let rms = (sum_sq / slice.len() as f64).sqrt();
+            if rms < min_rms {
+                min_rms = rms;
+                best_sec = (chunk_start + frame_len / 2) as f64 / sr;
+            }
+        }
+        return best_sec.clamp(start + 0.5, end - 0.5);
+    }
+
+    mid_expected.clamp(start + 0.5, end - 0.5)
+}
+
+fn speaker_change_cuts(
+    samples: &[f32],
+    start: f64,
+    end: f64,
+    wins: &[(f64, Vec<f64>)],
+    words: &[WordConf],
+) -> Vec<f64> {
     let sims: Vec<f64> = wins
         .windows(2)
         .map(|w| mr_ml::cosine_similarity(&w[0].1, &w[1].1))
         .collect();
     let mut cuts = vec![];
     for (i, &s) in sims.iter().enumerate() {
-        if s >= 0.35 {
+        if s >= 0.42 {
             continue;
         }
         let prev = if i > 0 { sims[i - 1] } else { 1.0 };
@@ -2213,7 +2298,7 @@ fn speaker_change_cuts(start: f64, end: f64, wins: &[(f64, Vec<f64>)]) -> Vec<f6
         if s > prev || s > next {
             continue;
         }
-        let b = ((wins[i].0 + wins[i + 1].0) / 2.0 + 0.8).clamp(start + 0.5, end - 0.5);
+        let b = find_speaker_cut_point(samples, start, end, wins[i].0, wins[i + 1].0, words);
         if cuts.last().map(|&c| b - c >= 1.0).unwrap_or(true) {
             cuts.push((b * 100.0).round() / 100.0);
         }
@@ -2281,7 +2366,7 @@ pub(crate) fn split_long_by_speaker_change(
             out.push(u);
             continue;
         }
-        let cuts = speaker_change_cuts(u.start, u.end, &wins);
+        let cuts = speaker_change_cuts(samples, u.start, u.end, &wins, &u.words);
         log::debug!(
             target: "diar",
             i = index,
@@ -3038,9 +3123,42 @@ mod tests {
             .into_iter()
             .map(|t| (t, if t < 2.0 { a.clone() } else { b.clone() }))
             .collect();
-        let cuts = speaker_change_cuts(0.0, 4.0, &wins);
+        let cuts = speaker_change_cuts(&[], 0.0, 4.0, &wins, &[]);
         assert_eq!(cuts.len(), 1);
         assert!((2.0..=2.9).contains(&cuts[0]), "{cuts:?}");
+    }
+
+    #[test]
+    fn speaker_change_cuts_snaps_to_inter_word_pause() {
+        let a = vec![1.0, 0.0];
+        let b = vec![0.0, 1.0];
+        let wins: Vec<(f64, Vec<f64>)> = vec![
+            (0.0, a.clone()),
+            (1.0, a.clone()),
+            (2.0, a),
+            (3.0, b.clone()),
+            (4.0, b),
+        ];
+        let words = vec![
+            WordConf {
+                w: "первый".to_string(),
+                conf: 1.0,
+                needs_review: false,
+                start_sec: 0.5,
+                end_sec: 2.2,
+            },
+            WordConf {
+                w: "второй".to_string(),
+                conf: 1.0,
+                needs_review: false,
+                start_sec: 2.8,
+                end_sec: 4.5,
+            },
+        ];
+        let samples = vec![0.0f32; 16000 * 5];
+        let cuts = speaker_change_cuts(&samples, 0.0, 5.0, &wins, &words);
+        assert_eq!(cuts.len(), 1);
+        assert_eq!(cuts[0], 2.5);
     }
 
     #[test]
