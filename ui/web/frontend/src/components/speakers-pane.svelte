@@ -17,8 +17,9 @@ import { emit, ui } from '../lib/ui.svelte.ts'
 
 type Props = {
   speakers: SpeakerInfo[]
+  onseek?: (sec: number) => void
 }
-let { speakers }: Props = $props()
+let { speakers, onseek }: Props = $props()
 
 type MergedSpeaker = Omit<SpeakerInfo, 'samples'> & { key: string; samples: SpeakerSample[] }
 
@@ -431,9 +432,17 @@ const onInputKey = (e: KeyboardEvent, btn: HTMLButtonElement | null): void => {
         </svg>
       {/if}
     </button>
-    <span class="sample-text" title={s.full_text || s.text || ''}>
+    <button
+      type="button"
+      class="sample-text"
+      title={`Перейти к этой части записи: ${s.full_text || s.text || ''}`}
+      onclick={() => {
+        stopSample()
+        onseek?.(s.start)
+      }}
+    >
       {fmtClockShort(s.start)} · «{s.text || ''}»
-    </span>
+    </button>
     <button
       type="button"
       class="sample-detach-btn"

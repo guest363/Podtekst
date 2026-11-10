@@ -45,31 +45,10 @@ pub(super) fn run_pipeline(
     } else {
         #[cfg(not(target_os = "android"))]
         {
-            let cpu = super::runtime_locator::locate().map_err(|_| SummaryJobError::ModelLoad)?;
-            let gpu = if super::config::load().gpu == super::config::GpuMode::Auto {
-                super::gpu::installed_runtime()
-            } else {
-                None
-            };
-            let (runtime, gpu_layers, gpu_device, gpu_backend, fallback) = match gpu {
-                Some(gpu) => (
-                    gpu.runtime,
-                    99,
-                    gpu.device_index,
-                    gpu.backend,
-                    Some(cpu.clone()),
-                ),
-                None => (cpu.clone(), 0, None, None, None),
-            };
-            Box::new(sidecar::SidecarBackend::new(
-                &runtime,
-                spec.model_sha.clone(),
-                threads,
-                gpu_layers,
-                gpu_device,
-                gpu_backend,
-                fallback,
-            ))
+            Box::new(
+                open_backend(spec.model_sha.clone(), threads)
+                    .map_err(|_| SummaryJobError::ModelLoad)?,
+            )
         }
         #[cfg(target_os = "android")]
         {
@@ -158,6 +137,35 @@ fn stage(job: &Arc<Job>, event: BackendEvent) {
     });
     drop(state);
     emit_event(event);
+}
+
+#[cfg(not(target_os = "android"))]
+fn open_backend(model_sha: String, threads: u32) -> Result<sidecar::SidecarBackend, String> {
+    let cpu = super::runtime_locator::locate().map_err(|e| format!("Runtime не найден: {e:?}"))?;
+    let gpu = if super::config::load().gpu == super::config::GpuMode::Auto {
+        super::gpu::installed_runtime()
+    } else {
+        None
+    };
+    let (runtime, gpu_layers, gpu_device, gpu_backend, fallback) = match gpu {
+        Some(gpu) => (
+            gpu.runtime,
+            99,
+            gpu.device_index,
+            gpu.backend,
+            Some(cpu.clone()),
+        ),
+        None => (cpu.clone(), 0, None, None, None),
+    };
+    Ok(sidecar::SidecarBackend::new(
+        &runtime,
+        model_sha,
+        threads,
+        gpu_layers,
+        gpu_device,
+        gpu_backend,
+        fallback,
+    ))
 }
 
 #[cfg(test)]

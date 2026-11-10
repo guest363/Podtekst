@@ -15,7 +15,6 @@ pub(super) struct Input<'a> {
     pub(super) models: &'a mut ModelSet,
     pub(super) opts: &'a TranscribeOptions,
     pub(super) is_stereo: bool,
-    pub(super) mixed_channels: Option<usize>,
     pub(super) on_event: &'a dyn Fn(u8, &str),
 }
 
@@ -28,7 +27,6 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
         models,
         opts,
         is_stereo,
-        mixed_channels,
         on_event,
     } = input;
     let diar_stage = Instant::now();
@@ -79,9 +77,10 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
         } else {
             None
         };
-        // В стерео каналы уже разделены по голосам, а дробление по паузам
-        // даёт лишние короткие эмбеддинги и перекластеризацию.
-        let mut diar_utts = if is_stereo || mixed_channels.is_some() {
+        // В раздельном стерео каналы уже разделены по голосам.
+        // В моно-миксе речь нескольких участников в одном микрофоне
+        // обязательно делим по паузам, иначе диалог склеивается в одну реплику.
+        let mut diar_utts = if is_stereo {
             source_utts.clone()
         } else {
             on_event(80, "Делю речь на паузы для спикеров…");

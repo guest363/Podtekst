@@ -173,48 +173,70 @@ impl SileroVad {
     }
 }
 
-/// К началу добавляются два окна pre-roll, чтобы сохранить начальные согласные.
+/// Сегментация по вероятностям VAD:
+/// - двойной порог (гистерезис): `threshold` для старта, `neg_threshold` для продолжения
+/// - симметричный паддинг `speech_pad_sec` вокруг сегмента
+/// - фильтрация по `min_speech_sec`
+/// - склейка соседних сегментов с паузой менее 400 мс
 pub fn vad_segments_from_probs(
     probs: &[f32],
     threshold: f32,
+    neg_threshold: f32,
     min_speech_sec: f32,
     min_silence_sec: f32,
+    speech_pad_sec: f32,
 ) -> Vec<(f32, f32)> {
-    const PREROLL_WINDOWS: usize = 2;
     let win_sec = VAD_WINDOW as f32 / 16000.0;
-    let mut segs = Vec::new();
+    let pad_windows = (speech_pad_sec / win_sec).round() as usize;
+    let min_sil_windows = (min_silence_sec / win_sec).round() as usize;
+    let mut raw_segs = Vec::new();
     let mut start: Option<usize> = None;
     let mut silence_run = 0usize;
-    let mut last_end = 0usize;
-    let min_sil_windows = (min_silence_sec / win_sec).round() as usize;
+
     for (i, &p) in probs.iter().enumerate() {
-        if p >= threshold {
-            if start.is_none() {
-                start = Some(i);
-            }
-            silence_run = 0;
-        } else if let Some(s) = start {
-            silence_run += 1;
-            if silence_run >= min_sil_windows.max(1) {
-                let a = s.saturating_sub(PREROLL_WINDOWS).max(last_end);
-                let b = i - silence_run + 1;
-                if (b as f32 - a as f32) * win_sec >= min_speech_sec {
-                    segs.push((a as f32 * win_sec, b as f32 * win_sec));
-                }
-                last_end = b;
-                start = None;
+        if let Some(s) = start {
+            if p >= neg_threshold {
                 silence_run = 0;
+            } else {
+                silence_run += 1;
+                if silence_run >= min_sil_windows.max(1) {
+                    let speech_end = i.saturating_sub(silence_run).saturating_add(1);
+                    let a = s.saturating_sub(pad_windows);
+                    let b = (speech_end + pad_windows).min(probs.len());
+                    if (b.saturating_sub(a) as f32) * win_sec >= min_speech_sec {
+                        raw_segs.push((a as f32 * win_sec, b as f32 * win_sec));
+                    }
+                    start = None;
+                    silence_run = 0;
+                }
+            }
+        } else if p >= threshold {
+            start = Some(i);
+            silence_run = 0;
+        }
+    }
+
+    if let Some(s) = start {
+        let a = s.saturating_sub(pad_windows);
+        let b = probs.len();
+        if (b.saturating_sub(a) as f32) * win_sec >= min_speech_sec {
+            raw_segs.push((a as f32 * win_sec, b as f32 * win_sec));
+        }
+    }
+
+    const MERGE_GAP_SEC: f32 = 0.40;
+    let mut merged: Vec<(f32, f32)> = Vec::with_capacity(raw_segs.len());
+    for (s, e) in raw_segs {
+        if let Some(last) = merged.last_mut() {
+            if s <= last.1 + MERGE_GAP_SEC {
+                last.1 = last.1.max(e);
+                continue;
             }
         }
+        merged.push((s, e));
     }
-    if let Some(s) = start {
-        let a = s.saturating_sub(PREROLL_WINDOWS).max(last_end);
-        let b = probs.len();
-        if (b as f32 - a as f32) * win_sec >= min_speech_sec {
-            segs.push((a as f32 * win_sec, b as f32 * win_sec));
-        }
-    }
-    segs
+
+    merged
 }
 
 #[cfg(test)]
@@ -242,21 +264,22 @@ mod tests {
     #[test]
     fn segments_hysteresis() {
         let mut probs = vec![0.9f32; 31];
-        probs.extend(vec![0.05; 3]);
+        probs.extend(vec![0.20; 3]);
         probs.extend(vec![0.9; 31]);
-        let segs = vad_segments_from_probs(&probs, 0.5, 0.25, 0.3);
+        let segs = vad_segments_from_probs(&probs, 0.30, 0.15, 0.12, 0.30, 0.25);
         assert_eq!(segs.len(), 1);
         assert!(segs[0].1 - segs[0].0 > 1.8);
     }
 
     #[test]
-    fn segments_include_two_preroll_windows() {
-        let mut probs = vec![0.0f32; 5];
+    fn segments_include_padding_windows() {
+        let mut probs = vec![0.0f32; 15];
         probs.extend(vec![0.9; 10]);
-        probs.extend(vec![0.0; 16]);
-        let segs = vad_segments_from_probs(&probs, 0.5, 0.25, 0.5);
+        probs.extend(vec![0.0; 25]);
+        let segs = vad_segments_from_probs(&probs, 0.30, 0.15, 0.12, 0.30, 0.25);
         assert_eq!(segs.len(), 1);
-        assert!((segs[0].0 - 3.0 * 0.032).abs() < 1e-6);
-        assert!((segs[0].1 - 15.0 * 0.032).abs() < 1e-6);
+        // 0.25 сек паддинг = ~8 окон с каждой стороны
+        assert!(segs[0].0 <= (15.0 - 7.0) * 0.032);
+        assert!(segs[0].1 >= (25.0 + 7.0) * 0.032);
     }
 }

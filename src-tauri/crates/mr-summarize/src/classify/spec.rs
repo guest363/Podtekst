@@ -117,14 +117,22 @@ pub(super) fn spec() -> &'static Spec {
     })
 }
 
+fn hash_lf(raw: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    for &b in raw {
+        if b != b'\r' {
+            hasher.update([b]);
+        }
+    }
+    hex(&hasher.finalize())
+}
+
 pub(super) fn spec_sha256() -> String {
-    hex(&Sha256::digest(include_bytes!(
-        "../../classify-spec.v1.json"
-    )))
+    hash_lf(include_bytes!("../../classify-spec.v1.json"))
 }
 
 pub(super) fn stopwords_sha256() -> String {
-    hex(&Sha256::digest(include_bytes!("../../stopwords-v1.txt")))
+    hash_lf(include_bytes!("../../stopwords-v1.txt"))
 }
 
 pub(super) fn hex(bytes: &[u8]) -> String {

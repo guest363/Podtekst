@@ -5,9 +5,11 @@ use mr_ml::onnx::vad::{vad_segments_from_probs, VadRunStats, VAD_WINDOW};
 
 use super::asr_engine::models_root;
 
-pub(super) const VAD_THRESHOLD: f32 = 0.25;
-pub(super) const VAD_MIN_SPEECH_SEC: f32 = 0.25;
-pub(super) const VAD_MIN_SILENCE_SEC: f32 = 0.5;
+pub(super) const VAD_THRESHOLD: f32 = 0.30;
+pub(super) const VAD_NEG_THRESHOLD: f32 = 0.15;
+pub(super) const VAD_MIN_SPEECH_SEC: f32 = 0.12;
+pub(super) const VAD_MIN_SILENCE_SEC: f32 = 0.30;
+pub(super) const VAD_SPEECH_PAD_SEC: f32 = 0.25;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct AudioStats {
@@ -96,8 +98,10 @@ pub(super) fn log_vad_summary(ch: i32, probs: &[f32], stats: VadRunStats) -> Vec
     let segments = vad_segments_from_probs(
         probs,
         VAD_THRESHOLD,
+        VAD_NEG_THRESHOLD,
         VAD_MIN_SPEECH_SEC,
         VAD_MIN_SILENCE_SEC,
+        VAD_SPEECH_PAD_SEC,
     );
     if !cfg!(debug_assertions) {
         return segments;

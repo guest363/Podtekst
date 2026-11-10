@@ -612,6 +612,10 @@ const SPEAKER_PALETTE = [
   '#047857',
   '#92400e',
   '#9d174d',
+  '#3730a3',
+  '#115e59',
+  '#7c2d12',
+  '#4c1d95',
 ]
 
 const speakerIndex = (name: string): number => {

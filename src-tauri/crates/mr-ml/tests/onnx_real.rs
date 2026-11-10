@@ -195,7 +195,7 @@ fn vad_finds_speech_in_real_recording() {
     let max_p = probs.iter().cloned().fold(0.0f32, f32::max);
     println!("vad: тихие окна p={lo:.3}, громкие p={hi:.3}, max={max_p:.3}");
     assert!(hi > lo, "VAD не различает речь и тишину");
-    let segs = mr_ml::onnx::vad::vad_segments_from_probs(&probs, 0.15, 0.25, 0.3);
+    let segs = mr_ml::onnx::vad::vad_segments_from_probs(&probs, 0.30, 0.15, 0.12, 0.30, 0.25);
     println!("vad: сегментов={} первый={:?}", segs.len(), segs.first());
     assert!(!segs.is_empty(), "VAD не нашёл речь в реальной записи");
 }
@@ -226,7 +226,7 @@ fn gigaam_transcribes_real_russian_speech() {
     };
     let mut vad = mr_ml::onnx::vad::SileroVad::load(&vad_p).unwrap();
     let probs = vad.process_all(&wav).unwrap();
-    let segs = mr_ml::onnx::vad::vad_segments_from_probs(&probs, 0.15, 0.25, 0.3);
+    let segs = mr_ml::onnx::vad::vad_segments_from_probs(&probs, 0.30, 0.15, 0.12, 0.30, 0.25);
     assert!(!segs.is_empty());
     let (s, e) = segs
         .iter()
@@ -328,7 +328,7 @@ fn whisper_transcribes_every_vad_segment() {
     let mut vad = mr_ml::onnx::vad::SileroVad::load(&vad_path).expect("vad load");
     let probs = vad.process_all(&wav).expect("vad run");
     // Пороги как в конвейере приложения (diag.rs).
-    let segments = mr_ml::onnx::vad::vad_segments_from_probs(&probs, 0.25, 0.25, 0.5);
+    let segments = mr_ml::onnx::vad::vad_segments_from_probs(&probs, 0.30, 0.15, 0.12, 0.30, 0.25);
     assert!(!segments.is_empty(), "VAD не нашёл речь");
     let mut ws = mr_ml::onnx::whisper::Whisper::load(&model_dir).expect("whisper load");
     for (i, (s, e)) in segments.iter().enumerate() {
@@ -420,6 +420,94 @@ fn embedding_is_deterministic_and_sane() {
         assert!(cross.is_finite());
     }
     assert!(emb.embed(&wav[..1000]).expect("short").is_none());
+}
+
+#[test]
+fn batched_embeddings_match_single() {
+    let Some(dir) = models_dir() else {
+        eprintln!("SKIP: нет моделей");
+        return;
+    };
+    let Some(emb_path) = embedding_model_file(&dir) else {
+        eprintln!("SKIP: нет эмбеддинга");
+        return;
+    };
+    let Some(wav) = test_wav() else {
+        eprintln!("SKIP: нет wav");
+        return;
+    };
+    let spans: [(f32, f32); 4] = [(0.0, 1.0), (1.0, 1.8), (3.0, 0.6), (4.0, 2.2)];
+    let Some(last_end) = spans
+        .iter()
+        .map(|(start, dur)| ((start + dur) * 16000.0) as usize)
+        .max()
+    else {
+        return;
+    };
+    if wav.len() < last_end {
+        eprintln!("SKIP: wav короче {} сэмплов", last_end);
+        return;
+    }
+    let chunks: Vec<&[f32]> = spans
+        .iter()
+        .map(|(start, dur)| {
+            let lo = (*start * 16000.0) as usize;
+            &wav[lo..lo + (*dur * 16000.0) as usize]
+        })
+        .collect();
+    let same: Vec<&[f32]> = [0.0, 2.0, 4.0]
+        .into_iter()
+        .map(|start| {
+            let lo = (start * 16000.0) as usize;
+            &wav[lo..lo + 16000]
+        })
+        .collect();
+    let mut emb = mr_ml::onnx::embed::EmbeddingExtractor::load(&emb_path).expect("emb load");
+    let single: Vec<_> = chunks
+        .iter()
+        .map(|chunk| emb.embed(chunk).expect("single"))
+        .collect();
+    let batched = emb.embed_batch(&chunks).expect("batch");
+    assert_eq!(batched.len(), chunks.len());
+    for (index, (single, batched)) in single.iter().zip(batched).enumerate() {
+        match (single, &batched) {
+            (Some(single), Some(batched)) => {
+                let cos = mr_ml::cosine_similarity(single, batched);
+                println!("batch[{index}]: cos={cos:.4}");
+                assert!(cos > 0.99, "batch[{index}] разошёлся: {cos}");
+            }
+            (None, None) => {}
+            _ => panic!("batch[{index}]: single={single:?}, batched={batched:?}"),
+        }
+    }
+    let single_same: Vec<_> = same
+        .iter()
+        .map(|chunk| emb.embed(chunk).expect("single same"))
+        .collect();
+    let batched_same = emb.embed_batch(&same).expect("batch same");
+    for (index, (single, batched)) in single_same.iter().zip(batched_same).enumerate() {
+        let single = single.as_ref().expect("same single");
+        let batched = batched.expect("same batch");
+        let cos = mr_ml::cosine_similarity(single, &batched);
+        println!("same[{index}]: cos={cos:.6}");
+        assert!(cos > 0.999, "same[{index}] разошёлся: {cos}");
+    }
+
+    let repeated: Vec<&[f32]> = (0..8)
+        .map(|index| {
+            let lo = (index * 16000) as usize;
+            &wav[lo..lo + 16000]
+        })
+        .collect();
+    let started = std::time::Instant::now();
+    for chunk in &repeated {
+        emb.embed(chunk).expect("timing single");
+    }
+    let single_ms = started.elapsed().as_millis();
+    let started = std::time::Instant::now();
+    emb.embed_batch(&repeated).expect("timing batch");
+    let batch_ms = started.elapsed().as_millis();
+    println!("timing 8x1s: single={single_ms}ms batch={batch_ms}ms");
 }
 
 /// Приёмочный тест ERes2NetV2 против официальных примеров 3D-Speaker
