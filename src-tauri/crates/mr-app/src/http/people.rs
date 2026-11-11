@@ -570,6 +570,30 @@ struct PrototypeSample<'a> {
     quality: Option<f64>,
 }
 
+/// Битый файл или чужое пространство — ошибка, а не пустой список: иначе
+/// следующая запись молча стирает все накопленные отпечатки.
+fn load_pack_profiles(path: &Path) -> Result<Vec<serde_json::Value>, String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("Не удалось прочитать голосовые отпечатки: {error}")),
+    };
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(|_| {
+        "Файл голосовых отпечатков повреждён: сохранение стёрло бы записанные голоса".to_string()
+    })?;
+    if value
+        .get("embedding_space")
+        .and_then(|x| x.as_str())
+        .is_some_and(|space| space != EMBEDDING_SPACE)
+    {
+        return Err(
+            "Голосовые отпечатки пакета собраны другой моделью: сохраните голос в новый пакет"
+                .to_string(),
+        );
+    }
+    Ok(parse_profiles(&value))
+}
+
 fn store_voiceprint(
     name: &str,
     target_pack_id: Option<&str>,
@@ -598,39 +622,14 @@ fn store_voiceprint(
     );
 
     let _guard = lock_voiceprints();
-    let mut profiles: Vec<serde_json::Value> = match std::fs::read_to_string(&vp_file) {
-        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
-            Ok(value) => {
-                if value
-                    .get("embedding_space")
-                    .and_then(|x| x.as_str())
-                    .is_some_and(|s| s != EMBEDDING_SPACE)
-                {
-                    vec![]
-                } else {
-                    parse_profiles(&value)
-                }
-            }
-            Err(error) => {
-                log::warn!(
-                    target: "json",
-                    path = crate::logging::file_token(&vp_file),
-                    error = error.to_string();
-                    "ev=json.load"
-                );
-                vec![]
-            }
-        },
+    let mut profiles = match load_pack_profiles(&vp_file) {
+        Ok(profiles) => profiles,
         Err(error) => {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                log::warn!(
-                    target: "json",
-                    path = crate::logging::file_token(&vp_file),
-                    error = error.to_string();
-                    "ev=json.load"
-                );
+            drop(_guard);
+            if let (Some(rel), Some(parent)) = (snippet_rel.as_deref(), vp_file.parent()) {
+                remove_snippet(parent, rel);
             }
-            vec![]
+            return Err(error);
         }
     };
     profiles.retain(voiceprint_usable);
@@ -2045,6 +2044,103 @@ mod tests {
             }),
             "слабый прототип должен быть вытеснен первым"
         );
+
+        if let Some(p) = prev {
+            std::env::set_var("MEETING_RECORDER_DATA_DIR", p);
+        } else {
+            std::env::remove_var("MEETING_RECORDER_DATA_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn corrupt_voiceprints_block_save_without_wipe() {
+        let _guard = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!(
+            "mr-voiceprint-corrupt-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let prev = std::env::var("MEETING_RECORDER_DATA_DIR").ok();
+        std::env::set_var("MEETING_RECORDER_DATA_DIR", &dir);
+
+        store_voiceprint(
+            "Тест-Сохранение",
+            Some("default"),
+            l2_normalize(&vec![1.0; EMBEDDING_DIM]),
+            PrototypeSample {
+                start: Some(0.0),
+                end: Some(2.0),
+                quality: Some(1.0),
+                ..Default::default()
+            },
+        )
+        .expect("первый профиль");
+        let vp_file = dir.join("packs/default/voiceprints.json");
+        std::fs::write(&vp_file, "{ broken").expect("порча файла");
+
+        let error = store_voiceprint(
+            "Тест-Новый",
+            Some("default"),
+            l2_normalize(&vec![0.5; EMBEDDING_DIM]),
+            PrototypeSample::default(),
+        )
+        .expect_err("битый файл обязан блокировать запись");
+        assert!(error.contains("повреждён"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(&vp_file).expect("файл на месте"),
+            "{ broken",
+            "битый файл не должен перезаписываться"
+        );
+
+        if let Some(p) = prev {
+            std::env::set_var("MEETING_RECORDER_DATA_DIR", p);
+        } else {
+            std::env::remove_var("MEETING_RECORDER_DATA_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn foreign_embedding_space_blocks_save_without_wipe() {
+        let _guard = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!(
+            "mr-voiceprint-space-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let prev = std::env::var("MEETING_RECORDER_DATA_DIR").ok();
+        std::env::set_var("MEETING_RECORDER_DATA_DIR", &dir);
+
+        let vp_file = dir.join("packs/default/voiceprints.json");
+        std::fs::create_dir_all(vp_file.parent().expect("каталог пакета")).expect("каталог");
+        let foreign = json!({
+            "version": 3,
+            "embedding_space": "other-space",
+            "profiles": [{"name": "Старый Голос", "embedding": []}],
+        });
+        std::fs::write(&vp_file, serde_json::to_string(&foreign).expect("json")).expect("запись");
+
+        let error = store_voiceprint(
+            "Тест-Новый",
+            Some("default"),
+            l2_normalize(&vec![0.5; EMBEDDING_DIM]),
+            PrototypeSample::default(),
+        )
+        .expect_err("чужое пространство обязано блокировать запись");
+        assert!(error.contains("другой моделью"), "{error}");
+        let text = std::fs::read_to_string(&vp_file).expect("файл на месте");
+        assert!(text.contains("Старый Голос"), "профили не должны стираться");
 
         if let Some(p) = prev {
             std::env::set_var("MEETING_RECORDER_DATA_DIR", p);
