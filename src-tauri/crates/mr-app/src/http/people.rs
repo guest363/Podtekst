@@ -184,7 +184,7 @@ pub(super) fn read_people_list(path: &Path) -> Option<Vec<serde_json::Value>> {
     })
 }
 
-fn same_name(a: &str, b: &str) -> bool {
+pub(super) fn same_name(a: &str, b: &str) -> bool {
     a.trim().to_lowercase() == b.trim().to_lowercase()
 }
 
@@ -870,11 +870,12 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
     }
 
     ensure_person_in_pack(&name, Some("Участник"), &chosen_pack);
+    let mut state = None;
     if !audio_file.is_empty() {
         // Правим расшифровки только внутри папки записей (запись в произвольную
         // директорию через чужое имя файла недопустима).
         if inside_save_dir(Path::new(&audio_file)) {
-            rename_speaker_in_files(
+            state = rename_speaker_in_files(
                 Path::new(&audio_file),
                 &name,
                 if old_name.is_empty() {
@@ -885,11 +886,19 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
             );
         }
     }
-    json_response(
-        request,
-        json!({"ok": true, "voiceprint_saved": !emb.is_empty(), "pack_id": chosen_pack}),
-        200,
-    );
+    // UI обновляет текст из этого ответа, без повторного GET: иначе на медленной
+    // цепочке (loadPeople → reload) расшифровка оставалась старой.
+    let mut payload =
+        json!({"ok": true, "voiceprint_saved": !emb.is_empty(), "pack_id": chosen_pack});
+    if let (Some(dst), Some(src)) = (
+        payload.as_object_mut(),
+        state.and_then(|v| v.as_object().cloned()),
+    ) {
+        for (key, value) in src {
+            dst.insert(key, value);
+        }
+    }
+    json_response(request, payload, 200);
 }
 
 pub(super) fn handle_people_add(request: tiny_http::Request, body: serde_json::Value) {
@@ -1578,7 +1587,11 @@ fn clear_matched_in_transcript(audio: &Path, name: &str) {
     }
 }
 
-fn rename_speaker_in_files(audio: &Path, new_name: &str, old_name: Option<&str>) {
+fn rename_speaker_in_files(
+    audio: &Path,
+    new_name: &str,
+    old_name: Option<&str>,
+) -> Option<serde_json::Value> {
     let stem = audio
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
@@ -1590,109 +1603,112 @@ fn rename_speaker_in_files(audio: &Path, new_name: &str, old_name: Option<&str>)
     let json_p = parent.join(format!("{stem}.transcript.json"));
     let md_p = parent.join(format!("{stem}.md"));
     let txt_p = parent.join(format!("{stem}.txt"));
-    let mut old = old_name.map(|s| s.to_string());
-    let mut unique_speakers = Vec::new();
-    if let Ok(t) = std::fs::read_to_string(&json_p) {
-        if let Ok(mut data) = serde_json::from_str::<serde_json::Value>(&t) {
-            if let Some(meta) = data.get_mut("meta") {
-                if let Some(arr) = meta.get_mut("speakers_info").and_then(|v| v.as_array_mut()) {
-                    for spk in arr.iter_mut() {
-                        let cur = spk
-                            .get("name")
-                            .and_then(|x| x.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let hit = match &old {
-                            Some(o) => same_name(&cur, o),
-                            None => true,
-                        };
-                        if hit {
-                            if old.is_none() {
-                                old = Some(cur);
-                            }
-                            spk["name"] = json!(new_name);
-                            spk["matched"] = json!(true);
-                            spk["matched_name"] = json!(new_name);
-                        }
+    // Без исходного имени не знаем, кого переименовывать: молча не трогаем файлы.
+    let old = old_name?;
+    let source = std::fs::read_to_string(&json_p).ok()?;
+    let mut data: serde_json::Value = serde_json::from_str(&source).ok()?;
+
+    // У одной персоны бывает две карточки: профиль и прежний анонимный кластер.
+    // Собираем все её имена, иначе переименуется только часть реплик.
+    let mut aliases: Vec<String> = Vec::new();
+    if let Some(arr) = data
+        .get("meta")
+        .and_then(|m| m.get("speakers_info"))
+        .and_then(|v| v.as_array())
+    {
+        for spk in arr {
+            let cur = spk.get("name").and_then(|x| x.as_str()).unwrap_or("");
+            let matched = spk
+                .get("matched_name")
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
+            if same_name(cur, old) || same_name(matched, old) {
+                for value in [cur, matched] {
+                    if !value.is_empty() && !aliases.iter().any(|a| a == value) {
+                        aliases.push(value.to_string());
                     }
                 }
-                if let Some(list) = meta.get_mut("speakers").and_then(|v| v.as_array_mut()) {
-                    if let Some(o) = old.as_deref() {
-                        for s in list.iter_mut() {
-                            if s.as_str().map(|n| same_name(n, o)).unwrap_or(false) {
-                                *s = json!(new_name);
-                            }
-                        }
-                    }
-                    let mut deduped = Vec::new();
-                    for s in list.drain(..) {
-                        if !deduped.contains(&s) {
-                            deduped.push(s);
-                        }
-                    }
-                    *list = deduped;
-                }
-                if let Some(list) = meta.get("speakers").and_then(|v| v.as_array()) {
-                    for s in list {
-                        if let Some(name) = s.as_str() {
-                            if !unique_speakers.contains(&name.to_string()) {
-                                unique_speakers.push(name.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-            if let Some(arr) = data.get_mut("utterances").and_then(|v| v.as_array_mut()) {
-                if let Some(o) = &old {
-                    for u in arr.iter_mut() {
-                        if u.get("speaker")
-                            .and_then(|x| x.as_str())
-                            .map(|n| same_name(n, o))
-                            .unwrap_or(false)
-                        {
-                            u["speaker"] = json!(new_name);
-                        }
-                    }
-                }
-            }
-            let _ = write_atomic(
-                &json_p,
-                serde_json::to_string_pretty(&data)
-                    .unwrap_or_default()
-                    .as_bytes(),
-            );
-        }
-    }
-    if let Some(o) = &old {
-        if let Ok(t) = std::fs::read_to_string(&md_p) {
-            let mut patched = t.replace(&format!("] {o}:"), &format!("] {new_name}:"));
-            if !unique_speakers.is_empty() {
-                let lines: Vec<String> = patched
-                    .lines()
-                    .map(|line| {
-                        if line.starts_with("**Спикеры:**") {
-                            format!("**Спикеры:** {}", unique_speakers.join(", "))
-                        } else {
-                            line.to_string()
-                        }
-                    })
-                    .collect();
-                patched = lines.join("\n");
-                if t.ends_with('\n') {
-                    patched.push('\n');
-                }
-            }
-            if patched != t {
-                let _ = write_atomic(&md_p, patched.as_bytes());
-            }
-        }
-        if let Ok(t) = std::fs::read_to_string(&txt_p) {
-            let patched = t.replace(&format!("] {o}:"), &format!("] {new_name}:"));
-            if patched != t {
-                let _ = write_atomic(&txt_p, patched.as_bytes());
             }
         }
     }
+    if !aliases.iter().any(|a| same_name(a, old)) {
+        aliases.push(old.to_string());
+    }
+    if let Some(arr) = data
+        .get_mut("meta")
+        .and_then(|m| m.get_mut("speakers_info"))
+        .and_then(|v| v.as_array_mut())
+    {
+        for spk in arr.iter_mut() {
+            let cur = spk.get("name").and_then(|x| x.as_str()).unwrap_or("");
+            let matched = spk
+                .get("matched_name")
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
+            if aliases
+                .iter()
+                .any(|a| same_name(cur, a) || same_name(matched, a))
+            {
+                spk["name"] = json!(new_name);
+                spk["matched"] = json!(true);
+                spk["matched_name"] = json!(new_name);
+            }
+        }
+    }
+    if let Some(list) = data
+        .get_mut("meta")
+        .and_then(|m| m.get_mut("speakers"))
+        .and_then(|v| v.as_array_mut())
+    {
+        for s in list.iter_mut() {
+            if s.as_str()
+                .is_some_and(|name| aliases.iter().any(|a| same_name(name, a)))
+            {
+                *s = json!(new_name);
+            }
+        }
+        let mut deduped: Vec<serde_json::Value> = Vec::new();
+        for s in list.drain(..) {
+            if !deduped.contains(&s) {
+                deduped.push(s);
+            }
+        }
+        *list = deduped;
+    }
+    if let Some(arr) = data.get_mut("utterances").and_then(|v| v.as_array_mut()) {
+        for u in arr.iter_mut() {
+            let hit = u
+                .get("speaker")
+                .and_then(|x| x.as_str())
+                .is_some_and(|name| aliases.iter().any(|a| same_name(name, a)));
+            if hit {
+                u["speaker"] = json!(new_name);
+            }
+        }
+    }
+    let _ = write_atomic(
+        &json_p,
+        serde_json::to_string_pretty(&data)
+            .unwrap_or_default()
+            .as_bytes(),
+    );
+
+    let utterances: Vec<crate::transcribe::Utterance> =
+        serde_json::from_value(data["utterances"].clone()).ok()?;
+    let markdown = crate::transcribe::report::build_markdown(&data["meta"], &utterances);
+    let text = crate::transcribe::report::build_text(&utterances);
+    for (path, contents) in [(&md_p, markdown.clone()), (&txt_p, text)] {
+        let _ = write_atomic(path, contents.as_bytes());
+    }
+    let rev = serde_json::from_value::<Vec<mr_summarize::Utterance>>(data["utterances"].clone())
+        .ok()
+        .map(|items| mr_summarize::artifact::source_rev(&items));
+    Some(json!({
+        "utterances": data["utterances"],
+        "speakers_info": data["meta"]["speakers_info"],
+        "markdown": markdown,
+        "rev": rev,
+    }))
 }
 
 #[cfg(test)]
@@ -2035,6 +2051,72 @@ mod tests {
         } else {
             std::env::remove_var("MEETING_RECORDER_DATA_DIR");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_updates_both_cards_and_returns_state() {
+        let dir = std::env::temp_dir().join(format!("mr-rename-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("каталог");
+        let audio = dir.join("meeting.wav");
+        std::fs::write(&audio, b"").expect("файл");
+        let data = json!({
+            "meta": {
+                "speakers": ["Собеседник 1", "Сергей Золотов"],
+                "speakers_info": [
+                    {"name": "Собеседник 1", "matched": true, "matched_name": "Сергей Золотов"},
+                    {"name": "Сергей Золотов", "matched": true, "matched_name": "Сергей Золотов"}
+                ]
+            },
+            "utterances": [
+                {"start": 0.0, "end": 1.0, "text": "раз", "speaker": "Собеседник 1", "channel": 1},
+                {"start": 1.0, "end": 2.0, "text": "два", "speaker": "Сергей Золотов", "channel": 1}
+            ],
+            "stats": {}
+        });
+        std::fs::write(
+            dir.join("meeting.transcript.json"),
+            serde_json::to_string_pretty(&data).expect("json"),
+        )
+        .expect("запись");
+
+        let state = rename_speaker_in_files(&audio, "Сергей Петров", Some("Сергей Золотов"))
+            .expect("состояние");
+        let speakers: Vec<&str> = state["utterances"]
+            .as_array()
+            .expect("реплики")
+            .iter()
+            .map(|u| u["speaker"].as_str().unwrap_or(""))
+            .collect();
+        assert_eq!(speakers, vec!["Сергей Петров", "Сергей Петров"]);
+        let cards = state["speakers_info"].as_array().expect("карточки");
+        assert!(cards.iter().all(|c| c["name"] == "Сергей Петров"));
+        let markdown = std::fs::read_to_string(dir.join("meeting.md")).expect("md");
+        assert!(markdown.contains("Сергей Петров"), "{markdown}");
+        assert!(!markdown.contains("Собеседник 1"), "{markdown}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_without_source_keeps_transcript() {
+        let dir = std::env::temp_dir().join(format!("mr-rename-none-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("каталог");
+        let audio = dir.join("meeting.wav");
+        std::fs::write(&audio, b"").expect("файл");
+        let json_p = dir.join("meeting.transcript.json");
+        let data = json!({
+            "meta": {"speakers": ["А"], "speakers_info": [{"name": "А"}]},
+            "utterances": [
+                {"start": 0.0, "end": 1.0, "text": "раз", "speaker": "А", "channel": 0}
+            ],
+            "stats": {}
+        });
+        let before = serde_json::to_string_pretty(&data).expect("json");
+        std::fs::write(&json_p, &before).expect("запись");
+        assert!(rename_speaker_in_files(&audio, "Б", None).is_none());
+        assert_eq!(std::fs::read_to_string(&json_p).expect("json"), before);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

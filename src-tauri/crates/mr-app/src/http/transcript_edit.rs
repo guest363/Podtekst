@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 
 use super::json_response;
 use super::media::inside_save_dir;
+use super::people::same_name;
 use crate::config::save_dir;
 use crate::transcribe::{report, Utterance};
 
@@ -238,13 +239,47 @@ fn apply_edit(data: &mut Value, body: &Value) -> Result<(), String> {
             }
         }
     }
-    if !new_speaker.is_empty()
-        && !speakers_info
-            .iter()
-            .any(|info| info["name"].as_str() == Some(new_speaker))
-    {
-        speakers_info
-            .push(json!({"name": new_speaker, "utterances_count": 0, "total_speech_sec": 0}));
+    let new_name = new_speaker.trim();
+    if !new_name.is_empty() {
+        // Карточка могла быть записана под прежним анонимным именем, но уже
+        // опознана по профилю: сверяем и `matched_name`, иначе плодим дубль.
+        let known = speakers_info.iter().position(|info| {
+            ["name", "matched_name"].iter().any(|key| {
+                info[*key]
+                    .as_str()
+                    .is_some_and(|name| same_name(name, new_name))
+            })
+        });
+        if let Some(position) = known {
+            if speakers_info[position]["name"].as_str() != Some(new_name) {
+                speakers_info[position]["name"] = json!(new_name);
+            }
+        } else {
+            let mut channels = utterances
+                .iter()
+                .filter(|u| {
+                    u["speaker"]
+                        .as_str()
+                        .is_some_and(|s| same_name(s, new_name))
+                })
+                .filter_map(|u| u["channel"].as_i64());
+            let first = channels.next();
+            let channel = if channels.all(|c| Some(c) == first) {
+                first
+            } else {
+                None
+            };
+            speakers_info.push(json!({
+                "id": format!("edited_{new_name}"),
+                "name": new_name,
+                "channel": channel,
+                "matched": false,
+                "similarity": 0.0,
+                "candidates": [],
+                "utterances_count": 0,
+                "total_speech_sec": 0.0,
+            }));
+        }
     }
     for info in speakers_info {
         let name = info["name"].as_str().unwrap_or("");
@@ -349,6 +384,46 @@ mod tests {
         .unwrap();
         assert_eq!(data["meta"]["speakers_info"][1]["matched"], json!(false));
         assert!(data["meta"]["speakers_info"][1]["matched_name"].is_null());
+    }
+
+    #[test]
+    fn rename_to_matched_profile_does_not_duplicate_card() {
+        let mut data = json!({
+            "meta": {"speakers": ["Собеседник 1"], "speakers_info": [
+                {"name": "Собеседник 1", "matched": true, "matched_name": "Сергей Золотов"}
+            ]},
+            "stats": {},
+            "utterances": [
+                {"start": 0.0, "end": 1.0, "speaker": "Собеседник 1", "text": "раз", "channel": 1}
+            ]
+        });
+        apply_edit(&mut data, &json!({"index": 0, "speaker": "Сергей Золотов"})).unwrap();
+        let cards = data["meta"]["speakers_info"].as_array().expect("карточки");
+        assert_eq!(cards.len(), 1, "{cards:?}");
+        assert_eq!(cards[0]["name"], "Сергей Золотов");
+        assert_eq!(cards[0]["utterances_count"], 1);
+    }
+
+    #[test]
+    fn new_speaker_card_has_full_schema() {
+        let mut data = json!({
+            "meta": {"speakers": ["Спикер"], "speakers_info": [{"name": "Спикер"}]},
+            "stats": {},
+            "utterances": [
+                {"start": 0.0, "end": 1.0, "speaker": "Спикер", "text": "раз", "channel": 0}
+            ]
+        });
+        apply_edit(&mut data, &json!({"index": 0, "speaker": "Новый"})).unwrap();
+        let cards = data["meta"]["speakers_info"].as_array().expect("карточки");
+        let card = cards
+            .iter()
+            .find(|c| c["name"] == "Новый")
+            .expect("карточка нового спикера");
+        assert_eq!(card["channel"], 0);
+        assert_eq!(card["matched"], false);
+        assert!(card["candidates"].is_array());
+        assert!(card["similarity"].is_number());
+        assert_eq!(card["utterances_count"], 1);
     }
 
     #[test]
