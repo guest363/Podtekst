@@ -24,9 +24,7 @@ let diagBusy = $state(false)
 const isRecording = $derived(recording ?? system.snapshot?.recording?.active === true)
 const releaseUrl = $derived(update.url || 'https://github.com/guest363/podtekst/releases/latest')
 const hasDetails = $derived(
-  Boolean(
-    update.errorCode || update.hint || update.attempt || !update.sourcesAgree || update.stale,
-  ),
+  Boolean(update.errorCode || update.hint || update.attempt || update.stale),
 )
 
 // Владелец пропа может не передать состояние записи: читаем его из снимка системы.
@@ -69,7 +67,6 @@ const detailRows = $derived.by(() => {
   if (update.errorCode) rows.push(['Код ошибки', update.errorCode])
   if (update.hint) rows.push(['Подсказка', update.hint])
   if (update.retryAfterSec > 0) rows.push(['Повтор через', `${update.retryAfterSec} с`])
-  rows.push(['Источники', update.sourcesAgree ? 'совпадают' : 'расходятся'])
   rows.push(['Данные проверки', update.stale ? 'могли устареть' : 'актуальны'])
   if (update.attempt) {
     const a = update.attempt

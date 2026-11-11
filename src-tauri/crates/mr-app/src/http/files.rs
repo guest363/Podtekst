@@ -291,11 +291,16 @@ pub(super) fn handle_upload(mut request: tiny_http::Request) {
     let dir = save_dir();
     let _ = std::fs::create_dir_all(&dir);
     let dest = crate::recording::unique_media_path(&dir, &fname);
+    // Уникальный суффикс: две параллельные загрузки одного имени не должны делить `.part`.
     let part_name = format!(
-        ".{}.part",
+        ".{}.{}.part",
         dest.file_name()
             .and_then(|s| s.to_str())
-            .unwrap_or("upload")
+            .unwrap_or("upload"),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
     );
     let part = dir.join(part_name);
     let mut out = match std::fs::File::create(&part) {

@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
@@ -77,6 +77,51 @@ pub fn remove_person_from_pack(app_data: &Path, pack_id: &str, name: &str) -> Re
     }
 }
 
+/// Профиль, вынутый из файла пакета в памяти: на диск ничего не пишется,
+/// пока цель не приняла данные — иначе сбой на цели теряет источник.
+struct PackProfile {
+    file: PathBuf,
+    kept: Vec<Value>,
+    space: String,
+    profile: Value,
+}
+
+fn take_profile(dir: &Path, name: &str) -> Option<PackProfile> {
+    let file = dir.join("voiceprints.json");
+    let text = fs::read_to_string(&file).ok()?;
+    let value: Value = serde_json::from_str(&text).ok()?;
+    let space = value
+        .get("embedding_space")
+        .and_then(|s| s.as_str())
+        .unwrap_or("eres2netv2-192d")
+        .to_string();
+    let profiles = value
+        .get("profiles")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut profile = None;
+    let kept = profiles
+        .into_iter()
+        .filter(|p| {
+            if profile.is_none()
+                && same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), name)
+            {
+                profile = Some(p.clone());
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+    Some(PackProfile {
+        file,
+        kept,
+        space,
+        profile: profile?,
+    })
+}
+
 pub fn move_person_pack(
     app_data: &Path,
     name: &str,
@@ -97,7 +142,6 @@ pub fn move_person_pack(
         return Err(PacksError::NotFound(to_id.to_string()));
     }
 
-    // 1. Извлекаем и удаляем человека из from_dir/people.json
     let from_people_file = from_dir.join("people.json");
     let from_people: Vec<Value> = match fs::read_to_string(&from_people_file) {
         Ok(text) => serde_json::from_str(&text)?,
@@ -116,94 +160,49 @@ pub fn move_person_pack(
             }
         })
         .collect();
-    write_json_atomic(&from_people_file, &kept_people)?;
 
-    // 2. Извлекаем профиль отпечатка из from_dir/voiceprints.json (или fallback из default)
-    let mut source_vp_dir = from_dir.clone();
-    let mut moved_profile = None;
-    let extract_vp = |vp_dir: &Path| -> Option<Value> {
-        let vp_file = vp_dir.join("voiceprints.json");
-        let text = fs::read_to_string(&vp_file).ok()?;
-        let v: Value = serde_json::from_str(&text).ok()?;
-        let space = v
-            .get("embedding_space")
-            .and_then(|s| s.as_str())
-            .unwrap_or("eres2netv2-192d")
-            .to_string();
-        let profiles = v
-            .get("profiles")
-            .and_then(|x| x.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let mut found = None;
-        let kept_profiles: Vec<Value> = profiles
-            .into_iter()
-            .filter(|p| {
-                if same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), name) {
-                    found = Some(p.clone());
-                    false
-                } else {
-                    true
-                }
-            })
-            .collect();
-        if found.is_some() {
-            let _ = write_json_atomic(&vp_file, &voiceprints_v3(kept_profiles, &space));
-        }
-        found
-    };
-
-    if let Some(prof) = extract_vp(&from_dir) {
-        moved_profile = Some(prof);
-    } else if from_id != "default" {
-        let def_dir = packs_root_dir(app_data).join("default");
-        if def_dir.is_dir() {
-            if let Some(prof) = extract_vp(&def_dir) {
-                moved_profile = Some(prof);
-                source_vp_dir = def_dir;
-            }
-        }
+    let mut source = take_profile(&from_dir, name);
+    if source.is_none() && from_id != "default" {
+        source = take_profile(&packs_root_dir(app_data).join("default"), name);
     }
 
-    // 3. Переносим аудиосниппеты
-    if let Some(ref prof) = moved_profile {
-        if let Some(protos) = prof.get("prototypes").and_then(|x| x.as_array()) {
+    // Сниппеты копируем, а не переносим: до успешной записи цели источник обязан
+    // оставаться целым. Оригиналы уберём последним шагом.
+    let mut copied_snippets = Vec::new();
+    if let Some(profile) = source.as_ref() {
+        if let (Some(protos), Some(source_dir)) = (
+            profile.profile.get("prototypes").and_then(|x| x.as_array()),
+            profile.file.parent(),
+        ) {
+            let root = source_dir.canonicalize().ok();
             for proto in protos {
-                if let Some(rel) = proto.get("snippet_relpath").and_then(|x| x.as_str()) {
-                    let Some(rel) = safe_snippet_rel(rel) else {
-                        continue;
-                    };
-                    let from_wav = source_vp_dir.join(rel);
-                    let to_wav = to_dir.join(rel);
-                    if !from_wav.is_file() {
-                        continue;
-                    }
-                    let Some(root) = source_vp_dir.canonicalize().ok() else {
-                        continue;
-                    };
-                    let Some(real) = from_wav.canonicalize().ok() else {
-                        continue;
-                    };
-                    if !real.starts_with(&root) {
-                        continue;
-                    }
-                    if let Some(p) = to_wav.parent() {
-                        let _ = fs::create_dir_all(p);
-                    }
-                    let _ = fs::rename(&real, &to_wav)
-                        .or_else(|_| fs::copy(&real, &to_wav).map(|_| ()));
-                    let _ = fs::remove_file(&real);
+                let Some(rel) = proto.get("snippet_relpath").and_then(|x| x.as_str()) else {
+                    continue;
+                };
+                let Some(rel) = safe_snippet_rel(rel) else {
+                    continue;
+                };
+                let Some(real) = source_dir.join(rel).canonicalize().ok() else {
+                    continue;
+                };
+                if !root.as_ref().is_some_and(|root| real.starts_with(root)) {
+                    continue;
+                }
+                let to_wav = to_dir.join(rel);
+                if let Some(parent) = to_wav.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                if fs::copy(&real, &to_wav).is_ok() {
+                    copied_snippets.push(real);
                 }
             }
         }
     }
 
-    // 4. Добавляем человека в to_dir/people.json
     let person_val = moved_person.unwrap_or_else(|| json!({"name": name, "role": "Участник"}));
     add_person_to_pack(app_data, to_id, person_val)?;
 
-    // 5. Добавляем профиль в to_dir/voiceprints.json
-    if let Some(prof) = moved_profile {
+    if let Some(source) = &source {
         let to_vp_file = to_dir.join("voiceprints.json");
         let mut to_profiles = vec![];
         let mut to_space = "eres2netv2-192d".to_string();
@@ -222,8 +221,20 @@ pub fn move_person_pack(
         }
         to_profiles
             .retain(|p| !same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), name));
-        to_profiles.push(prof);
+        to_profiles.push(source.profile.clone());
         write_json_atomic(&to_vp_file, &voiceprints_v3(to_profiles, &to_space))?;
+    }
+
+    // Только теперь убираем из источника: сбой выше оставит дубликат, а не потерю.
+    write_json_atomic(&from_people_file, &kept_people)?;
+    if let Some(source) = &source {
+        write_json_atomic(
+            &source.file,
+            &voiceprints_v3(source.kept.clone(), &source.space),
+        )?;
+    }
+    for snippet in copied_snippets {
+        let _ = fs::remove_file(snippet);
     }
 
     Ok(())
@@ -299,6 +310,20 @@ mod tests {
 
         assert!(move_person_pack(&app, "Инженер 3", &p1.id, &p2.id).is_err());
         assert_eq!(fs::read_to_string(&target).unwrap(), "{ broken");
+        let source_vp = app.join("packs").join(&p1.id).join("voiceprints.json");
+        assert!(
+            fs::read_to_string(&source_vp)
+                .unwrap()
+                .contains("Инженер 3"),
+            "сбой на цели не должен вырезать профиль из источника"
+        );
+        let source_people = app.join("packs").join(&p1.id).join("people.json");
+        assert!(
+            fs::read_to_string(&source_people)
+                .unwrap()
+                .contains("Инженер 3"),
+            "сбой на цели не должен вырезать человека из источника"
+        );
     }
 
     #[test]

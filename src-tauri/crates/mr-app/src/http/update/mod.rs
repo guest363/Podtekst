@@ -135,7 +135,6 @@ pub(crate) fn handle_update_check(request: tiny_http::Request, force: bool) {
                     "notes": info.get("notes"),
                     "notes_truncated": info.get("notes_truncated"),
                     "size_bytes": info.get("size_bytes"),
-                    "sources_agree": true,
                     "source": info.get("source"),
                     "stale": false,
                     "skipped": skipped.as_deref() == Some(latest),

@@ -408,9 +408,14 @@ pub(crate) fn mux_screen_and_audio(
 ) -> Result<(), String> {
     crate::note!("[SCREEN] Склейка видео {video_path:?} и аудио {audio_path:?} -> {final_path:?}");
 
-    let remove_leftovers = || {
-        let _ = std::fs::remove_file(video_path);
+    // Исходник экрана — единственная копия видео: сбой склейки не должен его удалять.
+    let fail = |reason: String| -> Result<(), String> {
         let _ = std::fs::remove_file(final_path);
+        let kept = keep_raw_video(video_path, audio_path);
+        let note = kept
+            .map(|path| format!("; запись экрана сохранена: {}", path.display()))
+            .unwrap_or_default();
+        Err(format!("{reason}{note}"))
     };
 
     let mut cmd = Command::new(mr_audio::tools::ffmpeg_path());
@@ -428,10 +433,7 @@ pub(crate) fn mux_screen_and_audio(
 
     let output = match cmd.output() {
         Ok(output) => output,
-        Err(e) => {
-            remove_leftovers();
-            return Err(format!("Не удалось запустить ffmpeg: {e}"));
-        }
+        Err(e) => return fail(format!("Не удалось запустить ffmpeg: {e}")),
     };
     if output.status.success() && final_path.is_file() {
         let size = std::fs::metadata(final_path).map(|m| m.len()).unwrap_or(0);
@@ -460,10 +462,7 @@ pub(crate) fn mux_screen_and_audio(
 
     let output = match cmd.output() {
         Ok(output) => output,
-        Err(e) => {
-            remove_leftovers();
-            return Err(format!("Не удалось запустить ffmpeg: {e}"));
-        }
+        Err(e) => return fail(format!("Не удалось запустить ffmpeg: {e}")),
     };
     if output.status.success() && final_path.is_file() {
         let size = std::fs::metadata(final_path).map(|m| m.len()).unwrap_or(0);
@@ -475,13 +474,23 @@ pub(crate) fn mux_screen_and_audio(
         }
     }
 
-    // Неудачная склейка не должна оставлять мусор: исходник экрана и частичный mp4.
-    remove_leftovers();
     let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(format!(
+    fail(format!(
         "Ошибка ffmpeg: {}",
         stderr.chars().take(300).collect::<String>()
     ))
+}
+
+/// Кладёт сырое видео экрана рядом с аудио, чтобы сбой склейки не уничтожил запись.
+fn keep_raw_video(video_path: &Path, audio_path: &Path) -> Option<PathBuf> {
+    let dir = audio_path.parent()?;
+    let stem = audio_path.file_stem()?.to_string_lossy();
+    let ext = video_path
+        .extension()
+        .map(|ext| ext.to_string_lossy().to_string())
+        .unwrap_or_else(|| "mp4".to_string());
+    let dest = crate::recording::unique_media_path(dir, &format!("{stem}.screen.{ext}"));
+    std::fs::rename(video_path, &dest).ok().map(|()| dest)
 }
 
 #[cfg(test)]
@@ -491,6 +500,27 @@ mod tests {
     #[test]
     fn test_screen_support_check() {
         let _ = is_screen_capture_supported();
+    }
+
+    #[test]
+    fn failed_mux_keeps_raw_screen_video_next_to_audio() {
+        let dir = std::env::temp_dir().join(format!("mr-screen-keep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let audio = dir.join("meeting.wav");
+        std::fs::write(&audio, b"wav").unwrap();
+        let video = dir.join(".mr_screen_1.mp4");
+        std::fs::write(&video, b"video").unwrap();
+
+        let kept = keep_raw_video(&video, &audio).expect("видео обязано сохраниться");
+        assert_eq!(
+            kept.file_name().map(|n| n.to_string_lossy().to_string()),
+            Some("meeting.screen.mp4".to_string())
+        );
+        assert!(kept.is_file());
+        assert!(!video.exists(), "сырой файл переехал, а не остался в temp");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
