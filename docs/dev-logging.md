@@ -111,8 +111,8 @@ dev-runs/<run_id>/
 ```bash
 LOG=<app_data>/logs/dev/dev-*.log
 
-# VAD не увидел речь или каналы не свернулись в моно
-rg 'ev=vad\.(summary|hist)|ev=audio\.(channel|mix|fold|bleed)' "$LOG" | tail -20
+# VAD не увидел речь
+rg 'ev=vad\.(summary|hist)|ev=audio\.(channel|mix)' "$LOG" | tail -20
 
 # Фраза потерялась/разрезана
 rg 'ev=(vad\.group|vad\.merge_quiet|asr\.seg|asr\.loop|asr\.empty|diar\.merge_utts)' "$LOG"

@@ -1,6 +1,7 @@
 mod artifacts;
 mod asr_engine;
 mod channel_mix;
+mod clean_speech;
 mod diag;
 pub mod diarize;
 pub mod document;

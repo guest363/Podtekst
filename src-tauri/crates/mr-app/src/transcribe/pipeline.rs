@@ -10,7 +10,6 @@ use super::asr_engine::{pick_asr_engine, AsrEngine};
 use super::channel_mix;
 use super::diag::{audio_stats, stage_begin, stage_end, AudioStats};
 use super::document::{unique_speech_sec, Meta, Stats, TranscriptDoc};
-use super::echo::FrameClass;
 use super::events;
 use super::memory;
 use super::models::ModelsGuard;
@@ -183,7 +182,11 @@ fn transcribe_file_inner(
         "ev=audio.decode"
     );
     stage_end("decode", decode_stage);
-    let mut channels = if video && !crate::media_registry::load_registry().is_owned(audio_path) {
+    let downmixed_video = video && !crate::media_registry::load_registry().is_owned(audio_path);
+    let mut source_channels: Vec<Option<i32>> =
+        (0..channels.len()).map(|ch| Some(ch as i32)).collect();
+    let mut channels = if downmixed_video {
+        source_channels = vec![None];
         let n = channels.iter().map(|c| c.len()).max().unwrap_or(0);
         let mut mono = vec![0.0f32; n];
         for ch in &channels {
@@ -211,43 +214,12 @@ fn transcribe_file_inner(
             "ev=audio.mix"
         );
     }
-    // Колонки, а не наушники: системный звук слышен микрофону, значит оба
-    // канала несут одних и тех же собеседников. Раздельная расшифровка в этом
-    // режиме задваивает реплики и путает спикеров, поэтому сводим в моно.
-    let mut folded_playback = false;
-    if mixed_channels.is_none() && channels.len() == 2 {
-        if let Some(evidence) = channel_mix::speaker_playback(&channels[0], &channels[1]) {
-            let echo_only = evidence
-                .frames
-                .iter()
-                .filter(|class| **class == FrameClass::EchoOnly)
-                .count();
-            let folded = channel_mix::fold_playback(&channels[0], &channels[1], &evidence);
-            log::info!(
-                target: "audio",
-                mode = "speaker_playback",
-                delay = evidence.delay_samples,
-                delay_sec = evidence.delay_sec,
-                prom = evidence.prominence,
-                stability = evidence.stability,
-                gain = evidence.gain,
-                echo_only = echo_only,
-                total = evidence.frames.len();
-                "ev=audio.fold"
-            );
-            on_event(
-                6,
-                "Собеседники слышны через колонки — свожу каналы в одну дорожку",
-            );
-            channels = vec![folded];
-            folded_playback = true;
-        }
-    }
     if let Some(pick) = mixed_channels {
         on_event(
             6,
             "Каналы дублируют одну и ту же речь — обрабатываю один канал",
         );
+        source_channels = vec![source_channels[pick]];
         let chosen = channels.remove(pick);
         channels = vec![chosen];
     }
@@ -323,11 +295,6 @@ fn transcribe_file_inner(
             ],
             "раздельные каналы записи (микрофон / система)",
         )
-    } else if folded_playback {
-        (
-            vec![(0usize, opts.speaker_right.clone())],
-            "общий микс (колонки: микрофон слышит собеседников)",
-        )
     } else if mixed_channels.is_some() {
         (
             vec![(0usize, opts.speaker_left.clone())],
@@ -358,7 +325,7 @@ fn transcribe_file_inner(
         &mut models,
         on_event,
     )?;
-    let (speakers_info, merged, speakers) = speakers::run(speakers::Input {
+    let (mut speakers_info, mut merged, speakers) = speakers::run(speakers::Input {
         channel_samples: &channel_samples,
         chan_list: &chan_list,
         channel_vad: &channel_vad,
@@ -369,6 +336,15 @@ fn transcribe_file_inner(
         is_stereo,
         on_event,
     });
+    for utterance in &mut merged {
+        utterance.channel = original_channel(utterance.channel, &source_channels);
+    }
+    for speaker in &mut speakers_info {
+        speaker.channel = original_channel(speaker.channel, &source_channels);
+        for sample in &mut speaker.samples {
+            sample.channel = original_channel(sample.channel, &source_channels);
+        }
+    }
     let words = merged
         .iter()
         .map(|u| u.text.split_whitespace().count())
@@ -470,9 +446,23 @@ fn transcribe_file_inner(
     })
 }
 
+fn original_channel(channel: Option<i32>, sources: &[Option<i32>]) -> Option<i32> {
+    channel
+        .and_then(|ch| usize::try_from(ch).ok())
+        .and_then(|ch| sources.get(ch).copied().flatten())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::quiet_blank_penalty;
+    use super::{original_channel, quiet_blank_penalty};
+
+    #[test]
+    fn selected_right_channel_keeps_original_index() {
+        assert_eq!(original_channel(Some(0), &[Some(1)]), Some(1));
+        assert_eq!(original_channel(Some(1), &[Some(0), Some(1)]), Some(1));
+        assert_eq!(original_channel(Some(0), &[None]), None);
+        assert_eq!(original_channel(None, &[Some(0)]), None);
+    }
 
     #[test]
     fn blank_penalty_only_for_short_quiet_speech() {

@@ -136,6 +136,17 @@ pub fn invalidate_models_cache() {
     *cache.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
+fn source_channel(channel: Option<i32>, channels: usize) -> Result<usize, String> {
+    match channel {
+        None if channels == 1 => Ok(0),
+        Some(channel) if channel >= 0 && (channel as usize) < channels => Ok(channel as usize),
+        _ => Err(
+            "Источник голоса неоднозначен — повторите расшифровку и выберите чистый участок"
+                .to_string(),
+        ),
+    }
+}
+
 pub(crate) fn extract_utterance_embedding(
     audio: &Path,
     start: f64,
@@ -148,6 +159,9 @@ pub(crate) fn extract_utterance_embedding(
     }
     if !mr_audio::has_audio_track(audio) {
         return Err("Файл не содержит аудиодорожки".to_string());
+    }
+    if let Some((_, channels)) = mr_audio::decode::media_info(audio) {
+        source_channel(channel, channels)?;
     }
     let snippet = audio
         .extension()
@@ -166,10 +180,9 @@ pub(crate) fn extract_utterance_embedding(
         Some(samples) => samples,
         None => {
             let channels = decode_to_channels_16k_auto(audio).map_err(|e| e.to_string())?;
-            let ch = channel.unwrap_or(0).max(0) as usize;
+            let ch = source_channel(channel, channels.len())?;
             let samples = channels
                 .get(ch)
-                .or(channels.first())
                 .ok_or_else(|| "Файл не содержит аудиодорожки".to_string())?;
             let lo = ((start.max(0.0) * 16000.0) as usize).min(samples.len());
             let hi = ((end.max(start).max(0.0) * 16000.0) as usize).min(samples.len());
@@ -338,5 +351,19 @@ impl ModelSet {
                     }
                 }
             });
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::source_channel;
+
+    #[test]
+    fn enrollment_requires_explicit_source_for_stereo() {
+        assert_eq!(source_channel(None, 1).expect("моно"), 0);
+        assert_eq!(source_channel(Some(1), 2).expect("правый канал"), 1);
+        assert!(source_channel(None, 2).is_err());
+        assert!(source_channel(Some(2), 2).is_err());
+        assert!(source_channel(Some(-1), 2).is_err());
     }
 }
