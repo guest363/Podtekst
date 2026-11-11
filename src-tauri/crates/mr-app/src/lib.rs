@@ -752,9 +752,11 @@ mod live_api_tests {
             match std::net::TcpStream::connect(format!("127.0.0.1:{port}")) {
                 Ok(mut s) => {
                     let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(5)));
-                    let mut req = format!(
-                        "{method} {target} HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n"
-                    );
+                    let mut req = format!("{method} {target} HTTP/1.0\r\n");
+                    if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("host")) {
+                        req.push_str("Host: 127.0.0.1\r\n");
+                    }
+                    req.push_str("Connection: close\r\n");
                     for (k, v) in headers {
                         req.push_str(&format!("{k}: {v}\r\n"));
                     }
@@ -1174,6 +1176,15 @@ mod live_api_tests {
             "GET",
             "/api/status",
             &[("Origin", "https://evil.example")],
+            &[],
+        );
+        assert_eq!(st, 403);
+        // DNS rebinding: чужое имя хоста не должно приниматься как локальное.
+        let (st, _, _) = http(
+            port,
+            "GET",
+            "/api/status",
+            &[("Host", "evil.example:8765")],
             &[],
         );
         assert_eq!(st, 403);
