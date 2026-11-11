@@ -5,6 +5,7 @@ use super::super::diag::{stage_begin, stage_end};
 use super::super::diarize;
 use super::super::echo::EchoEvidence;
 use super::super::models::ModelSet;
+use super::super::word_dedupe;
 use super::super::word_speakers;
 use super::super::{SpeakerInfo, TranscribeOptions, Utterance};
 
@@ -38,6 +39,7 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
     let profiles = diarize::load_profiles();
     let mut speakers_info: Vec<SpeakerInfo> = vec![];
     let mut all_utts: Vec<Utterance> = vec![];
+    let mut channel_trees: HashMap<usize, word_speakers::DiarIntervalTree> = HashMap::new();
     for (ch, _label) in chan_list.iter() {
         let samples = &channel_samples[ch];
         let source_utts = channel_utts.remove(ch).unwrap_or_default();
@@ -132,6 +134,23 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
         speakers_info.extend(infos);
         let tree = word_speakers::DiarIntervalTree::new(&diar_utts);
         all_utts.extend(document_utterances(&source_utts, &tree));
+        channel_trees.insert(*ch, tree);
+    }
+    if let Some(evidence) = echo.as_ref() {
+        let before = all_utts.len();
+        let changed = word_dedupe::dedupe_words(
+            &mut all_utts,
+            channel_samples,
+            evidence,
+            channel_trees.get(&0),
+        );
+        log::debug!(
+            target: "diar",
+            changed = changed,
+            before = before,
+            after = all_utts.len();
+            "ev=diar.word_dedupe"
+        );
     }
     // Один и тот же голос в микрофоне и системе — одна карточка, а не два
     // разных «Участник N» / «Собеседник N». Дубли эха схлопываем до одной фразы.

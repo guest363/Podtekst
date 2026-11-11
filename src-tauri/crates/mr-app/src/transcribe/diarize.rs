@@ -1798,15 +1798,18 @@ pub(crate) fn move_boundary_words(utterances: &mut Vec<Utterance>) {
     }
 }
 
+pub(crate) fn normalize_word(word: &str) -> String {
+    word.trim_matches(|c: char| !c.is_alphanumeric())
+        .to_lowercase()
+        .chars()
+        .map(|c| if c == 'ё' { 'е' } else { c })
+        .collect()
+}
+
 fn words_of(text: &str) -> HashSet<String> {
     text.split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
-        .map(|w| {
-            w.to_lowercase()
-                .chars()
-                .map(|c| if c == 'ё' { 'е' } else { c })
-                .collect()
-        })
+        .map(normalize_word)
         .collect()
 }
 
@@ -1820,7 +1823,7 @@ fn words_contained(small: &str, big: &str) -> bool {
     !a.is_empty() && a.is_subset(&b)
 }
 
-fn words_match(a: &str, b: &str) -> bool {
+pub(crate) fn words_match(a: &str, b: &str) -> bool {
     if a == b || (a == "че" && b == "что") || (a == "что" && b == "че") {
         return true;
     }
