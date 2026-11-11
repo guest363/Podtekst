@@ -10,6 +10,7 @@ use super::asr_engine::{pick_asr_engine, AsrEngine};
 use super::channel_mix;
 use super::diag::{audio_stats, stage_begin, stage_end, AudioStats};
 use super::document::{unique_speech_sec, Meta, Stats, TranscriptDoc};
+use super::echo::FrameClass;
 use super::events;
 use super::memory;
 use super::models::ModelsGuard;
@@ -210,6 +211,38 @@ fn transcribe_file_inner(
             "ev=audio.mix"
         );
     }
+    // Колонки, а не наушники: системный звук слышен микрофону, значит оба
+    // канала несут одних и тех же собеседников. Раздельная расшифровка в этом
+    // режиме задваивает реплики и путает спикеров, поэтому сводим в моно.
+    let mut folded_playback = false;
+    if mixed_channels.is_none() && channels.len() == 2 {
+        if let Some(evidence) = channel_mix::speaker_playback(&channels[0], &channels[1]) {
+            let echo_only = evidence
+                .frames
+                .iter()
+                .filter(|class| **class == FrameClass::EchoOnly)
+                .count();
+            let folded = channel_mix::fold_playback(&channels[0], &channels[1], &evidence);
+            log::info!(
+                target: "audio",
+                mode = "speaker_playback",
+                delay = evidence.delay_samples,
+                delay_sec = evidence.delay_sec,
+                prom = evidence.prominence,
+                stability = evidence.stability,
+                gain = evidence.gain,
+                echo_only = echo_only,
+                total = evidence.frames.len();
+                "ev=audio.fold"
+            );
+            on_event(
+                6,
+                "Собеседники слышны через колонки — свожу каналы в одну дорожку",
+            );
+            channels = vec![folded];
+            folded_playback = true;
+        }
+    }
     if let Some(pick) = mixed_channels {
         on_event(
             6,
@@ -289,6 +322,11 @@ fn transcribe_file_inner(
                 (1, opts.speaker_right.clone()),
             ],
             "раздельные каналы записи (микрофон / система)",
+        )
+    } else if folded_playback {
+        (
+            vec![(0usize, opts.speaker_right.clone())],
+            "общий микс (колонки: микрофон слышит собеседников)",
         )
     } else if mixed_channels.is_some() {
         (
