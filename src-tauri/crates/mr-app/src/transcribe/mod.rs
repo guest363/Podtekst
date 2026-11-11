@@ -4,6 +4,7 @@ mod channel_mix;
 mod diag;
 pub mod diarize;
 pub mod document;
+mod echo;
 pub mod events;
 pub mod memory;
 pub mod report;

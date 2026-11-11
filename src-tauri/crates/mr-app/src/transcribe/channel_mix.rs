@@ -1,3 +1,5 @@
+use super::echo::{self, EchoEvidence, FrameClass};
+
 const FRAME_SAMPLES: usize = 8_000;
 const MAX_DUP_LAG: i64 = 64;
 const DUP_LAG_PROBE_SEC: usize = 30;
@@ -20,7 +22,7 @@ fn smooth(values: &[f32]) -> Vec<f32> {
         .collect()
 }
 
-fn percentile(values: &[f32], fraction: f32) -> f32 {
+pub(super) fn percentile(values: &[f32], fraction: f32) -> f32 {
     let mut sorted = values.to_vec();
     sorted.sort_by(f32::total_cmp);
     let index = ((sorted.len().saturating_sub(1)) as f32 * fraction).round() as usize;
@@ -192,14 +194,14 @@ pub(crate) fn mixed_stereo_with_stats(channels: &[Vec<f32>]) -> (Option<usize>, 
 const VAD_FRAME: usize = 512;
 const BLEED_PROBE_SEC: usize = 60;
 
-fn vad_envelope(samples: &[f32]) -> Vec<f32> {
+pub(super) fn vad_envelope(samples: &[f32]) -> Vec<f32> {
     samples
         .chunks(VAD_FRAME)
         .map(|frame| (frame.iter().map(|x| x * x).sum::<f32>() / frame.len().max(1) as f32).sqrt())
         .collect()
 }
 
-fn window_corr(a: &[f32], b: &[f32], center: usize, other: usize, half: usize) -> f64 {
+pub(super) fn window_corr(a: &[f32], b: &[f32], center: usize, other: usize, half: usize) -> f64 {
     let left = center.min(other).min(half);
     let right = (a.len().saturating_sub(center + 1))
         .min(b.len().saturating_sub(other + 1))
@@ -229,6 +231,7 @@ fn window_corr(a: &[f32], b: &[f32], center: usize, other: usize, half: usize) -
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct BleedStats {
     pub delay: usize,
     pub prominence: f32,
@@ -242,27 +245,36 @@ pub(crate) fn suppress_mic_bleed(mic: &[f32], system: &[f32], vad_probs: &mut [f
     suppress_mic_bleed_with_stats(mic, system, vad_probs).suppressed
 }
 
-fn best_bleed_probe(mic: &[f32], system: &[f32]) -> Option<(usize, f32)> {
-    let len = mic.len().min(system.len());
-    let window = (BLEED_PROBE_SEC * 16000).min(len);
-    if window < 16000 * 2 {
-        return None;
-    }
-    let mut best: Option<(usize, f32)> = None;
-    for fraction in [0.0, 0.25, 0.5, 0.75, 0.9] {
-        let start = ((len - window) as f64 * fraction) as usize;
-        let end = start + window;
-        if let Some((delay, prominence)) =
-            mr_audio::echo::delay::estimate(&mic[start..end], &system[start..end], 8000)
-        {
-            if best.is_none_or(|(_, best_prominence)| prominence > best_prominence) {
-                best = Some((delay, prominence));
-            }
-        }
-    }
-    best
+/// Ниже этого уровня VAD-вероятность не опускается: если гейт ошибся,
+/// ASR всё равно получает слабую локальную речь.
+pub(crate) const SUPPRESSION_FLOOR: f32 = 0.05;
+
+pub(crate) fn classify_echo(
+    mic: &[f32],
+    system: &[f32],
+    mic_probs: Option<&[f32]>,
+) -> Option<EchoEvidence> {
+    echo::detect(mic, system, mic_probs)
 }
 
+pub(crate) fn apply_vad_gate(vad_probs: &mut [f32], evidence: &EchoEvidence) -> usize {
+    let frames = vad_probs.len().min(evidence.frames.len());
+    let mut suppressed = 0usize;
+    for (frame, prob) in vad_probs.iter_mut().enumerate().take(frames) {
+        if evidence.frames[frame] != FrameClass::EchoOnly {
+            continue;
+        }
+        if *prob > SUPPRESSION_FLOOR {
+            *prob = SUPPRESSION_FLOOR;
+            suppressed += 1;
+        }
+    }
+    suppressed
+}
+
+/// Диагностическая точка входа для тестов и замеров: конвейер идёт через
+/// classify_echo + apply_vad_gate, чтобы не считать задержку дважды.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn suppress_mic_bleed_with_stats(
     mic: &[f32],
     system: &[f32],
@@ -270,61 +282,14 @@ pub(crate) fn suppress_mic_bleed_with_stats(
 ) -> BleedStats {
     let mut stats = BleedStats::default();
     let len = mic.len().min(system.len());
-    let probe = len.min(BLEED_PROBE_SEC * 16000);
-    stats.probe_sec = probe as f64 / 16000.0;
-    if probe < 16000 * 2 {
-        return stats;
-    }
-    let Some((delay, prominence)) = best_bleed_probe(mic, system) else {
+    stats.probe_sec = len.min(BLEED_PROBE_SEC * 16000) as f64 / 16000.0;
+    let Some(evidence) = classify_echo(mic, system, Some(vad_probs)) else {
         return stats;
     };
-    stats.delay = delay;
-    stats.prominence = prominence;
-    if prominence < 8.0 {
-        return stats;
-    }
-    let mic_env = vad_envelope(mic);
-    let sys_env = vad_envelope(system);
-    let frames = mic_env.len().min(sys_env.len()).min(vad_probs.len());
-    stats.frames = frames;
-    let delay_frames = delay / VAD_FRAME;
-    let mut suppressed = 0;
-    for frame in 0..frames {
-        if vad_probs[frame] < 0.1 {
-            continue;
-        }
-        let Some(other) = frame.checked_sub(delay_frames) else {
-            continue;
-        };
-        if other >= sys_env.len() {
-            continue;
-        }
-        let mic_level = mic_env[frame];
-        let sys_level = sys_env[other];
-        if sys_level < 0.005 || mic_level < 0.001 {
-            continue;
-        }
-        const SUPPRESSION_FLOOR: f32 = 0.05;
-        let corr = window_corr(&mic_env, &sys_env, frame, other, 10);
-        let corr_prev = if other > 0 {
-            window_corr(&mic_env, &sys_env, frame, other - 1, 10)
-        } else {
-            0.0
-        };
-        let corr_next = if other + 1 < sys_env.len() {
-            window_corr(&mic_env, &sys_env, frame, other + 1, 10)
-        } else {
-            0.0
-        };
-        let high_corr = corr.max(corr_prev).max(corr_next);
-        let max_ratio = if high_corr > 0.75 { 3.0 } else { 1.2 };
-        if mic_level > sys_level * max_ratio || high_corr <= 0.65 {
-            continue;
-        }
-        vad_probs[frame] = vad_probs[frame].min(SUPPRESSION_FLOOR);
-        suppressed += 1;
-    }
-    stats.suppressed = suppressed;
+    stats.delay = evidence.delay_samples;
+    stats.prominence = evidence.prominence;
+    stats.frames = evidence.frames.len().min(vad_probs.len());
+    stats.suppressed = apply_vad_gate(vad_probs, &evidence);
     stats
 }
 
@@ -487,6 +452,29 @@ mod tests {
         assert_eq!(stats.delay, delay);
         assert!(stats.prominence >= 8.0);
         assert!(stats.probe_sec > 3.0);
+    }
+
+    #[test]
+    fn vad_gate_touches_only_echo_frames() {
+        let evidence = EchoEvidence {
+            delay_samples: 1000,
+            delay_sec: 0.0625,
+            prominence: 12.0,
+            stability: 1.0,
+            gain: 0.1,
+            noise_floor: 1e-4,
+            residual: vec![0.0; 4],
+            frames: vec![
+                FrameClass::EchoOnly,
+                FrameClass::DoubleTalk,
+                FrameClass::LocalOnly,
+                FrameClass::Uncertain,
+            ],
+        };
+        let mut probs = vec![1.0f32; 4];
+        let suppressed = apply_vad_gate(&mut probs, &evidence);
+        assert_eq!(suppressed, 1);
+        assert_eq!(probs, vec![SUPPRESSION_FLOOR, 1.0, 1.0, 1.0]);
     }
 
     #[test]

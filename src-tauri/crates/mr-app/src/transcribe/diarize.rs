@@ -79,12 +79,27 @@ pub(crate) fn group_segments(
     grouped
 }
 
-/// Склейка тихих коротких фрагментов через более длинную паузу:
-/// по отдельности ASR теряет тихую короткую речь. Громкую и длинную речь не трогаем.
+/// Без эхо-доказательств склейка ведёт себя как раньше: вызовы, где пара
+/// каналов недоступна, не должны менять результат.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn merge_quiet_short(
     samples: &[f32],
     groups: Vec<(f32, f32)>,
     ch: i32,
+) -> Vec<(f32, f32)> {
+    merge_quiet_short_with_evidence(samples, groups, ch, None, None)
+}
+
+/// Доля эхо-кадров, начиная с которой фрагмент считается эхом и не склеивается
+/// с локальной речью: иначе ASR получает окно «локальная фраза + чужое эхо».
+const ECHO_MERGE_BLOCK: f32 = 0.5;
+
+pub(crate) fn merge_quiet_short_with_evidence(
+    samples: &[f32],
+    groups: Vec<(f32, f32)>,
+    ch: i32,
+    evidence: Option<&super::echo::EchoEvidence>,
+    system: Option<&[f32]>,
 ) -> Vec<(f32, f32)> {
     const SHORT_SEC: f32 = 2.0;
     const MAX_MERGED_SEC: f32 = 12.0;
@@ -99,6 +114,41 @@ pub(crate) fn merge_quiet_short(
         let s = &samples[lo..hi];
         (s.iter().map(|x| x * x).sum::<f32>() / s.len() as f32).sqrt()
     };
+    let system_rms = |a: f32, b: f32| -> f32 {
+        let Some(system) = system else {
+            return 0.0;
+        };
+        let lo = (a.max(0.0) * 16000.0) as usize;
+        let hi = ((b.max(0.0) * 16000.0) as usize).min(system.len());
+        if hi <= lo {
+            return 0.0;
+        }
+        let s = &system[lo..hi];
+        (s.iter().map(|x| x * x).sum::<f32>() / s.len() as f32).sqrt()
+    };
+    let echo_blocks = |a: (f32, f32), b: (f32, f32)| -> bool {
+        let Some(evidence) = evidence else {
+            return false;
+        };
+        let head = super::echo::segment_profile(evidence, a.0 as f64, a.1 as f64);
+        let tail = super::echo::segment_profile(evidence, b.0 as f64, b.1 as f64);
+        let echo_like = |_profile: super::echo::SegmentProfile, a: (f32, f32)| {
+            let sys_level = system_rms(a.0, a.1);
+            let mic_level = rms(a.0, a.1);
+            sys_level > 0.005 && mic_level <= evidence.gain * sys_level * 1.5
+        };
+        if echo_like(head, a) || echo_like(tail, b) {
+            return true;
+        }
+        if b.0 > a.1 && system_rms(a.1, b.0) > 0.005 {
+            return true;
+        }
+        head.echo_only >= ECHO_MERGE_BLOCK
+            || tail.echo_only >= ECHO_MERGE_BLOCK
+            || (b.0 > a.1
+                && super::echo::segment_profile(evidence, a.1 as f64, b.0 as f64).echo_only
+                    >= ECHO_MERGE_BLOCK)
+    };
     let mut out: Vec<(f32, f32)> = Vec::new();
     let mut merged = 0usize;
     for (s, e) in groups {
@@ -107,11 +157,13 @@ pub(crate) fn merge_quiet_short(
             let incoming_short = e - s <= SHORT_SEC;
             let rms_a = rms(last.0, last.1);
             let rms_b = rms(s, e);
+            let blocked = echo_blocks(*last, (s, e));
             if incoming_short
                 && (0.0..=MAX_GAP_SEC).contains(&gap)
                 && e - last.0 <= MAX_MERGED_SEC
                 && rms_a < QUIET_RMS
                 && rms_b < QUIET_RMS
+                && !blocked
             {
                 log::debug!(
                     target: "vad",
@@ -125,6 +177,15 @@ pub(crate) fn merge_quiet_short(
                 merged += 1;
                 last.1 = e;
                 continue;
+            }
+            if blocked && incoming_short && (0.0..=MAX_GAP_SEC).contains(&gap) {
+                log::debug!(
+                    target: "vad",
+                    ch = ch,
+                    gap_sec = gap,
+                    at_sec = s;
+                    "ev=vad.merge_echo_skip"
+                );
             }
         }
         out.push((s, e));
@@ -2704,11 +2765,11 @@ pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<Strin
 mod tests {
     use super::{
         cannot_link_units, dedupe_cross_channel, fill_labels_by_time, group_segments,
-        merge_quiet_short, merge_tiny_clusters, merge_utterances, move_boundary_words,
-        profile_anchors, read_profiles_file, reconcile_channels, refresh_speaker_stats,
-        short_join_threshold, speaker_change_cuts, split_at_pauses, split_by_word_pauses,
-        split_utterance_by_bounds, split_words_by_bounds, switch_penalty, text_similarity,
-        AcoustUnit, SpeakerInfo, Utterance,
+        merge_quiet_short, merge_quiet_short_with_evidence, merge_tiny_clusters, merge_utterances,
+        move_boundary_words, profile_anchors, read_profiles_file, reconcile_channels,
+        refresh_speaker_stats, short_join_threshold, speaker_change_cuts, split_at_pauses,
+        split_by_word_pauses, split_utterance_by_bounds, split_words_by_bounds, switch_penalty,
+        text_similarity, AcoustUnit, SpeakerInfo, Utterance,
     };
     use crate::transcribe::WordConf;
     use std::collections::HashMap;
@@ -3120,6 +3181,108 @@ mod tests {
         let out = merge_quiet_short(&samples, groups, 0);
         assert_eq!(out.len(), 2);
         assert!(out[0].1 - out[0].0 <= 12.0);
+    }
+
+    fn echo_evidence(
+        total_sec: f64,
+        spans: &[(f64, f64, crate::transcribe::echo::FrameClass)],
+    ) -> crate::transcribe::echo::EchoEvidence {
+        let win = mr_ml::onnx::vad::VAD_WINDOW as f64 / 16000.0;
+        let n = (total_sec / win).ceil() as usize;
+        let frames = (0..n)
+            .map(|i| {
+                let t = i as f64 * win;
+                spans
+                    .iter()
+                    .find(|(a, b, _)| t >= *a && t < *b)
+                    .map(|(_, _, class)| *class)
+                    .unwrap_or(crate::transcribe::echo::FrameClass::Uncertain)
+            })
+            .collect::<Vec<_>>();
+        crate::transcribe::echo::EchoEvidence {
+            delay_samples: 1000,
+            delay_sec: 0.0625,
+            prominence: 12.0,
+            stability: 1.0,
+            gain: 0.1,
+            noise_floor: 1e-4,
+            residual: vec![0.0; n],
+            frames,
+        }
+    }
+
+    #[test]
+    fn merge_quiet_short_keeps_local_speech_apart_from_echo() {
+        use crate::transcribe::echo::FrameClass;
+        let samples = vec![0.005f32; 6 * 16000];
+        let groups = vec![(0.0, 1.0), (2.0, 3.0)];
+        assert_eq!(
+            merge_quiet_short(&samples, groups.clone(), 0),
+            vec![(0.0, 3.0)]
+        );
+
+        let ev = echo_evidence(
+            6.0,
+            &[
+                (0.0, 1.0, FrameClass::LocalOnly),
+                (1.0, 2.0, FrameClass::Uncertain),
+                (2.0, 3.0, FrameClass::EchoOnly),
+            ],
+        );
+        let out = merge_quiet_short_with_evidence(&samples, groups, 0, Some(&ev), None);
+        assert_eq!(out, vec![(0.0, 1.0), (2.0, 3.0)]);
+    }
+
+    #[test]
+    fn merge_quiet_short_joins_local_segments_with_evidence() {
+        use crate::transcribe::echo::FrameClass;
+        let samples = vec![0.005f32; 6 * 16000];
+        let groups = vec![(0.0, 1.0), (2.0, 3.0)];
+        let ev = echo_evidence(
+            6.0,
+            &[
+                (0.0, 1.0, FrameClass::LocalOnly),
+                (1.0, 2.0, FrameClass::Uncertain),
+                (2.0, 3.0, FrameClass::DoubleTalk),
+            ],
+        );
+        let out = merge_quiet_short_with_evidence(&samples, groups, 0, Some(&ev), None);
+        assert_eq!(out, vec![(0.0, 3.0)]);
+    }
+
+    #[test]
+    fn merge_quiet_short_does_not_bridge_echo_gap() {
+        use crate::transcribe::echo::FrameClass;
+        let samples = vec![0.005f32; 6 * 16000];
+        let groups = vec![(0.0, 1.0), (3.0, 4.0)];
+        let ev = echo_evidence(
+            6.0,
+            &[
+                (0.0, 1.0, FrameClass::LocalOnly),
+                (1.0, 3.0, FrameClass::EchoOnly),
+                (3.0, 4.0, FrameClass::LocalOnly),
+            ],
+        );
+        let out = merge_quiet_short_with_evidence(&samples, groups, 0, Some(&ev), None);
+        assert_eq!(out, vec![(0.0, 1.0), (3.0, 4.0)]);
+    }
+
+    #[test]
+    fn merge_quiet_short_does_not_join_echo_tail_with_system_active() {
+        use crate::transcribe::echo::FrameClass;
+        let samples = vec![0.005f32; 6 * 16000];
+        let system = vec![0.05f32; 6 * 16000];
+        let groups = vec![(0.0, 1.0), (2.0, 3.0)];
+        let ev = echo_evidence(
+            6.0,
+            &[
+                (0.0, 1.0, FrameClass::LocalOnly),
+                (1.0, 2.0, FrameClass::Uncertain),
+                (2.0, 3.0, FrameClass::Uncertain),
+            ],
+        );
+        let out = merge_quiet_short_with_evidence(&samples, groups, 0, Some(&ev), Some(&system));
+        assert_eq!(out, vec![(0.0, 1.0), (2.0, 3.0)]);
     }
 
     #[test]
