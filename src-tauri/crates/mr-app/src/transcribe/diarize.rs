@@ -419,7 +419,7 @@ const SHORT_REPLY_SEC: f64 = 1.2;
 const SHORT_REPLY_WORDS: usize = 2;
 const SHORT_REPLY_KEEP_SIM: f64 = 0.55;
 const SHORT_REPLY_KEEP_MARGIN: f64 = 0.08;
-const SHORT_REPLY_NEIGHBOR_GAP_SEC: f64 = 2.0;
+const SHORT_REPLY_NEIGHBOR_GAP_SEC: f64 = 3.5;
 const SHORT_REPLY_NEIGHBOR_SLACK: f64 = 0.02;
 
 /// Нижняя граница непрерывной локальной речи для эмбеддинга: на более коротком
