@@ -198,7 +198,7 @@ pub(crate) fn merge_quiet_short_with_evidence(
     out
 }
 
-fn pick_samples(utterances: &[Utterance], max_samples: usize) -> Vec<Sample> {
+pub(super) fn pick_samples(utterances: &[Utterance], max_samples: usize) -> Vec<Sample> {
     let mut scored: Vec<(f64, &Utterance)> = utterances
         .iter()
         .map(|u| {
@@ -759,7 +759,7 @@ fn reassign_short_replies(
         let Some(&current) = label_of.get(&index) else {
             continue;
         };
-        let short = durs[index] < SHORT_REPLY_SEC
+        let short = utterances[index].end - utterances[index].start < SHORT_REPLY_SEC
             || utterances[index].text.split_whitespace().count() <= SHORT_REPLY_WORDS;
         if !short {
             continue;
@@ -1162,10 +1162,7 @@ pub(crate) fn diarize_channel(
         "ev=diar.start"
     );
     let mut embs: Vec<Option<Vec<f64>>> = vec![None; n];
-    let mut durs: Vec<f64> = utterances
-        .iter()
-        .map(|u| (u.end - u.start).max(0.0))
-        .collect();
+    let mut durs = vec![0.0; n];
     let mut quals = vec![1.0f64; n];
     let units = build_acoust_units(samples, utterances, extractor, segmentation, echo, on_event);
     if units.is_empty() {
@@ -1396,9 +1393,18 @@ pub(crate) fn diarize_channel(
             .iter()
             .map(|&index| units[index].embedding.clone())
             .collect();
+        let mut intervals = Vec::with_capacity(members.len());
+        let mut covered = 0.0;
         let ws: Vec<f64> = members
             .iter()
-            .map(|&index| units[index].dur.clamp(0.4, 4.0) * units[index].quality)
+            .map(|&index| {
+                let unit = &units[index];
+                intervals.push((unit.start, unit.end));
+                let total = super::clean_speech::duration(&intervals, segmentation);
+                let weight = (total - covered).max(0.0) * unit.quality;
+                covered = total;
+                weight
+            })
             .collect();
         let total_dur: f64 = members.iter().map(|&index| units[index].dur).sum();
         let quality: f64 = members
@@ -1407,7 +1413,7 @@ pub(crate) fn diarize_channel(
             .sum::<f64>()
             / total_dur.max(1e-6);
         embs[utterance] = Some(mr_ml::weighted_centroid(&vecs, &ws));
-        durs[utterance] = (utterances[utterance].end - utterances[utterance].start).max(0.0);
+        durs[utterance] = covered;
         quals[utterance] = quality;
         label_of.insert(utterance, label);
         valid.push(utterance);
@@ -1493,11 +1499,7 @@ pub(crate) fn diarize_channel(
             mr_ml::weighted_centroid(&vecs, &ws)
         }
     };
-    let eligible = if echo.is_some() {
-        eligible_clusters(&raw_clusters, &label_of, &embs, &durs)
-    } else {
-        (0..raw_clusters.len()).collect()
-    };
+    let eligible = eligible_clusters(&raw_clusters, &label_of, &embs, &durs);
     let eligible_centroids: Vec<Vec<f64>> = eligible
         .iter()
         .map(|&k| cluster_centroid(raw_clusters[k]))
@@ -1694,7 +1696,13 @@ pub(crate) fn diarize_channel(
             embedding: emb.filter(|v| v.iter().any(|&x| x.abs() > 1e-12)),
             samples,
             utterances_count: members.len(),
-            total_speech_sec: (members.iter().map(|&i| durs[i]).sum::<f64>() * 10.0).round() / 10.0,
+            total_speech_sec: (members
+                .iter()
+                .map(|&i| (utterances[i].end - utterances[i].start).max(0.0))
+                .sum::<f64>()
+                * 10.0)
+                .round()
+                / 10.0,
         });
     }
     for (i, u) in utterances.iter_mut().enumerate() {
@@ -1947,12 +1955,30 @@ pub(crate) fn reconcile_channels(infos: &mut Vec<SpeakerInfo>, utterances: &mut 
             matched_root.insert(idx, &info.name);
         }
     }
+    let mut unnamed_roots: HashSet<usize> = infos
+        .iter()
+        .enumerate()
+        .filter(|(_, info)| !info.matched && info.candidates.is_empty())
+        .map(|(index, _)| index)
+        .collect();
     for i in 0..n {
         for j in (i + 1)..n {
             let sim = match (&infos[i].embedding, &infos[j].embedding) {
                 (Some(a), Some(b)) => mr_ml::cosine_similarity(a, b),
                 _ => 0.0,
             };
+            if infos[i].matched ^ infos[j].matched {
+                let (known, unknown) = if infos[i].matched {
+                    (&infos[i], &infos[j])
+                } else {
+                    (&infos[j], &infos[i])
+                };
+                if !unknown.candidates.iter().any(|(name, score)| {
+                    name == &known.name && *score >= mr_ml::DEFAULT_MATCH_THRESHOLD
+                }) {
+                    continue;
+                }
+            }
             let (overlap, echo) = pair_evidence(&by_name, &infos[i].name, &infos[j].name);
             let short = infos[i].utterances_count <= 2 || infos[j].utterances_count <= 2;
             let same_name = infos[i].name == infos[j].name;
@@ -1995,8 +2021,17 @@ pub(crate) fn reconcile_channels(infos: &mut Vec<SpeakerInfo>, utterances: &mut 
                         continue; // Разные профили уже в этих компонентах — слияние строго запрещено!
                     }
                 }
+                if (matched_root.contains_key(&ri) && unnamed_roots.contains(&rj))
+                    || (matched_root.contains_key(&rj) && unnamed_roots.contains(&ri))
+                {
+                    continue;
+                }
+                let unnamed = unnamed_roots.contains(&ri) || unnamed_roots.contains(&rj);
                 dsu.union(i, j);
                 let nr = dsu.find(i);
+                if unnamed {
+                    unnamed_roots.insert(nr);
+                }
                 if let Some(&name) = matched_root.get(&ri).or_else(|| matched_root.get(&rj)) {
                     matched_root.insert(nr, name);
                 }
@@ -3237,7 +3272,9 @@ mod tests {
         let mut matched = info("Я", 0, vec![1.0, 0.0], 5, 10.0);
         matched.matched = true;
         matched.matched_name = Some("Я".to_string());
-        let mut infos = vec![matched, info("Участник 2", 0, vec![1.0, 0.0], 1, 2.0)];
+        let mut tail = info("Участник 2", 0, vec![1.0, 0.0], 1, 2.0);
+        tail.candidates.push(("Я".to_string(), 0.8));
+        let mut infos = vec![matched, tail];
         let mut utts = vec![
             utt(1.0, 5.0, "Я", 0, "моя реплика"),
             utt(10.0, 11.0, "Участник 2", 0, "хвост"),
@@ -3245,6 +3282,40 @@ mod tests {
         reconcile_channels(&mut infos, &mut utts);
         assert_eq!(infos.len(), 1);
         assert_eq!(infos[0].name, "Я");
+    }
+
+    #[test]
+    fn ineligible_tail_cannot_inherit_a_profile_during_reconciliation() {
+        for channel in [0, 1] {
+            let mut known = info("A", 0, vec![1.0, 0.0], 5, 10.0);
+            known.matched = true;
+            let unknown = info("B", channel, vec![1.0, 0.0], 1, 0.8);
+            let mut infos = vec![known, unknown];
+            let mut utterances = vec![
+                utt(0.0, 3.0, "A", 0, "раз два"),
+                utt(0.0, 0.8, "B", channel, "раз два"),
+            ];
+            reconcile_channels(&mut infos, &mut utterances);
+            assert_eq!(infos.len(), 2, "канал {channel}");
+            assert_eq!(utterances[1].speaker, "B");
+        }
+    }
+
+    #[test]
+    fn unnamed_tail_cannot_inherit_profile_through_another_cluster() {
+        let mut known = info("A", 0, vec![1.0, 0.0], 5, 10.0);
+        known.matched = true;
+        let unknown = info("B", 1, vec![1.0, 0.0], 1, 0.8);
+        let mut bridge = info("C", 1, vec![1.0, 0.0], 3, 4.0);
+        bridge.candidates.push(("A".to_string(), 0.8));
+        let mut infos = vec![known, unknown, bridge];
+        let mut utterances = vec![
+            utt(0.0, 3.0, "A", 0, "раз два"),
+            utt(0.0, 0.8, "B", 1, "раз два"),
+            utt(0.0, 3.0, "C", 1, "раз два"),
+        ];
+        reconcile_channels(&mut infos, &mut utterances);
+        assert_ne!(utterances[1].speaker, "A");
     }
 
     #[test]

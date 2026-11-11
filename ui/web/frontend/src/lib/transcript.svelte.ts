@@ -116,6 +116,17 @@ export const openTranscriptFile = async (rawPath: string): Promise<void> => {
   transcript.hasText = Boolean(d.markdown?.trim() || transcript.utterances.length > 0)
 }
 
+// Сервер возвращает новое состояние расшифровки: применяем его сразу, без
+// повторного GET, иначе текст в UI отстаёт на лишний запрос.
+export const applyTranscriptState = (d: TranscriptData): void => {
+  if (Array.isArray(d.utterances)) transcript.utterances = d.utterances
+  if (Array.isArray(d.speakers_info)) transcript.speakers = d.speakers_info
+  if (typeof d.markdown === 'string') transcript.markdown = d.markdown
+  if (typeof d.rev === 'string') transcript.rev = d.rev
+  transcript.hasText = Boolean(transcript.markdown.trim() || transcript.utterances.length)
+  emit('transcript-edited')
+}
+
 export const editTranscript = async (
   rawPath: string,
   change: { index?: number; text?: string; speaker?: string; old_speaker?: string },
@@ -127,12 +138,7 @@ export const editTranscript = async (
   })
   const d = await readJsonSafe<TranscriptEditResponse>(r)
   if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`)
-  transcript.utterances = d.utterances || []
-  transcript.speakers = d.speakers_info || []
-  transcript.markdown = d.markdown || ''
-  transcript.rev = typeof d.rev === 'string' ? d.rev : transcript.rev
-  transcript.hasText = Boolean(transcript.markdown.trim() || transcript.utterances.length)
-  emit('transcript-edited')
+  applyTranscriptState(d)
 }
 
 export const emptyHint = (): string => {

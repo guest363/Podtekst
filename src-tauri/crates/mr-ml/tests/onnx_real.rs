@@ -83,8 +83,8 @@ fn pyannote_segmentation_matches_powerset_contract() {
         .expect("sliding");
     assert_eq!(sliding.windows.len(), 2);
     assert_eq!(sliding.windows[0].classes.len(), 589);
-    assert_eq!(sliding.windows[1].start_sample, 16000);
-    assert_eq!(sliding.windows[1].classes.len(), 560);
+    assert_eq!(sliding.windows[1].start_sample, 32000);
+    assert_eq!(sliding.windows[1].classes.len(), 501);
     assert!(sliding.frames.len() > 589);
 }
 

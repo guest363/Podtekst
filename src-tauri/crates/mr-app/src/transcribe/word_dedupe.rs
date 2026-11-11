@@ -17,6 +17,9 @@ const ECHO_SHARE: f32 = 0.7;
 /// Дрейф оценки задержки между зондами: ±60 мс перекрывают округление до кадра
 /// (32 мс) и медленное расхождение часов каналов.
 const DELAY_DRIFT_SEC: f64 = 0.06;
+/// Остаток эха короче трёх слов — ошибки ASR, а не реплика; короткие ответы не трогаем.
+const MIN_LOCAL_WORDS: usize = 3;
+const ECHO_RESIDUE_WORDS: usize = 5;
 
 /// Пословная дедупликация эха в микрофонном канале; счётчик изменённых
 /// реплик нужен только для лога `ev=diar.word_dedupe`.
@@ -62,6 +65,9 @@ pub(crate) fn dedupe_words(
             continue;
         }
         changed += 1;
+        if local.len() < MIN_LOCAL_WORDS && utterance.words.len() >= ECHO_RESIDUE_WORDS {
+            continue;
+        }
         let Some(first) = local.first() else {
             continue;
         };
@@ -124,23 +130,26 @@ fn is_echo(
         return false;
     }
     let profile = echo::segment_profile(echo, word.start_sec, word.end_sec);
-    let rms = mic_rms(mic, word.start_sec, word.end_sec);
-    let residual_ratio = echo::mean_residual(echo, word.start_sec, word.end_sec) / rms.max(1e-6);
-    if profile.local_only > LOCAL_ONLY_SHARE
-        || (profile.double_talk > DOUBLE_TALK_SHARE && residual_ratio > DOUBLE_TALK_RESIDUAL)
-    {
+    if profile.local_only > LOCAL_ONLY_SHARE {
         return false;
     }
-    if residual_ratio > RESIDUAL_KEEP || profile.echo_only + profile.uncertain < ECHO_SHARE {
-        return false;
-    }
-    matches_echo_word(
+    // Усиление эха — медиана по файлу: при смене громкости динамиков остаток
+    // выглядит как двойная речь, поэтому совпадение текста в окне задержки решает.
+    if matches_echo_word(
         &normalized,
         word.start_sec,
         word.end_sec,
         echo.delay_sec,
         echo_words,
-    )
+    ) {
+        return true;
+    }
+    let rms = mic_rms(mic, word.start_sec, word.end_sec);
+    let residual_ratio = echo::mean_residual(echo, word.start_sec, word.end_sec) / rms.max(1e-6);
+    if profile.double_talk > DOUBLE_TALK_SHARE && residual_ratio > DOUBLE_TALK_RESIDUAL {
+        return false;
+    }
+    residual_ratio <= RESIDUAL_KEEP && profile.echo_only + profile.uncertain >= ECHO_SHARE
 }
 
 fn matches_echo_word(
@@ -308,16 +317,51 @@ mod tests {
     }
 
     #[test]
-    fn double_talk_with_residual_keeps_word() {
+    fn double_talk_with_residual_keeps_local_word() {
+        let ev = evidence(&[(0.0, 2.0, FrameClass::DoubleTalk, 0.024)], 2.0);
+        let mut utts = vec![
+            utterance(0.0, 1.0, 0, vec![word("дельта", 0.0, 0.5)]),
+            utterance(0.0, 1.0, 1, vec![word("альфа", 0.0, 0.5)]),
+        ];
+        let changed = dedupe_words(&mut utts, &samples(), &ev, None);
+        assert_eq!(changed, 0, "{utts:?}");
+        assert_eq!(utts.len(), 2);
+        assert_eq!(utts[0].text, "дельта");
+    }
+
+    #[test]
+    fn matching_word_in_double_talk_is_echo() {
         let ev = evidence(&[(0.0, 2.0, FrameClass::DoubleTalk, 0.024)], 2.0);
         let mut utts = vec![
             utterance(0.0, 1.0, 0, vec![word("альфа", 0.0, 0.5)]),
             utterance(0.0, 1.0, 1, vec![word("альфа", 0.0, 0.5)]),
         ];
         let changed = dedupe_words(&mut utts, &samples(), &ev, None);
-        assert_eq!(changed, 0, "{utts:?}");
-        assert_eq!(utts.len(), 2);
-        assert_eq!(utts[0].text, "альфа");
+        assert_eq!(changed, 1, "{utts:?}");
+        assert_eq!(utts.len(), 1, "{utts:?}");
+        assert_eq!(utts[0].channel, Some(1));
+    }
+
+    #[test]
+    fn short_echo_residue_of_long_utterance_is_dropped() {
+        let ev = evidence(&[(0.0, 2.0, FrameClass::EchoOnly, 0.0)], 2.0);
+        let spans = ["альфа", "гамма", "дельта", "эпсилон"];
+        let mut mic: Vec<WordConf> = spans
+            .iter()
+            .enumerate()
+            .map(|(i, w)| word(w, i as f64 * 0.4, i as f64 * 0.4 + 0.35))
+            .collect();
+        mic.push(word("лишнее", 1.7, 1.9));
+        let system: Vec<WordConf> = spans
+            .iter()
+            .enumerate()
+            .map(|(i, w)| word(w, i as f64 * 0.4, i as f64 * 0.4 + 0.35))
+            .collect();
+        let mut utts = vec![utterance(0.0, 2.0, 0, mic), utterance(0.0, 2.0, 1, system)];
+        let changed = dedupe_words(&mut utts, &samples(), &ev, None);
+        assert_eq!(changed, 1, "{utts:?}");
+        assert_eq!(utts.len(), 1, "{utts:?}");
+        assert_eq!(utts[0].channel, Some(1));
     }
 
     #[test]

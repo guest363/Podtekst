@@ -40,6 +40,7 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
     let mut speakers_info: Vec<SpeakerInfo> = vec![];
     let mut all_utts: Vec<Utterance> = vec![];
     let mut channel_trees: HashMap<usize, word_speakers::DiarIntervalTree> = HashMap::new();
+    let mut segmentations = HashMap::new();
     for (ch, _label) in chan_list.iter() {
         let samples = &channel_samples[ch];
         let source_utts = channel_utts.remove(ch).unwrap_or_default();
@@ -53,8 +54,11 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
                 };
                 match result {
                     Ok(result) => {
-                        let overlap_frames =
-                            result.frames.iter().filter(|&&class| class >= 4).count();
+                        let overlap_frames = result
+                            .frames
+                            .iter()
+                            .filter(|&&class| class >= super::super::OVERLAP_CLASS)
+                            .count();
                         log::debug!(
                             target: "diar",
                             ch = *ch as i64,
@@ -135,6 +139,9 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
         let tree = word_speakers::DiarIntervalTree::new(&diar_utts);
         all_utts.extend(document_utterances(&source_utts, &tree));
         channel_trees.insert(*ch, tree);
+        if let Some(segmentation) = segmentation {
+            segmentations.insert(*ch, segmentation);
+        }
     }
     if let Some(evidence) = echo.as_ref() {
         let before = all_utts.len();
@@ -156,9 +163,18 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
     // разных «Участник N» / «Собеседник N». Дубли эха схлопываем до одной фразы.
     diarize::reconcile_channels(&mut speakers_info, &mut all_utts);
     diarize::dedupe_cross_channel(&mut all_utts, &speakers_info, channel_samples);
-    stage_end("diar", diar_stage);
     all_utts.sort_by(|a, b| a.start.total_cmp(&b.start).then(a.speaker.cmp(&b.speaker)));
-    let merged = diarize::merge_utterances(all_utts);
+    let mut merged = diarize::merge_utterances(all_utts);
+    on_event(92, "Проверяю голоса отдельных реплик…");
+    super::super::profile_verification::run(
+        &mut merged,
+        &mut speakers_info,
+        channel_samples,
+        &segmentations,
+        &mut models.embed,
+        &profiles,
+    );
+    stage_end("diar", diar_stage);
     diarize::refresh_speaker_stats(&mut speakers_info, &merged);
     if cfg!(debug_assertions) {
         let speaker_summary: Vec<serde_json::Value> = speakers_info

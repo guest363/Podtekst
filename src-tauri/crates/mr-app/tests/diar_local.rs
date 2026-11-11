@@ -26,6 +26,8 @@ struct Case {
     expected_turns: Option<Vec<Turn>>,
     #[serde(default)]
     max_rtf: Option<f64>,
+    #[serde(default)]
+    identity_turns: Vec<Turn>,
 }
 
 #[derive(serde::Deserialize, Clone)]
@@ -68,6 +70,28 @@ fn dominant<'a>(intervals: &[(&'a str, f64, f64)], start: f64, end: f64) -> Opti
         }
     }
     best.map(|(speaker, _)| speaker)
+}
+
+fn wrong_identity_seconds(hyp: &[TranscriptUtterance], reference: &[Turn]) -> f64 {
+    reference
+        .iter()
+        .map(|turn| {
+            let mut intervals: Vec<(f64, f64)> = hyp
+                .iter()
+                .filter(|utterance| utterance.speaker == turn.speaker)
+                .map(|utterance| (utterance.start.max(turn.start), utterance.end.min(turn.end)))
+                .filter(|(start, end)| end > start)
+                .collect();
+            intervals.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let mut covered = 0.0;
+            let mut cursor = turn.start;
+            for (start, end) in intervals {
+                covered += (end - start.max(cursor)).max(0.0);
+                cursor = cursor.max(end);
+            }
+            ((turn.end - turn.start).max(0.0) - covered).max(0.0)
+        })
+        .sum()
 }
 
 fn compute_der(hyp: &[TranscriptUtterance], reference: &[Turn], collar_sec: f64) -> DerMetrics {
@@ -223,22 +247,29 @@ fn local_diarization_cases() {
                 ));
             }
         }
-        if let Some(reference) = &case.expected_turns {
+        if case.expected_turns.is_some() || !case.identity_turns.is_empty() {
             match std::fs::read_to_string(&report.json_path)
                 .ok()
                 .and_then(|text| serde_json::from_str::<Transcript>(&text).ok())
             {
                 Some(transcript) => {
-                    let der = compute_der(&transcript.utterances, reference, 0.25);
-                    eprintln!(
-                        "{}: DER {:.3} (miss {:.2}, fa {:.2}, conf {:.2})",
-                        case.id, der.der, der.missed, der.false_alarm, der.confusion
-                    );
-                    if der.total_ref <= 0.0 || der.der > 0.12 {
-                        failures.push(format!(
-                            "{}: DER {:.3} выше 0.12 (эталон {:.2} с)",
-                            case.id, der.der, der.total_ref
-                        ));
+                    let wrong =
+                        wrong_identity_seconds(&transcript.utterances, &case.identity_turns);
+                    if wrong > 0.0 {
+                        failures.push(format!("{}: неверный профиль на {wrong:.2} с", case.id));
+                    }
+                    if let Some(reference) = &case.expected_turns {
+                        let der = compute_der(&transcript.utterances, reference, 0.25);
+                        eprintln!(
+                            "{}: DER {:.3} (miss {:.2}, fa {:.2}, conf {:.2})",
+                            case.id, der.der, der.missed, der.false_alarm, der.confusion
+                        );
+                        if der.total_ref <= 0.0 || der.der > 0.12 {
+                            failures.push(format!(
+                                "{}: DER {:.3} выше 0.12 (эталон {:.2} с)",
+                                case.id, der.der, der.total_ref
+                            ));
+                        }
                     }
                 }
                 None => failures.push(format!("{}: не читается transcript.json", case.id)),
@@ -333,4 +364,35 @@ fn der_maps_swapped_labels() {
     ];
     let der = compute_der(&hyp, &reference, 0.25);
     assert!(der.der < 1e-9, "{der:?}");
+}
+
+#[test]
+fn identity_check_rejects_swapped_profiles_even_when_der_is_zero() {
+    let reference = vec![
+        Turn {
+            start: 0.0,
+            end: 3.0,
+            speaker: "A".to_string(),
+        },
+        Turn {
+            start: 3.0,
+            end: 6.0,
+            speaker: "B".to_string(),
+        },
+    ];
+    let hyp = vec![
+        TranscriptUtterance {
+            start: 0.0,
+            end: 3.0,
+            speaker: "B".to_string(),
+        },
+        TranscriptUtterance {
+            start: 3.0,
+            end: 6.0,
+            speaker: "A".to_string(),
+        },
+    ];
+    assert_eq!(compute_der(&hyp, &reference, 0.0).der, 0.0);
+    assert_eq!(wrong_identity_seconds(&hyp, &reference), 6.0);
+    assert_eq!(wrong_identity_seconds(&[], &reference), 6.0);
 }

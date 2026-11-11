@@ -1,6 +1,7 @@
 mod artifacts;
 mod asr_engine;
 mod channel_mix;
+mod clean_speech;
 mod diag;
 pub mod diarize;
 pub mod document;
@@ -16,6 +17,10 @@ use std::path::PathBuf;
 
 mod models;
 mod pipeline;
+mod profile_verification;
+
+/// Первый класс одновременной речи PyAnnote: 4+ — оверлап, младше — чистые голоса из mr-ml.
+pub(super) const OVERLAP_CLASS: u8 = 4;
 
 pub(crate) use models::extract_utterance_embedding;
 pub use models::invalidate_models_cache;

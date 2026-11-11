@@ -70,14 +70,15 @@ impl OrtSession {
         intra_threads: usize,
     ) -> Result<Self, String> {
         use ort::ep::ExecutionProviderDispatch;
-        let mut eps: Vec<ExecutionProviderDispatch> = Vec::new();
-        #[cfg(feature = "ort-cuda")]
-        eps.push(ort::ep::cuda::CUDA::default().into());
-        #[cfg(feature = "ort-directml")]
-        eps.push(ort::ep::directml::DirectML::default().into());
-        #[cfg(feature = "ort-coreml")]
-        eps.push(ort::ep::coreml::CoreML::default().into());
-        let builder = Self::base_builder(env, intra_threads)?
+        let eps: Vec<ExecutionProviderDispatch> = vec![
+            #[cfg(feature = "ort-cuda")]
+            ort::ep::cuda::CUDA::default().into(),
+            #[cfg(feature = "ort-directml")]
+            ort::ep::directml::DirectML::default().into(),
+            #[cfg(feature = "ort-coreml")]
+            ort::ep::coreml::CoreML::default().into(),
+        ];
+        let mut builder = Self::base_builder(env, intra_threads)?
             .with_execution_providers(eps)
             .map_err(|e| e.to_string())?;
         let session = builder.commit_from_file(path).map_err(|e| e.to_string())?;

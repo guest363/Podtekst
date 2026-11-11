@@ -73,7 +73,7 @@ jq -c 'select(.ev=="vad.summary")' dev.log
 | `audio` | `read`, `decode`, `channel`, `mix`, `bleed`, `capture` | что декодировали, какой канал выбрали, почему подавили эхо, проблемы захвата |
 | `vad` | `start`, `summary`, `hist`, `window`, `window.suppressed`, `segment`, `group`, `group.cut`, `merge_quiet` | параметры, распределение вероятностей, найденные/склеенные сегменты |
 | `asr` | `engine`, `seg.start`, `seg.done`, `loop`, `empty`, `ctc`, `ctc.skip`, `ctc.hotwords_skipped`, `blank_penalty`, `infer_error`, `text` | вход/выход сегмента, петли, второй проход CTC, ошибки ONNX |
-| `diar` | `start`, `units`, `segmentation`, `cluster`, `merge_tiny`, `max_speakers`, `assign`, `embed_batch`, `split`, `reconcile`, `dedupe`, `merge_utts`, `profile.load`, `stats` | почему столько спикеров и как распределены голоса |
+| `diar` | `start`, `units`, `segmentation`, `cluster`, `merge_tiny`, `max_speakers`, `assign`, `embed_batch`, `split`, `reconcile`, `dedupe`, `merge_utts`, `profile.load`, `verify_profiles`, `stats` | почему столько спикеров и как распределены голоса |
 | `cluster` | `auto_k`, `auto_k_fallback`, `merge_centroid` | выбор k по разрывам дерева слияний и финальное слияние близких центроидов |
 | `json` | `load`, `build`, `utt`, `check`, `invalid`, `roundtrip`, `write`, `edit`, `response` | чтение/запись `.transcript.json`, инварианты, правки UI |
 | `model` | `search`, `load`, `warmup`, `load_failed`, `infer_error`, `gpu_fallback` | что искали/загрузили, прогрев сессии, почему модели нет |
@@ -111,8 +111,8 @@ dev-runs/<run_id>/
 ```bash
 LOG=<app_data>/logs/dev/dev-*.log
 
-# VAD не увидел речь или каналы не свернулись в моно
-rg 'ev=vad\.(summary|hist)|ev=audio\.(channel|mix|fold|bleed)' "$LOG" | tail -20
+# VAD не увидел речь
+rg 'ev=vad\.(summary|hist)|ev=audio\.(channel|mix)' "$LOG" | tail -20
 
 # Фраза потерялась/разрезана
 rg 'ev=(vad\.group|vad\.merge_quiet|asr\.seg|asr\.loop|asr\.empty|diar\.merge_utts)' "$LOG"

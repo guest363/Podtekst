@@ -1,6 +1,6 @@
 <script lang="ts">
 import { onDestroy, tick } from 'svelte'
-import type { SpeakerCandidate, SpeakerInfo, SpeakerSample } from '../lib/api'
+import type { SpeakerCandidate, SpeakerInfo, SpeakerSample, TranscriptData } from '../lib/api'
 import {
   baseName,
   encPath,
@@ -12,7 +12,7 @@ import {
 import { errText } from '../lib/guards.ts'
 import { loadPeople, peopleState } from '../lib/people.svelte.ts'
 import { toast, toastConfirm } from '../lib/toast.svelte.ts'
-import { editTranscript, transcript } from '../lib/transcript.svelte.ts'
+import { applyTranscriptState, editTranscript, transcript } from '../lib/transcript.svelte.ts'
 import { emit, ui } from '../lib/ui.svelte.ts'
 
 type Props = {
@@ -205,16 +205,19 @@ const saveVoiceprint = async (
         sample_channel: sample?.channel,
       }),
     })
-    const d = await readJsonSafe(r)
+    const d = await readJsonSafe<
+      TranscriptData & { ok?: boolean; error?: string; voiceprint_saved?: boolean }
+    >(r)
     if (d.ok) {
       if (d.voiceprint_saved || hasEmb) {
         toast(`Голос спикера «${oldName}» привязан к «${finalName}». Текст обновлён.`)
       } else {
         toast(`Спикер «${oldName}» переименован в «${finalName}». Участник сохранён.`)
       }
-      await loadPeople()
-      emit('transcript-reload')
+      if (Array.isArray(d.utterances)) applyTranscriptState(d)
+      else emit('transcript-reload')
       emit('voiceprints-changed')
+      await loadPeople()
     } else {
       toast(`Не удалось сохранить: ${d.error || 'неизвестная ошибка'}`, 'error')
     }
@@ -238,10 +241,11 @@ const unmatchSpeaker = async (speakerName: string): Promise<void> => {
         unmatch: true,
       }),
     })
-    const d = await readJsonSafe(r)
+    const d = await readJsonSafe<TranscriptData & { ok?: boolean; error?: string }>(r)
     if (d.ok) {
       toast(`Опознание спикера «${speakerName}» снято в этой записи`)
-      emit('transcript-reload')
+      if (Array.isArray(d.utterances)) applyTranscriptState(d)
+      else emit('transcript-reload')
     } else {
       toast(`Не удалось снять опознание: ${d.error || 'ошибка'}`, 'error')
     }
