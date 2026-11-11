@@ -463,6 +463,21 @@ export const encPath = (p: string): string => {
   return encodeURIComponent(p)
 }
 
+// Без таймаута зависший ответ оставляет UI в «загрузке» навсегда: fetch сам не истекает.
+export const fetchWithTimeout = async (
+  url: string,
+  init: RequestInit = {},
+  ms = 15000,
+): Promise<Response> => {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export const readJsonSafe = async <T = Record<string, unknown>>(res: Response): Promise<T> => {
   const ct = res.headers.get('content-type') || ''
   if (ct.includes('application/json')) return (await res.json()) as T // SAFETY: контракт endpoint, тип задаёт вызывающая сторона
