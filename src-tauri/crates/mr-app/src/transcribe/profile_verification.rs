@@ -3,7 +3,8 @@ use std::collections::{HashMap, HashSet};
 use mr_ml::onnx::embed::EmbeddingExtractor;
 use mr_ml::onnx::segmentation::Segmentation;
 use mr_ml::{
-    match_voiceprints_matrix, score_speaker_similarity, weighted_centroid, SpeakerProfile,
+    cosine_similarity, match_voiceprints_matrix, score_speaker_similarity, weighted_centroid,
+    SpeakerProfile,
 };
 
 use super::diarize::pick_samples;
@@ -11,6 +12,26 @@ use super::{SpeakerInfo, Utterance};
 
 /// Калибровка ERes2NetV2: `onnx_real` проверяет различимость голосов на фрагментах от 1,5 с.
 const MIN_VERIFY_SEC: f64 = 1.5;
+/// Та же граница «один голос», что в `reconcile_channels`; иначе каждая спорная реплика плодит карточку.
+const ANON_MERGE_SIM: f64 = 0.55;
+
+fn nearest_anonymous<'a>(
+    infos: &'a [SpeakerInfo],
+    embedding: &[f64],
+    current: &str,
+) -> Option<&'a str> {
+    infos
+        .iter()
+        .filter(|info| !info.matched && info.name != current)
+        .filter_map(|info| {
+            info.embedding
+                .as_ref()
+                .map(|vector| (info.name.as_str(), cosine_similarity(vector, embedding)))
+        })
+        .filter(|(_, score)| *score >= ANON_MERGE_SIM)
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(name, _)| name)
+}
 
 fn contradicts(embedding: &[f64], assigned: &str, profiles: &[SpeakerProfile]) -> bool {
     let Some(profile) = profiles.iter().find(|profile| profile.name == assigned) else {
@@ -89,6 +110,9 @@ pub(super) fn run(
             );
             let result = result.remove(0);
             let name = result.name.clone().unwrap_or_else(|| {
+                if let Some(known) = nearest_anonymous(infos, &embedding, &utterance.speaker) {
+                    return known.to_string();
+                }
                 while names.contains(&format!("Собеседник {next_unknown}")) {
                     next_unknown += 1;
                 }
@@ -112,7 +136,7 @@ pub(super) fn run(
                     .into_iter()
                     .map(|candidate| (candidate.name, candidate.similarity))
                     .collect();
-                new_info.embedding = None;
+                new_info.embedding = Some(embedding.clone());
                 new_info.samples.clear();
                 infos.push(new_info);
                 names.insert(name.clone());
@@ -222,6 +246,46 @@ mod tests {
         );
         assert!(!result[0].matched);
         assert!(result[0].name.is_none());
+    }
+
+    fn info(name: &str, matched: bool, embedding: Vec<f64>) -> SpeakerInfo {
+        SpeakerInfo {
+            id: name.to_string(),
+            name: name.to_string(),
+            channel: Some(0),
+            matched,
+            matched_name: None,
+            matched_pack_id: None,
+            matched_pack_name: None,
+            similarity: 0.0,
+            silhouette: 0.0,
+            candidates: vec![],
+            embedding: Some(embedding),
+            samples: vec![],
+            utterances_count: 1,
+            total_speech_sec: 1.0,
+        }
+    }
+
+    #[test]
+    fn anonymous_voice_is_reused_instead_of_a_new_card() {
+        let infos = vec![
+            info("Собеседник 1", false, vec![1.0, 0.0, 0.0]),
+            info("A", true, vec![1.0, 0.0, 0.0]),
+            info("Другой", false, vec![0.0, 1.0, 0.0]),
+        ];
+        assert_eq!(
+            nearest_anonymous(&infos, &[1.0, 0.0, 0.0], "Исходный"),
+            Some("Собеседник 1")
+        );
+        assert_eq!(
+            nearest_anonymous(&infos, &[0.0, 0.0, 1.0], "Исходный"),
+            None
+        );
+        assert_eq!(
+            nearest_anonymous(&infos, &[1.0, 0.0, 0.0], "Собеседник 1"),
+            None
+        );
     }
 
     #[test]

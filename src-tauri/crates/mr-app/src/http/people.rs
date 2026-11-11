@@ -807,11 +807,20 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
             };
             if inside_save_dir(&full_p) {
                 let channel_i32 = sample_channel.map(|c| c as i32);
-                if let Ok((e, _dur, q)) =
-                    crate::transcribe::extract_utterance_embedding(&full_p, start, end, channel_i32)
-                {
-                    emb = e;
-                    extracted_quality = Some(q);
+                match crate::transcribe::extract_utterance_embedding(
+                    &full_p,
+                    start,
+                    end,
+                    channel_i32,
+                ) {
+                    Ok((e, _dur, q)) => {
+                        emb = e;
+                        extracted_quality = Some(q);
+                    }
+                    Err(error) => {
+                        json_response(request, json!({"ok": false, "error": error}), 422);
+                        return;
+                    }
                 }
             }
         }
