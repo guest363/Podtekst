@@ -141,8 +141,12 @@ pub(crate) fn merge_quiet_short_with_evidence(
         if echo_like(head, a) || echo_like(tail, b) {
             return true;
         }
-        if b.0 > a.1 && system_rms(a.1, b.0) > 0.005 {
-            return true;
+        if b.0 > a.1 {
+            let sys_level = system_rms(a.1, b.0);
+            let mic_level = rms(a.1, b.0);
+            if sys_level > 0.005 && mic_level <= evidence.gain * sys_level * 1.5 {
+                return true;
+            }
         }
         head.echo_only >= ECHO_MERGE_BLOCK
             || tail.echo_only >= ECHO_MERGE_BLOCK
@@ -1448,7 +1452,9 @@ pub(crate) fn diarize_channel(
             max_speakers,
         );
     }
-    reassign_short_replies(utterances, &embs, &durs, &quals, &mut label_of);
+    if echo.is_some() {
+        reassign_short_replies(utterances, &embs, &durs, &quals, &mut label_of);
+    }
     let final_vecs: Vec<Vec<f64>> = valid.iter().map(|&i| embs[i].clone().unwrap()).collect();
     let final_labels: Vec<usize> = valid.iter().map(|&i| label_of[&i]).collect();
     let final_scores = mr_ml::cluster::silhouette_scores(&final_vecs, &final_labels);
@@ -1487,7 +1493,11 @@ pub(crate) fn diarize_channel(
             mr_ml::weighted_centroid(&vecs, &ws)
         }
     };
-    let eligible = eligible_clusters(&raw_clusters, &label_of, &embs, &durs);
+    let eligible = if echo.is_some() {
+        eligible_clusters(&raw_clusters, &label_of, &embs, &durs)
+    } else {
+        (0..raw_clusters.len()).collect()
+    };
     let eligible_centroids: Vec<Vec<f64>> = eligible
         .iter()
         .map(|&k| cluster_centroid(raw_clusters[k]))

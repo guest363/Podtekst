@@ -6,7 +6,11 @@ const SAMPLE_RATE: usize = 16_000;
 pub(crate) const PROBE_SEC: usize = 30;
 const PROBE_COUNT: usize = 5;
 const MIN_INFORMATIVE_PROBES: usize = 3;
+/// Старый порог VAD-гейта: ниже него эхо не подавляется.
 const MIN_PROMINENCE: f32 = 8.0;
+/// Калибровка: на проблемных встречах prominence 88–136, на записи с
+/// фоновым эхом — 27. Перегруппировку VAD оправдывает только сильное эхо.
+pub(crate) const STRONG_PROMINENCE: f32 = 30.0;
 /// 4 мс: ниже этой задержки микрофон ближе к цифровому дублю канала, а не к эху из динамиков.
 const MIN_DELAY_SAMPLES: usize = 64;
 const MAX_DELAY_SAMPLES: usize = 8_000;
@@ -24,6 +28,9 @@ const RESIDUAL_MARGIN: f32 = 1.5;
 /// ~6% остатка из-за нецелой задержки в кадрах. Поэтому шумовой порог
 /// дополняется относительным — локальная речь ниже 15% уровня эха не речь.
 const RESIDUAL_RELATIVE: f32 = 0.15;
+/// Системный канал тише −40 dB не даёт слышимого эха: GCC-PHAT на шуме
+/// выдаёт ложный пик. Локальную речь такой гейт не трогает.
+const MIN_SYSTEM_RMS: f32 = 0.01;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FrameClass {
@@ -31,6 +38,12 @@ pub(crate) enum FrameClass {
     LocalOnly,
     DoubleTalk,
     Uncertain,
+}
+
+impl EchoEvidence {
+    pub(crate) fn is_strong(&self) -> bool {
+        self.prominence >= STRONG_PROMINENCE
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -120,17 +133,21 @@ pub(crate) fn detect(
         return None;
     }
     let window = (PROBE_SEC * SAMPLE_RATE).min(len);
-    let rms = |a: usize, b: usize| -> f32 {
-        let slice = &system[a..b.min(system.len())];
+    let rms = |data: &[f32], a: usize, b: usize| -> f32 {
+        let slice = &data[a..b.min(data.len())];
         if slice.is_empty() {
             return 0.0;
         }
         (slice.iter().map(|x| x * x).sum::<f32>() / slice.len() as f32).sqrt()
     };
+    let system_rms = rms(system, 0, len);
+    if system_rms < MIN_SYSTEM_RMS || rms(mic, 0, len) > system_rms * 20.0 {
+        return None;
+    }
     let mut candidates: Vec<(f32, usize)> = (0..=8)
         .map(|step| {
             let start = ((len - window) as f64 * step as f64 / 8.0) as usize;
-            (rms(start, start + window), start)
+            (rms(system, start, start + window), start)
         })
         .collect();
     candidates.sort_by(|a, b| b.0.total_cmp(&a.0));

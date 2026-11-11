@@ -114,15 +114,16 @@ pub(super) fn run(
     if is_stereo {
         if let (Some(mic), Some(system)) = (channel_samples.get(&0), channel_samples.get(&1)) {
             let mic_probs = channel_vad.get(&0).map(Vec::as_slice);
-            evidence = channel_mix::classify_echo(mic, system, mic_probs);
-            if let Some(echo) = &evidence {
+            let detected = channel_mix::classify_echo(mic, system, mic_probs);
+            if let Some(echo) = detected.filter(EchoEvidence::is_strong) {
                 let suppressed = channel_vad
                     .get_mut(&0)
-                    .map(|probs| channel_mix::apply_vad_gate(probs, echo))
+                    .map(|probs| channel_mix::apply_vad_gate(probs, &echo))
                     .unwrap_or(0);
                 log::info!(
                     target: "audio",
                     ch = 0,
+                    mode = "frame_classes",
                     delay = echo.delay_samples,
                     delay_sec = echo.delay_sec,
                     prom = echo.prominence,
@@ -140,6 +141,20 @@ pub(super) fn run(
                         &format!("Микрофон: подавлено эхо в {suppressed} кадрах"),
                     );
                 }
+                evidence = Some(echo);
+            } else if let Some(probs) = channel_vad.get_mut(&0) {
+                let stats = channel_mix::suppress_mic_bleed_with_stats(mic, system, probs);
+                log::info!(
+                    target: "audio",
+                    ch = 0,
+                    mode = "legacy",
+                    delay = stats.delay,
+                    prom = stats.prominence,
+                    suppressed = stats.suppressed,
+                    total = stats.frames,
+                    probe_sec = stats.probe_sec;
+                    "ev=audio.bleed"
+                );
             }
         }
     }
