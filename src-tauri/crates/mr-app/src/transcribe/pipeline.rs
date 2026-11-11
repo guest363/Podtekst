@@ -288,7 +288,7 @@ fn transcribe_file_inner(
                 (0usize, opts.speaker_left.clone()),
                 (1, opts.speaker_right.clone()),
             ],
-            "раздельные каналы записи (микрофон / система, наушники)",
+            "раздельные каналы записи (микрофон / система)",
         )
     } else if mixed_channels.is_some() {
         (
@@ -307,8 +307,10 @@ fn transcribe_file_inner(
         .collect();
 
     let vad = models.ensure_vad()?;
-    let (channel_vad, channel_grouped) =
-        vad::run(&channel_samples, &chan_list, is_stereo, vad, on_event)?;
+    let vad_output = vad::run(&channel_samples, &chan_list, is_stereo, vad, on_event)?;
+    let channel_vad = vad_output.channel_vad;
+    let channel_grouped = vad_output.channel_grouped;
+    let echo = vad_output.echo;
     let (channel_utts, ctc_used_any) = asr::run(
         &channel_grouped,
         &channel_samples,
@@ -323,6 +325,7 @@ fn transcribe_file_inner(
         chan_list: &chan_list,
         channel_vad: &channel_vad,
         channel_utts,
+        echo,
         models: &mut models,
         opts,
         is_stereo,
@@ -343,7 +346,7 @@ fn transcribe_file_inner(
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
     let method = if is_stereo {
-        "Микрофон и система, наушники (модели: VAD, GigaAM, векторы голосов)".to_string()
+        "Микрофон и система (модели: VAD, GigaAM, векторы голосов)".to_string()
     } else {
         speaker_method.to_string() + " + разделение голосов"
     };

@@ -4,10 +4,12 @@ mod channel_mix;
 mod diag;
 pub mod diarize;
 pub mod document;
+mod echo;
 pub mod events;
 pub mod memory;
 pub mod report;
 mod speaker_assignment;
+mod word_dedupe;
 mod word_speakers;
 
 use std::path::PathBuf;
