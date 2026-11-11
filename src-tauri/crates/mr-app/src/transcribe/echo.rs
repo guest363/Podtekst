@@ -316,8 +316,8 @@ pub(crate) fn mean_residual(ev: &EchoEvidence, start: f64, end: f64) -> f32 {
     ev.residual[lo..hi].iter().sum::<f32>() / (hi - lo) as f32
 }
 
-/// Понадобится этапу пословной дедупликации: конвейер stage 1 его не вызывает.
-#[allow(dead_code)]
+/// Самый длинный непрерывный участок без «только эхо»: по нему берём эмбеддинг,
+/// чтобы в вектор голоса не попала чужая речь из динамиков.
 pub(crate) fn longest_local_run(ev: &EchoEvidence, start: f64, end: f64) -> Option<(f64, f64)> {
     let (lo, hi) = frame_range(ev, start, end);
     let mut best: Option<(usize, usize)> = None;

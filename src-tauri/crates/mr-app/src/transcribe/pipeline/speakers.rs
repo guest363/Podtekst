@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use super::super::diag::{stage_begin, stage_end};
 use super::super::diarize;
+use super::super::echo::EchoEvidence;
 use super::super::models::ModelSet;
 use super::super::word_speakers;
 use super::super::{SpeakerInfo, TranscribeOptions, Utterance};
@@ -12,6 +13,7 @@ pub(super) struct Input<'a> {
     pub(super) chan_list: &'a [(usize, String)],
     pub(super) channel_vad: &'a HashMap<usize, Vec<f32>>,
     pub(super) channel_utts: HashMap<usize, Vec<Utterance>>,
+    pub(super) echo: Option<EchoEvidence>,
     pub(super) models: &'a mut ModelSet,
     pub(super) opts: &'a TranscribeOptions,
     pub(super) is_stereo: bool,
@@ -24,6 +26,7 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
         chan_list,
         channel_vad,
         mut channel_utts,
+        echo,
         models,
         opts,
         is_stereo,
@@ -85,11 +88,14 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
             diarize::split_at_pauses(samples, &paused_utts)
         };
         on_event(80, "Ищу смену голоса внутри реплик…");
+        // Эхо бывает только в микрофонном канале (системный канал — источник).
+        let ch_echo = if *ch == 0 { echo.as_ref() } else { None };
         diar_utts = diarize::split_long_by_speaker_change(
             samples,
             diar_utts,
             &mut models.embed,
             segmentation.as_ref(),
+            ch_echo,
             &|pct, msg| on_event(pct, msg),
         );
         let (prefix, ch_idx) = if is_stereo {
@@ -117,6 +123,7 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
             prefix,
             &mut models.embed,
             segmentation.as_ref(),
+            ch_echo,
             &profiles,
             opts.min_speakers,
             opts.max_speakers,

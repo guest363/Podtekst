@@ -310,8 +310,7 @@ fn transcribe_file_inner(
     let vad_output = vad::run(&channel_samples, &chan_list, is_stereo, vad, on_event)?;
     let channel_vad = vad_output.channel_vad;
     let channel_grouped = vad_output.channel_grouped;
-    // Эхо-доказательства понадобятся пословной дедупликации на следующем этапе.
-    let _echo = vad_output.echo;
+    let echo = vad_output.echo;
     let (channel_utts, ctc_used_any) = asr::run(
         &channel_grouped,
         &channel_samples,
@@ -326,6 +325,7 @@ fn transcribe_file_inner(
         chan_list: &chan_list,
         channel_vad: &channel_vad,
         channel_utts,
+        echo,
         models: &mut models,
         opts,
         is_stereo,

@@ -2,9 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use mr_ml::onnx::embed::EmbeddingExtractor;
 use mr_ml::onnx::segmentation::Segmentation;
-use mr_ml::{interval_gap, match_voiceprints_matrix, SpeakerProfile};
+use mr_ml::{interval_gap, match_voiceprints_matrix, ClusterMatch, SpeakerProfile};
 use mr_packs as packs;
 
+use super::echo::{self, EchoEvidence};
 use super::{Sample, SpeakerInfo, Utterance, WordConf};
 
 /// Группировка VAD-сегментов в окна для ASR (≤ `max_dur`, склейка по паузе ≤ `gap`).
@@ -409,6 +410,28 @@ const AUTO_K_MAX_SPEAKERS: usize = 12;
 /// слияние разных собеседников с похожей акустикой комнаты.
 const CENTROID_MERGE_SIM: f64 = 0.70;
 
+/// Кластер, набравший меньше чистой речи, слишком короток для надёжного
+/// центроида: имя профиля на него не вешаем.
+const MIN_NAMED_CLEAN_SEC: f64 = 2.0;
+
+/// Калибровка на коротких репликах, перепроверить на размеченном наборе.
+const SHORT_REPLY_SEC: f64 = 1.2;
+const SHORT_REPLY_WORDS: usize = 2;
+const SHORT_REPLY_KEEP_SIM: f64 = 0.55;
+const SHORT_REPLY_KEEP_MARGIN: f64 = 0.08;
+const SHORT_REPLY_NEIGHBOR_GAP_SEC: f64 = 2.0;
+const SHORT_REPLY_NEIGHBOR_SLACK: f64 = 0.02;
+
+/// Нижняя граница непрерывной локальной речи для эмбеддинга: на более коротком
+/// куске ERes2NetV2 не набирает стабильный вектор голоса.
+const MIN_LOCAL_EMBED_SEC: f64 = 0.8;
+
+/// Окно поиска смены голоса должно содержать хотя бы столько чистой локальной
+/// речи: иначе эмбеддинг окна — это голос из динамиков, а не собеседника.
+const SPLIT_MIN_LOCAL_SEC: f64 = 0.8;
+/// Окно, больше половины которого — только эхо, для сравнения голосов не годится.
+const SPLIT_MAX_ECHO_SHARE: f32 = 0.5;
+
 fn short_join_threshold(dur: f64) -> f64 {
     const MIN: f64 = 0.36;
     const SPAN: f64 = 0.12;
@@ -652,6 +675,163 @@ fn profile_anchors(
     anchors
 }
 
+fn empty_match() -> ClusterMatch {
+    ClusterMatch {
+        matched: false,
+        name: None,
+        pack_id: None,
+        pack_name: None,
+        similarity: 0.0,
+        margin: 0.0,
+        candidates: vec![],
+    }
+}
+
+/// Индексы в `raw_clusters`, которым можно назначать имя профиля: только
+/// кластеры с достаточным объёмом чистой (локальной) речи.
+fn eligible_clusters(
+    raw_clusters: &[usize],
+    label_of: &HashMap<usize, usize>,
+    embs: &[Option<Vec<f64>>],
+    durs: &[f64],
+) -> Vec<usize> {
+    let mut clean_sec: HashMap<usize, f64> = HashMap::new();
+    for (&index, &label) in label_of.iter() {
+        if embs.get(index).is_some_and(Option::is_some) {
+            *clean_sec.entry(label).or_default() += durs.get(index).copied().unwrap_or(0.0);
+        }
+    }
+    (0..raw_clusters.len())
+        .filter(|&k| clean_sec.get(&raw_clusters[k]).copied().unwrap_or(0.0) >= MIN_NAMED_CLEAN_SEC)
+        .collect()
+}
+
+fn label_centroids(
+    embs: &[Option<Vec<f64>>],
+    durs: &[f64],
+    quals: &[f64],
+    label_of: &HashMap<usize, usize>,
+) -> HashMap<usize, Vec<f64>> {
+    let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (&index, &label) in label_of.iter() {
+        if embs.get(index).is_some_and(Option::is_some) {
+            groups.entry(label).or_default().push(index);
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(label, mut members)| {
+            members.sort_unstable();
+            let (vecs, ws): (Vec<Vec<f64>>, Vec<f64>) = members
+                .iter()
+                .filter_map(|&i| {
+                    embs[i]
+                        .clone()
+                        .map(|vector| (vector, durs[i].min(8.0) * quals[i]))
+                })
+                .unzip();
+            (label, mr_ml::weighted_centroid(&vecs, &ws))
+        })
+        .collect()
+}
+
+/// Короткая реплика («да», «угу») даёт неустойчивый вектор. Если акустика не
+/// подтверждает её кластер, а обе соседние реплики в том же канале — один
+/// голос, относим короткую к этому голосу: имена здесь ещё не назначены,
+/// поэтому решение чисто акустическое и временное.
+fn reassign_short_replies(
+    utterances: &[Utterance],
+    embs: &[Option<Vec<f64>>],
+    durs: &[f64],
+    quals: &[f64],
+    label_of: &mut HashMap<usize, usize>,
+) {
+    let centroids = label_centroids(embs, durs, quals, label_of);
+    if centroids.len() < 2 {
+        return;
+    }
+    let mut moved = 0usize;
+    for index in 0..utterances.len() {
+        let Some(&current) = label_of.get(&index) else {
+            continue;
+        };
+        let short = durs[index] < SHORT_REPLY_SEC
+            || utterances[index].text.split_whitespace().count() <= SHORT_REPLY_WORDS;
+        if !short {
+            continue;
+        }
+        let Some(emb) = embs.get(index).and_then(Option::as_ref) else {
+            continue;
+        };
+        let sim_current = centroids
+            .get(&current)
+            .map_or(0.0, |c| mr_ml::cosine_similarity(emb, c));
+        let best_alt = centroids
+            .iter()
+            .filter(|(label, _)| **label != current)
+            .map(|(_, c)| mr_ml::cosine_similarity(emb, c))
+            .fold(f64::NEG_INFINITY, f64::max);
+        if sim_current >= SHORT_REPLY_KEEP_SIM && sim_current - best_alt >= SHORT_REPLY_KEEP_MARGIN
+        {
+            continue;
+        }
+        let neighbor = |next: bool| -> Option<usize> {
+            let utterance = &utterances[index];
+            let mut best: Option<(f64, usize)> = None;
+            for (other, candidate) in utterances.iter().enumerate() {
+                if other == index
+                    || candidate.channel != utterance.channel
+                    || !label_of.contains_key(&other)
+                {
+                    continue;
+                }
+                let gap = if next {
+                    if candidate.start < utterance.end {
+                        continue;
+                    }
+                    candidate.start - utterance.end
+                } else {
+                    if candidate.end > utterance.start {
+                        continue;
+                    }
+                    utterance.start - candidate.end
+                };
+                if gap > SHORT_REPLY_NEIGHBOR_GAP_SEC {
+                    continue;
+                }
+                if best.is_none_or(|(best_gap, _)| gap < best_gap) {
+                    best = Some((gap, other));
+                }
+            }
+            best.map(|(_, other)| other)
+        };
+        let (Some(prev), Some(next)) = (neighbor(false), neighbor(true)) else {
+            continue;
+        };
+        let (Some(&prev_label), Some(&next_label)) = (label_of.get(&prev), label_of.get(&next))
+        else {
+            continue;
+        };
+        if prev_label != next_label || prev_label == current {
+            continue;
+        }
+        let sim_neighbor = centroids
+            .get(&prev_label)
+            .map_or(0.0, |c| mr_ml::cosine_similarity(emb, c));
+        if sim_neighbor >= sim_current - SHORT_REPLY_NEIGHBOR_SLACK {
+            label_of.insert(index, prev_label);
+            moved += 1;
+        }
+    }
+    if moved > 0 {
+        log::debug!(
+            target: "diar",
+            moved = moved;
+            "ev=diar.short_reply"
+        );
+    }
+}
+
 fn fill_labels_by_time(utterances: &[Utterance], label_of: &mut HashMap<usize, usize>) {
     let mut labeled: Vec<usize> = (0..utterances.len())
         .filter(|&i| label_of.contains_key(&i))
@@ -742,12 +922,22 @@ struct AcoustUnit {
     embedding: Vec<f64>,
 }
 
+/// Участок окна без «только эхо», обрезанный по границам окна: `None` — кадров
+/// локальной речи нет или их слишком мало для честного эмбеддинга.
+fn local_region(ev: &EchoEvidence, start: f64, end: f64, min_sec: f64) -> Option<(f64, f64)> {
+    let (run_start, run_end) = echo::longest_local_run(ev, start, end)?;
+    let run_start = run_start.max(start);
+    let run_end = run_end.min(end);
+    (run_end - run_start >= min_sec).then_some((run_start, run_end))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_acoust_units(
     samples: &[f32],
     utterances: &[Utterance],
     extractor: &mut Option<EmbeddingExtractor>,
     segmentation: Option<&Segmentation>,
+    echo: Option<&EchoEvidence>,
     on_event: &dyn Fn(u8, &str),
 ) -> Vec<AcoustUnit> {
     const SR: f64 = 16000.0;
@@ -779,6 +969,13 @@ fn build_acoust_units(
                 if end - start < MIN_UNIT_SEC {
                     break;
                 }
+                let (start, end) = match echo {
+                    Some(ev) => match local_region(ev, start, end, MIN_LOCAL_EMBED_SEC) {
+                        Some(region) => region,
+                        None => continue,
+                    },
+                    None => (start, end),
+                };
                 let lo = (start.max(0.0) * SR) as usize;
                 let hi = ((end.max(0.0) * SR) as usize).min(samples.len());
                 if hi <= lo {
@@ -937,6 +1134,7 @@ pub(crate) fn diarize_channel(
     prefix: &str,
     extractor: &mut Option<EmbeddingExtractor>,
     segmentation: Option<&Segmentation>,
+    echo: Option<&EchoEvidence>,
     profiles: &[SpeakerProfile],
     min_speakers: usize,
     max_speakers: usize,
@@ -965,7 +1163,7 @@ pub(crate) fn diarize_channel(
         .map(|u| (u.end - u.start).max(0.0))
         .collect();
     let mut quals = vec![1.0f64; n];
-    let units = build_acoust_units(samples, utterances, extractor, segmentation, on_event);
+    let units = build_acoust_units(samples, utterances, extractor, segmentation, echo, on_event);
     if units.is_empty() {
         for u in utterances.iter_mut() {
             u.speaker = default_name.to_string();
@@ -1250,6 +1448,7 @@ pub(crate) fn diarize_channel(
             max_speakers,
         );
     }
+    reassign_short_replies(utterances, &embs, &durs, &quals, &mut label_of);
     let final_vecs: Vec<Vec<f64>> = valid.iter().map(|&i| embs[i].clone().unwrap()).collect();
     let final_labels: Vec<usize> = valid.iter().map(|&i| label_of[&i]).collect();
     let final_scores = mr_ml::cluster::silhouette_scores(&final_vecs, &final_labels);
@@ -1260,43 +1459,49 @@ pub(crate) fn diarize_channel(
     let mut raw_clusters: Vec<usize> = label_of.values().copied().collect();
     raw_clusters.sort();
     raw_clusters.dedup();
-    let ordered_centroids: Vec<Vec<f64>> = raw_clusters
-        .iter()
-        .map(|c| {
-            let members: Vec<usize> = {
-                let mut members: Vec<usize> = label_of
-                    .iter()
-                    .filter(|(_, &l)| l == *c)
-                    .map(|(&i, _)| i)
-                    .collect();
-                // Порядок обхода HashMap не должен влиять на сумму центроида.
-                members.sort_unstable();
-                members
-            };
-            // Пары «вектор-вес» строим вместе: иначе веса съезжают на
-            // реплики без эмбеддинга и центроид считается не по тем голосам.
-            let weighted: Vec<(Vec<f64>, f64)> = members
+    let cluster_centroid = |c: usize| -> Vec<f64> {
+        let members: Vec<usize> = {
+            let mut members: Vec<usize> = label_of
                 .iter()
-                .filter_map(|&i| {
-                    embs[i]
-                        .clone()
-                        .map(|vector| (vector, durs[i].min(8.0) * quals[i]))
-                })
+                .filter(|(_, &l)| l == c)
+                .map(|(&i, _)| i)
                 .collect();
-            if weighted.is_empty() {
-                vec![0.0; mr_ml::EMBEDDING_DIM]
-            } else {
-                let (vecs, ws): (Vec<Vec<f64>>, Vec<f64>) = weighted.into_iter().unzip();
-                mr_ml::weighted_centroid(&vecs, &ws)
-            }
-        })
+            // Порядок обхода HashMap не должен влиять на сумму центроида.
+            members.sort_unstable();
+            members
+        };
+        // Пары «вектор-вес» строим вместе: иначе веса съезжают на
+        // реплики без эмбеддинга и центроид считается не по тем голосам.
+        let weighted: Vec<(Vec<f64>, f64)> = members
+            .iter()
+            .filter_map(|&i| {
+                embs[i]
+                    .clone()
+                    .map(|vector| (vector, durs[i].min(8.0) * quals[i]))
+            })
+            .collect();
+        if weighted.is_empty() {
+            vec![0.0; mr_ml::EMBEDDING_DIM]
+        } else {
+            let (vecs, ws): (Vec<Vec<f64>>, Vec<f64>) = weighted.into_iter().unzip();
+            mr_ml::weighted_centroid(&vecs, &ws)
+        }
+    };
+    let eligible = eligible_clusters(&raw_clusters, &label_of, &embs, &durs);
+    let eligible_centroids: Vec<Vec<f64>> = eligible
+        .iter()
+        .map(|&k| cluster_centroid(raw_clusters[k]))
         .collect();
-    let matches = match_voiceprints_matrix(
-        &ordered_centroids,
+    let matched_eligible = match_voiceprints_matrix(
+        &eligible_centroids,
         profiles,
         mr_ml::DEFAULT_MATCH_THRESHOLD,
         mr_ml::DEFAULT_MIN_MARGIN,
     );
+    let mut matches: Vec<ClusterMatch> = raw_clusters.iter().map(|_| empty_match()).collect();
+    for (slot, &k) in eligible.iter().enumerate() {
+        matches[k] = matched_eligible[slot].clone();
+    }
     let mut cluster_name: HashMap<usize, String> = HashMap::new();
     let mut cluster_pack_id: HashMap<usize, String> = HashMap::new();
     let mut cluster_pack_name: HashMap<usize, String> = HashMap::new();
@@ -2530,6 +2735,18 @@ fn speaker_change_cuts(
     cuts
 }
 
+fn split_window_region(echo: Option<&EchoEvidence>, start: f64, end: f64) -> Option<(f64, f64)> {
+    match echo {
+        Some(ev) => {
+            if echo::segment_profile(ev, start, end).echo_only > SPLIT_MAX_ECHO_SHARE {
+                return None;
+            }
+            local_region(ev, start, end, SPLIT_MIN_LOCAL_SEC)
+        }
+        None => Some((start, end)),
+    }
+}
+
 /// Один голос даёт ~0.5+, смена диктора ≤ 0.22 — замеры ERes2NetV2
 /// (`onnx_real::eres2netv2_parity_with_official_reference`).
 /// Перекрытия вырезаются до эмбеддинга: иначе оба голоса дают «средний» вектор.
@@ -2538,6 +2755,7 @@ pub(crate) fn split_long_by_speaker_change(
     utterances: Vec<Utterance>,
     extractor: &mut Option<EmbeddingExtractor>,
     segmentation: Option<&Segmentation>,
+    echo: Option<&EchoEvidence>,
     on_event: &dyn Fn(u8, &str),
 ) -> Vec<Utterance> {
     let Some(ext) = extractor else {
@@ -2562,16 +2780,19 @@ pub(crate) fn split_long_by_speaker_change(
         let mut wins: Vec<(f64, Vec<f64>)> = vec![];
         let mut t = u.start;
         while t + SPLIT_WINDOW_SEC <= u.end + 1e-6 {
-            let lo = (t * sr) as usize;
-            let hi = ((t + SPLIT_WINDOW_SEC).min(u.end) * sr) as usize;
-            if hi > lo && hi <= samples.len() {
-                let mut chunk = samples[lo..hi].to_vec();
-                let clean_len = segmentation
-                    .map(|seg| seg.exclude_overlap(&mut chunk, lo))
-                    .unwrap_or(chunk.len());
-                if clean_len >= (sr * 0.4) as usize {
-                    if let Ok(Some(e)) = ext.embed(&chunk[..clean_len]) {
-                        wins.push((t, e));
+            let window_end = (t + SPLIT_WINDOW_SEC).min(u.end);
+            if let Some((start, end)) = split_window_region(echo, t, window_end) {
+                let lo = (start * sr) as usize;
+                let hi = (end * sr) as usize;
+                if hi > lo && hi <= samples.len() {
+                    let mut chunk = samples[lo..hi].to_vec();
+                    let clean_len = segmentation
+                        .map(|seg| seg.exclude_overlap(&mut chunk, lo))
+                        .unwrap_or(chunk.len());
+                    if clean_len >= (sr * 0.4) as usize {
+                        if let Ok(Some(e)) = ext.embed(&chunk[..clean_len]) {
+                            wins.push((t, e));
+                        }
                     }
                 }
             }
@@ -2764,13 +2985,15 @@ pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::{
-        cannot_link_units, dedupe_cross_channel, fill_labels_by_time, group_segments,
-        merge_quiet_short, merge_quiet_short_with_evidence, merge_tiny_clusters, merge_utterances,
-        move_boundary_words, profile_anchors, read_profiles_file, reconcile_channels,
-        refresh_speaker_stats, short_join_threshold, speaker_change_cuts, split_at_pauses,
-        split_by_word_pauses, split_utterance_by_bounds, split_words_by_bounds, switch_penalty,
-        text_similarity, AcoustUnit, SpeakerInfo, Utterance,
+        cannot_link_units, dedupe_cross_channel, eligible_clusters, fill_labels_by_time,
+        group_segments, local_region, merge_quiet_short, merge_quiet_short_with_evidence,
+        merge_tiny_clusters, merge_utterances, move_boundary_words, profile_anchors,
+        read_profiles_file, reassign_short_replies, reconcile_channels, refresh_speaker_stats,
+        short_join_threshold, speaker_change_cuts, split_at_pauses, split_by_word_pauses,
+        split_utterance_by_bounds, split_window_region, split_words_by_bounds, switch_penalty,
+        text_similarity, AcoustUnit, SpeakerInfo, Utterance, MIN_LOCAL_EMBED_SEC,
     };
+    use crate::transcribe::echo::FrameClass;
     use crate::transcribe::WordConf;
     use std::collections::HashMap;
 
@@ -4105,5 +4328,133 @@ mod tests {
         let cuts = speaker_change_cuts(&samples, 0.0, 5.0, &wins, &[]);
         assert_eq!(cuts.len(), 1);
         assert!((2.5..=2.7).contains(&cuts[0]), "{cuts:?}");
+    }
+
+    #[test]
+    fn local_region_keeps_local_run_and_skips_echo_only() {
+        let mixed = echo_evidence(
+            4.0,
+            &[
+                (0.0, 2.0, FrameClass::EchoOnly),
+                (2.0, 4.0, FrameClass::LocalOnly),
+            ],
+        );
+        let (start, end) =
+            local_region(&mixed, 0.0, 4.0, MIN_LOCAL_EMBED_SEC).expect("локальная речь есть");
+        assert!((start - 2.0).abs() < 0.05, "{start}");
+        assert!((end - 4.0).abs() < 0.05, "{end}");
+
+        let only_echo = echo_evidence(4.0, &[(0.0, 4.0, FrameClass::EchoOnly)]);
+        assert!(local_region(&only_echo, 0.0, 4.0, MIN_LOCAL_EMBED_SEC).is_none());
+
+        let too_short = echo_evidence(
+            2.2,
+            &[
+                (0.0, 1.7, FrameClass::EchoOnly),
+                (1.7, 2.2, FrameClass::LocalOnly),
+            ],
+        );
+        assert!(local_region(&too_short, 0.0, 2.2, MIN_LOCAL_EMBED_SEC).is_none());
+    }
+
+    #[test]
+    fn split_window_region_rejects_echo_dominant_window() {
+        let ev = echo_evidence(
+            3.0,
+            &[
+                (0.0, 1.0, FrameClass::LocalOnly),
+                (1.0, 3.0, FrameClass::EchoOnly),
+            ],
+        );
+        let (start, end) =
+            split_window_region(Some(&ev), 0.0, 1.6).expect("локальная половина окна");
+        assert!(start < 0.05, "{start}");
+        assert!((end - 1.0).abs() < 0.05, "{end}");
+        assert!(split_window_region(Some(&ev), 1.0, 2.6).is_none());
+        assert_eq!(split_window_region(None, 0.0, 1.6), Some((0.0, 1.6)));
+    }
+
+    #[test]
+    fn short_cluster_is_not_eligible_for_profile_name() {
+        let label_of: HashMap<usize, usize> = HashMap::from([(0, 0), (1, 0), (2, 1), (3, 1)]);
+        let embs = vec![
+            Some(vec![1.0, 0.0]),
+            Some(vec![1.0, 0.0]),
+            Some(vec![0.0, 1.0]),
+            None,
+        ];
+        let durs = vec![1.5, 1.5, 1.0, 4.0];
+        let raw_clusters = vec![0usize, 1];
+        assert_eq!(
+            eligible_clusters(&raw_clusters, &label_of, &embs, &durs),
+            vec![0]
+        );
+
+        let durs = vec![1.5, 1.5, 2.4, 4.0];
+        assert_eq!(
+            eligible_clusters(&raw_clusters, &label_of, &embs, &durs),
+            vec![0, 1]
+        );
+    }
+
+    #[test]
+    fn weak_short_reply_moves_to_matching_neighbors() {
+        let utterances = vec![
+            utt(0.0, 2.0, "A", 0, "нейтральная тестовая фраза"),
+            utt(2.2, 2.7, "A", 0, "да"),
+            utt(2.9, 5.0, "A", 0, "нейтральная тестовая фраза"),
+            utt(10.0, 12.0, "A", 0, "нейтральная тестовая фраза"),
+        ];
+        let embs = vec![
+            Some(vec![1.0, 0.0]),
+            Some(vec![1.0, 0.0]),
+            Some(vec![1.0, 0.0]),
+            Some(vec![-1.0, 0.0]),
+        ];
+        let durs = vec![2.0, 0.5, 2.1, 2.0];
+        let quals = vec![1.0; 4];
+        let mut label_of: HashMap<usize, usize> = HashMap::from([(0, 0), (1, 1), (2, 0), (3, 1)]);
+        reassign_short_replies(&utterances, &embs, &durs, &quals, &mut label_of);
+        assert_eq!(label_of[&1], 0, "{label_of:?}");
+    }
+
+    #[test]
+    fn confident_short_reply_keeps_its_cluster() {
+        let utterances = vec![
+            utt(0.0, 2.0, "A", 0, "нейтральная тестовая фраза"),
+            utt(2.2, 2.7, "A", 0, "да"),
+            utt(2.9, 5.0, "A", 0, "нейтральная тестовая фраза"),
+        ];
+        let embs = vec![
+            Some(vec![0.0, 1.0]),
+            Some(vec![1.0, 0.0]),
+            Some(vec![0.0, 1.0]),
+        ];
+        let durs = vec![2.0, 0.5, 2.1];
+        let quals = vec![1.0; 3];
+        let mut label_of: HashMap<usize, usize> = HashMap::from([(0, 0), (1, 1), (2, 0)]);
+        reassign_short_replies(&utterances, &embs, &durs, &quals, &mut label_of);
+        assert_eq!(label_of[&1], 1, "{label_of:?}");
+    }
+
+    #[test]
+    fn short_reply_with_different_neighbors_stays() {
+        let utterances = vec![
+            utt(0.0, 2.0, "A", 0, "нейтральная тестовая фраза"),
+            utt(2.2, 2.7, "A", 0, "да"),
+            utt(2.9, 5.0, "A", 0, "нейтральная тестовая фраза"),
+            utt(10.0, 12.0, "A", 0, "нейтральная тестовая фраза"),
+        ];
+        let embs = vec![
+            Some(vec![1.0, 0.0]),
+            Some(vec![1.0, 0.0]),
+            Some(vec![0.0, 1.0]),
+            Some(vec![0.0, -1.0]),
+        ];
+        let durs = vec![2.0, 0.5, 2.1, 2.0];
+        let quals = vec![1.0; 4];
+        let mut label_of: HashMap<usize, usize> = HashMap::from([(0, 0), (1, 2), (2, 1), (3, 2)]);
+        reassign_short_replies(&utterances, &embs, &durs, &quals, &mut label_of);
+        assert_eq!(label_of[&1], 2, "{label_of:?}");
     }
 }
