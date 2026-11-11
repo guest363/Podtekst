@@ -418,42 +418,28 @@ fn content_range_total(value: &str) -> Option<u64> {
     total.trim().parse().ok()
 }
 
-/// Замок скачивания на `.lock`-файле: без внешних крейтов и без гонки за общий `.part`.
+/// Замок скачивания на `.lock`-файле: ОС снимает блокировку сама при падении
+/// процесса, поэтому «протухших» замков не бывает и второй писатель в `.part`
+/// не попадает даже на многогигабайтном файле с медленного канала.
 struct DownloadLock {
-    path: PathBuf,
+    _file: fs::File,
 }
 
 impl DownloadLock {
-    /// Замок прошлого запуска после краха иначе блокировал бы скачивание навсегда.
-    const STALE: std::time::Duration = std::time::Duration::from_secs(30 * 60);
-
     fn acquire(dir: &Path, filename: &str) -> Result<Self> {
         let path = dir.join(format!("{filename}.lock"));
-        if fs::metadata(&path)
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.elapsed().ok())
-            .is_some_and(|age| age > Self::STALE)
-        {
-            let _ = fs::remove_file(&path);
-        }
-        match fs::OpenOptions::new()
+        let file = fs::OpenOptions::new()
             .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(_) => Ok(Self { path }),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(ModelsError::Other(
-                format!("файл {filename} уже скачивается другим процессом"),
-            )),
-            Err(e) => Err(e.into()),
+            .create(true)
+            .truncate(false)
+            .open(&path)?;
+        match file.try_lock() {
+            Ok(()) => Ok(Self { _file: file }),
+            Err(std::fs::TryLockError::WouldBlock) => Err(ModelsError::Other(format!(
+                "файл {filename} уже скачивается другим процессом"
+            ))),
+            Err(std::fs::TryLockError::Error(error)) => Err(error.into()),
         }
-    }
-}
-
-impl Drop for DownloadLock {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
     }
 }
 
