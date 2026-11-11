@@ -25,7 +25,7 @@ pub(super) fn duration(intervals: &[(f64, f64)], segmentation: Option<&Segmentat
                 if segmentation
                     .frames
                     .get(frame)
-                    .is_some_and(|class| *class >= 4)
+                    .is_some_and(|class| *class >= super::OVERLAP_CLASS)
                 {
                     count -=
                         end.min((frame + 1) * FRAME_SAMPLES) - start.max(frame * FRAME_SAMPLES);

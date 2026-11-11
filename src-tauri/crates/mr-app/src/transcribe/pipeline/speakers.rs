@@ -54,8 +54,11 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
                 };
                 match result {
                     Ok(result) => {
-                        let overlap_frames =
-                            result.frames.iter().filter(|&&class| class >= 4).count();
+                        let overlap_frames = result
+                            .frames
+                            .iter()
+                            .filter(|&&class| class >= super::super::OVERLAP_CLASS)
+                            .count();
                         log::debug!(
                             target: "diar",
                             ch = *ch as i64,

@@ -167,13 +167,12 @@ pub(crate) fn extract_utterance_embedding(
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("wav"))
         .then(|| {
-            mr_audio::decode::decode_wav_range_16k(
-                audio,
-                start,
-                end,
-                channel.map(|c| c.max(0) as usize),
-            )
-            .ok()
+            // Отрицательный канал не клампим в 0: общий путь ниже вернёт понятную ошибку.
+            let ch = match channel {
+                Some(c) => Some(usize::try_from(c).ok()?),
+                None => None,
+            };
+            mr_audio::decode::decode_wav_range_16k(audio, start, end, ch).ok()
         })
         .flatten();
     let samples: Vec<f32> = match snippet {
