@@ -17,6 +17,7 @@ use std::path::PathBuf;
 
 mod models;
 mod pipeline;
+mod profile_verification;
 
 pub(crate) use models::extract_utterance_embedding;
 pub use models::invalidate_models_cache;

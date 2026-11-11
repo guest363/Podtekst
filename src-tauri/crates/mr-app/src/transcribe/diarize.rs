@@ -198,7 +198,7 @@ pub(crate) fn merge_quiet_short_with_evidence(
     out
 }
 
-fn pick_samples(utterances: &[Utterance], max_samples: usize) -> Vec<Sample> {
+pub(super) fn pick_samples(utterances: &[Utterance], max_samples: usize) -> Vec<Sample> {
     let mut scored: Vec<(f64, &Utterance)> = utterances
         .iter()
         .map(|u| {
