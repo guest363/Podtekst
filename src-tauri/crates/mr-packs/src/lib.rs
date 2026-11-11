@@ -193,10 +193,14 @@ pub fn safe_snippet_path(pack_dir: &Path, rel: &str) -> Option<PathBuf> {
 
 /// Атомарная запись JSON (tmp + rename): крах процесса не оставляет битый файл.
 pub(crate) fn write_json_atomic<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("tmp");
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    // Уникальное имя: общий `.tmp` перемешал бы байты двух записей и оставил половину JSON.
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = parent.join(format!(".{name}.{}.{seq}.tmp", std::process::id()));
     let text = serde_json::to_string_pretty(value)?;
     {
         let mut f = fs::File::create(&tmp)?;
@@ -244,5 +248,35 @@ pub(crate) mod testutil {
         std::fs::create_dir_all(&dir).unwrap();
         let guard = Guard(dir.clone());
         (guard, dir)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::tmp_app;
+
+    #[test]
+    fn concurrent_json_writes_leave_valid_file() {
+        let (_g, app) = tmp_app("atomic-json");
+        let path = app.join("people.json");
+        let workers: Vec<_> = (0..4)
+            .map(|worker| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for i in 0..20 {
+                        let value = vec![serde_json::json!({"name": format!("w{worker}-{i}")})];
+                        write_json_atomic(&path, &value).expect("запись");
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().expect("поток записи");
+        }
+        let text = fs::read_to_string(&path).expect("файл на месте");
+        let value: serde_json::Value = serde_json::from_str(&text)
+            .expect("после параллельных записей файл должен быть валидным JSON");
+        assert!(value.as_array().is_some_and(|items| items.len() == 1));
     }
 }
