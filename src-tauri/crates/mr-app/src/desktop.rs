@@ -55,7 +55,6 @@ pub fn autostart_file_path() -> PathBuf {
     }
 }
 
-#[allow(dead_code)]
 pub fn is_autostart_enabled() -> bool {
     autostart_file_path().exists()
 }
@@ -106,11 +105,6 @@ pub fn uninstall_autostart() -> Result<bool> {
     }
     std::fs::remove_file(&target)?;
     Ok(true)
-}
-
-#[allow(dead_code)]
-pub fn notify(title: &str, body: &str) {
-    notify_icon(title, body, "audio-input-microphone");
 }
 
 pub fn notify_icon(title: &str, body: &str, icon: &str) {

@@ -15,7 +15,6 @@ type UpdateStateResponse = {
   size_bytes?: unknown
   is_newer?: unknown
   url?: unknown
-  sources_agree?: unknown
   stale?: unknown
   self_update?: unknown
   install_mode?: unknown
@@ -69,7 +68,6 @@ type UpdateState = {
   selfUpdate: boolean
   installMode: string
   url: string
-  sourcesAgree: boolean
   stale: boolean
   lastCheckAt: string
   skippedVersion: string
@@ -103,7 +101,6 @@ export const update: UpdateState = $state({
   selfUpdate: false,
   installMode: '',
   url: '',
-  sourcesAgree: true,
   stale: false,
   lastCheckAt: '',
   skippedVersion: '',
@@ -209,7 +206,6 @@ export const checkUpdate = async (force = false, notify = false): Promise<void> 
     update.sizeBytes = num(d.size_bytes)
     update.isNewer = d.is_newer === true
     update.url = str(d.url)
-    update.sourcesAgree = d.sources_agree !== false
     update.stale = d.stale === true
     update.lastCheckAt = new Date().toISOString()
     update.errorCode = ''
