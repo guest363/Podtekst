@@ -25,7 +25,7 @@ import {
   statusBadge,
 } from './lib/settings.svelte.ts'
 import { loadSupportInfo } from './lib/support.svelte.ts'
-import { system } from './lib/system.svelte.ts'
+import { loadSystem, runChecks, system } from './lib/system.svelte.ts'
 import {
   downloadAllCoreModels,
   downloadingCore,
@@ -83,22 +83,26 @@ const coreInstalled = $derived(coreModels.length > 0 && coreModels.every((m) => 
 const anyCoreDownloading = $derived(coreModels.some((m) => engine.downloading[m.id] !== undefined))
 const coreLeftMb = $derived(coreModels.reduce((s, m) => s + remainingMb(m), 0))
 const statusTone = $derived(
-  system.unacknowledged > 0 || system.summary?.status === 'error'
+  system.error || system.unacknowledged > 0 || system.summary?.status === 'error'
     ? 'error'
     : system.summary?.status === 'warn' || system.snapshot?.models?.core_ready === false
       ? 'warn'
-      : system.snapshot
+      : system.snapshot || system.summary
         ? 'ok'
         : 'info',
 )
 const statusLabel = $derived(
-  statusTone === 'error'
-    ? 'Есть проблема'
-    : statusTone === 'warn'
-      ? 'Замечание'
-      : system.snapshot
-        ? 'Всё в порядке'
-        : 'Проверка…',
+  system.loading || system.checksLoading
+    ? 'Проверка…'
+    : system.error
+      ? 'Сервер не отвечает'
+      : statusTone === 'error'
+        ? 'Есть проблема'
+        : statusTone === 'warn'
+          ? 'Замечание'
+          : statusTone === 'ok'
+            ? 'Всё в порядке'
+            : 'Не проверялось',
 )
 
 const TAB_TITLES: Record<string, string> = {
@@ -147,7 +151,22 @@ onMount(() => {
     loadSummaryFeature(),
     loadSupportInfo(),
     checkUpdate(),
+    loadSystem(),
+    runChecks(false),
   ])
+  // Снимок иначе остаётся с момента запуска: после установки моделей и ffmpeg
+  // индикатор продолжал бы показывать старое состояние.
+  const refreshSystem = (): void => {
+    if (document.visibilityState === 'visible') void loadSystem()
+  }
+  window.addEventListener('focus', refreshSystem)
+  document.addEventListener('visibilitychange', refreshSystem)
+  const systemTimer = setInterval(refreshSystem, 5 * 60 * 1000)
+  return () => {
+    window.removeEventListener('focus', refreshSystem)
+    document.removeEventListener('visibilitychange', refreshSystem)
+    clearInterval(systemTimer)
+  }
 })
 </script>
 

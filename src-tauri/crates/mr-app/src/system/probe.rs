@@ -42,6 +42,23 @@ pub(crate) fn cleanup_stale() {
 
 #[cfg(not(target_os = "android"))]
 pub(super) fn run() -> Outcome {
+    // Открытие потока libpulse — блокирующий вызов без таймаута: уводим пробу
+    // в поток, чтобы HTTP-запрос и UI не ждали зависший звуковой сервер.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(capture_probe());
+    });
+    match rx.recv_timeout(Duration::from_secs(12)) {
+        Ok(outcome) => outcome,
+        Err(_) => Outcome::warn(
+            "Проверка микрофона не завершилась за 12 с",
+            "Повторите проверку или перезапустите приложение",
+        ),
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn capture_probe() -> Outcome {
     let catalog = mr_audio::capture::devices();
     let Some(mic) = catalog.default_input.clone() else {
         return Outcome::error(

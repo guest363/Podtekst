@@ -42,7 +42,7 @@ const usedPct = $derived(
 const freeHours = $derived(freeBytes > 0 ? Math.floor(freeBytes / (450 * 1024 * 1024)) : 0)
 
 const overallKind = $derived(
-  unacknowledged > 0 || system.summary?.status === 'error'
+  system.error || unacknowledged > 0 || system.summary?.status === 'error'
     ? 'error'
     : system.summary?.status === 'warn'
       ? 'warn'
@@ -51,13 +51,15 @@ const overallKind = $derived(
         : 'info',
 )
 const overallLabel = $derived(
-  overallKind === 'error'
-    ? 'Есть проблема'
-    : overallKind === 'warn'
-      ? 'Есть замечания'
-      : overallKind === 'ok'
-        ? 'Всё в порядке'
-        : 'Проверки не запускались',
+  system.error
+    ? 'Сервер не отвечает'
+    : overallKind === 'error'
+      ? 'Есть проблема'
+      : overallKind === 'warn'
+        ? 'Есть замечания'
+        : overallKind === 'ok'
+          ? 'Всё в порядке'
+          : 'Проверки не запускались',
 )
 
 const MODE_LABELS: Record<string, string> = {
@@ -204,6 +206,9 @@ const crashKind = (): string => {
         <span class="system-val">{summaryText()}</span>
       {/if}
     </div>
+    {#if system.error}
+      <span class="rec-meta check-hint">{system.error}</span>
+    {/if}
     <div class="system-hero-actions pt-2">
       <button
         class="btn-primary btn-sm"

@@ -1,6 +1,6 @@
 import type { OkResponse } from './api'
-import { readJsonSafe } from './api'
-import { errText, isRecord } from './guards.ts'
+import { fetchWithTimeout, readJsonSafe } from './api'
+import { errText, isAbortError, isRecord } from './guards.ts'
 import { toast } from './toast.svelte.ts'
 
 type SystemResponse = SystemSnapshot &
@@ -312,7 +312,7 @@ export const loadSystem = async (): Promise<void> => {
   system.loading = true
   system.error = ''
   try {
-    const d = await readJsonSafe<SystemResponse>(await fetch('/api/system'))
+    const d = await readJsonSafe<SystemResponse>(await fetchWithTimeout('/api/system'))
     if (d.ok === false) throw new Error(String(d.error || 'Не удалось получить состояние системы'))
     const snap = d.system ?? d.snapshot ?? d
     system.snapshot = snap
@@ -321,7 +321,7 @@ export const loadSystem = async (): Promise<void> => {
       system.unacknowledged = crashes.unacknowledged
     }
   } catch (e) {
-    system.error = errText(e)
+    system.error = isAbortError(e) ? 'Сервер не ответил вовремя' : errText(e)
   } finally {
     system.loading = false
   }
@@ -332,11 +332,15 @@ export const runChecks = async (probeAudio = true): Promise<void> => {
   system.checksLoading = true
   try {
     const d = await readJsonSafe<CheckResponse>(
-      await fetch('/api/system/check', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ probe_audio: probeAudio, include_optional: true }),
-      }),
+      await fetchWithTimeout(
+        '/api/system/check',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ probe_audio: probeAudio, include_optional: true }),
+        },
+        30000,
+      ),
     )
     if (d.ok === false) throw new Error(String(d.error || 'Проверка не выполнилась'))
     system.checks = (Array.isArray(d.checks) ? d.checks : []).map((c: unknown) => {
@@ -371,7 +375,10 @@ export const runChecks = async (probeAudio = true): Promise<void> => {
         : null
     system.checkedAt = String(d.checked_at || '')
   } catch (e) {
-    toast(`Проверка не выполнилась: ${errText(e)}`, 'error')
+    toast(
+      `Проверка не выполнилась: ${isAbortError(e) ? 'сервер не ответил вовремя' : errText(e)}`,
+      'error',
+    )
   } finally {
     system.checksLoading = false
   }
