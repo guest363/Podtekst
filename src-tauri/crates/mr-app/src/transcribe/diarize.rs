@@ -983,6 +983,15 @@ fn log_cluster_summary(
     );
 }
 
+fn constraint_retry_needed(
+    k_fixed: bool,
+    constraints_active: bool,
+    final_k: usize,
+    has_pairs: bool,
+) -> bool {
+    !k_fixed && !constraints_active && final_k == 1 && has_pairs
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn diarize_channel(
     samples: &[f32],
@@ -1102,7 +1111,24 @@ pub(crate) fn diarize_channel(
         .enumerate()
         .map(|(position, &index)| (index, position))
         .collect();
-    let mut constraints = cannot_link_units(&units, &core_pos, support);
+    let pairs = cannot_link_units(&units, &core_pos, support, &core_vecs);
+    let auto_max = if max_speakers > 0 {
+        max_speakers
+    } else {
+        AUTO_K_MAX_SPEAKERS
+    };
+    // Замер 2026-11-12 (runs/crosslink-diag2, crosslink-esc): постоянные
+    // cannot-link искажают выбор k даже при верных парах (main-en-quiet: 2 → 3),
+    // а без них конвейер сваливается в один кластер в reject_small_clusters
+    // (synth-ru-2spk: 2 → 1). Прогон без ограничений; повтор с ними только при
+    // финальном k=1.
+    let initial_core = core_units.clone();
+    let mut constraints_active = k.is_some();
+    let mut constraints = if constraints_active {
+        pairs.clone()
+    } else {
+        vec![]
+    };
     let mut core_labels = if let Some(k) = k {
         agglomerative_weighted(&core_vecs, &core_weights, &constraints, 0.52, Some(k))
     } else {
@@ -1112,152 +1138,198 @@ pub(crate) fn diarize_channel(
             &constraints,
             0.52,
             min_auto,
-            if max_speakers > 0 {
-                max_speakers
-            } else {
-                AUTO_K_MAX_SPEAKERS
-            },
+            auto_max,
         )
     };
-    let candidate_k = core_labels.iter().copied().collect::<HashSet<_>>().len();
-    diagnostics::core("ahc", ch, &units, &core_units, &core_labels, support);
-    if let Some(requested) = k {
-        log::debug!(
-            target: "diar",
-            ch = ch,
-            requested_k = requested,
-            actual_k = candidate_k,
-            coverage_enabled = false,
-            merge_enabled = false,
-            smoothing_enabled = min_speakers == 0;
-            "ev=diar.fixed_k"
-        );
-    }
-    if k.is_none() && experiment.guards == Guards::On {
-        let validated = coverage::reject_small_clusters(
-            &units,
-            &core_units,
-            core_labels,
-            &core_weights,
-            &constraints,
-            support,
-            min_auto..=if max_speakers > 0 {
-                max_speakers
+    let mut after_ahc = 0;
+    for attempt in 0..2 {
+        if attempt > 0 {
+            core_units = initial_core.clone();
+            core_vecs = core_units
+                .iter()
+                .map(|&index| units[index].embedding.clone())
+                .collect();
+            core_weights = core_units
+                .iter()
+                .map(|&index| units[index].dur.clamp(0.4, 4.0) * units[index].quality)
+                .collect();
+            constraints = if constraints_active {
+                pairs.clone()
             } else {
-                AUTO_K_MAX_SPEAKERS
-            },
-        );
-        core_units = validated.core_units;
-        core_labels = validated.labels;
-        core_vecs = core_units
-            .iter()
-            .map(|&index| units[index].embedding.clone())
-            .collect();
-        core_weights = core_units
-            .iter()
-            .map(|&index| units[index].dur.clamp(0.4, 4.0) * units[index].quality)
-            .collect();
-        let positions = core_units
-            .iter()
-            .enumerate()
-            .map(|(position, &index)| (index, position))
-            .collect();
-        constraints = cannot_link_units(&units, &positions, support);
-    }
-    let after_ahc = core_labels.iter().copied().collect::<HashSet<_>>().len();
-    diagnostics::core("coverage", ch, &units, &core_units, &core_labels, support);
-    // Короткие шумные куски часто образуют ложные «голоса». Сливаем их с
-    // ближайшим похожим голосом (косинус ≥ 0.45) как в моно, так и в стерео.
-    if k.is_none() {
-        let weights: Vec<f64> = core_units.iter().map(|&index| units[index].dur).collect();
-        merge_tiny_clusters(
-            &core_vecs,
-            &mut core_labels,
-            &weights,
-            min_auto,
-            profiles,
-            &constraints,
-        );
-    }
-    diagnostics::core("tiny_merge", ch, &units, &core_units, &core_labels, support);
-    if k.is_none() {
-        let mut uniq: Vec<usize> = core_labels.clone();
-        uniq.sort();
-        uniq.dedup();
-        if max_speakers > 0 && uniq.len() > max_speakers {
+                vec![]
+            };
+            core_labels = if let Some(k) = k {
+                agglomerative_weighted(&core_vecs, &core_weights, &constraints, 0.52, Some(k))
+            } else {
+                agglomerative_gap(
+                    &core_vecs,
+                    &core_weights,
+                    &constraints,
+                    0.52,
+                    min_auto,
+                    auto_max,
+                )
+            };
+        }
+        let candidate_k = core_labels.iter().copied().collect::<HashSet<_>>().len();
+        diagnostics::core("ahc", ch, &units, &core_units, &core_labels, support);
+        if let Some(requested) = k {
             log::debug!(
                 target: "diar",
                 ch = ch,
-                before = uniq.len(),
-                after = max_speakers,
-                max_spk = max_speakers;
-                "ev=diar.max_speakers"
-            );
-            core_labels = agglomerative_weighted(
-                &core_vecs,
-                &core_weights,
-                &constraints,
-                f64::INFINITY,
-                Some(max_speakers),
-            );
-        } else if min_speakers > 1 && uniq.len() < min_speakers && core_vecs.len() >= min_speakers {
-            log::debug!(
-                target: "diar",
-                ch = ch,
-                before = uniq.len(),
-                after = min_speakers,
-                min_spk = min_speakers;
-                "ev=diar.max_speakers"
-            );
-            core_labels = agglomerative_weighted(
-                &core_vecs,
-                &core_weights,
-                &constraints,
-                f64::INFINITY,
-                Some(min_speakers),
+                requested_k = requested,
+                actual_k = candidate_k,
+                coverage_enabled = false,
+                merge_enabled = false,
+                smoothing_enabled = min_speakers == 0;
+                "ev=diar.fixed_k"
             );
         }
-    }
-    if k.is_none() {
-        merge_by_centroid_cosine(
-            &core_vecs,
-            &core_weights,
-            &mut core_labels,
-            &constraints,
-            CENTROID_MERGE_SIM,
-            min_auto,
-        );
-    }
-    if k.is_none() && experiment.guards == Guards::On {
-        let validated = coverage::reject_small_clusters(
-            &units,
-            &core_units,
-            core_labels,
-            &core_weights,
-            &constraints,
-            support,
-            min_auto..=if max_speakers > 0 {
-                max_speakers
+        if k.is_none() && experiment.guards == Guards::On {
+            let validated = coverage::reject_small_clusters(
+                &units,
+                &core_units,
+                core_labels,
+                &core_weights,
+                &constraints,
+                support,
+                min_auto..=auto_max,
+            );
+            core_units = validated.core_units;
+            core_labels = validated.labels;
+            core_vecs = core_units
+                .iter()
+                .map(|&index| units[index].embedding.clone())
+                .collect();
+            core_weights = core_units
+                .iter()
+                .map(|&index| units[index].dur.clamp(0.4, 4.0) * units[index].quality)
+                .collect();
+            let positions = core_units
+                .iter()
+                .enumerate()
+                .map(|(position, &index)| (index, position))
+                .collect();
+            constraints = if constraints_active {
+                cannot_link_units(&units, &positions, support, &core_vecs)
             } else {
-                AUTO_K_MAX_SPEAKERS
-            },
-        );
-        core_units = validated.core_units;
-        core_labels = validated.labels;
-        core_vecs = core_units
-            .iter()
-            .map(|&index| units[index].embedding.clone())
-            .collect();
+                vec![]
+            };
+        }
+        after_ahc = core_labels.iter().copied().collect::<HashSet<_>>().len();
+        diagnostics::core("coverage", ch, &units, &core_units, &core_labels, support);
+        // Короткие шумные куски часто образуют ложные «голоса». Сливаем их с
+        // ближайшим похожим голосом (косинус ≥ 0.45) как в моно, так и в стерео.
+        if k.is_none() {
+            let weights: Vec<f64> = core_units.iter().map(|&index| units[index].dur).collect();
+            merge_tiny_clusters(
+                &core_vecs,
+                &mut core_labels,
+                &weights,
+                min_auto,
+                profiles,
+                &constraints,
+            );
+        }
+        diagnostics::core("tiny_merge", ch, &units, &core_units, &core_labels, support);
+        if k.is_none() {
+            let mut uniq: Vec<usize> = core_labels.clone();
+            uniq.sort();
+            uniq.dedup();
+            if max_speakers > 0 && uniq.len() > max_speakers {
+                log::debug!(
+                    target: "diar",
+                    ch = ch,
+                    before = uniq.len(),
+                    after = max_speakers,
+                    max_spk = max_speakers;
+                    "ev=diar.max_speakers"
+                );
+                core_labels = agglomerative_weighted(
+                    &core_vecs,
+                    &core_weights,
+                    &constraints,
+                    f64::INFINITY,
+                    Some(max_speakers),
+                );
+            } else if min_speakers > 1
+                && uniq.len() < min_speakers
+                && core_vecs.len() >= min_speakers
+            {
+                log::debug!(
+                    target: "diar",
+                    ch = ch,
+                    before = uniq.len(),
+                    after = min_speakers,
+                    min_spk = min_speakers;
+                    "ev=diar.max_speakers"
+                );
+                core_labels = agglomerative_weighted(
+                    &core_vecs,
+                    &core_weights,
+                    &constraints,
+                    f64::INFINITY,
+                    Some(min_speakers),
+                );
+            }
+        }
+        if k.is_none() {
+            merge_by_centroid_cosine(
+                &core_vecs,
+                &core_weights,
+                &mut core_labels,
+                &constraints,
+                CENTROID_MERGE_SIM,
+                min_auto,
+            );
+        }
+        if k.is_none() && experiment.guards == Guards::On {
+            let validated = coverage::reject_small_clusters(
+                &units,
+                &core_units,
+                core_labels,
+                &core_weights,
+                &constraints,
+                support,
+                min_auto..=auto_max,
+            );
+            core_units = validated.core_units;
+            core_labels = validated.labels;
+            core_vecs = core_units
+                .iter()
+                .map(|&index| units[index].embedding.clone())
+                .collect();
 
-        let positions = core_units
-            .iter()
-            .enumerate()
-            .map(|(position, &index)| (index, position))
-            .collect();
-        constraints = cannot_link_units(&units, &positions, support);
+            let positions = core_units
+                .iter()
+                .enumerate()
+                .map(|(position, &index)| (index, position))
+                .collect();
+            constraints = if constraints_active {
+                cannot_link_units(&units, &positions, support, &core_vecs)
+            } else {
+                vec![]
+            };
+        }
+        diagnostics::core("validated", ch, &units, &core_units, &core_labels, support);
+        log_cluster_summary(ch, k, &core_vecs, &core_labels, constraints.len());
+        if constraint_retry_needed(
+            k.is_some(),
+            constraints_active,
+            core_labels.iter().copied().collect::<HashSet<_>>().len(),
+            !pairs.is_empty(),
+        ) {
+            log::debug!(
+                target: "diar",
+                ch = ch,
+                pairs = pairs.len();
+                "ev=diar.constraint_escalation"
+            );
+            constraints_active = true;
+            continue;
+        }
+        break;
     }
-    diagnostics::core("validated", ch, &units, &core_units, &core_labels, support);
-    log_cluster_summary(ch, k, &core_vecs, &core_labels, constraints.len());
     on_event(88, "Голоса разделены по спикерам");
     let mut unit_label: HashMap<usize, usize> = core_units
         .iter()
@@ -1446,6 +1518,7 @@ pub(crate) fn diarize_channel(
     let mut raw_clusters: Vec<usize> = label_of.values().copied().collect();
     raw_clusters.sort();
     raw_clusters.dedup();
+    let candidate_k = core_labels.iter().copied().collect::<HashSet<_>>().len();
     if candidate_k >= 2 && raw_clusters.len() == 1 {
         log::debug!(target: "diar", ch = ch, before = candidate_k, after_ahc = after_ahc, after_coverage = after_coverage, after_smooth = after_smooth, after_assignment = after_assignment, after = 1; "ev=diar.collapse");
     }
@@ -3018,13 +3091,14 @@ pub(crate) fn split_words_by_bounds(words: &[&str], bounds: &[f64]) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::{
-        cannot_link_units, dedupe_cross_channel, eligible_clusters, fill_labels_by_time,
-        group_segments, local_region, merge_quiet_short, merge_quiet_short_with_evidence,
-        merge_tiny_clusters, merge_utterances, move_boundary_words, profile_anchors,
-        read_profiles_file, reassign_short_replies, reconcile_channels, refresh_speaker_stats,
-        short_join_threshold, speaker_change_cuts, split_at_pauses, split_by_word_pauses,
-        split_utterance_by_bounds, split_window_region, split_words_by_bounds, switch_penalty,
-        text_similarity, AcoustUnit, SpeakerInfo, Utterance, MIN_LOCAL_EMBED_SEC,
+        cannot_link_units, constraint_retry_needed, dedupe_cross_channel, eligible_clusters,
+        fill_labels_by_time, group_segments, local_region, merge_quiet_short,
+        merge_quiet_short_with_evidence, merge_tiny_clusters, merge_utterances,
+        move_boundary_words, profile_anchors, read_profiles_file, reassign_short_replies,
+        reconcile_channels, refresh_speaker_stats, short_join_threshold, speaker_change_cuts,
+        split_at_pauses, split_by_word_pauses, split_utterance_by_bounds, split_window_region,
+        split_words_by_bounds, switch_penalty, text_similarity, AcoustUnit, SpeakerInfo, Utterance,
+        MIN_LOCAL_EMBED_SEC,
     };
     use crate::transcribe::echo::FrameClass;
     use crate::transcribe::WordConf;
@@ -3800,10 +3874,22 @@ mod tests {
                     segmentation: Some(&segmentation),
                     vad_probs: None,
                 },
+                &[],
             ),
             vec![(0, 1)]
         );
-        assert!(cannot_link_units(&units, &core_pos, super::SpeechSupport::default()).is_empty());
+        assert!(
+            cannot_link_units(&units, &core_pos, super::SpeechSupport::default(), &[]).is_empty()
+        );
+    }
+
+    #[test]
+    fn constraint_retry_needed_only_after_unconstrained_collapse_to_one() {
+        assert!(constraint_retry_needed(false, false, 1, true));
+        assert!(!constraint_retry_needed(false, false, 2, true));
+        assert!(!constraint_retry_needed(false, false, 1, false));
+        assert!(!constraint_retry_needed(false, true, 1, true));
+        assert!(!constraint_retry_needed(true, false, 1, true));
     }
 
     #[test]

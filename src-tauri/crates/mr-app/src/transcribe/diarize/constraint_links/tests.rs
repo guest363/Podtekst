@@ -37,6 +37,7 @@ fn links(segmentation: &Segmentation, units: &[AcoustUnit]) -> Vec<(usize, usize
             segmentation: Some(segmentation),
             vad_probs: None,
         },
+        &[],
     )
 }
 
@@ -106,6 +107,7 @@ fn absent_vad_support_does_not_create_a_constraint() {
             segmentation: Some(&segmentation),
             vad_probs: Some(&vad),
         },
+        &[],
     );
     assert!(constraints.is_empty());
 }
@@ -140,6 +142,7 @@ fn purity_uses_only_the_shared_clean_speech_support() {
                 segmentation: Some(&segmentation),
                 vad_probs: Some(&vad),
             },
+            &[],
         ),
         vec![(0, 1)]
     );
@@ -163,6 +166,7 @@ fn core_positions_are_used_instead_of_unit_indices() {
                 segmentation: Some(&segmentation),
                 vad_probs: None,
             },
+            &[],
         ),
         vec![(0, 1)]
     );
