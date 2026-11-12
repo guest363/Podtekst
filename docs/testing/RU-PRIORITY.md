@@ -104,19 +104,31 @@ JSON допускаются только явно и при совпадении
 - `matrix-ru6.json`: 2/3/4 голоса × равные/−18 дБ, 60 с, без перекрытий.
 
 Это выбор по условиям сценария, не по результату модели. Аудио, исходные
-RTTM и полный манифест не менялись. Если нужны стадийные данные для следующей
-правки, достаточно этих восьми RU-файлов на сохранённом N:
+RTTM и полный манифест не менялись. Следующее узкое сравнение — default N
+против `anchors=windows` с сохранением frontend-входа, frozen-центроидов и
+guards. На историческом RU2 именно эта отдельная абляция вернула 2 → 2 и
+DER 20,28%; это основание для проверки, а не для изменения обычного режима.
+Комбинация windows/raw, ухудшившая Vox5, здесь не повторяется.
+
+Восемь RU-файлов в двух режимах дают 16 запусков на сохранённом бинарнике N:
 
 ```bash
 APP="$ROOT/runs/n-combination-20261112-210124/podtekst"
 export PODTEKST_DATA_DIR="$ROOT/appdata" MR_DIAR_BENCH=1 MR_DIAG_DUMP=1 MR_LOG_TEXT=off
 export MR_LOG='info,run=debug,vad=debug,diar=debug,cluster=debug'
-unset MR_DIAR_EXPERIMENT
-for suite in main-ru matrix-ru6; do
-  "$PY" tools/diar_eval/run_batch.py --app "$APP" \
-    --manifest "$ROOT/manifests/ru-priority-v1/$suite.json" \
-    --out "$OUT/$suite" --dev-runs-dir "$ROOT/appdata/logs/dev-runs"
+for mode in default windows-frontend; do
+  if [ "$mode" = default ]; then
+    unset MR_DIAR_EXPERIMENT
+  else
+    export MR_DIAR_EXPERIMENT='anchors=windows'
+  fi
+  for suite in main-ru matrix-ru6; do
+    "$PY" tools/diar_eval/run_batch.py --app "$APP" \
+      --manifest "$ROOT/manifests/ru-priority-v1/$suite.json" \
+      --out "$OUT/$mode-$suite" --dev-runs-dir "$ROOT/appdata/logs/dev-runs"
+  done
 done
+unset MR_DIAR_EXPERIMENT
 ```
 
 Отдельный старый стресс-gate доступен через `regression.py --language ru`;
@@ -124,6 +136,8 @@ done
 потом два EN. Пороги и приёмка не ослаблены.
 
 ASR450 повторяется при изменении ASR-сигнала или декодера, а не ради исправления
-формулы метрики. Следующая алгоритмическая правка должна устранять конкретный
-этап потери русского голоса, подтверждённый стадийными данными. До этого новый
-baseline не объявляется.
+формулы метрики. После выбора алгоритмического кандидата до принятия baseline
+всё равно обязательны полная RU-матрица 36 и русский ASR450; английские проверки
+выполняются последними. Следующая алгоритмическая правка должна устранять
+конкретный этап потери русского голоса, подтверждённый стадийными данными.
+До этого новый baseline не объявляется.

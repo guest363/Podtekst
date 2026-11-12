@@ -664,7 +664,7 @@ def _emit(summary: dict, as_json: bool) -> None:
         f"({summary['cer_errors']}/{summary['ref_chars']})"
     )
     if math.isfinite(summary["cpWER"]):
-        print(f"cpWER={summary['cpWER'] * 100:.2f}%")
+        print(f"cpWER={summary['cpWER'] * 100:.2f}% version={summary['cpwer_version']}")
     if math.isfinite(summary["attribution"]):
         print(
             f"attribution={summary['attribution'] * 100:.2f}% "

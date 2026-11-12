@@ -88,6 +88,11 @@ class RescoreCpwerTest(unittest.TestCase):
         self.assertEqual(rows[0]["rescore_hypothesis_source"], "dev_run")
         self.assertEqual(float(rows[0]["cpWER"]), 1.0)
 
+    def test_russian_only_manifest_does_not_require_unselected_english_records(self):
+        english = dict(self.row, file_id="other", language="en")
+        self._save([self.row, english])
+        self.assertEqual(rescore(self.options)["rows"], 1)
+
     def test_reference_snapshot_is_used_before_the_manifest_reference(self):
         self.row["reference_snapshot"] = str(self.reference)
         self.records[0]["ref_text"] = "missing.json"

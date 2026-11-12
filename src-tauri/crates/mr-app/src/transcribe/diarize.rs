@@ -1,10 +1,13 @@
 mod acoustic_units;
 mod acoustic_windows;
+mod constraint_links;
 mod coverage;
 mod diagnostics;
 mod turn_anchors;
 
 use std::collections::{HashMap, HashSet};
+
+use constraint_links::cannot_link_units;
 
 use mr_ml::onnx::embed::EmbeddingExtractor;
 use mr_ml::onnx::segmentation::Segmentation;
@@ -870,64 +873,6 @@ fn fill_labels_by_time(utterances: &[Utterance], label_of: &mut HashMap<usize, u
     }
 }
 
-fn cannot_link_units(
-    segmentation: Option<&Segmentation>,
-    units: &[AcoustUnit],
-    core_pos: &HashMap<usize, usize>,
-) -> Vec<(usize, usize)> {
-    let Some(segmentation) = segmentation else {
-        return vec![];
-    };
-    const SR: f64 = 16000.0;
-    let frame_sec = mr_ml::onnx::segmentation::FRAME_SAMPLES as f64 / SR;
-    let mut pairs = HashSet::new();
-    for window in &segmentation.windows {
-        let window_start = window.start_sample as f64 / SR;
-        let window_end = (window.start_sample
-            + window.classes.len() * mr_ml::onnx::segmentation::FRAME_SAMPLES)
-            as f64
-            / SR;
-        let mut members: [Vec<(usize, usize)>; 3] = Default::default();
-        for (&index, &position) in core_pos {
-            let unit = &units[index];
-            let start = unit.start.max(window_start);
-            let end = unit.end.min(window_end);
-            if end <= start {
-                continue;
-            }
-            let from =
-                (((start - window_start) / frame_sec).floor() as usize).min(window.classes.len());
-            let to = (((end - window_start) / frame_sec).ceil() as usize).min(window.classes.len());
-            let mut overlap = [0.0f64; 3];
-            for &class in &window.classes[from..to] {
-                if (1..=3).contains(&class) {
-                    overlap[class as usize - 1] += 1.0;
-                }
-            }
-            let total: f64 = overlap.iter().sum();
-            let Some((local, &best)) = overlap.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1))
-            else {
-                continue;
-            };
-            if total > 0.0 && best / total >= 0.6 {
-                members[local].push((position, unit.utterance));
-            }
-        }
-        for a in 0..3 {
-            for b in (a + 1)..3 {
-                for &(i, utt_a) in &members[a] {
-                    for &(j, utt_b) in &members[b] {
-                        if utt_a == utt_b {
-                            pairs.insert((i.min(j), i.max(j)));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    pairs.into_iter().collect()
-}
-
 struct AcoustUnit {
     utterance: usize,
     start: f64,
@@ -1157,7 +1102,7 @@ pub(crate) fn diarize_channel(
         .enumerate()
         .map(|(position, &index)| (index, position))
         .collect();
-    let mut constraints = cannot_link_units(segmentation, &units, &core_pos);
+    let mut constraints = cannot_link_units(&units, &core_pos, support);
     let mut core_labels = if let Some(k) = k {
         agglomerative_weighted(&core_vecs, &core_weights, &constraints, 0.52, Some(k))
     } else {
@@ -1217,7 +1162,7 @@ pub(crate) fn diarize_channel(
             .enumerate()
             .map(|(position, &index)| (index, position))
             .collect();
-        constraints = cannot_link_units(segmentation, &units, &positions);
+        constraints = cannot_link_units(&units, &positions, support);
     }
     let after_ahc = core_labels.iter().copied().collect::<HashSet<_>>().len();
     diagnostics::core("coverage", ch, &units, &core_units, &core_labels, support);
@@ -1309,7 +1254,7 @@ pub(crate) fn diarize_channel(
             .enumerate()
             .map(|(position, &index)| (index, position))
             .collect();
-        constraints = cannot_link_units(segmentation, &units, &positions);
+        constraints = cannot_link_units(&units, &positions, support);
     }
     diagnostics::core("validated", ch, &units, &core_units, &core_labels, support);
     log_cluster_summary(ch, k, &core_vecs, &core_labels, constraints.len());
@@ -3824,8 +3769,8 @@ mod tests {
     #[test]
     fn cannot_link_units_separates_voices_inside_one_utterance() {
         let frame = mr_ml::onnx::segmentation::FRAME_SAMPLES;
-        let mut classes = vec![1u8; 2];
-        classes.extend(vec![2u8; 2]);
+        let mut classes = vec![1u8; 100];
+        classes.extend(vec![2u8; 100]);
         let segmentation = mr_ml::onnx::segmentation::Segmentation {
             frames: vec![],
             windows: vec![mr_ml::onnx::segmentation::SegmentationWindow {
@@ -3842,17 +3787,23 @@ mod tests {
             quality: 1.0,
             embedding: vec![],
         };
-        // Калибровка теста: PyAnnote размечает два куска одной реплики на разных людей.
         let units = vec![
-            unit(0, 0.0, 2.0 * frame_sec),
-            unit(0, 2.0 * frame_sec, 4.0 * frame_sec),
+            unit(0, 0.0, 100.0 * frame_sec),
+            unit(0, 100.0 * frame_sec, 200.0 * frame_sec),
         ];
         let core_pos = HashMap::from([(0usize, 0usize), (1, 1)]);
         assert_eq!(
-            cannot_link_units(Some(&segmentation), &units, &core_pos),
+            cannot_link_units(
+                &units,
+                &core_pos,
+                super::SpeechSupport {
+                    segmentation: Some(&segmentation),
+                    vad_probs: None,
+                },
+            ),
             vec![(0, 1)]
         );
-        assert!(cannot_link_units(None, &units, &core_pos).is_empty());
+        assert!(cannot_link_units(&units, &core_pos, super::SpeechSupport::default()).is_empty());
     }
 
     #[test]

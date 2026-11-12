@@ -115,12 +115,12 @@ def rescore(options: argparse.Namespace) -> dict:
         if not file_id or file_id in seen:
             raise ValueError("исходный CSV содержит пустой или повторяющийся file_id")
         seen.add(file_id)
-        if file_id not in records:
-            raise ValueError(f"{file_id}: запись отсутствует в исходном манифесте")
-        record = records[file_id]
+        record = records.get(file_id, {})
         language = row.get("language") or str(record.get("language") or "")
         if options.language != "all" and language != options.language:
             continue
+        if file_id not in records:
+            raise ValueError(f"{file_id}: запись отсутствует в исходном манифесте")
         safe_id = _safe_id(file_id)
         if safe_id in safe_ids:
             raise ValueError("file_id выбранных записей имеют одинаковое имя RTTM")
