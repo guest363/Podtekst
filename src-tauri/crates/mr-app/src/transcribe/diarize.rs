@@ -1,3 +1,6 @@
+mod acoustic_windows;
+mod coverage;
+
 use std::collections::{HashMap, HashSet};
 
 use mr_ml::onnx::embed::EmbeddingExtractor;
@@ -5,6 +8,7 @@ use mr_ml::onnx::segmentation::Segmentation;
 use mr_ml::{interval_gap, match_voiceprints_matrix, ClusterMatch, SpeakerProfile};
 use mr_packs as packs;
 
+use super::clean_speech::SpeechSupport;
 use super::echo::{self, EchoEvidence};
 use super::{Sample, SpeakerInfo, Utterance, WordConf};
 
@@ -451,6 +455,7 @@ fn merge_tiny_clusters(
     weights: &[f64],
     min_keep: usize,
     profiles: &[SpeakerProfile],
+    constraints: &[(usize, usize)],
 ) {
     let total: f64 = weights.iter().sum();
     if total <= 0.0 {
@@ -507,7 +512,11 @@ fn merge_tiny_clusters(
         }
         let mut best = (0usize, -2.0f64);
         for &l in totals.keys() {
-            if l == small {
+            if l == small
+                || constraints.iter().any(|&(a, b)| {
+                    (labels[a] == small && labels[b] == l) || (labels[b] == small && labels[a] == l)
+                })
+            {
                 continue;
             }
             let sim = mr_ml::cosine_similarity(&cs, &centroid(l));
@@ -940,15 +949,12 @@ fn build_acoust_units(
     samples: &[f32],
     utterances: &[Utterance],
     extractor: &mut Option<EmbeddingExtractor>,
-    segmentation: Option<&Segmentation>,
+    support: SpeechSupport<'_>,
     echo: Option<&EchoEvidence>,
     on_event: &dyn Fn(u8, &str),
 ) -> Vec<AcoustUnit> {
     const SR: f64 = 16000.0;
-    const UNIT_SEC: f64 = 1.8;
-    const MIN_UNIT_SEC: f64 = 0.4;
-    const MAX_UNIT_SEC: f64 = 2.4;
-    const MAX_UNITS: usize = 8;
+    use acoustic_windows::MIN_UNIT_SEC;
     let Some(ext) = extractor else {
         return vec![];
     };
@@ -957,22 +963,7 @@ fn build_acoust_units(
     for (index, utterance) in utterances.iter().enumerate() {
         let duration = (utterance.end - utterance.start).max(0.0);
         if duration >= MIN_UNIT_SEC {
-            let windows = if duration <= MAX_UNIT_SEC {
-                1
-            } else {
-                (((duration - UNIT_SEC) / 0.9).ceil() as usize + 1).clamp(2, MAX_UNITS)
-            };
-            let step = if windows <= 1 {
-                duration
-            } else {
-                ((duration - UNIT_SEC) / (windows - 1) as f64).max(0.9)
-            };
-            for window in 0..windows {
-                let start = utterance.start + window as f64 * step;
-                let end = (start + UNIT_SEC).min(utterance.end);
-                if end - start < MIN_UNIT_SEC {
-                    break;
-                }
+            for (start, end) in acoustic_windows::bounds(utterance.start, utterance.end) {
                 let (start, end) = match echo {
                     Some(ev) => match local_region(ev, start, end, MIN_LOCAL_EMBED_SEC) {
                         Some(region) => region,
@@ -986,9 +977,7 @@ fn build_acoust_units(
                     continue;
                 }
                 let mut chunk = samples[lo..hi].to_vec();
-                let clean_len = segmentation
-                    .map(|seg| seg.exclude_overlap(&mut chunk, lo))
-                    .unwrap_or(chunk.len());
+                let clean_len = support.retain_in_place(&mut chunk, lo);
                 if clean_len >= (SR * MIN_UNIT_SEC) as usize {
                     let clean = &chunk[..clean_len];
                     let started = std::time::Instant::now();
@@ -1138,6 +1127,7 @@ pub(crate) fn diarize_channel(
     prefix: &str,
     extractor: &mut Option<EmbeddingExtractor>,
     segmentation: Option<&Segmentation>,
+    vad_probs: Option<&[f32]>,
     echo: Option<&EchoEvidence>,
     profiles: &[SpeakerProfile],
     min_speakers: usize,
@@ -1146,7 +1136,11 @@ pub(crate) fn diarize_channel(
 ) -> Vec<SpeakerInfo> {
     use mr_ml::cluster::{agglomerative_gap, agglomerative_weighted, merge_by_centroid_cosine};
     use mr_ml::cosine_similarity;
-    let n = utterances.len();
+    let support = SpeechSupport {
+        vad_probs,
+        segmentation,
+    };
+    let mut n = utterances.len();
     if n == 0 {
         return vec![];
     }
@@ -1164,7 +1158,7 @@ pub(crate) fn diarize_channel(
     let mut embs: Vec<Option<Vec<f64>>> = vec![None; n];
     let mut durs = vec![0.0; n];
     let mut quals = vec![1.0f64; n];
-    let units = build_acoust_units(samples, utterances, extractor, segmentation, echo, on_event);
+    let mut units = build_acoust_units(samples, utterances, extractor, support, echo, on_event);
     if units.is_empty() {
         for u in utterances.iter_mut() {
             u.speaker = default_name.to_string();
@@ -1208,7 +1202,7 @@ pub(crate) fn diarize_channel(
         dur_max = dur_max;
         "ev=diar.units"
     );
-    let core_vecs: Vec<Vec<f64>> = core_units
+    let mut core_vecs: Vec<Vec<f64>> = core_units
         .iter()
         .map(|&index| units[index].embedding.clone())
         .collect();
@@ -1222,7 +1216,7 @@ pub(crate) fn diarize_channel(
     // Замеры ERes2NetV2 (`onnx_real`): разные дикторы ≤ 0.22 (dist ≥ 0.78),
     // один голос ≥ 0.48 (dist ≤ 0.52). shortcut: порог 0.52 перенесён с
     // complete linkage без замера average; перекалибровать на встречах.
-    let core_weights: Vec<f64> = core_units
+    let mut core_weights: Vec<f64> = core_units
         .iter()
         .map(|&index| units[index].dur.clamp(0.4, 4.0) * units[index].quality)
         .collect();
@@ -1231,7 +1225,7 @@ pub(crate) fn diarize_channel(
         .enumerate()
         .map(|(position, &index)| (index, position))
         .collect();
-    let constraints = cannot_link_units(segmentation, &units, &core_pos);
+    let mut constraints = cannot_link_units(segmentation, &units, &core_pos);
     let mut core_labels = if let Some(k) = k {
         agglomerative_weighted(&core_vecs, &core_weights, &constraints, 0.52, Some(k))
     } else {
@@ -1248,11 +1242,51 @@ pub(crate) fn diarize_channel(
             },
         )
     };
+    let candidate_k = core_labels.iter().copied().collect::<HashSet<_>>().len();
+    if k.is_none() {
+        let validated = coverage::reject_small_clusters(
+            &units,
+            &core_units,
+            core_labels,
+            &core_weights,
+            &constraints,
+            support,
+            min_auto..=if max_speakers > 0 {
+                max_speakers
+            } else {
+                AUTO_K_MAX_SPEAKERS
+            },
+        );
+        core_units = validated.core_units;
+        core_labels = validated.labels;
+        core_vecs = core_units
+            .iter()
+            .map(|&index| units[index].embedding.clone())
+            .collect();
+        core_weights = core_units
+            .iter()
+            .map(|&index| units[index].dur.clamp(0.4, 4.0) * units[index].quality)
+            .collect();
+        let positions = core_units
+            .iter()
+            .enumerate()
+            .map(|(position, &index)| (index, position))
+            .collect();
+        constraints = cannot_link_units(segmentation, &units, &positions);
+    }
+    let after_ahc = core_labels.iter().copied().collect::<HashSet<_>>().len();
     // Короткие шумные куски часто образуют ложные «голоса». Сливаем их с
     // ближайшим похожим голосом (косинус ≥ 0.45) как в моно, так и в стерео.
     if k.is_none() {
         let weights: Vec<f64> = core_units.iter().map(|&index| units[index].dur).collect();
-        merge_tiny_clusters(&core_vecs, &mut core_labels, &weights, min_auto, profiles);
+        merge_tiny_clusters(
+            &core_vecs,
+            &mut core_labels,
+            &weights,
+            min_auto,
+            profiles,
+            &constraints,
+        );
     }
     if k.is_none() {
         let mut uniq: Vec<usize> = core_labels.clone();
@@ -1301,6 +1335,34 @@ pub(crate) fn diarize_channel(
             CENTROID_MERGE_SIM,
             min_auto,
         );
+    }
+    if k.is_none() {
+        let validated = coverage::reject_small_clusters(
+            &units,
+            &core_units,
+            core_labels,
+            &core_weights,
+            &constraints,
+            support,
+            min_auto..=if max_speakers > 0 {
+                max_speakers
+            } else {
+                AUTO_K_MAX_SPEAKERS
+            },
+        );
+        core_units = validated.core_units;
+        core_labels = validated.labels;
+        core_vecs = core_units
+            .iter()
+            .map(|&index| units[index].embedding.clone())
+            .collect();
+
+        let positions = core_units
+            .iter()
+            .enumerate()
+            .map(|(position, &index)| (index, position))
+            .collect();
+        constraints = cannot_link_units(segmentation, &units, &positions);
     }
     log_cluster_summary(ch, k, &core_vecs, &core_labels, constraints.len());
     on_event(88, "Голоса разделены по спикерам");
@@ -1365,12 +1427,13 @@ pub(crate) fn diarize_channel(
         }
     }
     fill_unit_labels_by_time(&units, &mut unit_label);
-    let mut label_duration: HashMap<(usize, usize), f64> = HashMap::new();
-    for (index, unit) in units.iter().enumerate() {
-        if let Some(&label) = unit_label.get(&index) {
-            *label_duration.entry((unit.utterance, label)).or_default() += unit.dur;
-        }
-    }
+    let protected =
+        coverage::split_covered_utterances(utterances, &mut units, &mut unit_label, support);
+    n = utterances.len();
+    embs.resize(n, None);
+    durs.resize(n, 0.0);
+    quals.resize(n, 1.0);
+    let label_duration = coverage::label_durations(&units, &unit_label, support);
     let mut label_of: HashMap<usize, usize> = HashMap::new();
     let mut valid: Vec<usize> = vec![];
     for utterance in 0..n {
@@ -1400,7 +1463,7 @@ pub(crate) fn diarize_channel(
             .map(|&index| {
                 let unit = &units[index];
                 intervals.push((unit.start, unit.end));
-                let total = super::clean_speech::duration(&intervals, segmentation);
+                let total = support.duration(&intervals);
                 let weight = (total - covered).max(0.0) * unit.quality;
                 covered = total;
                 weight
@@ -1441,11 +1504,15 @@ pub(crate) fn diarize_channel(
         }];
     }
     fill_labels_by_time(utterances, &mut label_of);
+    let after_coverage = label_of.values().copied().collect::<HashSet<_>>().len();
+
     // Одиночный шумный кусок не должен рвать монолог на два голоса.
     // При явно заданном минимуме спикеров не сглаживаем: метки важнее.
     if channel_idx.is_none() && min_speakers == 0 {
         smooth_labels_mono(utterances, &embs, &durs, &quals, &mut label_of);
     }
+    let after_smooth = label_of.values().copied().collect::<HashSet<_>>().len();
+    coverage::restore_protected(&mut label_of, &protected);
     let mut spans = Vec::new();
     if let Some(segmentation) = segmentation {
         spans = super::speaker_assignment::apply(
@@ -1458,9 +1525,12 @@ pub(crate) fn diarize_channel(
             max_speakers,
         );
     }
+    let after_assignment = label_of.values().copied().collect::<HashSet<_>>().len();
+    coverage::restore_protected(&mut label_of, &protected);
     if echo.is_some() {
         reassign_short_replies(utterances, &embs, &durs, &quals, &mut label_of);
     }
+    coverage::restore_protected(&mut label_of, &protected);
     let final_vecs: Vec<Vec<f64>> = valid.iter().map(|&i| embs[i].clone().unwrap()).collect();
     let final_labels: Vec<usize> = valid.iter().map(|&i| label_of[&i]).collect();
     let final_scores = mr_ml::cluster::silhouette_scores(&final_vecs, &final_labels);
@@ -1471,6 +1541,9 @@ pub(crate) fn diarize_channel(
     let mut raw_clusters: Vec<usize> = label_of.values().copied().collect();
     raw_clusters.sort();
     raw_clusters.dedup();
+    if candidate_k >= 2 && raw_clusters.len() == 1 {
+        log::debug!(target: "diar", ch = ch, before = candidate_k, after_ahc = after_ahc, after_coverage = after_coverage, after_smooth = after_smooth, after_assignment = after_assignment, after = 1; "ev=diar.collapse");
+    }
     let cluster_centroid = |c: usize| -> Vec<f64> {
         let members: Vec<usize> = {
             let mut members: Vec<usize> = label_of
@@ -1731,8 +1804,8 @@ pub(crate) fn diarize_channel(
     if !timeline.is_empty() && utterances.iter().any(|u| u.end - u.start >= 20.0) {
         let tree = super::word_speakers::DiarIntervalTree::new(&timeline);
         let mut refined = Vec::with_capacity(utterances.len());
-        for utterance in utterances.iter() {
-            if utterance.end - utterance.start >= 20.0 {
+        for (index, utterance) in utterances.iter().enumerate() {
+            if utterance.end - utterance.start >= 20.0 && !protected.contains_key(&index) {
                 refined.extend(super::word_speakers::split_utterance_by_word_speakers(
                     utterance, &tree,
                 ));
@@ -2892,7 +2965,14 @@ pub(crate) fn split_utterance_by_bounds(u: &Utterance, bounds: &[f64]) -> Vec<Ut
     }
     let words: Vec<&str> = u.text.split_whitespace().collect();
     if words.is_empty() {
-        return vec![u.clone()];
+        return bounds
+            .windows(2)
+            .map(|pair| Utterance {
+                start: pair[0],
+                end: pair[1],
+                ..u.clone()
+            })
+            .collect();
     }
 
     let has_timed_words = !u.words.is_empty() && u.words.iter().any(|w| w.end_sec > w.start_sec);
@@ -3064,7 +3144,7 @@ mod tests {
         }
     }
 
-    fn utt(start: f64, end: f64, speaker: &str, ch: i32, text: &str) -> Utterance {
+    pub(super) fn utt(start: f64, end: f64, speaker: &str, ch: i32, text: &str) -> Utterance {
         Utterance {
             start,
             end,
@@ -3078,7 +3158,7 @@ mod tests {
         }
     }
 
-    fn word(text: &str, start: f64, end: f64) -> WordConf {
+    pub(super) fn word(text: &str, start: f64, end: f64) -> WordConf {
         WordConf {
             w: text.to_string(),
             conf: 1.0,
@@ -3961,13 +4041,24 @@ mod tests {
         ];
         let weights = vec![10.0, 10.0, 10.0, 10.0, 1.0];
         let mut labels = vec![0usize, 0, 1, 1, 2];
-        merge_tiny_clusters(&vecs, &mut labels, &weights, 1, &[]);
+        merge_tiny_clusters(&vecs, &mut labels, &weights, 1, &[], &[]);
         assert!(labels[4] == 0 || labels[4] == 1);
         let mut distinct = vec![0usize, 0, 1, 1, 2];
         let mut vecs2 = vecs.clone();
         vecs2[4] = vec![-1.0, 0.0];
-        merge_tiny_clusters(&vecs2, &mut distinct, &weights, 1, &[]);
+        merge_tiny_clusters(&vecs2, &mut distinct, &weights, 1, &[], &[]);
         assert_eq!(distinct[4], 2);
+    }
+
+    #[test]
+    fn tiny_cluster_preserves_cannot_link_with_similar_dominant_voice() {
+        let vecs = vec![vec![1.0, 0.0], vec![1.0, 0.0], vec![0.9, 0.1]];
+        let mut labels = vec![0, 0, 1];
+        merge_tiny_clusters(&vecs, &mut labels, &[10.0, 10.0, 1.0], 1, &[], &[(1, 2)]);
+        assert_ne!(
+            labels[1], labels[2],
+            "cannot-link must survive tiny-cluster merging"
+        );
     }
 
     #[test]
@@ -3990,7 +4081,7 @@ mod tests {
             updated_at: String::new(),
             prototypes: vec![],
         };
-        merge_tiny_clusters(&vecs, &mut labels, &weights, 1, &[profile]);
+        merge_tiny_clusters(&vecs, &mut labels, &weights, 1, &[profile], &[]);
         assert_eq!(labels[4], 2);
     }
 
@@ -4005,7 +4096,7 @@ mod tests {
         ];
         let weights = vec![40.0, 40.0, 40.0, 0.5, 0.5];
         let mut labels = vec![0usize, 0, 0, 1, 1];
-        merge_tiny_clusters(&vecs, &mut labels, &weights, 1, &[]);
+        merge_tiny_clusters(&vecs, &mut labels, &weights, 1, &[], &[]);
         assert_eq!(labels[3], 1);
         assert_eq!(labels[4], 1);
     }

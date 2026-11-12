@@ -17,6 +17,7 @@ use super::report;
 use super::{TranscribeOptions, TranscribeReport};
 
 mod asr;
+mod level;
 mod speakers;
 mod vad;
 
@@ -311,8 +312,16 @@ fn transcribe_file_inner(
         .filter(|(i, _)| chan_list.iter().any(|(ch, _)| ch == i))
         .collect();
 
+    let diarization_samples = level::diarization_channels(&channel_samples);
     let vad = models.ensure_vad()?;
-    let vad_output = vad::run(&channel_samples, &chan_list, is_stereo, vad, on_event)?;
+    let vad_output = vad::run(
+        &diarization_samples,
+        &channel_samples,
+        &chan_list,
+        is_stereo,
+        vad,
+        on_event,
+    )?;
     let channel_vad = vad_output.channel_vad;
     let channel_grouped = vad_output.channel_grouped;
     let echo = vad_output.echo;
@@ -327,6 +336,7 @@ fn transcribe_file_inner(
     )?;
     let (mut speakers_info, mut merged, speakers) = speakers::run(speakers::Input {
         channel_samples: &channel_samples,
+        frontend_samples: &diarization_samples,
         chan_list: &chan_list,
         channel_vad: &channel_vad,
         channel_utts,

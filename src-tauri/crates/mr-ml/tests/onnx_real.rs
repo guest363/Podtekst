@@ -62,6 +62,38 @@ fn segmentation_model_file(dir: &std::path::Path) -> Option<PathBuf> {
 }
 
 #[test]
+fn quiet_nonzero_samples_do_not_take_digital_silence_shortcut() {
+    let Some(dir) = models_dir() else {
+        eprintln!("SKIP: нет моделей");
+        return;
+    };
+    let Some(path) = vad_model_file(&dir) else {
+        eprintln!("SKIP: нет Silero VAD");
+        return;
+    };
+    let mut model = mr_ml::onnx::vad::SileroVad::load(&path).expect("load VAD");
+    let samples: Vec<f32> = (0..16000)
+        .map(|index| (index as f32 * std::f32::consts::TAU * 440.0 / 16000.0).sin() * 1e-5)
+        .collect();
+    let (_, stats) = model
+        .process_all_with_stats(&samples, |_, _| {})
+        .expect("quiet inference");
+    assert_eq!(
+        stats.silent_infer, 0,
+        "nonzero samples must reach normal inference"
+    );
+    assert_eq!(stats.silent_skip, 0);
+    assert_eq!(stats.resets, 0);
+    let (probabilities, zero_stats) = model
+        .process_all_with_stats(&vec![0.0; 16000], |_, _| {})
+        .expect("zero inference");
+    assert!(probabilities.iter().all(|&probability| probability == 0.0));
+    assert_eq!(zero_stats.silent_infer, 16);
+    assert_eq!(zero_stats.silent_skip, 15);
+    assert_eq!(zero_stats.resets, 1);
+}
+
+#[test]
 fn pyannote_segmentation_matches_powerset_contract() {
     let Some(dir) = models_dir() else {
         eprintln!("SKIP: нет моделей");

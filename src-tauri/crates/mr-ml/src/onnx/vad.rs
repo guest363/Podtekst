@@ -140,8 +140,7 @@ impl SileroVad {
             ..VadRunStats::default()
         };
         for (i, chunk) in chunks.into_iter().enumerate() {
-            let peak = chunk.iter().fold(0.0f32, |acc, x| acc.max(x.abs()));
-            if peak < 1e-4 {
+            if super::is_digital_silence(chunk) {
                 silent_run += 1;
                 match silence_action(silent_run) {
                     SilenceAction::Process => {

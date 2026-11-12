@@ -281,7 +281,8 @@ $PY tools/diar_eval/synth_meetings.py \
   --manifest-out ~/.cache/podtekst-bench/synth/manifest.json
 ```
 
-Один клип FLEURS = один диктор: клип повторяется, но разные дикторы внутри
+Один клип FLEURS содержит одного диктора, но разные клипы могут принадлежать
+одному диктору. Клип повторяется, но разные дикторы внутри
 сегмента не смешиваются. Реплики чередуются с паузами 0,2-0,5 с, `--overlap`
 - процент от длительности предыдущей реплики. Пишутся `meeting.wav`
 (16 кГц моно), `meeting.rttm`, `meeting.ref.json` с текстом реплик и запись
@@ -294,3 +295,45 @@ manifest для `run_batch.py` (`ref_rttm`, `ref_text`, `language`, `engine`:
 В репозиторий и self-tests попадают только обезличенные синтетические
 фикстуры: слова «альфа/бета», спикеры `A/B/X/Y`. Реальные записи, имена и
 фрагменты речи не используются.
+
+### Регрессия громкости и числа спикеров
+
+`--second-speaker-db -18` уменьшает уровень второго спикера на 18 дБ;
+без флага генератор сохраняет прежний результат. Для одинакового seed состав
+реплик и разметка не меняются. Файлы и модели остаются локальными.
+
+Для gate нужны локальные FLEURS `test.tsv` и `audio/test.tar.gz` в
+`$MR_DIAR_BENCH_ROOT/tmp/hf/fleurs/data/{en_us,ru_ru}`. Подготовка выбирает
+четыре различимых голоса по метаданным: для каждой пары совпадает предложение
+или различается указанный пол. Гарантия разных дикторов для одного предложения
+приведена в [статье FLEURS](https://simran-khanuja.github.io/assets/fleurs_slt.pdf).
+Проверка сверяет метаданные, хеши аудио и исходный архив; тексты и аудио
+остаются в локальном кэше.
+
+```bash
+ROOT="$HOME/.cache/podtekst-bench"
+PY="$ROOT/venv/bin/python"
+"$PY" tools/diar_eval/prepare_fleurs_speakers.py "$ROOT"
+MR_DIAR_BENCH=1 MR_DIAR_BENCH_ROOT="$ROOT" "$PY" tools/diar_eval/regression.py --prepare-only
+```
+
+Исходную сборку прогоняют через `run_batch.py` по
+`$ROOT/regression-verified/manifest.json`; её `metrics.csv` закрепляет baseline:
+
+```bash
+MR_DIAR_BENCH=1 MR_DIAR_BENCH_ROOT="$ROOT" "$PY" tools/diar_eval/regression.py \
+  --baseline-from-csv /путь/к/исходному/metrics.csv
+MR_DIAR_BENCH=1 MR_DIAR_BENCH_ROOT="$ROOT" \
+MR_DIAR_BENCH_APP="$PWD/src-tauri/target/release/podtekst" \
+PODTEKST_DATA_DIR="$ROOT/appdata" \
+  "$PY" tools/diar_eval/regression.py --baseline "$ROOT/regression-verified/baseline.json"
+```
+
+Проверяются обычные и тихие двухспикерные записи: DER английского ≤ 15%,
+число русских спикеров равно двум. DER и ошибка числа спикеров для русских
+записей с тремя и четырьмя спикерами не должны превышать baseline на той же
+выборке (допуск DER 0,0001 п.п.). Исторические значения другой выборки не
+используются. Seed 20261109, collar 0, перекрытия учитываются. Для CI нужны
+self-hosted runner `diarization-bench`, переменные `MR_DIAR_BENCH=1`,
+`MR_DIAR_BENCH_ROOT` и `MR_DIAR_BENCH_BASELINE`, локальные модели и venv.
+Скачивания датасетов в CI нет.

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Синтетические встречи из клипов FLEURS: эталон для диаризации, cpWER и attribution.
 
-Один клип FLEURS = один диктор с уникальным голосом. Встреча собирается
+Один клип FLEURS содержит одного диктора; разные клипы не обязательно принадлежат
+разным дикторам. Встреча собирается
 чередованием его реплик, поэтому разных дикторов внутри одного сегмента нет -
 так эталон RTTM и текст остаются точными. Длительность и перекрытие задаются
 в секундах и процентах от длительности предыдущей реплики: доля перекрытия
@@ -139,6 +140,7 @@ def build_meeting(
     duration_sec: int,
     overlap_pct: int,
     seed: int,
+    second_speaker_db: float = 0.0,
 ) -> tuple[np.ndarray, list[Turn], list[Path]]:
     rng = random.Random(seed)
     chosen = rng.sample(range(len(clips)), speakers)
@@ -183,7 +185,8 @@ def build_meeting(
             if not text:
                 break
         frame = samples[chosen[speaker]]
-        track[start:end] += frame[:take]
+        gain = 10 ** (second_speaker_db / 20) if speaker == 1 else 1.0
+        track[start:end] += frame[:take] * gain
         turns.append(Turn(speaker=speaker, start=start, end=end, text=text))
 
     if len({turn.speaker for turn in turns}) < speakers or len(turns) < 2:
@@ -278,7 +281,10 @@ def generate(
     engine: str | None = None,
     name: str | None = None,
     manifest_out: Path | None = None,
+    second_speaker_db: float = 0.0,
 ) -> dict:
+    if not math.isfinite(second_speaker_db) or second_speaker_db > 0:
+        raise ValueError("--second-speaker-db должен быть конечным числом не больше нуля")
     if speakers < 1:
         raise ValueError("--speakers должен быть больше нуля")
     if duration_sec < 1:
@@ -286,11 +292,16 @@ def generate(
     language = language or _language_from(clips_dir)
     engine = engine or ("whisper" if language == "en" else "gigaam")
     clips = discover_clips(clips_dir)
-    track, turns, sources = build_meeting(clips, speakers, duration_sec, overlap_pct, seed)
+    track, turns, sources = build_meeting(
+        clips, speakers, duration_sec, overlap_pct, seed, second_speaker_db
+    )
 
     out.mkdir(parents=True, exist_ok=True)
     sf.write(out / "meeting.wav", track, SAMPLE_RATE, subtype="PCM_16", format="WAV")
-    name = name or f"synth-{language}-{speakers}spk-{duration_sec}s-ov{overlap_pct}"
+    if name is None:
+        name = f"synth-{language}-{speakers}spk-{duration_sec}s-ov{overlap_pct}"
+        if second_speaker_db:
+            name += f"-spk2{second_speaker_db:g}db"
     write_rttm(out / "meeting.rttm", name, turns)
     duration = track.size / SAMPLE_RATE
     meta = {
@@ -301,6 +312,7 @@ def generate(
         "overlap_pct": overlap_pct,
         "seed": seed,
         "synthetic": True,
+        "second_speaker_db": second_speaker_db,
         "sources": [str(path) for path in sources],
     }
     write_ref_text(out / "meeting.ref.json", meta, turns)
@@ -338,6 +350,20 @@ class _SelfTest(unittest.TestCase):
             language="ru",
         )
         return out
+
+    def test_second_speaker_can_be_attenuated_without_changing_turns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_clips(root)
+            clips = discover_clips(root)
+            equal, turns, _ = build_meeting(clips, 2, 20, 0, DEFAULT_SEED)
+            quiet, quiet_turns, _ = build_meeting(clips, 2, 20, 0, DEFAULT_SEED, -18.0)
+            self.assertEqual(turns, quiet_turns)
+            for turn in turns:
+                original = equal[turn.start:turn.end]
+                modified = quiet[turn.start:turn.end]
+                ratio = np.linalg.norm(modified) / np.linalg.norm(original)
+                self.assertAlmostEqual(float(ratio), 10 ** (-18 / 20) if turn.speaker == 1 else 1.0, places=5)
 
     def test_meeting_is_consistent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -422,6 +448,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--overlap", type=int, choices=[0, 5, 15], default=0,
                         help="перекрытие, %% от длительности предыдущей реплики")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--second-speaker-db", type=float, default=0.0)
     parser.add_argument("--language", help="ru/en (по умолчанию из имени каталога)")
     parser.add_argument("--engine", choices=["auto", "gigaam", "whisper"])
     parser.add_argument("--name", help="id записи и file id в RTTM")
@@ -447,6 +474,7 @@ def main(argv: list[str] | None = None) -> int:
             engine=args.engine,
             name=args.name,
             manifest_out=args.manifest_out,
+            second_speaker_db=args.second_speaker_db,
         )
     except (OSError, ValueError) as exc:
         print(f"ошибка: {exc}", file=sys.stderr)

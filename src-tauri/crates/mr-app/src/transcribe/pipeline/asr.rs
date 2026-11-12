@@ -50,11 +50,10 @@ pub(super) fn run(
 
             // По-чанковая нормализация до пика 0.9 перед ASR:
             // полный динамический диапазон для INT8 квантованных моделей (GigaAM / Whisper).
-            const NOISE_FLOOR: f32 = 0.002;
             const TARGET_PEAK: f32 = 0.9;
             let peak = raw_chunk.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
             let normalized_buf: Vec<f32>;
-            let chunk: &[f32] = if peak > NOISE_FLOOR && (peak - TARGET_PEAK).abs() > 0.05 {
+            let chunk: &[f32] = if peak > f32::EPSILON && (peak - TARGET_PEAK).abs() > 0.05 {
                 let scale = TARGET_PEAK / peak;
                 normalized_buf = raw_chunk
                     .iter()

@@ -11,6 +11,7 @@ use super::super::{SpeakerInfo, TranscribeOptions, Utterance};
 
 pub(super) struct Input<'a> {
     pub(super) channel_samples: &'a HashMap<usize, Vec<f32>>,
+    pub(super) frontend_samples: &'a HashMap<usize, Vec<f32>>,
     pub(super) chan_list: &'a [(usize, String)],
     pub(super) channel_vad: &'a HashMap<usize, Vec<f32>>,
     pub(super) channel_utts: HashMap<usize, Vec<Utterance>>,
@@ -24,6 +25,7 @@ pub(super) struct Input<'a> {
 pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<String>) {
     let Input {
         channel_samples,
+        frontend_samples,
         chan_list,
         channel_vad,
         mut channel_utts,
@@ -49,8 +51,8 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
             on_event(80, "Ищу одновременную речь…");
             models.segmentation.as_mut().and_then(|model| {
                 let result = match channel_vad.get(ch) {
-                    Some(probs) => model.segment_with_vad(samples, probs),
-                    None => model.segment(samples),
+                    Some(probs) => model.segment_with_vad(&frontend_samples[ch], probs),
+                    None => model.segment(&frontend_samples[ch]),
                 };
                 match result {
                     Ok(result) => {
@@ -91,13 +93,13 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
             paused_utts
         } else {
             on_event(80, "Делю речь на паузы для спикеров…");
-            diarize::split_at_pauses(samples, &paused_utts)
+            diarize::split_at_pauses(&frontend_samples[ch], &paused_utts)
         };
         on_event(80, "Ищу смену голоса внутри реплик…");
         // Эхо бывает только в микрофонном канале (системный канал — источник).
         let ch_echo = if *ch == 0 { echo.as_ref() } else { None };
         diar_utts = diarize::split_long_by_speaker_change(
-            samples,
+            &frontend_samples[ch],
             diar_utts,
             &mut models.embed,
             segmentation.as_ref(),
@@ -129,6 +131,7 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
             prefix,
             &mut models.embed,
             segmentation.as_ref(),
+            channel_vad.get(ch).map(Vec::as_slice),
             ch_echo,
             &profiles,
             opts.min_speakers,
