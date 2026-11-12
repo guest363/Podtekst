@@ -164,6 +164,9 @@ fn parse_devices(text: &str) -> Vec<Device> {
 fn choose_device(devices: &[Device]) -> Option<&Device> {
     let discrete = |name: &str| {
         let name = name.to_ascii_lowercase();
+        if matches!(name.as_str(), "amd radeon(tm) graphics" | "amd radeon graphics") {
+            return false;
+        }
         ["nvidia", "geforce", "rtx", "radeon", "amd", "arc"]
             .iter()
             .any(|needle| name.contains(needle))
@@ -622,6 +625,15 @@ mod tests {
             choose_device(&parse_devices("Available devices:\n  (none)\n")),
             None
         );
+    }
+
+    #[test]
+    fn generic_radeon_graphics_does_not_outrank_discrete_gpu() {
+        let devices = parse_devices(
+            "Available devices:\n  Vulkan0: NVIDIA GeForce RTX 4060 (7956 MiB, 7188 MiB free)\n  Vulkan1: AMD Radeon(TM) Graphics (16200 MiB, 15390 MiB free)\n",
+        );
+        assert_eq!(choose_device(&devices).map(|d| d.index), Some(0));
+        assert_eq!(choose_device(&devices[1..]).map(|d| d.index), Some(1));
     }
 
     #[test]
