@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import os
 import platform
 import re
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,6 +24,7 @@ from pathlib import Path
 if __package__:
     from .evaluate import compute_der
     from .metrics import (
+        CPWER_VERSION,
         attribution_accuracy,
         cer_details,
         cpwer,
@@ -34,6 +37,7 @@ if __package__:
 else:
     from evaluate import compute_der
     from metrics import (
+        CPWER_VERSION,
         attribution_accuracy,
         cer_details,
         cpwer,
@@ -48,6 +52,45 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_APP = REPO_ROOT / "src-tauri" / "target" / "release" / "podtekst"
 TIME_BIN = Path("/usr/bin/time")
 
+
+def _sha256(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            hasher.update(block)
+    return hasher.hexdigest()
+
+
+def _save_dev_run(directory: Path, before: set[Path], audio: Path, destination: Path) -> Path:
+    candidates = []
+    audio_hash = _sha256(audio)
+    for manifest in set(directory.glob("*/manifest.json")) - before:
+        try:
+            doc = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(doc, dict):
+            continue
+        source = doc.get("input", {})
+        if (isinstance(source, dict) and source.get("sha256") == audio_hash
+                and isinstance(source.get("file"), str)
+                and Path(source["file"]).resolve() == audio.resolve()):
+            candidates.append(manifest.parent)
+    if len(candidates) != 1:
+        raise ValueError(f"ожидался один dev-run с совпадающим SHA-256, найдено {len(candidates)}")
+    target = destination / candidates[0].name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(candidates[0], target)
+    run_id = candidates[0].name
+    matching_logs = []
+    for log in (directory.parent / "dev").glob("dev-*.log"):
+        contents = log.read_text(encoding="utf-8", errors="replace")
+        if f"run={run_id}" in contents or re.search(r'"run"\s*:\s*"' + re.escape(run_id) + '"', contents):
+            matching_logs.append(log)
+    for index, log in enumerate(sorted(matching_logs)):
+        shutil.copy2(log, target / f"events-{index}.log")
+    return target.resolve()
+
 COLUMNS = [
     "dataset",
     "subset",
@@ -60,6 +103,7 @@ COLUMNS = [
     "DER",
     "SCA",
     "cpWER",
+    "cpwer_version",
     "attribution",
     "wall_sec",
     "rtf",
@@ -82,6 +126,9 @@ COLUMNS = [
     "attribution_correct",
     "words_hyp",
     "transcript",
+    "transcript_snapshot",
+    "reference_snapshot",
+    "dev_run",
     "MAE",
 ]
 
@@ -387,6 +434,8 @@ def _run_record(
     ]
     if options.ctc:
         command += ["--ctc", options.ctc]
+    dev_directory = getattr(options, "dev_runs_dir", None)
+    before = set(Path(dev_directory).glob("*/manifest.json")) if dev_directory else set()
     try:
         run = _run_process(command, options.timeout, time_bin)
     except OSError as exc:
@@ -397,6 +446,15 @@ def _run_record(
     row["wall_sec"] = run["wall_sec"]
     row["peak_rss_kb"] = run["peak_rss_kb"]
     row["exit_code"] = run["exit_code"]
+    if dev_directory:
+        logs = out / "logs"
+        logs.mkdir(exist_ok=True)
+        (logs / f"{safe}.stdout.log").write_text(run["stdout"], encoding="utf-8")
+        (logs / f"{safe}.stderr.log").write_text(run["stderr"], encoding="utf-8")
+        try:
+            row["dev_run"] = str(_save_dev_run(Path(dev_directory), before, audio, out / "dev-runs" / safe))
+        except (OSError, ValueError, TypeError) as exc:
+            errors.append(f"dev-артефакты не сохранены: {exc}")
 
     done, event_error = _parse_events(run["stdout"])
     process_error = run["timed_out"] or run["exit_code"] != 0
@@ -434,8 +492,13 @@ def _run_record(
             return row
 
     try:
-        doc = json.loads(transcript.read_text(encoding="utf-8"))
-        hypothesis = load_segments(transcript)
+        transcript_bytes = transcript.read_bytes()
+        doc = json.loads(transcript_bytes)
+        transcript_snapshot = out / "transcripts" / f"{safe}.json"
+        transcript_snapshot.parent.mkdir(parents=True, exist_ok=True)
+        transcript_snapshot.write_bytes(transcript_bytes)
+        hypothesis = load_segments(transcript_snapshot)
+        row["transcript_snapshot"] = str(transcript_snapshot.resolve())
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         errors.append(f"транскрипт не читается: {exc}")
         row["error"] = _error_text(errors)
@@ -499,7 +562,11 @@ def _run_record(
         errors.append(f"эталонный текст не найден: {ref_text}")
     elif ref_text is not None and ref_text.is_file():
         try:
-            reference = load_segments(ref_text)
+            reference_snapshot = out / "references" / f"{safe}{ref_text.suffix}"
+            reference_snapshot.parent.mkdir(parents=True, exist_ok=True)
+            reference_snapshot.write_bytes(ref_text.read_bytes())
+            reference = load_segments(reference_snapshot)
+            row["reference_snapshot"] = str(reference_snapshot.resolve())
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             errors.append(f"эталонный текст не читается: {exc}")
             reference = []
@@ -520,6 +587,7 @@ def _run_record(
             try:
                 cp = cpwer(reference, hypothesis)
                 row["cpWER"] = cp["cpwer"]
+                row["cpwer_version"] = cp["version"]
                 row["cpwer_ref_words"] = cp["ref_words"]
                 row["cpwer_errors"] = cp["errors"]
             except ValueError as exc:
@@ -572,6 +640,11 @@ def _write_run_manifest(
         "schema": 1,
         "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "app": str(app),
+        "app_sha256": _sha256(app),
+        "cpwer_version": CPWER_VERSION,
+        "diar_bench": os.environ.get("MR_DIAR_BENCH"),
+        "diar_experiment": os.environ.get("MR_DIAR_EXPERIMENT"),
+        "dev_runs_dir": str(options.dev_runs_dir) if getattr(options, "dev_runs_dir", None) else None,
         "engine_override": engine_override or "from manifest",
         "language": options.language or "from manifest",
         "ctc": options.ctc or "auto",
@@ -601,11 +674,20 @@ def run_batch(options: argparse.Namespace) -> dict:
         records = records[: options.limit]
     if options.timeout <= 0:
         raise ValueError("--timeout должен быть больше нуля")
+    dev_runs_dir = getattr(options, "dev_runs_dir", None)
+    if dev_runs_dir and not Path(dev_runs_dir).is_dir():
+        raise FileNotFoundError(f"каталог dev-run не найден: {dev_runs_dir}")
 
     data_root = Path(options.data_root) if options.data_root else manifest.parent
     out = Path(options.out) if options.out else Path("runs") / (
         f"{datetime.now().strftime('%Y-%m-%d')}-{(_git_commit() or 'local')[:7]}"
     )
+    metrics_path = out / "metrics.csv"
+    if metrics_path.exists() and not getattr(options, "overwrite", False):
+        raise FileExistsError(
+            f"результаты уже существуют: {metrics_path}; "
+            "задайте новый --out или явно --overwrite"
+        )
     out.mkdir(parents=True, exist_ok=True)
     (out / "rttm").mkdir(exist_ok=True)
     (out / "failures").mkdir(exist_ok=True)
@@ -631,7 +713,6 @@ def run_batch(options: argparse.Namespace) -> dict:
         options.engine,
     )
     time_bin = _gnu_time_available()
-    metrics_path = out / "metrics.csv"
     failed = 0
     with metrics_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=COLUMNS)
@@ -805,6 +886,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest", default="manifest.json", type=Path)
     parser.add_argument("--data-root", type=Path)
     parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument("--overwrite", action="store_true", help="явно разрешить замену результатов")
+    parser.add_argument("--dev-runs-dir", type=Path, help="скопировать dev-артефакты каждого файла в результаты")
     parser.add_argument("--app", type=Path, help="release-бинарник podtekst")
     parser.add_argument("--engine", choices=["auto", "gigaam", "whisper"])
     parser.add_argument("--language")

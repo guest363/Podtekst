@@ -142,6 +142,15 @@ fn labels_with_limit(
         if cluster_count <= target_k || distance > threshold {
             break;
         }
+        if distance >= CANNOT_LINK_DISTANCE {
+            log::debug!(
+                target: "cluster",
+                requested_k = target_k,
+                retained_k = cluster_count;
+                "ev=cluster.constraint_limit"
+            );
+            break;
+        }
         let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
         if ra != rb {
             parent[rb] = ra;
@@ -238,9 +247,6 @@ pub fn agglomerative_gap(
             gap = gap;
             "ev=cluster.auto_k"
         );
-        // Калибровка: auto-k выбрал k, порог расстояния не должен молча возвращать больше
-        // кластеров (на AMI auto-k просил 4, а cap 0.68 возвращал 7). cannot-link стоит на
-        // высоте CANNOT_LINK_DISTANCE, поэтому слияния до k его не задевают.
         return labels_with_limit(n, &merges, k, f64::INFINITY);
     }
     log::debug!(

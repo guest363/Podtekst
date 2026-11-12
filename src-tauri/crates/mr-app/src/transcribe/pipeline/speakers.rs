@@ -4,6 +4,7 @@ use std::time::Instant;
 use super::super::diag::{stage_begin, stage_end};
 use super::super::diarize;
 use super::super::echo::EchoEvidence;
+use super::super::experiment::{self, Embedding};
 use super::super::models::ModelSet;
 use super::super::word_dedupe;
 use super::super::word_speakers;
@@ -44,8 +45,18 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
     let mut channel_trees: HashMap<usize, word_speakers::DiarIntervalTree> = HashMap::new();
     let mut segmentations = HashMap::new();
     for (ch, _label) in chan_list.iter() {
-        let samples = &channel_samples[ch];
+        let samples = match experiment::current().embedding {
+            Embedding::Frontend => &frontend_samples[ch],
+            Embedding::Raw => &channel_samples[ch],
+        };
+        log::debug!(
+            target: "diar",
+            ch = *ch as i64,
+            normalized = samples != &channel_samples[ch];
+            "ev=diar.embedding_frontend"
+        );
         let source_utts = channel_utts.remove(ch).unwrap_or_default();
+        super::geometry::write("asr", *ch, &source_utts);
         let segmentation_started = Instant::now();
         let segmentation = if models.embed.is_some() && !source_utts.is_empty() {
             on_event(80, "Ищу одновременную речь…");
@@ -123,6 +134,7 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
         } else {
             opts.speaker_right.clone()
         };
+        super::geometry::write("pre-cluster", *ch, &diar_utts);
         let infos = diarize::diarize_channel(
             samples,
             &mut diar_utts,
@@ -138,9 +150,12 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
             opts.max_speakers,
             &|pct, msg| on_event(pct, msg),
         );
+        super::geometry::write("acoustic", *ch, &diar_utts);
         speakers_info.extend(infos);
         let tree = word_speakers::DiarIntervalTree::new(&diar_utts);
-        all_utts.extend(document_utterances(&source_utts, &tree));
+        let document = document_utterances(&source_utts, &tree);
+        super::geometry::write("document", *ch, &document);
+        all_utts.extend(document);
         channel_trees.insert(*ch, tree);
         if let Some(segmentation) = segmentation {
             segmentations.insert(*ch, segmentation);

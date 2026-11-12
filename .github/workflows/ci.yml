@@ -165,7 +165,5 @@ jobs:
       - run: cargo build --release -p mr-app --locked --manifest-path src-tauri/Cargo.toml
       - run: cargo test -p mr-ml --features onnx --test onnx_real --locked --manifest-path src-tauri/Cargo.toml quiet_nonzero_samples_do_not_take_digital_silence_shortcut
       - run: |
-          "$MR_DIAR_BENCH_ROOT/venv/bin/python" tools/diar_eval/synth_meetings.py --self-test
-          "$MR_DIAR_BENCH_ROOT/venv/bin/python" tools/diar_eval/test_regression.py
-          "$MR_DIAR_BENCH_ROOT/venv/bin/python" tools/diar_eval/test_fleurs_proof.py
+          "$MR_DIAR_BENCH_ROOT/venv/bin/python" -m unittest discover -s tools/diar_eval -p 'test_*.py'
           "$MR_DIAR_BENCH_ROOT/venv/bin/python" tools/diar_eval/regression.py --baseline "$MR_DIAR_BENCH_BASELINE"

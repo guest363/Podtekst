@@ -141,13 +141,24 @@ def build_meeting(
     overlap_pct: int,
     seed: int,
     second_speaker_db: float = 0.0,
+    target_speech_rms: float | None = None,
+    scaling: dict | None = None,
 ) -> tuple[np.ndarray, list[Turn], list[Path]]:
     rng = random.Random(seed)
     chosen = rng.sample(range(len(clips)), speakers)
     sources = [clips[index].path for index in chosen]
     total = int(round(duration_sec * SAMPLE_RATE))
     track = np.zeros(total, dtype=np.float32)
+    level_reference = np.zeros(total, dtype=np.float32) if target_speech_rms is not None else None
     samples = {index: _read_samples(clips[index].path) for index in chosen}
+    gains = {}
+    if target_speech_rms is not None:
+        for index in chosen:
+            rms = float(np.sqrt(np.mean(samples[index].astype(np.float64) ** 2)))
+            if not math.isfinite(rms) or rms <= 0:
+                raise ValueError("невозможно нормализовать пустой или некорректный клип")
+            gains[index] = target_speech_rms / rms
+            samples[index] *= gains[index]
     turns: list[Turn] = []
     order: list[int] = []
     cursor = 0
@@ -187,6 +198,8 @@ def build_meeting(
         frame = samples[chosen[speaker]]
         gain = 10 ** (second_speaker_db / 20) if speaker == 1 else 1.0
         track[start:end] += frame[:take] * gain
+        if level_reference is not None:
+            level_reference[start:end] += np.abs(frame[:take])
         turns.append(Turn(speaker=speaker, start=start, end=end, text=text))
 
     if len({turn.speaker for turn in turns}) < speakers or len(turns) < 2:
@@ -197,8 +210,24 @@ def build_meeting(
     used = turns[-1].end
     track = track[:used]
     peak = float(np.max(np.abs(track))) if track.size else 0.0
-    if peak > 1.0:
-        track *= 0.99 / peak
+    reference_peak = float(np.max(np.abs(level_reference[:used]))) if level_reference is not None else peak
+    headroom_peak = max(peak, reference_peak)
+    headroom_gain = 0.99 / headroom_peak if headroom_peak > 1.0 else 1.0
+    if headroom_gain < 1.0:
+        track *= headroom_gain
+    if scaling is not None and target_speech_rms is not None:
+        scaling.update({"target_clip_rms": target_speech_rms,
+                        "clip_gains": [gains[index] for index in chosen],
+                        "second_speaker_db": second_speaker_db,
+                        "mix_peak_before_headroom": peak,
+                        "unattenuated_sum_abs_peak": reference_peak, "headroom_gain": headroom_gain,
+                        "headroom_gain_db": 20 * math.log10(headroom_gain),
+                        "source_rms_post_headroom": [
+                            float(np.sqrt(np.mean(samples[index].astype(np.float64) ** 2)))
+                            * headroom_gain * (10 ** (second_speaker_db / 20) if speaker == 1 else 1)
+                            for speaker, index in enumerate(chosen)
+                        ],
+                        "track_rms_post_headroom": float(np.sqrt(np.mean(track.astype(np.float64) ** 2)))})
     return track, turns, sources
 
 
@@ -282,9 +311,12 @@ def generate(
     name: str | None = None,
     manifest_out: Path | None = None,
     second_speaker_db: float = 0.0,
+    target_speech_rms: float | None = None,
 ) -> dict:
     if not math.isfinite(second_speaker_db) or second_speaker_db > 0:
         raise ValueError("--second-speaker-db должен быть конечным числом не больше нуля")
+    if target_speech_rms is not None and (not math.isfinite(target_speech_rms) or not 0 < target_speech_rms <= 1):
+        raise ValueError("--target-speech-rms должен быть в диапазоне (0, 1]")
     if speakers < 1:
         raise ValueError("--speakers должен быть больше нуля")
     if duration_sec < 1:
@@ -292,8 +324,9 @@ def generate(
     language = language or _language_from(clips_dir)
     engine = engine or ("whisper" if language == "en" else "gigaam")
     clips = discover_clips(clips_dir)
+    scaling: dict = {}
     track, turns, sources = build_meeting(
-        clips, speakers, duration_sec, overlap_pct, seed, second_speaker_db
+        clips, speakers, duration_sec, overlap_pct, seed, second_speaker_db, target_speech_rms, scaling
     )
 
     out.mkdir(parents=True, exist_ok=True)
@@ -315,10 +348,14 @@ def generate(
         "second_speaker_db": second_speaker_db,
         "sources": [str(path) for path in sources],
     }
+    if scaling:
+        meta["scaling"] = scaling
     write_ref_text(out / "meeting.ref.json", meta, turns)
     record = _manifest_record(
         name, language, engine, speakers, overlap_pct, seed, out, duration
     )
+    if scaling:
+        record["scaling"] = scaling
     _merge_manifest(manifest_out or out / "manifest.json", record)
     return {"record": record, "turns": turns, "duration": duration}
 
@@ -363,6 +400,26 @@ class _SelfTest(unittest.TestCase):
                 original = equal[turn.start:turn.end]
                 modified = quiet[turn.start:turn.end]
                 ratio = np.linalg.norm(modified) / np.linalg.norm(original)
+                self.assertAlmostEqual(float(ratio), 10 ** (-18 / 20) if turn.speaker == 1 else 1.0, places=5)
+
+    def test_normalized_quiet_preserves_turns_and_relative_gain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_clips(root)
+            clips = discover_clips(root)
+            normal_info: dict = {}
+            quiet_info: dict = {}
+            normal, turns, _ = build_meeting(clips, 2, 20, 0, DEFAULT_SEED, 0, 0.1, normal_info)
+            quiet, quiet_turns, _ = build_meeting(clips, 2, 20, 0, DEFAULT_SEED, -18, 0.1, quiet_info)
+            self.assertEqual(turns, quiet_turns)
+            self.assertEqual(normal_info["headroom_gain"], quiet_info["headroom_gain"])
+            for speaker, (a, b) in enumerate(zip(normal_info["source_rms_post_headroom"], quiet_info["source_rms_post_headroom"])):
+                self.assertAlmostEqual(b / a, 10 ** (-18 / 20) if speaker == 1 else 1.0, places=5)
+            self.assertLessEqual(float(np.max(np.abs(normal))), 1.0)
+            for turn in turns:
+                a = normal[turn.start:turn.end] / normal_info["headroom_gain"]
+                b = quiet[turn.start:turn.end] / quiet_info["headroom_gain"]
+                ratio = np.linalg.norm(b) / np.linalg.norm(a)
                 self.assertAlmostEqual(float(ratio), 10 ** (-18 / 20) if turn.speaker == 1 else 1.0, places=5)
 
     def test_meeting_is_consistent(self) -> None:
@@ -449,6 +506,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="перекрытие, %% от длительности предыдущей реплики")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--second-speaker-db", type=float, default=0.0)
+    parser.add_argument("--target-speech-rms", type=float, help="RMS каждого исходного клипа до ослабления и сведения")
     parser.add_argument("--language", help="ru/en (по умолчанию из имени каталога)")
     parser.add_argument("--engine", choices=["auto", "gigaam", "whisper"])
     parser.add_argument("--name", help="id записи и file id в RTTM")
@@ -475,6 +533,7 @@ def main(argv: list[str] | None = None) -> int:
             name=args.name,
             manifest_out=args.manifest_out,
             second_speaker_db=args.second_speaker_db,
+            target_speech_rms=args.target_speech_rms,
         )
     except (OSError, ValueError) as exc:
         print(f"ошибка: {exc}", file=sys.stderr)

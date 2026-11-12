@@ -1,9 +1,15 @@
 import unittest
 
-from regression import check_metrics
+from regression import check_metrics, regression_scenarios
 
 
 class RegressionTest(unittest.TestCase):
+    def test_russian_scenarios_run_first_without_dropping_english(self):
+        self.assertEqual([scenario[0] for scenario in regression_scenarios()], ["ru"] * 4 + ["en"] * 2)
+        self.assertEqual(len(regression_scenarios("ru")), 4)
+        self.assertEqual(len(regression_scenarios("en")), 2)
+        self.assertTrue(all(scenario[0] == "ru" for scenario in regression_scenarios("ru")))
+
     def test_gate_rejects_bad_metrics_and_missing_rows(self):
         scenarios = [("en", 2, 0, 0), ("ru", 3, 5, 0)]
         rows = {

@@ -54,6 +54,7 @@ pub(super) fn write_run_manifest(
         "input": {
             "file": audio_path.display().to_string(),
             "bytes": std::fs::metadata(audio_path).map(|m| m.len()).unwrap_or(0),
+            "sha256": mr_models::sha256_of_file(audio_path).ok(),
             "dur_sec": duration_sec,
             "channels": channels,
             "rate": 16000,

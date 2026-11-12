@@ -17,6 +17,7 @@ use super::report;
 use super::{TranscribeOptions, TranscribeReport};
 
 mod asr;
+mod geometry;
 mod level;
 mod speakers;
 mod vad;
@@ -53,7 +54,10 @@ pub fn transcribe_file(
         dirty = option_env!("PODTEKST_GIT_DIRTY").unwrap_or("unknown");
         "ev=run.start"
     );
-    let result = transcribe_file_inner(audio_path, opts, on_event);
+    let result = super::experiment::initialize().and_then(|experiment| {
+        experiment.record();
+        transcribe_file_inner(audio_path, opts, on_event)
+    });
     match &result {
         Ok(report) => {
             let json_bytes = std::fs::metadata(&report.json_path)

@@ -8,10 +8,17 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from synth_meetings import DEFAULT_SEED, generate
 from prepare_fleurs_speakers import digest, validate
+
+
+def regression_scenarios(language: str = "all") -> list[tuple]:
+    scenarios = [("ru", 2, 0, 0), ("ru", 2, 0, -18), ("ru", 3, 5, 0),
+                 ("ru", 4, 15, 0), ("en", 2, 0, 0), ("en", 2, 0, -18)]
+    return [scenario for scenario in scenarios if language == "all" or scenario[0] == language]
 
 
 def check_metrics(rows: dict, scenarios: list, baseline: dict | None = None) -> list[str]:
@@ -47,6 +54,7 @@ def check_metrics(rows: dict, scenarios: list, baseline: dict | None = None) -> 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--prepare-only", action="store_true")
+    parser.add_argument("--language", choices=["ru", "en", "all"], default="all")
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--baseline-from-csv", type=Path)
     args = parser.parse_args()
@@ -57,10 +65,9 @@ def main() -> int:
     validate(root)
     out = root / "regression-verified"
     out.mkdir(parents=True, exist_ok=True)
-    manifest = out / "manifest.json"
+    manifest = out / ("manifest.json" if args.language == "all" else f"manifest-{args.language}.json")
     manifest.unlink(missing_ok=True)
-    scenarios = [("en", 2, 0, 0), ("ru", 2, 0, 0), ("ru", 3, 5, 0),
-                 ("ru", 4, 15, 0), ("en", 2, 0, -18), ("ru", 2, 0, -18)]
+    scenarios = regression_scenarios(args.language)
     for language, speakers, overlap, gain in scenarios:
         name = f"synth-{language}-{speakers}spk-60s-ov{overlap}"
         if gain:
@@ -89,10 +96,11 @@ def main() -> int:
         raise ValueError("baseline относится к другой выборке")
     baseline = baseline_doc["metrics"]
     app = Path(os.environ["MR_DIAR_BENCH_APP"]).resolve()
+    run = out / f"run-{args.language}-{time.time_ns()}"
     subprocess.run([sys.executable, str(Path(__file__).with_name("run_batch.py")),
-                    "--manifest", str(manifest), "--out", str(out / "run"),
+                    "--manifest", str(manifest), "--out", str(run),
                     "--app", str(app), "--timeout", "900"], check=True)
-    with (out / "run" / "metrics.csv").open(newline="", encoding="utf-8") as file:
+    with (run / "metrics.csv").open(newline="", encoding="utf-8") as file:
         rows = {row["file_id"]: row for row in csv.DictReader(file)}
     errors = check_metrics(rows, scenarios, baseline)
     for error in errors:

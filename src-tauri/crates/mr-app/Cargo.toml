@@ -11,6 +11,10 @@ repository = "https://github.com/guest363/podtekst"
 name = "podtekst"
 path = "src/main.rs"
 
+[[example]]
+name = "embedding_separability"
+required-features = ["onnx"]
+
 # Мобильные сборки Tauri (Android/iOS) подключают ядро как cdylib/staticlib
 # через JNI-обёртку `mobile_entry_point`; rlib — для бина и тестов.
 [lib]

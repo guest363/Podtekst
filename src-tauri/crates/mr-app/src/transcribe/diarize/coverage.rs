@@ -87,6 +87,16 @@ pub(super) fn reject_small_clusters(
                 labels,
             };
         }
+        let mut rejected_labels: Vec<_> = rejected.iter().copied().collect();
+        rejected_labels.sort_unstable();
+        log::debug!(
+            target: "diar",
+            before = k,
+            retained = k - rejected.len(),
+            rejected = format!("{rejected_labels:?}").as_str(),
+            speech_sec = total;
+            "ev=diar.coverage_reject"
+        );
         let retained: Vec<_> = labels
             .iter()
             .enumerate()

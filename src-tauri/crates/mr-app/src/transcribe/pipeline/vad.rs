@@ -125,10 +125,12 @@ pub(super) fn run(
         let (original_probs, original_stats) = vad
             .process_all_with_stats(original, |done, _| progress(done))
             .map_err(|e| format!("VAD (исходный звук): {e}"))?;
+        write_pass(*ch, "raw", &original_probs, None);
         let (probs, stats, raw_rescued, new_norm_speech) = if normalized {
             let (normalized_probs, stats) = vad
                 .process_all_with_stats(samples, |done, _| progress(original_windows + done))
                 .map_err(|e| format!("VAD (нормализованный звук): {e}"))?;
+            write_pass(*ch, "frontend", &normalized_probs, None);
             let probs = combine_probabilities(&original_probs, &normalized_probs);
             let mut raw_rescued = 0;
             let mut new_norm_speech = 0;
@@ -144,6 +146,7 @@ pub(super) fn run(
             }
             (probs, stats, raw_rescued, new_norm_speech)
         } else {
+            write_pass(*ch, "frontend", &original_probs, Some("raw"));
             (original_probs, original_stats, 0, 0)
         };
         log::debug!(
@@ -257,6 +260,23 @@ pub(super) fn run(
         channel_grouped,
         echo: evidence,
     })
+}
+
+fn write_pass(
+    channel: usize,
+    pass: &'static str,
+    probabilities: &[f32],
+    reused_from: Option<&str>,
+) {
+    if !cfg!(debug_assertions) || !crate::logging::dump_enabled() {
+        return;
+    }
+    crate::logging::write_artifact_f32(&format!("vad/ch{channel}.{pass}.probs.f32"), probabilities);
+    let segments = super::super::diag::speech_segments(probabilities);
+    crate::logging::write_artifact_json(
+        &format!("vad/ch{channel}.{pass}.segments.json"),
+        &serde_json::json!({"segments": segments, "reused_from": reused_from}),
+    );
 }
 
 #[cfg(test)]
