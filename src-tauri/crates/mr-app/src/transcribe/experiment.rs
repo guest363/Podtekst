@@ -97,25 +97,23 @@ impl Config {
     }
 
     pub(super) fn record(self) {
-        let modes = serde_json::to_value(self).expect("режимы эксперимента сериализуемы");
-        let anchors = modes["anchors"].as_str().expect("режим якорей — строка");
-        let centroids = modes["centroids"]
-            .as_str()
-            .expect("режим центроидов — строка");
-        let embedding = modes["embedding"]
-            .as_str()
-            .expect("источник эмбеддингов — строка");
-        let guards = modes["guards"]
-            .as_str()
-            .expect("режим ограничений — строка");
+        let modes = serde_json::json!({
+            "benchmark": self.benchmark,
+            "experiment": self.experiment,
+            "anchors": self.anchors,
+            "centroids": self.centroids,
+            "embedding": self.embedding,
+            "guards": self.guards,
+        });
+        let mode = |key: &str| modes[key].as_str().unwrap_or_default();
         log::info!(
             target: "diar",
             benchmark = self.benchmark,
             experiment = self.experiment,
-            anchors = anchors,
-            centroids = centroids,
-            embedding = embedding,
-            guards = guards;
+            anchors = mode("anchors"),
+            centroids = mode("centroids"),
+            embedding = mode("embedding"),
+            guards = mode("guards");
             "ev=diar.experiment"
         );
         crate::logging::write_artifact_json("diar/experiment.json", &modes);

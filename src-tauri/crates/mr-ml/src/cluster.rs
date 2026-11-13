@@ -174,6 +174,9 @@ fn labels_with_limit(
     labels
 }
 
+/// Контракт: `n_clusters` — целевое значение, а не гарантия. При несовместимых
+/// cannot-link слияния останавливаются раньше цели и кластеров возвращается
+/// больше (см. ev=cluster.constraint_limit).
 pub fn agglomerative_weighted(
     embeddings: &[Vec<f64>],
     weights: &[f64],

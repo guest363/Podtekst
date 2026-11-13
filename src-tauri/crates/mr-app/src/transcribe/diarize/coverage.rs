@@ -1,5 +1,5 @@
 use super::super::clean_speech::SpeechSupport;
-use super::{AcoustUnit, Utterance};
+use super::{AcoustUnit, Utterance, CORE_LINKAGE_THRESHOLD};
 use std::collections::HashMap;
 
 const MIN_CLUSTER_SHARE: f64 = 0.05;
@@ -19,6 +19,7 @@ fn speech_duration(intervals: &[(f64, f64)], support: SpeechSupport<'_>) -> f64 
 pub(super) struct CoreClustering {
     pub core_units: Vec<usize>,
     pub labels: Vec<usize>,
+    pub constraints: Vec<(usize, usize)>,
 }
 
 pub(super) fn reject_small_clusters(
@@ -52,6 +53,7 @@ pub(super) fn reject_small_clusters(
             return CoreClustering {
                 core_units: core,
                 labels,
+                constraints,
             };
         }
         let all: Vec<_> = intervals.values().flatten().copied().collect();
@@ -89,6 +91,7 @@ pub(super) fn reject_small_clusters(
             return CoreClustering {
                 core_units: core,
                 labels,
+                constraints,
             };
         }
         let mut rejected_labels: Vec<_> = rejected.iter().copied().collect();
@@ -125,7 +128,7 @@ pub(super) fn reject_small_clusters(
             &vecs,
             &weights,
             &constraints,
-            0.52,
+            CORE_LINKAGE_THRESHOLD,
             *speaker_bounds.start(),
             *speaker_bounds.end(),
         );
