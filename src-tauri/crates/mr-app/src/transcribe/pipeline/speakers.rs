@@ -136,7 +136,7 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
             opts.speaker_right.clone()
         };
         super::geometry::write("pre-cluster", *ch, &diar_utts);
-        let infos = diarize::diarize_channel(
+        let (infos, voice_runs) = diarize::diarize_channel(
             samples,
             &mut diar_utts,
             ch_idx,
@@ -155,6 +155,23 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
         speakers_info.extend(infos);
         let tree = word_speakers::DiarIntervalTree::new(&diar_utts);
         let document = document_utterances(&source_utts, &tree);
+        let document = word_speakers::detach_overlap_words(document, &voice_runs);
+        if cfg!(debug_assertions) {
+            let runs_dump: Vec<serde_json::Value> = voice_runs
+                .iter()
+                .map(|run| {
+                    serde_json::json!({
+                        "start": run.start,
+                        "end": run.end,
+                        "speaker": crate::logging::speaker_token(&run.speaker),
+                    })
+                })
+                .collect();
+            crate::logging::write_artifact_json(
+                &format!("diar/ch{ch}.voice_runs.json"),
+                &serde_json::json!({ "runs": runs_dump }),
+            );
+        }
         super::geometry::write("document", *ch, &document);
         all_utts.extend(document);
         channel_trees.insert(*ch, tree);

@@ -14,6 +14,13 @@ pub(super) struct SpeakerSpan {
     pub label: usize,
 }
 
+pub(super) struct Outcome {
+    /// Смены спикера, где зона перекрытия отнесена входящему голосу.
+    pub spans: Vec<SpeakerSpan>,
+    /// Раны чистых кадров одного локального голоса, без зон перекрытия.
+    pub voice_runs: Vec<SpeakerSpan>,
+}
+
 /// Венгерский алгоритм внутри каждого окна не даёт двум локальным спикерам
 /// занять один глобальный кластер. При нехватке кластеров создаётся новый,
 /// если это разрешено явным ограничением `max_speakers`.
@@ -25,7 +32,7 @@ pub(super) fn apply(
     quals: &[f64],
     label_of: &mut HashMap<usize, usize>,
     max_speakers: usize,
-) -> Vec<SpeakerSpan> {
+) -> Outcome {
     let mut members: HashMap<usize, Vec<usize>> = HashMap::new();
     for (&index, &label) in label_of.iter() {
         if embs.get(index).is_some_and(Option::is_some) {
@@ -47,10 +54,14 @@ pub(super) fn apply(
         })
         .collect();
     if globals.is_empty() {
-        return vec![];
+        return Outcome {
+            spans: vec![],
+            voice_runs: vec![],
+        };
     }
     let mut next_label = globals.keys().max().map_or(0, |label| label + 1);
     let mut spans = Vec::new();
+    let mut voice_runs = Vec::new();
     let mut votes: HashMap<usize, HashMap<usize, f64>> = HashMap::new();
     let mut cooccur: HashMap<(usize, usize), f64> = HashMap::new();
     let starts: Vec<f64> = utterances.iter().map(|u| u.start).collect();
@@ -189,6 +200,7 @@ pub(super) fn apply(
             }
         }
         collect_spans(window, &assignment, &mut spans);
+        collect_voice_runs(window, &assignment, &mut voice_runs);
         for (index, local, weight) in frame_weights {
             if let Some(&global) = assignment.get(&local) {
                 *votes.entry(index).or_default().entry(global).or_default() += weight;
@@ -207,7 +219,10 @@ pub(super) fn apply(
     for (index, label) in labels {
         label_of.insert(index, label);
     }
-    aggregate_spans(&spans)
+    Outcome {
+        spans: aggregate_spans(&spans),
+        voice_runs: aggregate_spans(&voice_runs),
+    }
 }
 
 /// Окна перекрываются, а локальные метки шумят. Голосуем покадрово и
@@ -322,6 +337,38 @@ fn collect_spans(
     }
 }
 
+/// Зона перекрытия не принадлежит ни одному ране: слово в ней атрибутируется
+/// только по ране чистой речи задетого голоса, а не по доминированию покрытия.
+fn collect_voice_runs(
+    window: &mr_ml::onnx::segmentation::SegmentationWindow,
+    assignment: &HashMap<usize, usize>,
+    out: &mut Vec<SpeakerSpan>,
+) {
+    let mut i = 0;
+    while i < window.classes.len() {
+        let class = window.classes[i];
+        if !(1..=3).contains(&class) {
+            i += 1;
+            continue;
+        }
+        let Some(&label) = assignment.get(&(class as usize - 1)) else {
+            i += 1;
+            continue;
+        };
+        let start = i;
+        i += 1;
+        while i < window.classes.len() && window.classes[i] == class {
+            i += 1;
+        }
+        let to_sec = |frame: usize| (window.start_sample + frame * FRAME_SAMPLES) as f64 / 16000.0;
+        out.push(SpeakerSpan {
+            start: to_sec(start),
+            end: to_sec(i),
+            label,
+        });
+    }
+}
+
 /// Иначе одновременно звучавшие разные голоса слипаются в «средний» профиль.
 fn resolve_label_conflicts(
     votes: &HashMap<usize, HashMap<usize, f64>>,
@@ -423,7 +470,7 @@ mod tests {
         let utterances = vec![utterance(0.0, 5.0), utterance(5.0, 10.0)];
         let embs = vec![Some(vec![1.0, 0.0]), Some(vec![0.0, 1.0])];
         let mut labels = [(0, 0), (1, 0)].into_iter().collect();
-        let spans = apply(
+        let outcome = apply(
             &segmentation,
             &utterances,
             &embs,
@@ -433,8 +480,8 @@ mod tests {
             2,
         );
         assert_ne!(labels[&0], labels[&1]);
-        assert!(spans.iter().any(|s| s.label == labels[&0]));
-        assert!(spans.iter().any(|s| s.label == labels[&1]));
+        assert!(outcome.spans.iter().any(|s| s.label == labels[&0]));
+        assert!(outcome.spans.iter().any(|s| s.label == labels[&1]));
     }
 
     #[test]
@@ -461,6 +508,56 @@ mod tests {
             1,
         );
         assert_eq!(labels[&0], labels[&1]);
+    }
+
+    #[test]
+    fn voice_runs_exclude_overlap_frames() {
+        let mut classes = vec![1u8; 296];
+        classes.extend(vec![4u8; 30]);
+        classes.extend(vec![2u8; 293]);
+        let segmentation = Segmentation {
+            frames: vec![],
+            windows: vec![SegmentationWindow {
+                start_sample: 0,
+                classes,
+            }],
+        };
+        let utterances = vec![utterance(0.0, 5.0), utterance(5.0, 10.0)];
+        let embs = vec![Some(vec![1.0, 0.0]), Some(vec![0.0, 1.0])];
+        let mut labels = [(0, 0), (1, 0)].into_iter().collect();
+        let outcome = apply(
+            &segmentation,
+            &utterances,
+            &embs,
+            &[5.0, 5.0],
+            &[1.0, 1.0],
+            &mut labels,
+            2,
+        );
+        let frame = FRAME_SAMPLES as f64 / 16000.0;
+        let first = outcome
+            .voice_runs
+            .iter()
+            .find(|run| run.label == labels[&0])
+            .unwrap();
+        assert!(first.end <= 296.0 * frame + 1e-6);
+        let second = outcome
+            .voice_runs
+            .iter()
+            .find(|run| run.label == labels[&1])
+            .unwrap();
+        assert!(second.start >= 325.0 * frame - 1e-9);
+        let mid_overlap = 311.0 * frame;
+        assert!(outcome
+            .voice_runs
+            .iter()
+            .all(|run| run.end <= mid_overlap || run.start > mid_overlap));
+        let incoming = outcome
+            .spans
+            .iter()
+            .find(|span| span.label == labels[&1])
+            .unwrap();
+        assert!(incoming.start <= 296.0 * frame + 1e-6);
     }
 
     #[test]

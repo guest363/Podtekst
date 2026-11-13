@@ -1017,7 +1017,7 @@ pub(crate) fn diarize_channel(
     min_speakers: usize,
     max_speakers: usize,
     on_event: &dyn Fn(u8, &str),
-) -> Vec<SpeakerInfo> {
+) -> (Vec<SpeakerInfo>, Vec<Utterance>) {
     use mr_ml::cluster::{agglomerative_gap, agglomerative_weighted, merge_by_centroid_cosine};
     use mr_ml::cosine_similarity;
     let experiment = experiment::current();
@@ -1027,7 +1027,7 @@ pub(crate) fn diarize_channel(
     };
     let mut n = utterances.len();
     if n == 0 {
-        return vec![];
+        return (vec![], Vec::new());
     }
     let ch = channel_idx.unwrap_or(-1);
     log::debug!(
@@ -1052,22 +1052,25 @@ pub(crate) fn diarize_channel(
             u.speaker = default_name.to_string();
             u.diarized = true;
         }
-        return vec![SpeakerInfo {
-            id: "channel_x".to_string(),
-            name: default_name.to_string(),
-            channel: channel_idx,
-            matched: false,
-            matched_name: None,
-            matched_pack_id: None,
-            matched_pack_name: None,
-            similarity: 0.0,
-            silhouette: 0.0,
-            candidates: vec![],
-            embedding: None,
-            samples: vec![],
-            utterances_count: utterances.len(),
-            total_speech_sec: utterances.iter().map(|u| (u.end - u.start).max(0.0)).sum(),
-        }];
+        return (
+            vec![SpeakerInfo {
+                id: "channel_x".to_string(),
+                name: default_name.to_string(),
+                channel: channel_idx,
+                matched: false,
+                matched_name: None,
+                matched_pack_id: None,
+                matched_pack_name: None,
+                similarity: 0.0,
+                silhouette: 0.0,
+                candidates: vec![],
+                embedding: None,
+                samples: vec![],
+                utterances_count: utterances.len(),
+                total_speech_sec: utterances.iter().map(|u| (u.end - u.start).max(0.0)).sum(),
+            }],
+            Vec::new(),
+        );
     }
     let mut core_units = match experiment.anchors {
         Anchors::Turns => turn_anchors::core_indices(&units, &anchors),
@@ -1455,22 +1458,25 @@ pub(crate) fn diarize_channel(
             u.speaker = default_name.to_string();
             u.diarized = true;
         }
-        return vec![SpeakerInfo {
-            id: "channel_x".to_string(),
-            name: default_name.to_string(),
-            channel: channel_idx,
-            matched: false,
-            matched_name: None,
-            matched_pack_id: None,
-            matched_pack_name: None,
-            similarity: 0.0,
-            silhouette: 0.0,
-            candidates: vec![],
-            embedding: None,
-            samples: vec![],
-            utterances_count: utterances.len(),
-            total_speech_sec: utterances.iter().map(|u| (u.end - u.start).max(0.0)).sum(),
-        }];
+        return (
+            vec![SpeakerInfo {
+                id: "channel_x".to_string(),
+                name: default_name.to_string(),
+                channel: channel_idx,
+                matched: false,
+                matched_name: None,
+                matched_pack_id: None,
+                matched_pack_name: None,
+                similarity: 0.0,
+                silhouette: 0.0,
+                candidates: vec![],
+                embedding: None,
+                samples: vec![],
+                utterances_count: utterances.len(),
+                total_speech_sec: utterances.iter().map(|u| (u.end - u.start).max(0.0)).sum(),
+            }],
+            Vec::new(),
+        );
     }
     fill_labels_by_time(utterances, &mut label_of);
     let after_coverage = label_of.values().copied().collect::<HashSet<_>>().len();
@@ -1485,8 +1491,9 @@ pub(crate) fn diarize_channel(
     diagnostics::turns("smoothing", ch, utterances, &label_of, support);
     coverage::restore_protected(&mut label_of, &protected);
     let mut spans = Vec::new();
+    let mut voice_runs: Vec<super::speaker_assignment::SpeakerSpan> = Vec::new();
     if let Some(segmentation) = segmentation {
-        spans = super::speaker_assignment::apply(
+        let outcome = super::speaker_assignment::apply(
             segmentation,
             utterances,
             &embs,
@@ -1495,6 +1502,8 @@ pub(crate) fn diarize_channel(
             &mut label_of,
             max_speakers,
         );
+        spans = outcome.spans;
+        voice_runs = outcome.voice_runs;
     }
     let after_assignment = label_of.values().copied().collect::<HashSet<_>>().len();
     coverage::restore_protected(&mut label_of, &protected);
@@ -1758,22 +1767,26 @@ pub(crate) fn diarize_channel(
     }
     // shortcut: кадры PyAnnote уточняют только длинные монологи (≥20 с): на коротких
     // репликах шум локальных меток рвёт связный текст на фрагменты.
-    let timeline: Vec<Utterance> = spans
-        .iter()
-        .filter_map(|span| {
-            cluster_name.get(&span.label).map(|name| Utterance {
-                start: span.start,
-                end: span.end,
-                speaker: name.clone(),
-                channel: channel_idx,
-                text: String::new(),
-                diarized: true,
-                silhouette: 0.0,
-                words: Vec::new(),
-                ctc_used: false,
+    let spans_to_timeline = |spans: &[super::speaker_assignment::SpeakerSpan]| {
+        spans
+            .iter()
+            .filter_map(|span| {
+                cluster_name.get(&span.label).map(|name| Utterance {
+                    start: span.start,
+                    end: span.end,
+                    speaker: name.clone(),
+                    channel: channel_idx,
+                    text: String::new(),
+                    diarized: true,
+                    silhouette: 0.0,
+                    words: Vec::new(),
+                    ctc_used: false,
+                })
             })
-        })
-        .collect();
+            .collect::<Vec<Utterance>>()
+    };
+    let timeline = spans_to_timeline(&spans);
+    let voice_timeline = spans_to_timeline(&voice_runs);
     if !timeline.is_empty() && utterances.iter().any(|u| u.end - u.start >= 20.0) {
         let tree = super::word_speakers::DiarIntervalTree::new(&timeline);
         let mut refined = Vec::with_capacity(utterances.len());
@@ -1806,7 +1819,7 @@ pub(crate) fn diarize_channel(
             &serde_json::json!({ "segments": segments }),
         );
     }
-    infos
+    (infos, voice_timeline)
 }
 
 /// ASR-сегмент с padding иногда дослышит начало следующей реплики: слова

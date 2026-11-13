@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use super::{Utterance, WordConf};
 
@@ -365,6 +365,130 @@ pub(crate) fn split_utterance_by_word_speakers(
     out
 }
 
+/// Слово реплики, лежащее преимущественно вне ранов её собственного голоса и
+/// задевающее ран другого голоса, — перекрывающая вставка второго диктора:
+/// пословное покрытие оставляет её первому, отклеиваем в отдельную реплику.
+pub(crate) fn detach_overlap_words(
+    utterances: Vec<Utterance>,
+    runs: &[Utterance],
+) -> Vec<Utterance> {
+    let voices: HashSet<&str> = runs.iter().map(|run| run.speaker.as_str()).collect();
+    if voices.len() < 2 {
+        return utterances;
+    }
+    let mut detached = 0usize;
+    let mut out = Vec::with_capacity(utterances.len());
+    for u in utterances {
+        if !voices.contains(u.speaker.as_str()) {
+            out.push(u);
+            continue;
+        }
+        let mut word_speakers: Vec<&str> = Vec::with_capacity(u.words.len());
+        let mut changed = false;
+        for w in &u.words {
+            match detaching_speaker(w, &u.speaker, runs) {
+                Some(name) => {
+                    log::debug!(
+                        target: "diar",
+                        word_start = w.start_sec,
+                        word_end = w.end_sec,
+                        utt_start = u.start,
+                        utt_end = u.end,
+                        from = crate::logging::speaker_token(&u.speaker),
+                        to = crate::logging::speaker_token(name);
+                        "ev=diar.overlap_detach_word"
+                    );
+                    word_speakers.push(name);
+                    changed = true;
+                    detached += 1;
+                }
+                None => word_speakers.push(u.speaker.as_str()),
+            }
+        }
+        if !changed {
+            out.push(u);
+            continue;
+        }
+        let mut i = 0;
+        while i < u.words.len() {
+            let speaker = word_speakers[i].to_string();
+            let start = i;
+            i += 1;
+            while i < u.words.len() && word_speakers[i] == speaker {
+                i += 1;
+            }
+            let words = u.words[start..i].to_vec();
+            let timed = |w: &WordConf| w.end_sec > w.start_sec;
+            let start_sec = words
+                .iter()
+                .find(|w| timed(w))
+                .map_or(u.start, |w| w.start_sec);
+            let end_sec = words
+                .iter()
+                .rev()
+                .find(|w| timed(w))
+                .map_or(u.end, |w| w.end_sec);
+            let text = words
+                .iter()
+                .map(|w| w.w.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            out.push(Utterance {
+                start: start_sec,
+                end: end_sec,
+                speaker,
+                channel: u.channel,
+                text,
+                diarized: u.diarized,
+                silhouette: u.silhouette,
+                words,
+                ctc_used: u.ctc_used,
+            });
+        }
+    }
+    if detached > 0 {
+        log::debug!(target: "diar", words = detached; "ev=diar.overlap_detach");
+    }
+    out
+}
+
+/// Отклеивается только слово на стыке ранов: оно задевает ран собственного
+/// голоса (менее 50% себя) и ран другого голоса, который продолжается после
+/// слова — именно входящий голос начинает новую реплику. Слово целиком во
+/// владении чужого рана или у уже замолчавшего голоса — территория пословного
+/// покрытия и кластеризации: шумные чистые раны PyAnnote не должны
+/// перекидывать целые края реплик.
+fn detaching_speaker<'a>(word: &WordConf, own: &str, runs: &'a [Utterance]) -> Option<&'a str> {
+    if word.end_sec <= word.start_sec {
+        return None;
+    }
+    let overlap =
+        |run: &Utterance| (word.end_sec.min(run.end) - word.start_sec.max(run.start)).max(0.0);
+    let half = 0.5 * (word.end_sec - word.start_sec);
+    let own_cover: f64 = runs
+        .iter()
+        .filter(|run| run.speaker == own)
+        .map(overlap)
+        .sum();
+    if own_cover <= 0.0 || own_cover >= half {
+        return None;
+    }
+    let mut other: BTreeMap<&str, f64> = BTreeMap::new();
+    for run in runs
+        .iter()
+        .filter(|run| run.speaker != own && run.end >= word.end_sec)
+    {
+        let ov = overlap(run);
+        if ov > 0.0 {
+            *other.entry(run.speaker.as_str()).or_default() += ov;
+        }
+    }
+    other
+        .into_iter()
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(name, _)| name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -592,5 +716,165 @@ mod tests {
         assert_eq!(out[0].speaker, "A");
         assert_eq!(out[1].text, "четвертое");
         assert_eq!(out[1].speaker, "B");
+    }
+
+    fn voice_run(start: f64, end: f64, speaker: &str) -> Utterance {
+        Utterance {
+            start,
+            end,
+            speaker: speaker.to_string(),
+            channel: None,
+            text: String::new(),
+            diarized: true,
+            silhouette: 0.0,
+            words: Vec::new(),
+            ctc_used: false,
+        }
+    }
+
+    #[test]
+    fn overlapped_word_detaches_to_second_voice() {
+        let runs = vec![voice_run(0.0, 2.3, "A"), voice_run(2.5, 4.0, "B")];
+        let mut source = utt(0.0, 3.0, "A", "раз два три");
+        source.words = vec![
+            timed_word("раз", 0.2, 0.7),
+            timed_word("два", 0.8, 1.3),
+            timed_word("три", 2.2, 2.7),
+        ];
+        let out = detach_overlap_words(vec![source], &runs);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].text, "раз два");
+        assert_eq!(out[0].speaker, "A");
+        assert_eq!(out[1].text, "три");
+        assert_eq!(out[1].speaker, "B");
+        assert!((out[1].start - 2.2).abs() < 1e-9);
+        assert!((out[1].end - 2.7).abs() < 1e-9);
+        assert_eq!(out[1].words.len(), 1);
+    }
+
+    #[test]
+    fn word_inside_own_voice_run_stays() {
+        let runs = vec![voice_run(0.0, 2.0, "A"), voice_run(2.5, 4.0, "B")];
+        let mut source = utt(0.0, 2.0, "A", "раз два");
+        source.words = vec![timed_word("раз", 0.2, 0.7), timed_word("два", 1.2, 1.9)];
+        let out = detach_overlap_words(vec![source], &runs);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].text, "раз два");
+        assert_eq!(out[0].speaker, "A");
+        assert_eq!(out[0].start, 0.0);
+        assert_eq!(out[0].end, 2.0);
+    }
+
+    #[test]
+    fn word_half_covered_by_own_run_stays() {
+        let runs = vec![voice_run(0.0, 2.0, "A"), voice_run(2.0, 4.0, "B")];
+        let mut source = utt(0.0, 2.4, "A", "раз хвост");
+        source.words = vec![timed_word("раз", 0.2, 0.7), timed_word("хвост", 1.6, 2.4)];
+        let out = detach_overlap_words(vec![source], &runs);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].speaker, "A");
+        assert_eq!(out[0].text, "раз хвост");
+    }
+
+    #[test]
+    fn word_in_overlap_zone_without_nearby_other_voice_stays() {
+        let runs = vec![voice_run(0.0, 2.0, "A"), voice_run(4.0, 6.0, "B")];
+        let mut source = utt(0.0, 3.0, "A", "раз три");
+        source.words = vec![timed_word("раз", 0.2, 0.7), timed_word("три", 2.2, 2.7)];
+        let out = detach_overlap_words(vec![source], &runs);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].speaker, "A");
+        assert_eq!(out[0].text, "раз три");
+    }
+
+    #[test]
+    fn word_of_ended_other_voice_run_stays() {
+        let runs = vec![voice_run(0.0, 2.3, "A"), voice_run(2.4, 2.6, "B")];
+        let mut source = utt(0.0, 2.7, "A", "раз три");
+        source.words = vec![timed_word("раз", 0.2, 0.7), timed_word("три", 2.2, 2.7)];
+        let out = detach_overlap_words(vec![source], &runs);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].speaker, "A");
+        assert_eq!(out[0].text, "раз три");
+    }
+
+    #[test]
+    fn word_inside_other_voice_clean_run_stays() {
+        let runs = vec![voice_run(0.0, 2.0, "A"), voice_run(2.0, 4.0, "B")];
+        let mut source = utt(0.0, 3.6, "A", "раз чужая фраза");
+        source.words = vec![
+            timed_word("раз", 0.2, 0.7),
+            timed_word("чужая", 2.1, 2.6),
+            timed_word("фраза", 2.7, 3.2),
+        ];
+        let out = detach_overlap_words(vec![source], &runs);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].speaker, "A");
+        assert_eq!(out[0].text, "раз чужая фраза");
+    }
+
+    #[test]
+    fn single_voice_runs_change_nothing() {
+        let runs = vec![voice_run(0.0, 2.0, "A")];
+        let mut source = utt(0.0, 3.0, "A", "раз три");
+        source.words = vec![timed_word("раз", 0.2, 0.7), timed_word("три", 2.2, 2.7)];
+        let out = detach_overlap_words(vec![source], &runs);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].text, "раз три");
+        assert_eq!(out[0].speaker, "A");
+    }
+
+    #[test]
+    fn segmentation_runs_detach_second_voice_word() {
+        use mr_ml::onnx::segmentation::{Segmentation, SegmentationWindow};
+        let mut classes = vec![1u8; 296];
+        classes.extend(vec![4u8; 30]);
+        classes.extend(vec![2u8; 293]);
+        let segmentation = Segmentation {
+            frames: vec![],
+            windows: vec![SegmentationWindow {
+                start_sample: 0,
+                classes,
+            }],
+        };
+        let diar_units = vec![utt(0.0, 5.0, "A", "a"), utt(5.0, 10.0, "B", "b")];
+        let embs = vec![Some(vec![1.0, 0.0]), Some(vec![0.0, 1.0])];
+        let mut labels: std::collections::HashMap<usize, usize> =
+            [(0, 0), (1, 0)].into_iter().collect();
+        let outcome = super::super::speaker_assignment::apply(
+            &segmentation,
+            &diar_units,
+            &embs,
+            &[5.0, 5.0],
+            &[1.0, 1.0],
+            &mut labels,
+            2,
+        );
+        let names: std::collections::HashMap<usize, &str> =
+            [(labels[&0], "A"), (labels[&1], "B")].into_iter().collect();
+        let runs: Vec<Utterance> = outcome
+            .voice_runs
+            .iter()
+            .filter_map(|run| {
+                names
+                    .get(&run.label)
+                    .map(|name| voice_run(run.start, run.end, name))
+            })
+            .collect();
+        assert_eq!(runs.len(), 2);
+        let mut source = utt(0.0, 5.7, "A", "раз два три");
+        source.words = vec![
+            timed_word("раз", 0.3, 0.8),
+            timed_word("два", 0.9, 1.4),
+            timed_word("три", 4.9, 5.7),
+        ];
+        let out = detach_overlap_words(vec![source], &runs);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].text, "раз два");
+        assert_eq!(out[0].speaker, "A");
+        assert_eq!(out[1].text, "три");
+        assert_eq!(out[1].speaker, "B");
+        assert!((out[1].start - 4.9).abs() < 1e-9);
+        assert!((out[1].end - 5.7).abs() < 1e-9);
     }
 }
