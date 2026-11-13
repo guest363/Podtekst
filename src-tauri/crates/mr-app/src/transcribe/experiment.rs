@@ -22,6 +22,7 @@ pub(super) enum Embedding {
     #[default]
     Frontend,
     Raw,
+    UnitNorm,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
@@ -71,6 +72,7 @@ impl Config {
                 ("centroids", "online") => config.centroids = Centroids::Online,
                 ("embedding", "frontend") => config.embedding = Embedding::Frontend,
                 ("embedding", "raw") => config.embedding = Embedding::Raw,
+                ("embedding", "unitnorm") => config.embedding = Embedding::UnitNorm,
                 ("guards", "on") => config.guards = Guards::On,
                 ("guards", "off") => config.guards = Guards::Off,
                 _ => {
@@ -185,6 +187,13 @@ mod tests {
                 "embedding=raw",
                 Config {
                     embedding: Embedding::Raw,
+                    ..defaults
+                },
+            ),
+            (
+                "embedding=unitnorm",
+                Config {
+                    embedding: Embedding::UnitNorm,
                     ..defaults
                 },
             ),

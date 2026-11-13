@@ -47,7 +47,7 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
     let mut segmentations = HashMap::new();
     for (ch, _label) in chan_list.iter() {
         let samples: &[f32] = match experiment::current().embedding {
-            Embedding::Frontend => &frontend_samples[ch][..],
+            Embedding::Frontend | Embedding::UnitNorm => &frontend_samples[ch][..],
             Embedding::Raw => &channel_samples[ch][..],
         };
         log::debug!(

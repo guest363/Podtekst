@@ -57,8 +57,8 @@ pub struct AgcStats {
 }
 
 const WINDOW: usize = 1600;
-const TARGET_RMS: f32 = 0.1;
-const MAX_GAIN: f32 = 100.0;
+pub const TARGET_RMS: f32 = 0.1;
+pub const MAX_GAIN: f32 = 100.0;
 
 fn percentile(sorted: &[f32], fraction: f32) -> f32 {
     sorted

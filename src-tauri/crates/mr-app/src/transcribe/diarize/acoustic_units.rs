@@ -1,5 +1,5 @@
 use super::super::clean_speech::SpeechSupport;
-use super::super::experiment::{self, Anchors};
+use super::super::experiment::{self, Anchors, Embedding};
 use super::{
     acoustic_windows, turn_anchors, AcoustUnit, EchoEvidence, EmbeddingExtractor, Utterance,
 };
@@ -7,6 +7,18 @@ use super::{
 pub(super) struct Units {
     pub items: Vec<AcoustUnit>,
     pub anchors: Vec<usize>,
+}
+
+fn normalize_unit_rms(samples: &mut [f32]) {
+    let energy = samples.iter().map(|&x| x * x).sum::<f32>();
+    let rms = (energy / samples.len() as f32).sqrt();
+    if rms <= f32::EPSILON {
+        return;
+    }
+    let gain = (mr_audio::dsp::TARGET_RMS / rms).min(mr_audio::dsp::MAX_GAIN);
+    for sample in samples.iter_mut() {
+        *sample *= gain;
+    }
 }
 
 fn extract(
@@ -29,7 +41,11 @@ fn extract(
     if clean_len < (SR * acoustic_windows::MIN_UNIT_SEC) as usize {
         return None;
     }
-    let clean = &chunk[..clean_len];
+    let clean = &mut chunk[..clean_len];
+    let quality = super::rms_quality(clean);
+    if experiment::current().embedding == Embedding::UnitNorm {
+        normalize_unit_rms(clean);
+    }
     let started = std::time::Instant::now();
     let result = extractor.embed(clean);
     if log::log_enabled!(target: "diar", log::Level::Trace) {
@@ -60,7 +76,7 @@ fn extract(
         start,
         end,
         dur: clean_len as f64 / SR,
-        quality: super::rms_quality(clean),
+        quality,
         embedding,
     })
 }
@@ -130,4 +146,31 @@ pub(super) fn build(
         }
     }
     units
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rms(samples: &[f32]) -> f32 {
+        (samples.iter().map(|&x| x * x).sum::<f32>() / samples.len() as f32).sqrt()
+    }
+
+    #[test]
+    fn unitnorm_equalizes_loud_and_quiet_to_same_rms() {
+        let speech: Vec<f32> = (0..16_000)
+            .map(|i| (std::f32::consts::TAU * 220.0 * i as f32 / 16_000.0).sin())
+            .collect();
+        let mut loud: Vec<f32> = speech.iter().map(|&x| x * 0.5).collect();
+        let mut quiet: Vec<f32> = speech.iter().map(|&x| x * 0.005).collect();
+        normalize_unit_rms(&mut loud);
+        normalize_unit_rms(&mut quiet);
+        let target = mr_audio::dsp::TARGET_RMS;
+        assert!((rms(&loud) - target).abs() < 1e-5);
+        assert!((rms(&quiet) - target).abs() < 1e-5);
+        assert!((rms(&loud) - rms(&quiet)).abs() < 1e-5);
+        let mut silence = vec![0.0f32; 16_000];
+        normalize_unit_rms(&mut silence);
+        assert!(silence.iter().all(|&x| x == 0.0));
+    }
 }

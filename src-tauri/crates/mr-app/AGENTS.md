@@ -53,7 +53,8 @@ MR_SUMMARY_RUNTIME=<dir> MR_SUMMARY_MODEL=<file>.gguf \
 
 Локальные абляции диаризации задаются `MR_DIAR_EXPERIMENT` только вместе с
 `MR_DIAR_BENCH=1`: `anchors=turns|windows`, `centroids=frozen|online`,
-`embedding=frontend|raw`, `guards=on|off` через запятую. По умолчанию —
+`embedding=frontend|raw|unitnorm` (`unitnorm` — RMS-нормализация слайса юнита
+к цели AGC перед embed), `guards=on|off` через запятую. По умолчанию —
 `turns,frozen,frontend,on`. Конфигурация проверяется до загрузки моделей и
 фиксируется на процесс; недопустимые или повторные опции отклоняются.
 `guards=off` отключает только отбраковку по покрытию и coverage split/protection;
