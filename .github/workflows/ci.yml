@@ -150,6 +150,8 @@ jobs:
   diarization-regression:
     if: ${{ vars.MR_DIAR_BENCH == '1' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: [self-hosted, linux, diarization-bench]
+    # 6 файлов × 900 с (потолок run_batch в regression.py) + холодная release-сборка и ONNX-тест
+    timeout-minutes: 150
     env:
       MR_DIAR_BENCH: '1'
       MR_DIAR_BENCH_ROOT: ${{ vars.MR_DIAR_BENCH_ROOT }}
@@ -162,6 +164,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: '1.99'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
       - run: cargo build --release -p mr-app --locked --manifest-path src-tauri/Cargo.toml
       - run: cargo test -p mr-ml --features onnx --test onnx_real --locked --manifest-path src-tauri/Cargo.toml quiet_nonzero_samples_do_not_take_digital_silence_shortcut
       - run: |
