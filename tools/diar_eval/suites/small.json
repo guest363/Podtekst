@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "name": "small",
+  "description": "Быстрый прогон перед PR: 6 синтетических встреч и 4 main-файла.",
+  "manifests": [
+    {"name": "t0-regression", "path": "regression-verified/manifest.json"},
+    {"name": "main-normal", "path": "diar-main-meetings/normal.json"},
+    {"name": "main-quiet", "path": "diar-main-meetings/quiet.json"}
+  ]
+}

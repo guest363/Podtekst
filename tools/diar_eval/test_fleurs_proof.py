@@ -1,3 +1,4 @@
+import json
 import unittest
 import tempfile
 from pathlib import Path
@@ -8,6 +9,13 @@ from prepare_fleurs_speakers import validate_selection
 
 
 class SelectionTest(unittest.TestCase):
+    def test_committed_proof_matches_selection_rules(self):
+        proof = json.loads(Path(__file__).with_name("proof-fleurs-regression.json").read_text(encoding="utf-8"))
+        self.assertEqual(proof["schema"], 1)
+        for language in ("ru_ru", "en_us"):
+            records = proof["languages"][language]["selected"]
+            self.assertEqual(len(records), 4)
+            validate_selection(records)
     def test_main_uses_different_sentences_and_opposite_genders(self):
         with tempfile.TemporaryDirectory() as tmp:
             tsv = Path(tmp) / "test.tsv"

@@ -56,7 +56,6 @@ def main() -> int:
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--language", choices=["ru", "en", "all"], default="all")
     parser.add_argument("--baseline", type=Path)
-    parser.add_argument("--baseline-from-csv", type=Path)
     args = parser.parse_args()
     if os.environ.get("MR_DIAR_BENCH") != "1":
         print("MR_DIAR_BENCH != 1: пропуск")
@@ -75,17 +74,6 @@ def main() -> int:
         generate(root / "diar-regression-clips" / ("en_us" if language == "en" else "ru_ru"),
                  out / name, speakers, 60, overlap, DEFAULT_SEED, language=language,
                  name=name, manifest_out=manifest, second_speaker_db=gain)
-    if args.baseline_from_csv:
-        with args.baseline_from_csv.open(newline="", encoding="utf-8") as file:
-            rows = {row["file_id"]: row for row in csv.DictReader(file)}
-        names = [f"synth-ru-{speakers}spk-60s-ov{overlap}" for speakers, overlap in ((3, 5), (4, 15))]
-        if any(name not in rows or rows[name]["exit_code"] != "0" or rows[name]["error"] or not math.isfinite(float(rows[name]["DER"])) for name in names):
-            raise ValueError("неполные метрики baseline")
-        payload = {"proof_sha256": digest((root / "diar-regression-clips/proof.json").read_bytes()), "metrics": {name: {"DER": float(rows[name]["DER"]), "speakers_hyp": int(rows[name]["speakers_hyp"])} for name in names}}
-        destination = out / "baseline.json"
-        destination.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        print(f"Baseline записан: {destination}")
-        return 0
     if args.prepare_only:
         print(f"Манифест подготовлен: {manifest}")
         return 0
