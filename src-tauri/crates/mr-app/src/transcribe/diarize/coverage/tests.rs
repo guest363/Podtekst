@@ -173,6 +173,56 @@ fn quarter_coverage_under_one_second_does_not_split() {
 }
 
 #[test]
+fn close_embeddings_block_cut_between_differently_labeled_runs() {
+    let mut utterances = vec![super::super::tests::utt(
+        0.0,
+        8.0,
+        "",
+        0,
+        "one two three four",
+    )];
+    let mut units = vec![unit(0, 0.0, 6.0, 0), unit(0, 6.0, 8.0, 1)];
+    units[1].embedding = vec![0.9, (1.0 - 0.9_f64.powi(2)).sqrt()];
+    let mut labels = HashMap::from([(0, 0), (1, 1)]);
+    split_covered_utterances(
+        &mut utterances,
+        &mut units,
+        &mut labels,
+        SpeechSupport::default(),
+    );
+    assert_eq!(
+        utterances.len(),
+        1,
+        "run centroid cosine 0.9 is the same voice despite different labels"
+    );
+}
+
+#[test]
+fn distant_embeddings_keep_cut_between_runs() {
+    let mut utterances = vec![super::super::tests::utt(
+        0.0,
+        8.0,
+        "",
+        0,
+        "one two three four",
+    )];
+    let mut units = vec![unit(0, 0.0, 6.0, 0), unit(0, 6.0, 8.0, 1)];
+    units[1].embedding = vec![0.2, (1.0 - 0.2_f64.powi(2)).sqrt()];
+    let mut labels = HashMap::from([(0, 0), (1, 1)]);
+    split_covered_utterances(
+        &mut utterances,
+        &mut units,
+        &mut labels,
+        SpeechSupport::default(),
+    );
+    assert_eq!(
+        utterances.len(),
+        2,
+        "run centroid cosine 0.2 is a real speaker change"
+    );
+}
+
+#[test]
 fn valid_cluster_at_both_minima_survives() {
     let units = vec![unit(0, 0.0, 28.5, 0), unit(1, 28.5, 30.0, 1)];
     let labels = reject_small_clusters(&units, &[0, 1], vec![0, 1], &[4.0, 1.5], &[], None);

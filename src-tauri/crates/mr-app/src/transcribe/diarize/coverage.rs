@@ -6,6 +6,10 @@ const MIN_CLUSTER_SHARE: f64 = 0.05;
 const MIN_CLUSTER_SEC: f64 = 1.5;
 const MIN_TURN_SHARE: f64 = 0.25;
 const MIN_TURN_SEC: f64 = 1.0;
+/// Замер ERes2NetV2 на живой встрече: куски одной реплики, получившие разные
+/// метки после заливки по времени, — sim 0.56–0.72; настоящая смена диктора —
+/// ≤ 0.36. Порог между диапазонами не даёт материализовать рез внутри одного голоса.
+const CROSS_RUN_SAME_VOICE_SIM: f64 = 0.40;
 
 fn speech_duration(intervals: &[(f64, f64)], support: SpeechSupport<'_>) -> f64 {
     support.duration(intervals)
@@ -198,6 +202,28 @@ pub(super) fn label_durations(
         .collect()
 }
 
+fn run_centroid(
+    units: &[AcoustUnit],
+    labels: &HashMap<usize, usize>,
+    run: &(f64, f64, usize),
+) -> Option<Vec<f64>> {
+    let mut sum: Vec<f64> = Vec::new();
+    let mut count = 0usize;
+    for (index, unit) in units.iter().enumerate() {
+        if labels.get(&index) != Some(&run.2) || unit.end <= run.0 || unit.start >= run.1 {
+            continue;
+        }
+        if sum.is_empty() {
+            sum.resize(unit.embedding.len(), 0.0);
+        }
+        for (acc, value) in sum.iter_mut().zip(&unit.embedding) {
+            *acc += value;
+        }
+        count += 1;
+    }
+    (count > 0).then(|| sum.iter().map(|value| value / count as f64).collect())
+}
+
 pub(super) fn split_covered_utterances(
     utterances: &mut Vec<Utterance>,
     units: &mut Vec<AcoustUnit>,
@@ -230,8 +256,17 @@ pub(super) fn split_covered_utterances(
                 .iter()
                 .filter(|(_, _, label)| significant.contains(label))
                 .collect();
-            for pair in runs.windows(2) {
+            let centroids: Vec<_> = runs
+                .iter()
+                .map(|&run| run_centroid(units, labels, run))
+                .collect();
+            for (pos, pair) in runs.windows(2).enumerate() {
                 if pair[0].2 != pair[1].2 {
+                    if let (Some(a), Some(b)) = (&centroids[pos], &centroids[pos + 1]) {
+                        if mr_ml::cosine_similarity(a, b) >= CROSS_RUN_SAME_VOICE_SIM {
+                            continue;
+                        }
+                    }
                     let cut = (pair[0].1 + pair[1].0) * 0.5;
                     if cut > bounds.last().copied().unwrap_or(u.start) && cut < u.end {
                         bounds.push(cut);

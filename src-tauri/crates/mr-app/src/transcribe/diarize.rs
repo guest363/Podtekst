@@ -1894,7 +1894,10 @@ pub(crate) fn words_match(a: &str, b: &str) -> bool {
     let ca: Vec<char> = a.chars().collect();
     let cb: Vec<char> = b.chars().collect();
     if ca.len() >= 4 && cb.len() >= 4 && ca.len().abs_diff(cb.len()) <= 3 {
-        ca[..4] == cb[..4]
+        // У слов ровно из 4 символов prefix-4 требует полного совпадения и не
+        // пропускает словоформы одной лексемы как эхо.
+        let prefix = if ca.len() == 4 && cb.len() == 4 { 3 } else { 4 };
+        ca[..prefix] == cb[..prefix]
     } else {
         false
     }
@@ -1923,7 +1926,10 @@ pub(crate) fn text_similarity(a: &str, b: &str) -> f64 {
         .filter(|sw| big.iter().any(|bw| words_match(sw, bw)))
         .count();
     let containment = matched as f64 / small.len() as f64;
-    if containment >= 0.65 && small.len() >= 2 {
+    // Для одиночного слова Jaccard по словоформам даёт 0: эхо-дубль однословной
+    // реплики сводим к words_match. Вхождение слова в длинную фразу чужого
+    // канала эхом не считаем — это бэкканал.
+    if containment >= 0.65 && (small.len() >= 2 || big.len() == 1) {
         j.max(0.85)
     } else {
         j
@@ -3092,8 +3098,8 @@ mod tests {
         move_boundary_words, profile_anchors, read_profiles_file, reassign_short_replies,
         reconcile_channels, refresh_speaker_stats, short_join_threshold, speaker_change_cuts,
         split_at_pauses, split_by_word_pauses, split_utterance_by_bounds, split_window_region,
-        split_words_by_bounds, switch_penalty, text_similarity, AcoustUnit, SpeakerInfo, Utterance,
-        MIN_LOCAL_EMBED_SEC,
+        split_words_by_bounds, switch_penalty, text_similarity, words_match, AcoustUnit,
+        SpeakerInfo, Utterance, MIN_LOCAL_EMBED_SEC,
     };
     use crate::transcribe::echo::FrameClass;
     use crate::transcribe::WordConf;
@@ -3277,6 +3283,27 @@ mod tests {
         let echo = "А чё, я ей всё написал, чё ещё там надо? Да.";
         let original = "Мне нужно будет там для КП данные подготовить. Это Альфа, да? А что я ей все написал, че еще там надо? Да. Окей. Хмм.";
         assert!(text_similarity(echo, original) >= 0.85);
+    }
+
+    #[test]
+    fn words_match_accepts_inflected_four_char_word_forms() {
+        assert!(words_match("маша", "маша"));
+        assert!(words_match("маша", "маше"));
+    }
+
+    #[test]
+    fn words_match_rejects_different_lexemes_with_shared_prefix() {
+        assert!(!words_match("дыня", "дымка"));
+    }
+
+    #[test]
+    fn single_word_echo_word_form_counts_as_duplicate() {
+        assert!(text_similarity("маше", "маша") >= 0.55);
+        assert!(text_similarity("дыня", "дымка") < 0.55);
+        assert!(
+            text_similarity("да", "так да уменьшил") < 0.55,
+            "backchannel word inside a longer phrase of the other channel is not an echo"
+        );
     }
 
     #[test]
