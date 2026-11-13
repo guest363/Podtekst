@@ -67,7 +67,7 @@ fn percentile(sorted: &[f32], fraction: f32) -> f32 {
         .unwrap_or(0.0)
 }
 
-struct AgcPlan {
+pub struct AgcPlan {
     noise_floor: f32,
     speech_rms: f32,
     desired: f32,
@@ -155,18 +155,17 @@ fn analyze(samples: &[f32]) -> (AgcPlan, AgcStats) {
 
 /// Преданализ AGC без изменения сэмплов: amplified_fraction == 0.0 —
 /// конвейер берёт исходный канал, усиленная копия не выделяется.
-pub fn agc_analysis_16k(samples: &[f32]) -> AgcStats {
-    analyze(samples).1
+pub fn agc_analysis_16k(samples: &[f32]) -> (AgcPlan, AgcStats) {
+    analyze(samples)
 }
 
-pub fn agc_rms_16k(samples: &mut [f32]) -> AgcStats {
-    let (plan, stats) = analyze(samples);
+pub fn agc_apply_16k(samples: &mut [f32], plan: &AgcPlan) {
     let mut filter = HighPassFilter::new(80.0, 16_000.0);
     for (index, chunk) in samples.chunks_mut(WINDOW).enumerate() {
         let len = chunk.len();
         for (position, sample) in chunk.iter_mut().enumerate() {
             let filtered = filter.push(*sample);
-            let gain = window_gain(&plan, index, position, len);
+            let gain = window_gain(plan, index, position, len);
             *sample = if gain > 1.0 {
                 (filtered * gain).tanh()
             } else {
@@ -174,5 +173,10 @@ pub fn agc_rms_16k(samples: &mut [f32]) -> AgcStats {
             };
         }
     }
+}
+
+pub fn agc_rms_16k(samples: &mut [f32]) -> AgcStats {
+    let (plan, stats) = analyze(samples);
+    agc_apply_16k(samples, &plan);
     stats
 }

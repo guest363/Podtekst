@@ -1,4 +1,4 @@
-use mr_audio::dsp::agc_rms_16k;
+use mr_audio::dsp::{agc_analysis_16k, agc_apply_16k, agc_rms_16k};
 
 fn rms(samples: &[f32]) -> f32 {
     (samples.iter().map(|x| x * x).sum::<f32>() / samples.len() as f32).sqrt()
@@ -75,4 +75,28 @@ fn quiet_onset_reaches_target_without_waiting_for_steady_state() {
     agc_rms_16k(&mut samples);
     let onset_rms = rms(&samples[16_000..19_200]);
     assert!(onset_rms >= 0.075, "first 200ms RMS: {onset_rms}");
+}
+
+#[test]
+fn plan_apply_is_bitwise_identical_to_single_pass_agc() {
+    let mut samples = signal(0.0001, 1);
+    samples.extend(signal(0.01, 4));
+    samples.extend(signal(0.0001, 1));
+    let (plan, planned_stats) = agc_analysis_16k(&samples);
+    let mut planned = samples.clone();
+    agc_apply_16k(&mut planned, &plan);
+    let mut direct = samples;
+    let direct_stats = agc_rms_16k(&mut direct);
+    assert_eq!(planned_stats.noise_floor, direct_stats.noise_floor);
+    assert_eq!(planned_stats.speech_rms, direct_stats.speech_rms);
+    assert_eq!(planned_stats.gain_p50, direct_stats.gain_p50);
+    assert_eq!(planned_stats.gain_p95, direct_stats.gain_p95);
+    assert_eq!(
+        planned_stats.amplified_fraction,
+        direct_stats.amplified_fraction
+    );
+    assert!(planned
+        .iter()
+        .zip(direct.iter())
+        .all(|(a, b)| a.to_bits() == b.to_bits()));
 }

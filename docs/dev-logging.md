@@ -73,8 +73,8 @@ jq -c 'select(.ev=="vad.summary")' dev.log
 | `audio` | `read`, `decode`, `channel`, `mix`, `bleed`, `capture` | что декодировали, какой канал выбрали, почему подавили эхо, проблемы захвата |
 | `vad` | `start`, `summary`, `hist`, `window`, `window.suppressed`, `segment`, `group`, `group.cut`, `merge_quiet` | параметры, распределение вероятностей, найденные/склеенные сегменты |
 | `asr` | `engine`, `seg.start`, `seg.done`, `loop`, `empty`, `ctc`, `ctc.skip`, `ctc.hotwords_skipped`, `blank_penalty`, `infer_error`, `text` | вход/выход сегмента, петли, второй проход CTC, ошибки ONNX |
-| `diar` | `start`, `units`, `segmentation`, `cluster`, `merge_tiny`, `max_speakers`, `assign`, `embed_batch`, `split`, `reconcile`, `dedupe`, `merge_utts`, `profile.load`, `verify_profiles`, `stats` | почему столько спикеров и как распределены голоса |
-| `cluster` | `auto_k`, `auto_k_fallback`, `merge_centroid` | выбор k по разрывам дерева слияний и финальное слияние близких центроидов |
+| `diar` | `start`, `experiment`, `agc`, `embedding_frontend`, `units`, `segmentation`, `embed`, `cluster`, `clusters`, `fixed_k`, `cannot_link`, `cannot_link_pair`, `constraint_escalation`, `coverage_minimum`, `coverage_reject`, `merge_tiny`, `max_speakers`, `assign`, `split`, `short_reply`, `collapse`, `reconcile`, `dedupe`, `word_dedupe`, `merge_utts`, `overlap_detach`, `overlap_detach_word`, `profile.load`, `verify_profiles`, `stats` | почему столько спикеров и как распределены голоса |
+| `cluster` | `auto_k`, `auto_k_fallback`, `merges_tail`, `constraint_limit`, `merge_centroid` | выбор k по разрывам дерева слияний, хвост слияний и лимит cannot-link, финальное слияние близких центроидов |
 | `json` | `load`, `build`, `utt`, `check`, `invalid`, `roundtrip`, `write`, `edit`, `response` | чтение/запись `.transcript.json`, инварианты, правки UI |
 | `model` | `search`, `load`, `warmup`, `load_failed`, `infer_error`, `gpu_fallback` | что искали/загрузили, прогрев сессии, почему модели нет |
 | `diag` | `init`, `dropped`, `artifact.truncated`, `artifact.error` | состояние самого dev-sink |
@@ -82,6 +82,21 @@ jq -c 'select(.ev=="vad.summary")' dev.log
 Поля `p50/p95/p99`, `silhouette`, `margin` и `blank_ratio` — числа из самого
 конвейера; `iters` в `diar.cluster` не пишется, потому что кластеризатор
 не возвращает число итераций.
+
+Пары «нельзя-связывать» из перекрытий PyAnnote: `diar.cannot_link` — итог
+(`pairs` всего пар, `cross_turn_pairs` — из разных реплик),
+`diar.cannot_link_pair` — диагностика одной пары (`utt_a`/`utt_b`,
+`min_purity`, `min_support`, косинусное `sim` эмбеддингов). Если авто-режим
+с усечённым набором пар скатился в k=1, `diar.constraint_escalation`
+перезапускает кластеризацию с полным набором. `cluster.constraint_limit`
+(WARN) — фиксированный k не достигнут из-за cannot-link: запрошено
+`requested_k`, достигнуто `retained_k`.
+
+`diar.agc` — преданализ AGC канала перед диаризацией (`noise_floor`,
+`speech_rms`, `gain_p50`, `gain_p95`, `amplified_fraction`). Ограничение:
+стационарно-тихая речь без пауз (длиннее окна оценки, p10 ≈ p90) gate
+отсекает как фон и не усиливает — осознанный компромисс со steady
+background; проверять на реальных тихих монологах.
 
 Уровни: `ERROR` — операция не выполнена; `WARN` — деградация или нарушение
 инварианта; `INFO` — одна строка на стадию; `DEBUG` — на сегмент/спикера;
@@ -91,16 +106,25 @@ jq -c 'select(.ev=="vad.summary")' dev.log
 
 ```text
 dev-runs/<run_id>/
-  manifest.json          версия, commit, ОС, вход, опции, модели, repro
-  vad/chN.probs.f32      вероятности по окнам 32 мс (f32 LE)
-  vad/chN.segments.json  сегменты до/после группировки
-  asr/segments.jsonl     по сегменту: границы, rms, mel, гипотеза, CTC, тайминги
-  diar/summary.json      спикеры, silhouette, top-кандидаты (эмбеддинги при full)
-  transcript/pre.json    документ до записи
-  transcript/post.json   прочитанный обратно после записи
-  transcript/invalid.json — только при нарушении инвариантов
-  errors.jsonl           события run.error
-  README.txt             предупреждение о приватности
+  manifest.json               версия, commit, ОС, вход, опции, модели, repro
+  vad/chN.probs.f32           вероятности по окнам 32 мс (f32 LE)
+  vad/chN.segments.json       сегменты до/после группировки
+  vad/chN.raw.*               проход VAD по исходному звуку (probs.f32 + segments.json)
+  vad/chN.frontend.*          проход после AGC-нормализации (reused_from = raw, если повторно не считали)
+  asr/segments.jsonl          по сегменту: границы, rms, mel, гипотеза, CTC, тайминги
+  diar/experiment.json        режимы эксперимента (anchors, centroids, embedding, guards)
+  diar/chN.asr.json           реплики ASR до диаризации (start/end/speaker/слова)
+  diar/chN.pre-cluster.json   единицы диаризации до кластеризации
+  diar/chN.acoustic.json      реплики после акустической кластеризации
+  diar/chN.document.json      документ после раздачи слов по спикерам
+  diar/chN.voice_runs.json    прогоны локальных голосов (start/end/speaker)
+  diar/chN.segments.json      финальные сегменты диаризации — контракт DER-бенчмарка
+  diar/summary.json           спикеры, silhouette, top-кандидаты (эмбеддинги при full)
+  transcript/pre.json         документ до записи
+  transcript/post.json        прочитанный обратно после записи
+  transcript/invalid.json     — только при нарушении инвариантов
+  errors.jsonl                события run.error
+  README.txt                  предупреждение о приватности
 ```
 
 `manifest.json` — точка воспроизведения: в нём есть полный путь к входу и
