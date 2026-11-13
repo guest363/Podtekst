@@ -147,5 +147,22 @@ struct PairStats {
     min_support: f64,
 }
 
+pub(super) fn pairs_above_sim(
+    core_vecs: &[Vec<f64>],
+    pairs: &[(usize, usize)],
+    min_sim: f64,
+) -> Vec<(usize, usize)> {
+    pairs
+        .iter()
+        .filter(|&&(i, j)| {
+            core_vecs
+                .get(i)
+                .zip(core_vecs.get(j))
+                .is_some_and(|(a, b)| cosine_similarity(a, b) >= min_sim)
+        })
+        .copied()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests;

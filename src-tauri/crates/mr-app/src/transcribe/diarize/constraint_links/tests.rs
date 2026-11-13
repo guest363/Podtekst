@@ -206,3 +206,12 @@ fn duplicate_window_evidence_produces_one_pair() {
     let units = [unit(0, time(0), time(100)), unit(1, time(100), time(200))];
     assert_eq!(links(&segmentation, &units), vec![(0, 1)]);
 }
+
+#[test]
+fn pairs_above_sim_keeps_only_pairs_contradicting_embedding_closeness() {
+    let vecs = vec![vec![1.0, 0.0], vec![0.9, 0.1], vec![0.0, 1.0]];
+    let pairs = vec![(0usize, 1usize), (0, 2), (1, 2)];
+    assert_eq!(pairs_above_sim(&vecs, &pairs, 0.5), vec![(0, 1)]);
+    assert_eq!(pairs_above_sim(&vecs, &pairs, 0.999), vec![]);
+    assert_eq!(pairs_above_sim(&[], &pairs, 0.5), vec![]);
+}

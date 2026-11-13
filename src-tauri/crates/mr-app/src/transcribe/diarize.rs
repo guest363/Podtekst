@@ -7,7 +7,7 @@ mod turn_anchors;
 
 use std::collections::{HashMap, HashSet};
 
-use constraint_links::cannot_link_units;
+use constraint_links::{cannot_link_units, pairs_above_sim};
 
 use mr_ml::onnx::embed::EmbeddingExtractor;
 use mr_ml::onnx::segmentation::Segmentation;
@@ -428,6 +428,12 @@ const CENTROID_MERGE_SIM: f64 = 0.70;
 /// один голос ≥ 0.48 (dist ≤ 0.52). shortcut: порог перенесён с complete
 /// linkage без замера average; перекалибровать на встречах.
 const CORE_LINKAGE_THRESHOLD: f64 = 0.52;
+/// Замер 2026-11-13 (runs/crosslink-diag2, crosslink-esc2): пары схлопывающихся
+/// синтетических сценариев — sim 0.55–0.68, пары main-набора — 0.13–0.33.
+/// В первом прогоне активны только пары, противоречащие близости эмбеддингов
+/// (локальное доказательство против глобального слияния); полный набор —
+/// только при ретрае после коллапса в один кластер.
+const CROSS_TURN_ACTIVE_SIM: f64 = 0.5;
 
 /// Кластер, набравший меньше чистой речи, слишком короток для надёжного
 /// центроида: имя профиля на него не вешаем.
@@ -989,11 +995,11 @@ fn log_cluster_summary(
 
 fn constraint_retry_needed(
     k_fixed: bool,
-    constraints_active: bool,
+    full_constraints_used: bool,
     final_k: usize,
     has_pairs: bool,
 ) -> bool {
-    !k_fixed && !constraints_active && final_k == 1 && has_pairs
+    !k_fixed && !full_constraints_used && final_k == 1 && has_pairs
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1147,14 +1153,14 @@ pub(crate) fn diarize_channel(
     // Замер 2026-11-12 (runs/crosslink-diag2, crosslink-esc): постоянные
     // cannot-link искажают выбор k даже при верных парах (main-en-quiet: 2 → 3),
     // а без них конвейер сваливается в один кластер в reject_small_clusters
-    // (synth-ru-2spk: 2 → 1). Прогон без ограничений; повтор с ними только при
-    // финальном k=1.
+    // (synth-ru-2spk: 2 → 1). Первый прогон — только горячие пары
+    // (sim ≥ CROSS_TURN_ACTIVE_SIM); полный набор — при ретрае после k=1.
     let initial_core = core_units.clone();
-    let mut constraints_active = k.is_some();
-    let mut constraints = if constraints_active {
+    let mut use_full = k.is_some();
+    let mut constraints = if use_full {
         pairs.clone()
     } else {
-        vec![]
+        pairs_above_sim(&core_vecs, &pairs, CROSS_TURN_ACTIVE_SIM)
     };
     let mut core_labels = cluster_core(&core_vecs, &core_weights, &constraints);
     let mut after_ahc = 0;
@@ -1162,10 +1168,10 @@ pub(crate) fn diarize_channel(
         if attempt > 0 {
             core_units = initial_core.clone();
             (core_vecs, core_weights) = core_geometry(&core_units);
-            constraints = if constraints_active {
+            constraints = if use_full {
                 pairs.clone()
             } else {
-                vec![]
+                pairs_above_sim(&core_vecs, &pairs, CROSS_TURN_ACTIVE_SIM)
             };
             core_labels = cluster_core(&core_vecs, &core_weights, &constraints);
         }
@@ -1195,23 +1201,17 @@ pub(crate) fn diarize_channel(
             );
             core_units = validated.core_units;
             core_labels = validated.labels;
-            core_vecs = core_units
-                .iter()
-                .map(|&index| units[index].embedding.clone())
-                .collect();
-            core_weights = core_units
-                .iter()
-                .map(|&index| units[index].dur.clamp(0.4, 4.0) * units[index].quality)
-                .collect();
+            (core_vecs, core_weights) = core_geometry(&core_units);
             let positions = core_units
                 .iter()
                 .enumerate()
                 .map(|(position, &index)| (index, position))
                 .collect();
-            constraints = if constraints_active {
-                cannot_link_units(&units, &positions, support, &core_vecs)
+            let stage_pairs = cannot_link_units(&units, &positions, support, &core_vecs);
+            constraints = if use_full {
+                stage_pairs
             } else {
-                vec![]
+                pairs_above_sim(&core_vecs, &stage_pairs, CROSS_TURN_ACTIVE_SIM)
             };
         }
         after_ahc = core_labels.iter().copied().collect::<HashSet<_>>().len();
@@ -1293,27 +1293,24 @@ pub(crate) fn diarize_channel(
             );
             core_units = validated.core_units;
             core_labels = validated.labels;
-            core_vecs = core_units
-                .iter()
-                .map(|&index| units[index].embedding.clone())
-                .collect();
-
+            (core_vecs, core_weights) = core_geometry(&core_units);
             let positions = core_units
                 .iter()
                 .enumerate()
                 .map(|(position, &index)| (index, position))
                 .collect();
-            constraints = if constraints_active {
-                cannot_link_units(&units, &positions, support, &core_vecs)
+            let stage_pairs = cannot_link_units(&units, &positions, support, &core_vecs);
+            constraints = if use_full {
+                stage_pairs
             } else {
-                vec![]
+                pairs_above_sim(&core_vecs, &stage_pairs, CROSS_TURN_ACTIVE_SIM)
             };
         }
         diagnostics::core("validated", ch, &units, &core_units, &core_labels, support);
         log_cluster_summary(ch, k, &core_vecs, &core_labels, constraints.len());
         if constraint_retry_needed(
             k.is_some(),
-            constraints_active,
+            use_full,
             core_labels.iter().copied().collect::<HashSet<_>>().len(),
             !pairs.is_empty(),
         ) {
@@ -1323,7 +1320,7 @@ pub(crate) fn diarize_channel(
                 pairs = pairs.len();
                 "ev=diar.constraint_escalation"
             );
-            constraints_active = true;
+            use_full = true;
             continue;
         }
         break;
