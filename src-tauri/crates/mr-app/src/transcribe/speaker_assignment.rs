@@ -7,7 +7,7 @@ use mr_ml::{cosine_similarity, linear_sum_assignment_max, weighted_centroid};
 
 use super::Utterance;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct SpeakerSpan {
     pub start: f64,
     pub end: f64,
@@ -17,7 +17,7 @@ pub(super) struct SpeakerSpan {
 pub(super) struct Outcome {
     /// Смены спикера, где зона перекрытия отнесена входящему голосу.
     pub spans: Vec<SpeakerSpan>,
-    /// Раны чистых кадров одного локального голоса, без зон перекрытия.
+    /// Прогоны чистых кадров одного локального голоса, без зон перекрытия.
     pub voice_runs: Vec<SpeakerSpan>,
 }
 
@@ -238,43 +238,49 @@ fn aggregate_spans(spans: &[SpeakerSpan]) -> Vec<SpeakerSpan> {
     if frames == 0 {
         return vec![];
     }
-    let mut votes: Vec<HashMap<usize, f32>> = vec![HashMap::new(); frames];
+    let mut labels: Vec<usize> = spans.iter().map(|s| s.label).collect();
+    labels.sort_unstable();
+    labels.dedup();
+    let mut deltas: Vec<Vec<f32>> = vec![vec![0.0; frames + 1]; labels.len()];
     for span in spans {
         let start = ((span.start / frame_sec).floor() as usize).min(frames);
         let end = ((span.end / frame_sec).ceil() as usize).min(frames);
-        for frame in &mut votes[start..end] {
-            *frame.entry(span.label).or_default() += 1.0;
-        }
-    }
-    let best: Vec<Option<usize>> = votes
-        .iter()
-        .map(|frame| {
-            frame
-                .iter()
-                .max_by(|a, b| a.1.total_cmp(b.1).then_with(|| b.0.cmp(a.0)))
-                .map(|(&label, _)| label)
-        })
-        .collect();
-    let min_frames = ((1.0 / frame_sec).round() as usize).max(1);
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < best.len() {
-        let Some(label) = best[i] else {
-            i += 1;
+        if end <= start {
             continue;
-        };
-        let start = i;
-        i += 1;
-        while i < best.len() && best[i] == Some(label) {
-            i += 1;
         }
-        if i - start >= min_frames {
-            out.push(SpeakerSpan {
-                start: start as f64 * frame_sec,
-                end: i as f64 * frame_sec,
-                label,
-            });
+        let slot = labels.partition_point(|&label| label < span.label);
+        deltas[slot][start] += 1.0;
+        deltas[slot][end] -= 1.0;
+    }
+    let min_frames = ((1.0 / frame_sec).round() as usize).max(1);
+    let mut counts = vec![0.0f32; labels.len()];
+    let mut out = Vec::new();
+    let mut run: Option<(usize, usize)> = None;
+    for frame in 0..=frames {
+        let mut winner = None;
+        if frame < frames {
+            for (slot, delta) in deltas.iter().enumerate() {
+                counts[slot] += delta[frame];
+            }
+            for slot in 0..labels.len() {
+                if counts[slot] > 0.0 && winner.is_none_or(|best| counts[slot] > counts[best]) {
+                    winner = Some(slot);
+                }
+            }
         }
+        if matches!((winner, run), (Some(slot), Some((current, _))) if slot == current) {
+            continue;
+        }
+        if let Some((current, start)) = run {
+            if frame - start >= min_frames {
+                out.push(SpeakerSpan {
+                    start: start as f64 * frame_sec,
+                    end: frame as f64 * frame_sec,
+                    label: labels[current],
+                });
+            }
+        }
+        run = winner.map(|slot| (slot, frame));
     }
     out
 }
@@ -337,8 +343,8 @@ fn collect_spans(
     }
 }
 
-/// Зона перекрытия не принадлежит ни одному ране: слово в ней атрибутируется
-/// только по ране чистой речи задетого голоса, а не по доминированию покрытия.
+/// Зона перекрытия не принадлежит ни одному прогону: слово в ней атрибутируется
+/// только по прогону чистой речи задетого голоса, а не по доминированию покрытия.
 fn collect_voice_runs(
     window: &mr_ml::onnx::segmentation::SegmentationWindow,
     assignment: &HashMap<usize, usize>,
@@ -432,6 +438,102 @@ mod tests {
     use mr_ml::onnx::segmentation::SegmentationWindow;
 
     use super::*;
+
+    fn aggregate_spans_reference(spans: &[SpeakerSpan]) -> Vec<SpeakerSpan> {
+        let frame_sec = FRAME_SAMPLES as f64 / 16000.0;
+        let frames = spans
+            .iter()
+            .map(|s| (s.end / frame_sec).ceil() as usize)
+            .max()
+            .unwrap_or(0);
+        if frames == 0 {
+            return vec![];
+        }
+        let mut votes: Vec<HashMap<usize, f32>> = vec![HashMap::new(); frames];
+        for span in spans {
+            let start = ((span.start / frame_sec).floor() as usize).min(frames);
+            let end = ((span.end / frame_sec).ceil() as usize).min(frames);
+            for frame in &mut votes[start..end] {
+                *frame.entry(span.label).or_default() += 1.0;
+            }
+        }
+        let best: Vec<Option<usize>> = votes
+            .iter()
+            .map(|frame| {
+                frame
+                    .iter()
+                    .max_by(|a, b| a.1.total_cmp(b.1).then_with(|| b.0.cmp(a.0)))
+                    .map(|(&label, _)| label)
+            })
+            .collect();
+        let min_frames = ((1.0 / frame_sec).round() as usize).max(1);
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < best.len() {
+            let Some(label) = best[i] else {
+                i += 1;
+                continue;
+            };
+            let start = i;
+            i += 1;
+            while i < best.len() && best[i] == Some(label) {
+                i += 1;
+            }
+            if i - start >= min_frames {
+                out.push(SpeakerSpan {
+                    start: start as f64 * frame_sec,
+                    end: i as f64 * frame_sec,
+                    label,
+                });
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn aggregate_spans_matches_frame_voting_reference() {
+        let span = |start: f64, end: f64, label: usize| SpeakerSpan { start, end, label };
+        let cases: Vec<Vec<SpeakerSpan>> = vec![
+            vec![],
+            vec![span(0.0, 1.2, 1)],
+            vec![span(0.0, 1.2, 5)],
+            vec![span(0.0, 1.0, 1), span(0.5, 1.5, 2)],
+            vec![span(0.0, 1.0, 2), span(0.5, 1.5, 1)],
+            vec![span(0.0, 1.0, 1), span(1.0, 1.4, 2), span(1.4, 3.0, 1)],
+            vec![span(0.0, 1.0, 1), span(2.0, 3.2, 1)],
+            vec![span(0.0, 1.0, 1), span(0.8, 2.0, 2), span(1.5, 3.0, 3)],
+            vec![span(0.0, 2.0, 1), span(0.0, 2.0, 2), span(1.0, 2.0, 2)],
+            vec![span(0.3, 0.3, 1), span(0.0, 1.0, 2)],
+        ];
+        for spans in cases {
+            assert_eq!(
+                aggregate_spans(&spans),
+                aggregate_spans_reference(&spans),
+                "spans={spans:?}"
+            );
+        }
+        let mut state = 123456789u64;
+        let mut rng = move || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as f64 / u64::from(u32::MAX) as f64
+        };
+        for _ in 0..50 {
+            let spans: Vec<SpeakerSpan> = (0..40)
+                .map(|_| {
+                    let start = (rng() * 8.0 * 50.0).floor() / 50.0;
+                    let len = (rng() * 3.0 * 50.0).ceil() / 50.0;
+                    span(start, start + len, 1 + (rng() * 3.0) as usize)
+                })
+                .collect();
+            assert_eq!(
+                aggregate_spans(&spans),
+                aggregate_spans_reference(&spans),
+                "spans={spans:?}"
+            );
+        }
+    }
 
     fn utterance(start: f64, end: f64) -> Utterance {
         Utterance {
