@@ -215,6 +215,12 @@ pub fn list_devices_with_backend(
             cmd.env(key, joined);
         }
     }
+    if backend.is_some() {
+        // Тип Vulkan-устройства (`uma: 0|1`) есть только в debug-логе.
+        cmd.arg("-v");
+    }
+    // Порядок важен: параметры разбираются слева направо, а `--list-devices`
+    // завершает процесс до разбора следующих флагов.
     run_output(cmd.arg("--list-devices"), PROBE_TIMEOUT)
 }
 

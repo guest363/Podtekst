@@ -18,6 +18,7 @@
     "--log-disable",
     "--n-gpu-layers",
     "--list-devices",
+    "--verbose",
     "--fit",
     "--parallel",
     "--ctx-size",

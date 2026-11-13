@@ -112,9 +112,12 @@ struct Device {
     index: u32,
     name: String,
     free_mb: u64,
+    /// `None` — тип неизвестен (старый runtime или Metal).
+    integrated: Option<bool>,
 }
 
 fn parse_devices(text: &str) -> Vec<Device> {
+    let integrated = parse_device_types(text);
     let mut devices = Vec::new();
     for line in text.lines() {
         let line = line.trim();
@@ -123,6 +126,7 @@ fn parse_devices(text: &str) -> Vec<Device> {
                 index: 0,
                 name: "Metal".to_string(),
                 free_mb: u64::MAX,
+                integrated: None,
             });
             continue;
         }
@@ -154,25 +158,59 @@ fn parse_devices(text: &str) -> Vec<Device> {
             index,
             name,
             free_mb,
+            integrated: integrated
+                .iter()
+                .find(|(device, _)| *device == index)
+                .map(|(_, value)| *value),
         });
     }
     devices
 }
 
+/// `--list-devices` печатает только имя и память; тип устройства Vulkan
+/// (`uma: 0|1`) есть в debug-логе, который включает `-v`.
+fn parse_device_types(text: &str) -> Vec<(u32, bool)> {
+    let mut types = Vec::new();
+    for line in text.lines() {
+        let Some((_, rest)) = line.split_once("ggml_vulkan: ") else {
+            continue;
+        };
+        let Some((index, rest)) = rest.split_once(" = ") else {
+            continue;
+        };
+        let Some((_, rest)) = rest.split_once("| uma: ") else {
+            continue;
+        };
+        let (Ok(index), Some(value)) = (index.trim().parse::<u32>(), rest.chars().next()) else {
+            continue;
+        };
+        types.push((index, value == '1'));
+    }
+    types
+}
+
 /// На гибридном ноутбуке `Vulkan0` часто встроенная графика. Предпочитаем
 /// дискретную карту, иначе — максимум свободной памяти.
 fn choose_device(devices: &[Device]) -> Option<&Device> {
-    let discrete = |name: &str| {
-        let name = name.to_ascii_lowercase();
-        ["nvidia", "geforce", "rtx", "radeon", "amd", "arc"]
-            .iter()
-            .any(|needle| name.contains(needle))
+    let discrete = |device: &Device| match device.integrated {
+        Some(integrated) => !integrated,
+        None => is_discrete_name(&device.name),
     };
     devices
         .iter()
-        .filter(|d| discrete(&d.name))
+        .filter(|device| discrete(device))
         .max_by_key(|d| d.free_mb)
         .or_else(|| devices.iter().max_by_key(|d| d.free_mb))
+}
+
+fn is_discrete_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    if name.contains("radeon(tm) graphics") || name.contains("radeon graphics") {
+        return false;
+    }
+    ["nvidia", "geforce", "rtx", "radeon", "amd", "arc"]
+        .iter()
+        .any(|needle| name.contains(needle))
 }
 
 /// Установленный и проверенный Vulkan-backend. Возвращает CPU-runtime,
@@ -197,7 +235,7 @@ pub fn installed_runtime() -> Option<GpuRuntime> {
         });
     }
     let pack = pack_for_target()?;
-    let state = read_state()?;
+    let mut state = read_state()?;
     if state.build != manifest().build || state.commit != manifest().commit {
         return None;
     }
@@ -207,7 +245,17 @@ pub fn installed_runtime() -> Option<GpuRuntime> {
     }
     let text =
         runtime_locator::list_devices_with_backend(&info.exe, &info.dir, Some(&library)).ok()?;
-    choose_device(&parse_devices(&text)).map(|device| GpuRuntime {
+    let devices = parse_devices(&text);
+    let device = choose_device(&devices)?;
+    // state.device — только подпись в настройках; держим её в согласии с
+    // фактическим выбором, иначе после смены GPU она врёт до переустановки.
+    if state.device.as_deref() != Some(device.name.as_str()) {
+        state.device = Some(device.name.clone());
+        if let Ok(bytes) = serde_json::to_vec_pretty(&state) {
+            let _ = crate::fsutil::write_atomic(&state_path(), &bytes);
+        }
+    }
+    Some(GpuRuntime {
         runtime: info.clone(),
         backend: Some(library),
         device_index: Some(device.index),
@@ -622,6 +670,37 @@ mod tests {
             choose_device(&parse_devices("Available devices:\n  (none)\n")),
             None
         );
+    }
+
+    #[test]
+    fn vulkan_device_type_outranks_free_memory() {
+        let text = "\
+0.00.048.797 D ggml_vulkan: Found 2 Vulkan devices:
+0.00.049.149 D ggml_vulkan: 0 = NVIDIA GeForce RTX 4060 (NVIDIA proprietary driver) | uma: 0 | rebar: 1 | fp16: 1
+0.00.049.150 D ggml_vulkan: 1 = AMD Radeon(TM) Graphics (AMD proprietary driver) | uma: 1 | rebar: 1 | fp16: 1
+Available devices:
+  Vulkan0: NVIDIA GeForce RTX 4060 (7956 MiB, 7188 MiB free)
+  Vulkan1: AMD Radeon(TM) Graphics (16200 MiB, 15390 MiB free)
+";
+        let devices = parse_devices(text);
+        assert_eq!(devices[0].integrated, Some(false));
+        assert_eq!(devices[1].integrated, Some(true));
+        assert_eq!(choose_device(&devices).map(|d| d.index), Some(0));
+        assert_eq!(choose_device(&devices[1..]).map(|d| d.index), Some(1));
+    }
+
+    #[test]
+    fn generic_radeon_name_is_not_discrete_without_type() {
+        for name in [
+            "AMD Radeon(TM) Graphics",
+            "AMD Radeon Graphics (RADV RENOIR)",
+        ] {
+            let text = format!(
+                "Available devices:\n  Vulkan0: NVIDIA GeForce RTX 4060 (7956 MiB, 7188 MiB free)\n  Vulkan1: {name} (16200 MiB, 15390 MiB free)\n"
+            );
+            let devices = parse_devices(&text);
+            assert_eq!(choose_device(&devices).map(|d| d.index), Some(0), "{name}");
+        }
     }
 
     #[test]
