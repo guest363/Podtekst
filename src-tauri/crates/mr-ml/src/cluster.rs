@@ -143,7 +143,7 @@ fn labels_with_limit(
             break;
         }
         if distance >= CANNOT_LINK_DISTANCE {
-            log::debug!(
+            log::warn!(
                 target: "cluster",
                 requested_k = target_k,
                 retained_k = cluster_count;
