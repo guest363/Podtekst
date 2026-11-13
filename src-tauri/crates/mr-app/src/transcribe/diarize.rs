@@ -424,6 +424,10 @@ const AUTO_K_MAX_SPEAKERS: usize = 12;
 /// один голос ≥ 0.48 на фрагментах. Порог 0.70 предотвращает ложное
 /// слияние разных собеседников с похожей акустикой комнаты.
 const CENTROID_MERGE_SIM: f64 = 0.70;
+/// Замеры ERes2NetV2 (`onnx_real`): разные дикторы ≤ 0.22 (dist ≥ 0.78),
+/// один голос ≥ 0.48 (dist ≤ 0.52). shortcut: порог перенесён с complete
+/// linkage без замера average; перекалибровать на встречах.
+const CORE_LINKAGE_THRESHOLD: f64 = 0.52;
 
 /// Кластер, набравший меньше чистой речи, слишком короток для надёжного
 /// центроида: имя профиля на него не вешаем.
@@ -1088,10 +1092,19 @@ pub(crate) fn diarize_channel(
         dur_max = dur_max;
         "ev=diar.units"
     );
-    let mut core_vecs: Vec<Vec<f64>> = core_units
-        .iter()
-        .map(|&index| units[index].embedding.clone())
-        .collect();
+    let core_geometry = |core_units: &[usize]| -> (Vec<Vec<f64>>, Vec<f64>) {
+        (
+            core_units
+                .iter()
+                .map(|&index| units[index].embedding.clone())
+                .collect(),
+            core_units
+                .iter()
+                .map(|&index| units[index].dur.clamp(0.4, 4.0) * units[index].quality)
+                .collect(),
+        )
+    };
+    let (mut core_vecs, mut core_weights) = core_geometry(&core_units);
     let k = if min_speakers > 0 && min_speakers == max_speakers {
         Some(min_speakers)
     } else {
@@ -1099,13 +1112,6 @@ pub(crate) fn diarize_channel(
     };
     // Калибровка: авто-режим допускает монологи 1..max_speakers без принуждения к 2 спикерам.
     let min_auto = if min_speakers == 0 { 1 } else { min_speakers };
-    // Замеры ERes2NetV2 (`onnx_real`): разные дикторы ≤ 0.22 (dist ≥ 0.78),
-    // один голос ≥ 0.48 (dist ≤ 0.52). shortcut: порог 0.52 перенесён с
-    // complete linkage без замера average; перекалибровать на встречах.
-    let mut core_weights: Vec<f64> = core_units
-        .iter()
-        .map(|&index| units[index].dur.clamp(0.4, 4.0) * units[index].quality)
-        .collect();
     let core_pos: HashMap<usize, usize> = core_units
         .iter()
         .enumerate()
@@ -1117,6 +1123,27 @@ pub(crate) fn diarize_channel(
     } else {
         AUTO_K_MAX_SPEAKERS
     };
+    let cluster_core =
+        |core_vecs: &[Vec<f64>], core_weights: &[f64], constraints: &[(usize, usize)]| {
+            if let Some(k) = k {
+                agglomerative_weighted(
+                    core_vecs,
+                    core_weights,
+                    constraints,
+                    CORE_LINKAGE_THRESHOLD,
+                    Some(k),
+                )
+            } else {
+                agglomerative_gap(
+                    core_vecs,
+                    core_weights,
+                    constraints,
+                    CORE_LINKAGE_THRESHOLD,
+                    min_auto,
+                    auto_max,
+                )
+            }
+        };
     // Замер 2026-11-12 (runs/crosslink-diag2, crosslink-esc): постоянные
     // cannot-link искажают выбор k даже при верных парах (main-en-quiet: 2 → 3),
     // а без них конвейер сваливается в один кластер в reject_small_clusters
@@ -1129,47 +1156,18 @@ pub(crate) fn diarize_channel(
     } else {
         vec![]
     };
-    let mut core_labels = if let Some(k) = k {
-        agglomerative_weighted(&core_vecs, &core_weights, &constraints, 0.52, Some(k))
-    } else {
-        agglomerative_gap(
-            &core_vecs,
-            &core_weights,
-            &constraints,
-            0.52,
-            min_auto,
-            auto_max,
-        )
-    };
+    let mut core_labels = cluster_core(&core_vecs, &core_weights, &constraints);
     let mut after_ahc = 0;
     for attempt in 0..2 {
         if attempt > 0 {
             core_units = initial_core.clone();
-            core_vecs = core_units
-                .iter()
-                .map(|&index| units[index].embedding.clone())
-                .collect();
-            core_weights = core_units
-                .iter()
-                .map(|&index| units[index].dur.clamp(0.4, 4.0) * units[index].quality)
-                .collect();
+            (core_vecs, core_weights) = core_geometry(&core_units);
             constraints = if constraints_active {
                 pairs.clone()
             } else {
                 vec![]
             };
-            core_labels = if let Some(k) = k {
-                agglomerative_weighted(&core_vecs, &core_weights, &constraints, 0.52, Some(k))
-            } else {
-                agglomerative_gap(
-                    &core_vecs,
-                    &core_weights,
-                    &constraints,
-                    0.52,
-                    min_auto,
-                    auto_max,
-                )
-            };
+            core_labels = cluster_core(&core_vecs, &core_weights, &constraints);
         }
         let candidate_k = core_labels.iter().copied().collect::<HashSet<_>>().len();
         diagnostics::core("ahc", ch, &units, &core_units, &core_labels, support);
