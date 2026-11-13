@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -83,7 +84,7 @@ fn filter_echo_segments(
 }
 
 pub(super) fn run(
-    channel_samples: &HashMap<usize, Vec<f32>>,
+    channel_samples: &HashMap<usize, Cow<'_, [f32]>>,
     original_samples: &HashMap<usize, Vec<f32>>,
     chan_list: &[(usize, String)],
     is_stereo: bool,
@@ -113,7 +114,7 @@ pub(super) fn run(
         );
         let original = &original_samples[ch];
         let original_windows = original.len().div_ceil(VAD_WINDOW);
-        let normalized = original != samples;
+        let normalized = original.as_slice() != &samples[..];
         let total_windows = original_windows + if normalized { windows } else { 0 };
         let progress = |done: usize| {
             let pct = (base + span * done as f64 / total_windows.max(1) as f64) as u8;

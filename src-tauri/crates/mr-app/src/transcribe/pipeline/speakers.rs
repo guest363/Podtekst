@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -12,7 +13,7 @@ use super::super::{SpeakerInfo, TranscribeOptions, Utterance};
 
 pub(super) struct Input<'a> {
     pub(super) channel_samples: &'a HashMap<usize, Vec<f32>>,
-    pub(super) frontend_samples: &'a HashMap<usize, Vec<f32>>,
+    pub(super) frontend_samples: &'a HashMap<usize, Cow<'a, [f32]>>,
     pub(super) chan_list: &'a [(usize, String)],
     pub(super) channel_vad: &'a HashMap<usize, Vec<f32>>,
     pub(super) channel_utts: HashMap<usize, Vec<Utterance>>,
@@ -45,14 +46,14 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
     let mut channel_trees: HashMap<usize, word_speakers::DiarIntervalTree> = HashMap::new();
     let mut segmentations = HashMap::new();
     for (ch, _label) in chan_list.iter() {
-        let samples = match experiment::current().embedding {
-            Embedding::Frontend => &frontend_samples[ch],
-            Embedding::Raw => &channel_samples[ch],
+        let samples: &[f32] = match experiment::current().embedding {
+            Embedding::Frontend => &frontend_samples[ch][..],
+            Embedding::Raw => &channel_samples[ch][..],
         };
         log::debug!(
             target: "diar",
             ch = *ch as i64,
-            normalized = samples != &channel_samples[ch];
+            normalized = samples != channel_samples[ch].as_slice();
             "ev=diar.embedding_frontend"
         );
         let source_utts = channel_utts.remove(ch).unwrap_or_default();
