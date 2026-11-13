@@ -80,7 +80,7 @@ def _save_dev_run(directory: Path, before: set[Path], audio: Path, destination: 
         raise ValueError(f"ожидался один dev-run с совпадающим SHA-256, найдено {len(candidates)}")
     target = destination / candidates[0].name
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(candidates[0], target)
+    shutil.copytree(candidates[0], target, dirs_exist_ok=True)
     run_id = candidates[0].name
     matching_logs = []
     for log in (directory.parent / "dev").glob("dev-*.log"):
@@ -129,6 +129,7 @@ COLUMNS = [
     "transcript_snapshot",
     "reference_snapshot",
     "dev_run",
+    "dev_run_warning",
     "MAE",
 ]
 
@@ -454,7 +455,8 @@ def _run_record(
         try:
             row["dev_run"] = str(_save_dev_run(Path(dev_directory), before, audio, out / "dev-runs" / safe))
         except (OSError, ValueError, TypeError) as exc:
-            errors.append(f"dev-артефакты не сохранены: {exc}")
+            row["dev_run_warning"] = _error_text([str(exc)])
+            print(f"[{index}/{total}] {file_id}: dev-артефакты не сохранены: {exc}", file=sys.stderr, flush=True)
 
     done, event_error = _parse_events(run["stdout"])
     process_error = run["timed_out"] or run["exit_code"] != 0

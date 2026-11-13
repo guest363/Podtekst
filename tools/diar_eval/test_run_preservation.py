@@ -78,6 +78,24 @@ class RunPreservationTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 _save_dev_run(runs, set(), audio, root / "ambiguous")
 
+    def test_save_dev_run_reuses_existing_target_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            audio = root / "input.wav"
+            audio.write_bytes(b"audio")
+            runs = root / "runs"
+            run = runs / "run"
+            run.mkdir(parents=True)
+            document = {"input": {"file": str(audio), "sha256": hashlib.sha256(b"audio").hexdigest()}}
+            (run / "manifest.json").write_text(json.dumps(document), encoding="utf-8")
+            destination = root / "saved"
+            first = _save_dev_run(runs, set(), audio, destination)
+            (run / "extra.json").write_text("{}", encoding="utf-8")
+            second = _save_dev_run(runs, set(), audio, destination)
+            self.assertEqual(first, second)
+            self.assertEqual((second / "manifest.json").read_text(encoding="utf-8"), json.dumps(document))
+            self.assertTrue((second / "extra.json").is_file())
+
     def test_existing_metrics_are_rejected_before_any_output_is_replaced(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

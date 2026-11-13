@@ -38,10 +38,18 @@ def choose(tsv: Path) -> list[list[str]]:
     pairs = [rows for _, rows in ordered if len(rows) >= 2 and len({r[6] for r in rows}) == 1]
     if triples:
         chosen = sorted(triples[0], key=lambda r: r[1])
-        chosen.append(next(row for _, rows in ordered for row in sorted(rows, key=lambda r: r[1]) if row[6] != chosen[0][6]))
+        extra = next((row for _, rows in ordered for row in sorted(rows, key=lambda r: r[1]) if row[6] != chosen[0][6]), None)
+        if extra is None:
+            raise ValueError("в TSV не найден клип противоположного пола")
+        chosen.append(extra)
     else:
+        if not pairs:
+            raise ValueError("в TSV не найдены группы из двух и более клипов одного пола")
         chosen = sorted(pairs[0], key=lambda r: r[1])[:2]
-        chosen += next(sorted(rows, key=lambda r: r[1])[:2] for rows in pairs if rows[0][6] != chosen[0][6])
+        rest = next((sorted(rows, key=lambda r: r[1])[:2] for rows in pairs if rows[0][6] != chosen[0][6]), None)
+        if rest is None:
+            raise ValueError("в TSV не найдены два клипа противоположного пола")
+        chosen += rest
     validate_selection([{"source_id": r[1], "sentence_id": r[0], "gender": r[6]} for r in chosen])
     return chosen
 
