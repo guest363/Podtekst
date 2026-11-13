@@ -208,6 +208,27 @@ fn duplicate_window_evidence_produces_one_pair() {
 }
 
 #[test]
+fn dropping_a_core_unit_keeps_remaining_pairs_unchanged() {
+    let mut classes = vec![1; 100];
+    classes.extend(vec![2; 100]);
+    classes.extend(vec![3; 100]);
+    let segmentation = segmentation(classes);
+    let units = [
+        unit(0, time(0), time(100)),
+        unit(1, time(100), time(200)),
+        unit(2, time(200), time(300)),
+    ];
+    let full = links(&segmentation, &units);
+    assert_eq!(full, vec![(0, 1), (0, 2), (1, 2)]);
+    let support = SpeechSupport {
+        segmentation: Some(&segmentation),
+        vad_probs: None,
+    };
+    let without_middle = cannot_link_units(&units, &HashMap::from([(0, 0), (2, 1)]), support, &[]);
+    assert_eq!(without_middle, vec![(0, 1)]);
+}
+
+#[test]
 fn pairs_above_sim_keeps_only_pairs_contradicting_embedding_closeness() {
     let vecs = vec![vec![1.0, 0.0], vec![0.9, 0.1], vec![0.0, 1.0]];
     let pairs = vec![(0usize, 1usize), (0, 2), (1, 2)];

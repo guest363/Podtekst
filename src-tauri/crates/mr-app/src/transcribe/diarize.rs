@@ -1205,17 +1205,7 @@ pub(crate) fn diarize_channel(
             core_units = validated.core_units;
             core_labels = validated.labels;
             (core_vecs, core_weights) = core_geometry(&core_units);
-            let positions = core_units
-                .iter()
-                .enumerate()
-                .map(|(position, &index)| (index, position))
-                .collect();
-            let stage_pairs = cannot_link_units(&units, &positions, support, &core_vecs);
-            constraints = if use_full {
-                stage_pairs
-            } else {
-                pairs_above_sim(&core_vecs, &stage_pairs, CROSS_TURN_ACTIVE_SIM)
-            };
+            constraints = validated.constraints;
         }
         after_ahc = core_labels.iter().copied().collect::<HashSet<_>>().len();
         diagnostics::core("coverage", ch, &units, &core_units, &core_labels, support);
@@ -1297,17 +1287,7 @@ pub(crate) fn diarize_channel(
             core_units = validated.core_units;
             core_labels = validated.labels;
             (core_vecs, core_weights) = core_geometry(&core_units);
-            let positions = core_units
-                .iter()
-                .enumerate()
-                .map(|(position, &index)| (index, position))
-                .collect();
-            let stage_pairs = cannot_link_units(&units, &positions, support, &core_vecs);
-            constraints = if use_full {
-                stage_pairs
-            } else {
-                pairs_above_sim(&core_vecs, &stage_pairs, CROSS_TURN_ACTIVE_SIM)
-            };
+            constraints = validated.constraints;
         }
         diagnostics::core("validated", ch, &units, &core_units, &core_labels, support);
         log_cluster_summary(ch, k, &core_vecs, &core_labels, constraints.len());
@@ -1907,13 +1887,23 @@ pub(crate) fn words_match(a: &str, b: &str) -> bool {
     let ca: Vec<char> = a.chars().collect();
     let cb: Vec<char> = b.chars().collect();
     if ca.len() >= 4 && cb.len() >= 4 && ca.len().abs_diff(cb.len()) <= 3 {
-        // У слов ровно из 4 символов prefix-4 требует полного совпадения и не
-        // пропускает словоформы одной лексемы как эхо.
-        let prefix = if ca.len() == 4 && cb.len() == 4 { 3 } else { 4 };
-        ca[..prefix] == cb[..prefix]
+        if ca.len() == 4 && cb.len() == 4 {
+            // Замер эхо-дедупликации: расхождение словоформ 4-символьных лексем
+            // лежит в флексии на гласной; согласный хвост различает лексемы.
+            ca[..3] == cb[..3] && inflection_tail(ca[3]) && inflection_tail(cb[3])
+        } else {
+            ca[..4] == cb[..4]
+        }
     } else {
         false
     }
+}
+
+fn inflection_tail(c: char) -> bool {
+    matches!(
+        c,
+        'а' | 'е' | 'и' | 'о' | 'у' | 'ы' | 'э' | 'ю' | 'я' | 'a' | 'e' | 'i' | 'o' | 'u' | 'y'
+    )
 }
 
 /// Похожесть двух распознанных фраз (Jaccard по словам). Эхо одной и той же
@@ -3300,19 +3290,22 @@ mod tests {
 
     #[test]
     fn words_match_accepts_inflected_four_char_word_forms() {
-        assert!(words_match("маша", "маша"));
-        assert!(words_match("маша", "маше"));
+        assert!(words_match("вода", "вода"));
+        assert!(words_match("вода", "воде"));
     }
 
     #[test]
     fn words_match_rejects_different_lexemes_with_shared_prefix() {
         assert!(!words_match("дыня", "дымка"));
+        assert!(!words_match("стол", "стон"));
+        assert!(!words_match("work", "word"));
     }
 
     #[test]
     fn single_word_echo_word_form_counts_as_duplicate() {
-        assert!(text_similarity("маше", "маша") >= 0.55);
+        assert!(text_similarity("воде", "вода") >= 0.55);
         assert!(text_similarity("дыня", "дымка") < 0.55);
+        assert!(text_similarity("стол", "стон") < 0.55);
         assert!(
             text_similarity("да", "так да уменьшил") < 0.55,
             "backchannel word inside a longer phrase of the other channel is not an echo"
