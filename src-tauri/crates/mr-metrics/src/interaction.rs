@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use super::{median, percentile, vowels, Monologue, Navigation, Span, SpeakerMetrics, Turn};
+use super::{
+    median, percentile, vowels, Monologue, Navigation, Span, SpeakerMetrics, Totals, Turn,
+};
 
 const MONOLOGUE_GAP_SEC: f64 = 1.5;
 const INTERRUPTION_MIN_SEC: f64 = 0.3;
@@ -13,6 +15,7 @@ const PAUSE_LIST_CAP: usize = 50;
 
 pub struct Interaction {
     pub speakers: Vec<SpeakerMetrics>,
+    pub totals: Totals,
     pub navigation: Navigation,
     pub speech_sec: f64,
     pub duration_sec: f64,
@@ -207,6 +210,33 @@ pub fn compute(turns: &[Turn], duration_sec: f64, names: &HashMap<String, String
         })
         .collect();
 
+    let turn_durations: Vec<f64> = sorted.iter().map(|t| t.end - t.start).collect();
+    let switches = sorted
+        .windows(2)
+        .filter(|pair| pair[0].speaker != pair[1].speaker)
+        .count();
+    let dead_air_sec: f64 = pauses.iter().map(|pause| pause.end - pause.start).sum();
+    let global_latencies: Vec<f64> = acc
+        .values()
+        .flat_map(|entry| entry.latencies.iter().copied())
+        .collect();
+    let totals = Totals {
+        turns: sorted.len(),
+        turn_sec_median: median(&turn_durations),
+        turn_sec_p90: percentile(&turn_durations, 0.9),
+        monologues_over_30s: runs
+            .iter()
+            .filter(|run| run.2 - run.1 >= MONOLOGUE_LONG_SEC)
+            .count(),
+        interruptions: acc.values().map(|entry| entry.made).sum(),
+        interruptions_successful: acc.values().map(|entry| entry.successful).sum(),
+        response_latency_ms_median: median(&global_latencies),
+        switches_per_min: (speech_sec > 0.0).then(|| switches as f64 / (speech_sec / 60.0)),
+        dead_air_sec,
+        dead_air_share: (duration_sec > 0.0).then(|| dead_air_sec / duration_sec),
+        density: (duration_sec > 0.0).then(|| speech_sec / duration_sec),
+    };
+
     let mut warnings = Vec::new();
     if sorted.iter().all(|t| t.channel.is_none()) {
         warnings.push("mono_no_overlap".to_string());
@@ -217,6 +247,7 @@ pub fn compute(turns: &[Turn], duration_sec: f64, names: &HashMap<String, String
 
     Interaction {
         speakers,
+        totals,
         navigation,
         speech_sec,
         duration_sec,

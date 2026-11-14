@@ -20,15 +20,13 @@ import { loadPeople, peopleState } from '../lib/people.svelte.ts'
 import { toast, toastConfirm } from '../lib/toast.svelte.ts'
 import { applyTranscriptState, editTranscript, transcript } from '../lib/transcript.svelte.ts'
 import { emit, ui } from '../lib/ui.svelte.ts'
-import SpeechMetricsBlock from './speech-metrics.svelte'
 
 type Props = {
   speakers: SpeakerInfo[]
   metrics?: SpeechMetrics | null
-  metricsLoading?: boolean
   onseek?: (sec: number) => void
 }
-let { speakers, metrics = null, metricsLoading = false, onseek }: Props = $props()
+let { speakers, metrics = null, onseek }: Props = $props()
 
 type MergedSpeaker = Omit<SpeakerInfo, 'samples'> & { key: string; samples: SpeakerSample[] }
 
@@ -500,11 +498,6 @@ const onInputKey = (e: KeyboardEvent, btn: HTMLButtonElement | null): void => {
 
 <aside class="transcript-speakers">
   <div class="pane-title">Спикеры</div>
-  {#if metricsLoading}
-    <div class="metrics-loading" role="status">Считаем метрики речи…</div>
-  {:else if metrics}
-    <SpeechMetricsBlock {metrics} {onseek} />
-  {/if}
   <div class="speakers-deck">
     {#if mergedSpeakers.length === 0}
       <div class="empty-note">Спикеры появятся после расшифровки</div>
@@ -748,13 +741,6 @@ const onInputKey = (e: KeyboardEvent, btn: HTMLButtonElement | null): void => {
 </aside>
 
 <style>
-  .metrics-loading {
-    flex-shrink: 0;
-    font-size: 11.5px;
-    line-height: 1.4;
-    color: var(--text-faint);
-  }
-
   .speaker-share {
     display: flex;
     align-items: center;

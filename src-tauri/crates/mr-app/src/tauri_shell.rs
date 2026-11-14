@@ -23,15 +23,15 @@ use crate::recording::toggle_recording_with_notify;
 #[cfg(feature = "tauri-ui")]
 use crate::recording::RecordingState;
 
-/// Геометрия главного окна: ширина равна контенту (`.page` max-width 1000px
+/// Геометрия главного окна: ширина равна контенту (`.page` max-width 1400px
 /// + отступы body 32px + запас на скроллбар).
 #[cfg(feature = "tauri-ui")]
-pub(crate) const WINDOW_W: f64 = 1040.0;
+pub(crate) const WINDOW_W: f64 = 1456.0;
 #[cfg(feature = "tauri-ui")]
 pub(crate) const WINDOW_H: f64 = 860.0;
-/// Минимальная ширина окна: ниже 480px ломается мобильная вёрстка.
+/// Минимальная ширина: ниже 640px включается мобильная вёрстка.
 #[cfg(feature = "tauri-ui")]
-pub(crate) const WINDOW_MIN_W: f64 = 480.0;
+pub(crate) const WINDOW_MIN_W: f64 = 640.0;
 #[cfg(feature = "tauri-ui")]
 pub(crate) const WINDOW_MIN_H: f64 = 560.0;
 

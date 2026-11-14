@@ -931,6 +931,7 @@ mod live_api_tests {
         ));
         assert_eq!(st, 200, "метрики не посчитались: {v}");
         assert_eq!(v.get("schema").and_then(|x| x.as_u64()), Some(1));
+        assert!(v.get("totals").is_some(), "нет итогов по встрече: {v}");
         let speakers = v
             .get("speakers")
             .and_then(|x| x.as_array())

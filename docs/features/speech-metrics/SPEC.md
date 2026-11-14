@@ -164,7 +164,7 @@ RMS и AGC - в `mr-audio/src/dsp.rs` L59-181.
 | `stats` | `transcribe_api.rs` L14-105 | не нужен для Tier A |
 | Кэш | `metrics_api.rs` | ключ `path+len+mtime`, как у summary |
 | Базовая линия | `src/metrics.rs` | `<app_data>/metrics-baseline.json`, 0600, 20 замеров на человека |
-| UI-карточка | `transcript-page.svelte` L481-525 | блок «Речевые метрики» в панели спикеров |
+| UI-панель | `transcript-page.svelte`, `metrics-panel.svelte` | третья панель справа, взаимоисключающая с «Итогами» |
 | Полосы | `speakers-pane.svelte` | доля речи в карточке спикера |
 | Таймлайн | `slim-player.svelte` L94-127 | переходы кнопками, маркеры - следующий шаг |
 | Пресеты | `mr-summarize/src/preset.rs` L54-70 | нормы ещё не заданы |
@@ -237,7 +237,7 @@ Unit-тесты на синтетических интервалах, без а�
 DoD: `cargo test` зелёный, clippy без предупреждений.
 
 **M2. API и карточка (3-4 дня).** Статус: API готово, UI в работе.
-`GET /api/transcript/metrics`, кэш, типы в `api.ts`, блок в панели спикеров,
+`GET /api/transcript/metrics`, кэш, типы в `api.ts`, панель «Метрики» справа,
 проценты в `speakers-pane.svelte`.
 DoD: метрики видны на существующей записи, пересчёт после редактирования транскрипта.
 

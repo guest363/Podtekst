@@ -93,6 +93,21 @@ pub struct Monologue {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Totals {
+    pub turns: usize,
+    pub turn_sec_median: Option<f64>,
+    pub turn_sec_p90: Option<f64>,
+    pub monologues_over_30s: usize,
+    pub interruptions: usize,
+    pub interruptions_successful: usize,
+    pub response_latency_ms_median: Option<f64>,
+    pub switches_per_min: Option<f64>,
+    pub dead_air_sec: f64,
+    pub dead_air_share: Option<f64>,
+    pub density: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Navigation {
     pub longest_monologue: Option<Monologue>,
     pub first_long_pause: Option<Span>,
@@ -106,6 +121,7 @@ pub struct Metrics {
     pub duration_sec: f64,
     pub speech_sec: f64,
     pub quality: Quality,
+    pub totals: Totals,
     pub speakers: Vec<SpeakerMetrics>,
     pub navigation: Navigation,
     pub warnings: Vec<String>,
@@ -124,6 +140,7 @@ pub fn analyze(
         duration_sec: interaction.duration_sec,
         speech_sec: interaction.speech_sec,
         quality: Quality::default(),
+        totals: interaction.totals,
         speakers: interaction.speakers,
         navigation: interaction.navigation,
         warnings: interaction.warnings,

@@ -497,11 +497,26 @@ export type MetricsNavigation = {
   pauses_over_5s: { start: number; end: number }[]
 }
 
+export type MetricsTotals = {
+  turns: number
+  turn_sec_median: number | null
+  turn_sec_p90: number | null
+  monologues_over_30s: number
+  interruptions: number
+  interruptions_successful: number
+  response_latency_ms_median: number | null
+  switches_per_min: number | null
+  dead_air_sec: number
+  dead_air_share: number | null
+  density: number | null
+}
+
 export type SpeechMetrics = {
   schema: number
   duration_sec: number
   speech_sec: number
   quality: MetricsQuality
+  totals: MetricsTotals
   speakers: SpeakerMetrics[]
   navigation: MetricsNavigation
   warnings: string[]

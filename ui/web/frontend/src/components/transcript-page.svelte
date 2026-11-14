@@ -1,4 +1,5 @@
 <script lang="ts">
+import { tick } from 'svelte'
 import { baseName, fmtClock, fmtClockShort, isAndroid, isMobile, pluralSpeakers } from '../lib/api'
 import { exportDocx, printTranscript } from '../lib/export.ts'
 import { peopleState } from '../lib/people.svelte.ts'
@@ -15,13 +16,21 @@ import {
   transcript,
 } from '../lib/transcript.svelte.ts'
 import { closeTranscript, ui } from '../lib/ui.svelte.ts'
+import MetricsPanel from './metrics-panel.svelte'
 import SlimPlayer from './slim-player.svelte'
 import SpeakersPane from './speakers-pane.svelte'
 import SummaryPanel from './summary-panel.svelte'
 import TranscriptDoc from './transcript-doc.svelte'
 
+const initialSpeakersDrawer =
+  typeof window !== 'undefined' && window.matchMedia('(max-width: 720px)').matches
+const initialPanelDrawer =
+  typeof window !== 'undefined' && window.matchMedia('(max-width: 1200px)').matches
+
 let speakersOpen = $state(
-  typeof localStorage !== 'undefined' ? localStorage.getItem('mr_speakers_open') !== 'false' : true,
+  typeof localStorage !== 'undefined'
+    ? localStorage.getItem('mr_speakers_open') !== 'false' && !initialSpeakersDrawer
+    : true,
 )
 
 // v2: старый ключ хранил «скрыто» по умолчанию и не должен отменять новый дефолт.
@@ -29,7 +38,44 @@ const SUMMARY_OPEN_KEY = 'mr_summary_open_v2'
 const storedSummaryOpen =
   typeof localStorage !== 'undefined' ? localStorage.getItem(SUMMARY_OPEN_KEY) : null
 
-let summaryOpen = $state(storedSummaryOpen === null ? !isMobile : storedSummaryOpen === 'true')
+let summaryOpen = $state(
+  storedSummaryOpen === null ? !initialPanelDrawer : storedSummaryOpen === 'true',
+)
+
+let metricsOpen = $state(false)
+let metricsBtn = $state<HTMLButtonElement | null>(null)
+let metricsPanelEl = $state<HTMLElement | null>(null)
+let narrow = $state(false)
+let panelDrawer = $state(false)
+
+$effect(() => {
+  const query = window.matchMedia('(max-width: 720px)')
+  const sync = (): void => {
+    narrow = query.matches
+  }
+  sync()
+  query.addEventListener('change', sync)
+  return () => query.removeEventListener('change', sync)
+})
+
+$effect(() => {
+  const query = window.matchMedia('(max-width: 1200px)')
+  const sync = (): void => {
+    panelDrawer = query.matches
+  }
+  sync()
+  query.addEventListener('change', sync)
+  return () => query.removeEventListener('change', sync)
+})
+
+$effect(() => {
+  if (metricsOpen) {
+    void tick().then(() => {
+      const scrollable = metricsPanelEl?.querySelector<HTMLElement>('.metrics-panel')
+      ;(scrollable ?? metricsPanelEl)?.focus()
+    })
+  }
+})
 
 $effect(() => {
   try {
@@ -46,6 +92,7 @@ let summaryAvailable = $derived(
     summaryState.capabilities?.summary_supported !== false &&
     summaryState.blockReason !== 'no_text',
 )
+let metricsAvailable = $derived(transcript.hasText)
 
 const toggleSpeakers = (): void => {
   speakersOpen = !speakersOpen
@@ -60,7 +107,20 @@ const toggleSummaryPanel = (): void => {
   summaryOpen = !summaryOpen
   if (summaryOpen) {
     summaryState.expanded = true
+    metricsOpen = false
   }
+}
+
+const toggleMetricsPanel = (): void => {
+  metricsOpen = !metricsOpen
+  if (metricsOpen) {
+    summaryOpen = false
+  }
+}
+
+const closeMetricsPanel = (): void => {
+  metricsOpen = false
+  void tick().then(() => metricsBtn?.focus())
 }
 
 let videoExpanded = $state(false)
@@ -73,6 +133,7 @@ $effect(() => {
   if (ui.transcriptOpen && ui.currentTranscriptPath) {
     videoExpanded = false
     playbackTime = 0
+    metricsOpen = false
     void openTranscriptFile(ui.currentTranscriptPath)
   }
 })
@@ -85,6 +146,7 @@ $effect(() => {
   ) {
     summaryOpen = true
     summaryState.expanded = true
+    metricsOpen = false
   }
 })
 
@@ -222,11 +284,38 @@ const goBack = (): void => {
 
 const onWindowKey = (e: KeyboardEvent): void => {
   if (!ui.transcriptOpen) return
+  if (e.key === 'Tab' && panelDrawer && metricsOpen) {
+    const root = metricsPanelEl
+    if (root) {
+      const nodes = root.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, summary, audio[controls], [contenteditable="true"], [tabindex]:not([tabindex="-1"])',
+      )
+      if (nodes.length === 0) {
+        e.preventDefault()
+        root.focus()
+      } else {
+        const first = nodes[0]
+        const last = nodes[nodes.length - 1]
+        if (e.shiftKey && (document.activeElement === first || document.activeElement === root)) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault()
+          first.focus()
+        }
+      }
+    }
+    return
+  }
   if (e.key === 'Escape') {
-    if (isMobile && summaryOpen) {
+    if (metricsOpen) {
+      closeMetricsPanel()
+      e.preventDefault()
+      e.stopPropagation()
+    } else if (panelDrawer && summaryOpen) {
       summaryOpen = false
       e.stopPropagation()
-    } else if (isMobile && speakersOpen) {
+    } else if (narrow && speakersOpen) {
       speakersOpen = false
       e.stopPropagation()
     } else {
@@ -239,7 +328,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
 <svelte:window onkeydown={onWindowKey} />
 
 <div class="page transcript-page">
-  <header class="transcript-page-header">
+  <header class="transcript-page-header" inert={panelDrawer && metricsOpen}>
     <div class="transcript-header-top">
       <h1 class="transcript-page-title" title={ui.currentTranscriptPath}>
         {baseName(ui.currentTranscriptPath)}
@@ -270,6 +359,8 @@ const onWindowKey = (e: KeyboardEvent): void => {
           <button
             class="btn-secondary btn-sm btn-speakers-toggle {speakersOpen ? 'active' : ''}"
             aria-label="Спикеры встречи"
+            aria-expanded={speakersOpen}
+            aria-controls="speakers-panel"
             title={speakersOpen
               ? 'Скрыть панель спикеров'
               : (hasUnmatchedSpeakers
@@ -296,6 +387,8 @@ const onWindowKey = (e: KeyboardEvent): void => {
           <button
             class="btn-secondary btn-sm btn-summary-toggle {summaryOpen ? 'active' : ''}"
             aria-label="Итоги встречи"
+            aria-expanded={summaryOpen}
+            aria-controls="summary-panel"
             title={summaryOpen ? 'Скрыть панель итогов' : 'Показать итоги встречи'}
             onclick={toggleSummaryPanel}
           >
@@ -311,6 +404,29 @@ const onWindowKey = (e: KeyboardEvent): void => {
               <span class="spk-notify-dot warn" aria-hidden="true" title="Идёт формирование итогов"></span>
             {:else if summaryState.record}
               <span class="spk-notify-dot ok" aria-hidden="true" title="Итоги сформированы"></span>
+            {/if}
+          </button>
+        {/if}
+
+        {#if metricsAvailable}
+          <button
+            class="btn-secondary btn-sm btn-metrics-toggle {metricsOpen ? 'active' : ''}"
+            aria-label="Метрики встречи"
+            aria-expanded={metricsOpen}
+            aria-controls="metrics-panel"
+            bind:this={metricsBtn}
+            title={metricsOpen ? 'Скрыть панель метрик' : 'Показать панель метрик'}
+            onclick={toggleMetricsPanel}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="4" y1="20" x2="4" y2="11"></line>
+              <line x1="10" y1="20" x2="10" y2="4"></line>
+              <line x1="16" y1="20" x2="16" y2="14"></line>
+              <line x1="21" y1="20" x2="3" y2="20"></line>
+            </svg>
+            <span>Метрики</span>
+            {#if transcript.metricsLoading}
+              <span class="spk-notify-dot warn" aria-hidden="true" title="Считаем метрики встречи"></span>
             {/if}
           </button>
         {/if}
@@ -479,9 +595,9 @@ const onWindowKey = (e: KeyboardEvent): void => {
     </div>
   {:else}
     <div
-      class="transcript-grid {speakersOpen ? 'sidebar-open' : ''} {summaryOpen && summaryAvailable ? 'summary-open' : ''}"
+      class="transcript-grid {speakersOpen ? 'sidebar-open' : ''} {summaryOpen && summaryAvailable ? 'summary-open' : ''} {metricsOpen && metricsAvailable ? 'metrics-open' : ''}"
     >
-      {#if isMobile && speakersOpen}
+      {#if narrow && speakersOpen}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <div
           class="speakers-drawer-overlay"
@@ -489,7 +605,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
           onclick={() => (speakersOpen = false)}
         ></div>
       {/if}
-      {#if isMobile && summaryOpen && summaryAvailable}
+      {#if panelDrawer && summaryOpen && summaryAvailable}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <div
           class="speakers-drawer-overlay summary-drawer-overlay"
@@ -497,8 +613,20 @@ const onWindowKey = (e: KeyboardEvent): void => {
           onclick={() => (summaryOpen = false)}
         ></div>
       {/if}
+      {#if panelDrawer && metricsOpen && metricsAvailable}
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <div
+          class="speakers-drawer-overlay metrics-drawer-overlay"
+          role="presentation"
+          onclick={closeMetricsPanel}
+        ></div>
+      {/if}
 
-      <div class="transcript-speakers-wrap {speakersOpen ? 'open' : ''}">
+      <div
+        id="speakers-panel"
+        class="transcript-speakers-wrap {speakersOpen ? 'open' : ''}"
+        inert={!speakersOpen || (panelDrawer && metricsOpen)}
+      >
         <div class="speakers-drawer-top">
           <span class="card-title">Спикеры{#if transcript.speakers.length > 0}&nbsp;· {transcript.speakers.length}{/if}</span>
           <button
@@ -513,7 +641,6 @@ const onWindowKey = (e: KeyboardEvent): void => {
         <SpeakersPane
           speakers={transcript.speakers}
           metrics={transcript.metrics}
-          metricsLoading={transcript.metricsLoading}
           onseek={seekTo}
         />
       </div>
@@ -529,7 +656,11 @@ const onWindowKey = (e: KeyboardEvent): void => {
       />
 
       {#if summaryAvailable}
-        <div class="transcript-summary-wrap {summaryOpen ? 'open drawer-open' : ''}">
+        <div
+          id="summary-panel"
+          class="transcript-summary-wrap {summaryOpen ? 'open drawer-open' : ''}"
+          inert={!summaryOpen}
+        >
           <div class="summary-drawer-top">
             <span class="card-title">Итоги встречи</span>
             <button
@@ -544,6 +675,37 @@ const onWindowKey = (e: KeyboardEvent): void => {
           <SummaryPanel
             file={ui.currentTranscriptPath}
             transcriptMarkdown={buildFullTranscriptMarkdown}
+          />
+        </div>
+      {/if}
+
+      {#if metricsAvailable}
+        <div
+          id="metrics-panel"
+          class="transcript-metrics-wrap {metricsOpen ? 'open drawer-open' : ''}"
+          inert={!metricsOpen}
+          role={panelDrawer && metricsOpen ? 'dialog' : 'region'}
+          aria-modal={panelDrawer && metricsOpen ? 'true' : undefined}
+          aria-labelledby="metrics-drawer-title"
+          tabindex="-1"
+          bind:this={metricsPanelEl}
+        >
+          <div class="summary-drawer-top">
+            <h2 id="metrics-drawer-title" class="card-title">Метрики встречи</h2>
+            <button
+              class="btn-close-page"
+              aria-label="Скрыть панель метрик"
+              title="Скрыть панель метрик"
+              onclick={closeMetricsPanel}
+            >
+              ✕
+            </button>
+          </div>
+          <MetricsPanel
+            metrics={transcript.metrics}
+            loading={transcript.metricsLoading}
+            error={transcript.metricsError}
+            onseek={seekTo}
           />
         </div>
       {/if}

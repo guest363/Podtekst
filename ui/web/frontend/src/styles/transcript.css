@@ -242,14 +242,24 @@ body:has(.transcript-page) {
 }
 
 .transcript-grid.summary-open {
-  grid-template-columns: 0px minmax(0, 1fr) 360px;
+  grid-template-columns: 0px minmax(0, 1fr) clamp(360px, 26vw, 440px);
 }
 
 .transcript-grid.sidebar-open.summary-open {
-  grid-template-columns: 320px minmax(0, 1fr) 360px;
+  grid-template-columns: 320px minmax(0, 1fr) clamp(360px, 26vw, 440px);
+}
+
+.transcript-grid.metrics-open {
+  grid-template-columns: 0px minmax(0, 1fr) clamp(360px, 26vw, 440px);
+}
+
+.transcript-grid.sidebar-open.metrics-open {
+  grid-template-columns: 320px minmax(0, 1fr) clamp(360px, 26vw, 440px);
 }
 
 .transcript-speakers-wrap {
+  grid-column: 1;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -273,6 +283,38 @@ body:has(.transcript-page) {
 
 .transcript-grid.sidebar-open.summary-open .transcript-speakers-wrap {
   padding-right: 16px;
+}
+
+.transcript-summary-wrap,
+.transcript-metrics-wrap {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.transcript-metrics-wrap {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 180ms ease,
+    padding 180ms ease;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.transcript-grid.metrics-open .transcript-metrics-wrap {
+  opacity: 1;
+  pointer-events: auto;
+  padding-left: 20px;
+}
+
+.transcript-grid.sidebar-open.metrics-open .transcript-metrics-wrap {
+  padding-left: 16px;
 }
 
 .transcript-summary-wrap {
@@ -311,6 +353,11 @@ body:has(.transcript-page) {
   margin-bottom: 8px;
   flex-shrink: 0;
 }
+
+.speakers-drawer-top .card-title,
+.summary-drawer-top .card-title {
+  margin: 0;
+}
 .transcript-speakers-wrap .transcript-speakers .pane-title {
   display: none;
 }
@@ -323,7 +370,8 @@ body:has(.transcript-page) {
   transition: all 160ms ease;
 }
 .btn-speakers-toggle.active,
-.btn-summary-toggle.active {
+.btn-summary-toggle.active,
+.btn-metrics-toggle.active {
   background: rgba(37, 99, 235, 0.09);
   border-color: rgba(37, 99, 235, 0.35);
   color: var(--accent-blue);
@@ -362,6 +410,12 @@ body:has(.transcript-page) {
 }
 
 .transcript-doc {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: stretch;
+  width: 100%;
+  max-width: 80ch;
+  margin-inline: auto;
   position: relative;
   gap: 14px;
 }
@@ -1038,6 +1092,72 @@ body:has(.transcript-page) {
   border-color: var(--accent-blue);
 }
 
+@media (min-width: 721px) and (max-width: 1200px) {
+  .transcript-grid.sidebar-open {
+    grid-template-columns: 260px minmax(0, 1fr) 0px;
+  }
+  .transcript-grid.summary-open,
+  .transcript-grid.metrics-open {
+    grid-template-columns: 0px minmax(0, 1fr) 0px;
+  }
+  .transcript-grid.sidebar-open.summary-open,
+  .transcript-grid.sidebar-open.metrics-open {
+    grid-template-columns: 260px minmax(0, 1fr) 0px;
+  }
+  .transcript-summary-wrap,
+  .transcript-metrics-wrap {
+    display: none;
+  }
+  .transcript-summary-wrap.open,
+  .transcript-summary-wrap.drawer-open,
+  .transcript-metrics-wrap.open,
+  .transcript-metrics-wrap.drawer-open {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(100vw, 440px);
+    height: 100dvh;
+    z-index: 61;
+    background: #fff;
+    border-left: 1px solid var(--border-soft);
+    box-shadow: -16px 0 48px rgba(15, 30, 51, 0.16);
+    padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+      max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    gap: 12px;
+    overflow: hidden;
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .summary-drawer-overlay,
+  .metrics-drawer-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    background: rgba(15, 30, 51, 0.45);
+    backdrop-filter: blur(4px);
+  }
+  body:has(.metrics-drawer-overlay),
+  body:has(.summary-drawer-overlay) {
+    overflow: hidden;
+  }
+  .transcript-metrics-wrap .btn-close-page {
+    width: 44px;
+    height: 44px;
+  }
+  .transcript-btns .btn-sm {
+    min-height: 40px;
+  }
+  .metrics-value-button {
+    min-height: 44px;
+    padding: 10px 8px;
+    border-radius: var(--radius-sm);
+  }
+}
+
 @media (max-width: 720px) {
   body:has(.transcript-page) {
     overflow: auto;
@@ -1104,13 +1224,16 @@ body:has(.transcript-page) {
   }
 
   .transcript-speakers-wrap,
-  .transcript-summary-wrap {
+  .transcript-summary-wrap,
+  .transcript-metrics-wrap {
     display: none;
   }
   .transcript-speakers-wrap.open,
   .transcript-speakers-wrap.drawer-open,
   .transcript-summary-wrap.open,
-  .transcript-summary-wrap.drawer-open {
+  .transcript-summary-wrap.drawer-open,
+  .transcript-metrics-wrap.open,
+  .transcript-metrics-wrap.drawer-open {
     display: flex;
     flex-direction: column;
     position: fixed;
@@ -1125,15 +1248,28 @@ body:has(.transcript-page) {
     border-left: 1px solid var(--border-soft);
     border-radius: 0;
     box-shadow: -16px 0 48px rgba(15, 30, 51, 0.16);
-    padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+    padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+      max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
     gap: 12px;
     animation: drawer-in 240ms var(--ease-spring);
     overflow: hidden;
     opacity: 1;
     pointer-events: auto;
   }
+  body:has(.metrics-drawer-overlay),
+  body:has(.summary-drawer-overlay) {
+    overflow: hidden;
+  }
+  .transcript-btns .btn-sm {
+    min-height: 40px;
+  }
+  .transcript-metrics-wrap .btn-close-page {
+    width: 44px;
+    height: 44px;
+  }
   .speakers-drawer-overlay,
-  .summary-drawer-overlay {
+  .summary-drawer-overlay,
+  .metrics-drawer-overlay {
     display: block;
     position: fixed;
     inset: 0;
@@ -1191,6 +1327,7 @@ body:has(.transcript-page) {
   .transcript-progress,
   .transcript-speakers-wrap,
   .transcript-summary-wrap,
+  .transcript-metrics-wrap,
   .transcript-doc-header,
   .follow-current,
   .speaker-popover,
@@ -1261,5 +1398,19 @@ body:has(.transcript-page) {
   .utt-speaker,
   .utt-text {
     color: #111;
+  }
+}
+
+.transcript-metrics-wrap:focus {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transcript-grid {
+    transition: none;
+  }
+  .transcript-metrics-wrap,
+  .metrics-drawer-overlay {
+    animation: none;
   }
 }
