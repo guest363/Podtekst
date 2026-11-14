@@ -94,15 +94,19 @@ fn finite_probs(probs: &[f32]) -> Vec<f32> {
     values
 }
 
-pub(super) fn log_vad_summary(ch: i32, probs: &[f32], stats: VadRunStats) -> Vec<(f32, f32)> {
-    let segments = vad_segments_from_probs(
+pub(super) fn speech_segments(probs: &[f32]) -> Vec<(f32, f32)> {
+    vad_segments_from_probs(
         probs,
         VAD_THRESHOLD,
         VAD_NEG_THRESHOLD,
         VAD_MIN_SPEECH_SEC,
         VAD_MIN_SILENCE_SEC,
         VAD_SPEECH_PAD_SEC,
-    );
+    )
+}
+
+pub(super) fn log_vad_summary(ch: i32, probs: &[f32], stats: VadRunStats) -> Vec<(f32, f32)> {
+    let segments = speech_segments(probs);
     if !cfg!(debug_assertions) {
         return segments;
     }

@@ -50,11 +50,21 @@ pub(super) fn run(
 
             // По-чанковая нормализация до пика 0.9 перед ASR:
             // полный динамический диапазон для INT8 квантованных моделей (GigaAM / Whisper).
-            const NOISE_FLOOR: f32 = 0.002;
             const TARGET_PEAK: f32 = 0.9;
-            let peak = raw_chunk.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+            let mut peak = 0.0f32;
+            let mut sum_sq = 0.0f32;
+            for &x in raw_chunk {
+                peak = peak.max(x.abs());
+                sum_sq += x * x;
+            }
+            let rms_raw = (sum_sq / raw_chunk.len().max(1) as f32).sqrt();
+            // Пол по RMS, а не по пику: один щелчок задаёт пик, но не энергию.
+            // Ниже 1e-5 — только шум квантования 16-бит (LSB/√12 ≈ 9e-6) и
+            // дизеринг; их растяжение до пика 0.9 даёт галлюцинации ASR на
+            // ложных VAD-сегментах. Реальная тихая речь — от 1e-4, запас 10×.
+            const QUIET_RMS_FLOOR: f32 = 1e-5;
             let normalized_buf: Vec<f32>;
-            let chunk: &[f32] = if peak > NOISE_FLOOR && (peak - TARGET_PEAK).abs() > 0.05 {
+            let chunk: &[f32] = if rms_raw > QUIET_RMS_FLOOR && (peak - TARGET_PEAK).abs() > 0.05 {
                 let scale = TARGET_PEAK / peak;
                 normalized_buf = raw_chunk
                     .iter()

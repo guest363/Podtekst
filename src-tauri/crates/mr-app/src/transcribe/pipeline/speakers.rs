@@ -1,9 +1,11 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::Instant;
 
 use super::super::diag::{stage_begin, stage_end};
 use super::super::diarize;
 use super::super::echo::EchoEvidence;
+use super::super::experiment::{self, Embedding};
 use super::super::models::ModelSet;
 use super::super::word_dedupe;
 use super::super::word_speakers;
@@ -11,6 +13,7 @@ use super::super::{SpeakerInfo, TranscribeOptions, Utterance};
 
 pub(super) struct Input<'a> {
     pub(super) channel_samples: &'a HashMap<usize, Vec<f32>>,
+    pub(super) frontend_samples: &'a HashMap<usize, Cow<'a, [f32]>>,
     pub(super) chan_list: &'a [(usize, String)],
     pub(super) channel_vad: &'a HashMap<usize, Vec<f32>>,
     pub(super) channel_utts: HashMap<usize, Vec<Utterance>>,
@@ -24,6 +27,7 @@ pub(super) struct Input<'a> {
 pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<String>) {
     let Input {
         channel_samples,
+        frontend_samples,
         chan_list,
         channel_vad,
         mut channel_utts,
@@ -42,15 +46,25 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
     let mut channel_trees: HashMap<usize, word_speakers::DiarIntervalTree> = HashMap::new();
     let mut segmentations = HashMap::new();
     for (ch, _label) in chan_list.iter() {
-        let samples = &channel_samples[ch];
+        let samples: &[f32] = match experiment::current().embedding {
+            Embedding::Frontend | Embedding::UnitNorm => &frontend_samples[ch][..],
+            Embedding::Raw => &channel_samples[ch][..],
+        };
+        log::debug!(
+            target: "diar",
+            ch = *ch as i64,
+            normalized = samples != channel_samples[ch].as_slice();
+            "ev=diar.embedding_frontend"
+        );
         let source_utts = channel_utts.remove(ch).unwrap_or_default();
+        super::geometry::write("asr", *ch, &source_utts);
         let segmentation_started = Instant::now();
         let segmentation = if models.embed.is_some() && !source_utts.is_empty() {
             on_event(80, "Ищу одновременную речь…");
             models.segmentation.as_mut().and_then(|model| {
                 let result = match channel_vad.get(ch) {
-                    Some(probs) => model.segment_with_vad(samples, probs),
-                    None => model.segment(samples),
+                    Some(probs) => model.segment_with_vad(&frontend_samples[ch], probs),
+                    None => model.segment(&frontend_samples[ch]),
                 };
                 match result {
                     Ok(result) => {
@@ -91,13 +105,13 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
             paused_utts
         } else {
             on_event(80, "Делю речь на паузы для спикеров…");
-            diarize::split_at_pauses(samples, &paused_utts)
+            diarize::split_at_pauses(&frontend_samples[ch], &paused_utts)
         };
         on_event(80, "Ищу смену голоса внутри реплик…");
         // Эхо бывает только в микрофонном канале (системный канал — источник).
         let ch_echo = if *ch == 0 { echo.as_ref() } else { None };
         diar_utts = diarize::split_long_by_speaker_change(
-            samples,
+            &frontend_samples[ch],
             diar_utts,
             &mut models.embed,
             segmentation.as_ref(),
@@ -121,7 +135,8 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
         } else {
             opts.speaker_right.clone()
         };
-        let infos = diarize::diarize_channel(
+        super::geometry::write("pre-cluster", *ch, &diar_utts);
+        let (infos, voice_runs) = diarize::diarize_channel(
             samples,
             &mut diar_utts,
             ch_idx,
@@ -129,15 +144,36 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
             prefix,
             &mut models.embed,
             segmentation.as_ref(),
+            channel_vad.get(ch).map(Vec::as_slice),
             ch_echo,
             &profiles,
             opts.min_speakers,
             opts.max_speakers,
             &|pct, msg| on_event(pct, msg),
         );
+        super::geometry::write("acoustic", *ch, &diar_utts);
         speakers_info.extend(infos);
         let tree = word_speakers::DiarIntervalTree::new(&diar_utts);
-        all_utts.extend(document_utterances(&source_utts, &tree));
+        let document = document_utterances(&source_utts, &tree);
+        let document = word_speakers::detach_overlap_words(document, &voice_runs);
+        if cfg!(debug_assertions) {
+            let runs_dump: Vec<serde_json::Value> = voice_runs
+                .iter()
+                .map(|run| {
+                    serde_json::json!({
+                        "start": run.start,
+                        "end": run.end,
+                        "speaker": crate::logging::speaker_token(&run.speaker),
+                    })
+                })
+                .collect();
+            crate::logging::write_artifact_json(
+                &format!("diar/ch{ch}.voice_runs.json"),
+                &serde_json::json!({ "runs": runs_dump }),
+            );
+        }
+        super::geometry::write("document", *ch, &document);
+        all_utts.extend(document);
         channel_trees.insert(*ch, tree);
         if let Some(segmentation) = segmentation {
             segmentations.insert(*ch, segmentation);

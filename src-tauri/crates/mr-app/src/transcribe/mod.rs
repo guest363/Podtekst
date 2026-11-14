@@ -7,6 +7,7 @@ pub mod diarize;
 pub mod document;
 mod echo;
 pub mod events;
+mod experiment;
 pub mod memory;
 pub mod report;
 mod speaker_assignment;

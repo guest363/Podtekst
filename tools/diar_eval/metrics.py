@@ -10,10 +10,10 @@ import sys
 import tempfile
 import unicodedata
 import unittest
-from itertools import permutations
 from pathlib import Path
 
 _JIWER = None
+CPWER_VERSION = "speaker-stream-v2"
 
 
 def _jiwer():
@@ -161,6 +161,10 @@ def _speaker_blocks(segments: list[dict]) -> tuple[list[str], dict[str, list[str
 
 
 def _wer_errors(reference: str, hypothesis: str) -> int:
+    if not reference:
+        return len(hypothesis.split())
+    if not hypothesis:
+        return len(reference.split())
     output = _jiwer().process_words([reference], [hypothesis])
     return int(output.substitutions + output.deletions + output.insertions)
 
@@ -179,6 +183,7 @@ def cpwer(
 
     if n_ref == 0 or ref_words == 0:
         return {
+            "version": CPWER_VERSION,
             "cpwer": math.nan,
             "errors": 0,
             "ref_words": 0,
@@ -188,47 +193,21 @@ def cpwer(
         }
     if max(n_ref, n_hyp) > max_speakers:
         raise ValueError(
-            f"cpWER: {max(n_ref, n_hyp)} спикеров, перебор разрешён до {max_speakers}"
+            f"cpWER: {max(n_ref, n_hyp)} спикеров, разрешено до {max_speakers}"
         )
 
-    best_errors: int | None = None
-    best_mapping: dict[str, str | None] = {}
-
-    if n_hyp == 0:
-        best_errors = _wer_errors(ref_text, "")
-        best_mapping = {speaker: None for speaker in ref_order}
-    elif n_hyp <= n_ref:
-        # Перестановки задают, в какой слот эталона попадёт каждый спикер гипотезы.
-        for slots in permutations(range(n_ref), n_hyp):
-            hypothesis_blocks = [""] * n_ref
-            mapping: dict[str, str | None] = {speaker: None for speaker in ref_order}
-            for hyp_index, slot in enumerate(slots):
-                hypothesis_blocks[slot] = " ".join(hyp_blocks[hyp_order[hyp_index]])
-                mapping[ref_order[slot]] = hyp_order[hyp_index]
-            errors = _wer_errors(ref_text, " ".join(block for block in hypothesis_blocks if block))
-            if best_errors is None or errors < best_errors:
-                best_errors = errors
-                best_mapping = mapping
-                if best_errors == 0:
-                    break
-    else:
-        # Спикеров гипотезы больше: свободные слоты эталона пустые, лишние блоки идут в конец.
-        for perm in permutations(range(n_hyp)):
-            hypothesis_blocks = [
-                " ".join(hyp_blocks[hyp_order[perm[slot]]]) for slot in range(n_hyp)
-            ]
-            mapping = {
-                ref_order[index]: hyp_order[perm[index]] for index in range(n_ref)
-            }
-            errors = _wer_errors(ref_text, " ".join(block for block in hypothesis_blocks if block))
-            if best_errors is None or errors < best_errors:
-                best_errors = errors
-                best_mapping = mapping
-                if best_errors == 0:
-                    break
-
-    assert best_errors is not None
+    size = max(n_ref, n_hyp)
+    references = [" ".join(ref_blocks[speaker]) for speaker in ref_order] + [""] * (size - n_ref)
+    hypotheses = [" ".join(hyp_blocks[speaker]) for speaker in hyp_order] + [""] * (size - n_hyp)
+    costs = [[_wer_errors(ref, hyp) for hyp in hypotheses] for ref in references]
+    assignment = _hungarian_assign(costs)
+    best_errors = sum(costs[row][column] for row, column in enumerate(assignment))
+    best_mapping = {
+        speaker: hyp_order[assignment[row]] if assignment[row] < n_hyp else None
+        for row, speaker in enumerate(ref_order)
+    }
     return {
+        "version": CPWER_VERSION,
         "cpwer": best_errors / ref_words,
         "errors": best_errors,
         "ref_words": ref_words,
@@ -501,6 +480,7 @@ def _summary(reference_segments: list[dict], hypothesis_segments: list[dict]) ->
         "SCA": sca,
         "MAE": mae,
         "cpWER": cp["cpwer"] if cp else math.nan,
+        "cpwer_version": CPWER_VERSION,
         "attribution": attribution["accuracy"] if attribution else math.nan,
         "attribution_matched": attribution["matched"] if attribution else 0,
         "attribution_correct": attribution["correct"] if attribution else 0,
@@ -579,8 +559,32 @@ class _SelfTest(unittest.TestCase):
             {"speaker": "Y", "text": "b"},
             {"speaker": "Z", "text": "c"},
         ]
-        self.assertAlmostEqual(cpwer(ref, hyp)["cpwer"], 0.5)
+        self.assertAlmostEqual(cpwer(ref, hyp)["cpwer"], 1.5)
         self.assertAlmostEqual(cpwer(ref, [])["cpwer"], 1.0)
+
+    def test_cpwer_collapsed_identical_speaker_streams_are_penalized(self) -> None:
+        ref = [
+            {"speaker": "A", "text": "альфа бета"},
+            {"speaker": "B", "text": "альфа бета"},
+        ]
+        hyp = [{"speaker": "X", "text": "альфа бета альфа бета"}]
+        result = cpwer(ref, hyp)
+        self.assertEqual(result["errors"], 4)
+        self.assertEqual(result["ref_words"], 4)
+        self.assertEqual(result["cpwer"], 1.0)
+        self.assertEqual(result["version"], CPWER_VERSION)
+
+    def test_cpwer_cannot_align_words_across_speaker_boundaries(self) -> None:
+        ref = [{"speaker": "A", "text": "альфа"}, {"speaker": "B", "text": "бета гамма"}]
+        hyp = [{"speaker": "X", "text": "альфа бета"}, {"speaker": "Y", "text": "гамма"}]
+        self.assertEqual(cpwer(ref, hyp)["errors"], 2)
+        self.assertAlmostEqual(cpwer(ref, hyp)["cpwer"], 2 / 3)
+
+    def test_cpwer_split_stream_counts_missing_and_extra_words(self) -> None:
+        ref = [{"speaker": "A", "text": "альфа бета"}]
+        hyp = [{"speaker": "X", "text": "альфа"}, {"speaker": "Y", "text": "бета"}]
+        self.assertEqual(cpwer(ref, hyp)["errors"], 2)
+        self.assertEqual(cpwer(ref, hyp)["cpwer"], 1.0)
 
     def test_attribution(self) -> None:
         ref = [
@@ -660,7 +664,7 @@ def _emit(summary: dict, as_json: bool) -> None:
         f"({summary['cer_errors']}/{summary['ref_chars']})"
     )
     if math.isfinite(summary["cpWER"]):
-        print(f"cpWER={summary['cpWER'] * 100:.2f}%")
+        print(f"cpWER={summary['cpWER'] * 100:.2f}% version={summary['cpwer_version']}")
     if math.isfinite(summary["attribution"]):
         print(
             f"attribution={summary['attribution'] * 100:.2f}% "

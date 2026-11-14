@@ -38,7 +38,7 @@ impl DistanceMatrix {
 const CANNOT_LINK_DISTANCE: f64 = 10.0;
 /// Минимальный абсолютный разрыв между высотами слияний, при котором
 /// автоматический выбор k считается уверенным. shortcut: 0.04; проверено на
-/// VoxConverse и AMI через tools/diar_eval, см. docs/testing/BENCHMARK-REPORT.md.
+/// VoxConverse и AMI через tools/diar_eval, см. docs/testing/SPEC.md.
 const MIN_AUTO_K_GAP: f64 = 0.04;
 
 pub fn agglomerative(
@@ -142,6 +142,15 @@ fn labels_with_limit(
         if cluster_count <= target_k || distance > threshold {
             break;
         }
+        if distance >= CANNOT_LINK_DISTANCE {
+            log::warn!(
+                target: "cluster",
+                requested_k = target_k,
+                retained_k = cluster_count;
+                "ev=cluster.constraint_limit"
+            );
+            break;
+        }
         let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
         if ra != rb {
             parent[rb] = ra;
@@ -165,6 +174,9 @@ fn labels_with_limit(
     labels
 }
 
+/// Контракт: `n_clusters` — целевое значение, а не гарантия. При несовместимых
+/// cannot-link слияния останавливаются раньше цели и кластеров возвращается
+/// больше (см. ev=cluster.constraint_limit).
 pub fn agglomerative_weighted(
     embeddings: &[Vec<f64>],
     weights: &[f64],
@@ -238,9 +250,6 @@ pub fn agglomerative_gap(
             gap = gap;
             "ev=cluster.auto_k"
         );
-        // Калибровка: auto-k выбрал k, порог расстояния не должен молча возвращать больше
-        // кластеров (на AMI auto-k просил 4, а cap 0.68 возвращал 7). cannot-link стоит на
-        // высоте CANNOT_LINK_DISTANCE, поэтому слияния до k его не задевают.
         return labels_with_limit(n, &merges, k, f64::INFINITY);
     }
     log::debug!(

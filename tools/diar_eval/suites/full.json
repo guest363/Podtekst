@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "name": "full",
+  "description": "Полный прогон: small + русская матрица 36 + русский ASR 450.",
+  "manifests": [
+    {"name": "t0-regression", "path": "regression-verified/manifest.json"},
+    {"name": "main-normal", "path": "diar-main-meetings/normal.json"},
+    {"name": "main-quiet", "path": "diar-main-meetings/quiet.json"},
+    {"name": "matrix-ru36", "path": "runs/matrix-m/manifest.json"},
+    {
+      "name": "asr-ru",
+      "path": "data/manifest-run.json",
+      "data_root": "data",
+      "datasets": ["golos-crowd", "golos-farfield", "fleurs-ru"]
+    }
+  ]
+}

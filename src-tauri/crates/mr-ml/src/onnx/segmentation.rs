@@ -127,7 +127,7 @@ impl SegmentationModel {
         let mut start = 0usize;
         loop {
             let valid = (samples.len() - start).min(WINDOW_SAMPLES);
-            let digital_silence = samples[start..start + valid].iter().all(|x| x.abs() < 1e-4);
+            let digital_silence = super::is_digital_silence(&samples[start..start + valid]);
             let speech = !digital_silence
                 && vad_probs.is_none_or(|probs| window_has_speech(probs, start, valid));
             if !speech {

@@ -13,6 +13,7 @@
 
 - `src/lib.rs` - фасад крейта, сплиттер каналов, потоковый ресемплер и расчёт уровней громкости (RMS).
 - `src/decode.rs` - нативное декодирование через Symphonia и проверка метаданных медиа.
+- `src/dsp.rs` - AGC/RMS-план для диаризации: high-pass 80 Гц, пороги усиления `TARGET_RMS`/`MAX_GAIN`.
 - `src/capture/mod.rs` - абстракция аудиоустройств и единый интерфейс захвата.
 - `src/capture/linux.rs` и `src/capture/pulse.rs` - захват звука в Linux через PipeWire и PulseAudio с динамической загрузкой `libpulse.so.0`.
 - `src/capture/macos/` - CoreAudio HAL через AudioUnit (микрофон, BlackHole и другие loopback-входы) и системный звук через ScreenCaptureKit (`sck.rs`, разрешение проверяет `permission.rs`).

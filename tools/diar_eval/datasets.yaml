@@ -1,7 +1,6 @@
 # Шаблон манифеста наборов для tools/diar_eval.
 # Данные здесь не скачиваются. samples: null означает "уточнить после подготовки".
 schema: 1
-updated: "2026-11-09"
 notes: |
   Пути к аудио и эталонам задаются в manifest.json прогона, а не здесь.
   Перед публикацией цифр проверить лицензию каждого набора.
@@ -13,6 +12,9 @@ datasets:
     tasks: [asr]
     license: "Golos Terms of Use; проверить условия публикации"
     reference: "https://github.com/salute-developers/Golos"
+    download:
+      - "https://huggingface.co/datasets/bonlime/golos-test/resolve/main/crowd/test-00000-of-00003.parquet"
+      - "https://huggingface.co/datasets/bonlime/golos-test/resolve/main/farfield/test-00000-of-00001.parquet"
     samples: null
     subsets:
       - name: crowd/test
@@ -21,7 +23,7 @@ datasets:
       - name: farfield/test
         samples: null
         notes: "дальнее поле, шум"
-    prepare: "16 кГц, моно; эталонный текст из разметки набора"
+    prepare: "16 кГц, моно; parquet -> WAV; эталонный текст из поля text; manifest-run.json собирается локально"
     rttm: null
 
   - id: fleurs
@@ -30,6 +32,9 @@ datasets:
     tasks: [asr]
     license: "CC BY 4.0"
     reference: "https://huggingface.co/datasets/google/fleurs"
+    download:
+      - "https://huggingface.co/datasets/google/fleurs/resolve/main/data/{lang}/test.tsv"
+      - "https://huggingface.co/datasets/google/fleurs/resolve/main/data/{lang}/audio/test.tar.gz"
     samples: null
     subsets:
       - name: ru_ru/test
@@ -38,7 +43,7 @@ datasets:
       - name: fr_fr/test
       - name: es_419/test
       - name: cmn_hans_cn/test
-    prepare: "официальный test split; 16 кГц, моно"
+    prepare: "официальный test split; test.tsv и audio/test.tar.gz; 16 кГц, моно"
     rttm: null
 
   - id: ami-ihm
@@ -48,6 +53,8 @@ datasets:
     license: "CC BY 4.0"
     reference: "https://groups.inf.ed.ac.uk/ami/corpus/"
     annotations: "https://github.com/BUTSpeechFIT/AMI-diarization-setup"
+    download:
+      - "https://huggingface.co/datasets/diarizers-community/ami/resolve/main/ihm/test-00000-of-00003.parquet"
     samples: 16
     subsets:
       - name: test
@@ -77,6 +84,8 @@ datasets:
     tasks: [diarization]
     license: "CC BY 4.0"
     reference: "https://github.com/joonson/voxconverse"
+    download:
+      - "https://huggingface.co/datasets/diarizers-community/voxconverse/resolve/main/data/test-00000-of-00011.parquet"
     samples: 232
     subsets:
       - name: test

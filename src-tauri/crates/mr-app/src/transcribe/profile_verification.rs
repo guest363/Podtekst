@@ -14,6 +14,25 @@ use super::{SpeakerInfo, Utterance};
 const MIN_VERIFY_SEC: f64 = 1.5;
 /// Та же граница «один голос», что в `reconcile_channels`; иначе каждая спорная реплика плодит карточку.
 const ANON_MERGE_SIM: f64 = 0.55;
+/// Замер живой записи: короткое «угу» 0.91 с зажато соседями того же канала
+/// (паузы 1.18/1.55 с на акустической стадии); пословная атрибуция сдвигает
+/// границу следующей реплики до 2.08 с, поэтому допуск 2.2 с.
+const ADOPT_PAUSE_SEC: f64 = 2.2;
+/// Замер ERes2NetV2 на фронтенд-канале живой записи: соседние куски одного
+/// голоса с паузами 0.72–0.78 с — cos 0.6267–0.7606, реплики разных голосов — ≤ 0.378.
+const CHAIN_PAUSE_SEC: f64 = 1.5;
+const CHAIN_MIN_SIM: f64 = 0.5;
+/// Замер живой записи: ложный переворот реплики 1.7 с — маржа 0.0289, настоящие
+/// перевороты — маржа 0.30+; на коротких кусках переворачивает только уверенная смена.
+const SHORT_FLIP_SEC: f64 = 3.0;
+const SHORT_FLIP_MARGIN: f64 = 0.06;
+
+struct ChannelNeighbor {
+    speaker: String,
+    end: f64,
+    embedding: Vec<f64>,
+    matched: bool,
+}
 
 fn nearest_anonymous<'a>(
     infos: &'a [SpeakerInfo],
@@ -33,7 +52,72 @@ fn nearest_anonymous<'a>(
         .map(|(name, _)| name)
 }
 
-fn contradicts(embedding: &[f64], assigned: &str, profiles: &[SpeakerProfile]) -> bool {
+fn adopt_short_between_matched_neighbors(
+    utterances: &mut [Utterance],
+    infos: &[SpeakerInfo],
+    changed: &HashSet<String>,
+) -> usize {
+    let matched: HashSet<&str> = infos
+        .iter()
+        .filter(|info| info.matched)
+        .map(|info| info.name.as_str())
+        .collect();
+    let mut adopted = 0;
+    for index in 0..utterances.len() {
+        let (start, end, channel) = {
+            let current = &utterances[index];
+            (current.start, current.end, current.channel)
+        };
+        if end - start >= MIN_VERIFY_SEC {
+            continue;
+        }
+        let own = utterances[index].speaker.clone();
+        let prev = utterances[..index]
+            .iter()
+            .rev()
+            .find(|u| u.channel == channel);
+        let next = utterances[index + 1..]
+            .iter()
+            .find(|u| u.channel == channel);
+        let Some(target) = prev
+            .zip(next)
+            .filter(|(prev, next)| {
+                prev.speaker == next.speaker
+                    && start - prev.end <= ADOPT_PAUSE_SEC
+                    && next.start - end <= ADOPT_PAUSE_SEC
+                    && matched.contains(prev.speaker.as_str())
+            })
+            .map(|(prev, _)| prev.speaker.clone())
+        else {
+            continue;
+        };
+        if own == target {
+            continue;
+        }
+        // Устойчивая собственная matched-карточка — акустическое свидетельство кластера;
+        // соседи перетягивают только карточку-микс, покинутую проверенными голосами.
+        if matched.contains(own.as_str()) && !changed.contains(&own) {
+            continue;
+        }
+        utterances[index].speaker = target;
+        utterances[index].silhouette = 0.0;
+        adopted += 1;
+    }
+    adopted
+}
+
+fn chain_inherit(prev: &ChannelNeighbor, utterance: &Utterance, embedding: &[f64]) -> bool {
+    prev.matched
+        && utterance.start - prev.end <= CHAIN_PAUSE_SEC
+        && cosine_similarity(&prev.embedding, embedding) >= CHAIN_MIN_SIM
+}
+
+fn contradicts(
+    embedding: &[f64],
+    assigned: &str,
+    profiles: &[SpeakerProfile],
+    flip_margin: f64,
+) -> bool {
     let Some(profile) = profiles.iter().find(|profile| profile.name == assigned) else {
         return false;
     };
@@ -42,7 +126,7 @@ fn contradicts(embedding: &[f64], assigned: &str, profiles: &[SpeakerProfile]) -
         .iter()
         .map(|profile| score_speaker_similarity(embedding, profile))
         .fold(own, f64::max);
-    own < mr_ml::DEFAULT_MATCH_THRESHOLD || best - own >= mr_ml::DEFAULT_MIN_MARGIN
+    own < mr_ml::DEFAULT_MATCH_THRESHOLD || best - own >= flip_margin
 }
 
 pub(super) fn run(
@@ -61,20 +145,25 @@ pub(super) fn run(
     let mut changed = HashSet::new();
     let mut next_unknown = 1;
     let mut reassigned = 0;
+    let mut chained = 0;
     let mut failures = 0;
+    let mut last_on_channel: HashMap<usize, ChannelNeighbor> = HashMap::new();
     for utterance in utterances.iter_mut() {
-        let Some(info) = infos
-            .iter()
-            .find(|info| info.name == utterance.speaker && info.matched)
-        else {
-            continue;
-        };
         let Some(channel) = utterance
             .channel
             .and_then(|channel| usize::try_from(channel).ok())
         else {
             continue;
         };
+        let chain_prev = last_on_channel
+            .get(&channel)
+            .filter(|prev| prev.matched && utterance.start - prev.end <= CHAIN_PAUSE_SEC);
+        let verify_card = infos
+            .iter()
+            .any(|info| info.name == utterance.speaker && info.matched);
+        if chain_prev.is_none() && !verify_card {
+            continue;
+        }
         let Some(samples) = channels.get(&channel) else {
             continue;
         };
@@ -101,56 +190,93 @@ pub(super) fn run(
                 continue;
             }
         };
-        if contradicts(&embedding, &utterance.speaker, profiles) {
-            let mut result = match_voiceprints_matrix(
-                std::slice::from_ref(&embedding),
-                profiles,
-                mr_ml::DEFAULT_MATCH_THRESHOLD,
-                mr_ml::DEFAULT_MIN_MARGIN,
-            );
-            let result = result.remove(0);
-            let name = result.name.clone().unwrap_or_else(|| {
-                if let Some(known) = nearest_anonymous(infos, &embedding, &utterance.speaker) {
-                    return known.to_string();
-                }
-                while names.contains(&format!("Собеседник {next_unknown}")) {
-                    next_unknown += 1;
-                }
-                let name = format!("Собеседник {next_unknown}");
-                next_unknown += 1;
-                name
-            });
-            if !names.contains(&name) {
-                let mut new_info = info.clone();
-                new_info.id = format!("verified_{}", infos.len());
-                new_info.name = name.clone();
-                new_info.channel = utterance.channel;
-                new_info.matched = result.matched;
-                new_info.matched_name = result.name;
-                new_info.matched_pack_id = result.pack_id;
-                new_info.matched_pack_name = result.pack_name;
-                new_info.similarity = result.similarity;
-                new_info.silhouette = 0.0;
-                new_info.candidates = result
-                    .candidates
-                    .into_iter()
-                    .map(|candidate| (candidate.name, candidate.similarity))
-                    .collect();
-                new_info.embedding = Some(embedding.clone());
-                new_info.samples.clear();
-                infos.push(new_info);
-                names.insert(name.clone());
+        let mut inherited = false;
+        if let Some(prev) = chain_prev.filter(|prev| chain_inherit(prev, utterance, &embedding)) {
+            inherited = true;
+            if utterance.speaker != prev.speaker {
+                changed.insert(std::mem::replace(
+                    &mut utterance.speaker,
+                    prev.speaker.clone(),
+                ));
+                utterance.silhouette = 0.0;
+                chained += 1;
             }
-            changed.insert(utterance.speaker.clone());
-            utterance.speaker = name;
-            utterance.silhouette = 0.0;
-            reassigned += 1;
+        } else if verify_card {
+            let flip_margin = if duration < SHORT_FLIP_SEC {
+                SHORT_FLIP_MARGIN
+            } else {
+                mr_ml::DEFAULT_MIN_MARGIN
+            };
+            if contradicts(&embedding, &utterance.speaker, profiles, flip_margin) {
+                let mut result = match_voiceprints_matrix(
+                    std::slice::from_ref(&embedding),
+                    profiles,
+                    mr_ml::DEFAULT_MATCH_THRESHOLD,
+                    mr_ml::DEFAULT_MIN_MARGIN,
+                );
+                let result = result.remove(0);
+                let name = result.name.clone().unwrap_or_else(|| {
+                    if let Some(known) = nearest_anonymous(infos, &embedding, &utterance.speaker) {
+                        return known.to_string();
+                    }
+                    while names.contains(&format!("Собеседник {next_unknown}")) {
+                        next_unknown += 1;
+                    }
+                    let name = format!("Собеседник {next_unknown}");
+                    next_unknown += 1;
+                    name
+                });
+                if !names.contains(&name) {
+                    let mut new_info = infos
+                        .iter()
+                        .find(|info| info.name == utterance.speaker && info.matched)
+                        .cloned()
+                        .expect("verify_card");
+                    new_info.id = format!("verified_{}", infos.len());
+                    new_info.name = name.clone();
+                    new_info.channel = utterance.channel;
+                    new_info.matched = result.matched;
+                    new_info.matched_name = result.name;
+                    new_info.matched_pack_id = result.pack_id;
+                    new_info.matched_pack_name = result.pack_name;
+                    new_info.similarity = result.similarity;
+                    new_info.silhouette = 0.0;
+                    new_info.candidates = result
+                        .candidates
+                        .into_iter()
+                        .map(|candidate| (candidate.name, candidate.similarity))
+                        .collect();
+                    new_info.embedding = Some(embedding.clone());
+                    new_info.samples.clear();
+                    infos.push(new_info);
+                    names.insert(name.clone());
+                }
+                changed.insert(utterance.speaker.clone());
+                utterance.speaker = name;
+                utterance.silhouette = 0.0;
+                reassigned += 1;
+            }
         }
-        verified
-            .entry(utterance.speaker.clone())
-            .or_default()
-            .push((embedding, duration));
+        if inherited || verify_card {
+            verified
+                .entry(utterance.speaker.clone())
+                .or_default()
+                .push((embedding.clone(), duration));
+        }
+        let matched = infos
+            .iter()
+            .any(|info| info.name == utterance.speaker && info.matched);
+        last_on_channel.insert(
+            channel,
+            ChannelNeighbor {
+                speaker: utterance.speaker.clone(),
+                end: utterance.end,
+                embedding,
+                matched,
+            },
+        );
     }
+    let adopted = adopt_short_between_matched_neighbors(utterances, infos, &changed);
     for info in infos.iter_mut() {
         if let Some(points) = verified.remove(&info.name) {
             let (vectors, weights): (Vec<_>, Vec<_>) = points.into_iter().unzip();
@@ -190,7 +316,14 @@ pub(super) fn run(
             .collect();
         info.samples = pick_samples(&members, 3);
     }
-    log::debug!(target: "diar", reassigned = reassigned, failures = failures; "ev=diar.verify_profiles");
+    log::debug!(
+        target: "diar",
+        reassigned = reassigned,
+        chained = chained,
+        adopted = adopted,
+        failures = failures;
+        "ev=diar.verify_profiles"
+    );
 }
 
 #[cfg(test)]
@@ -212,20 +345,45 @@ mod tests {
     #[test]
     fn isolated_voice_can_contradict_its_named_cluster() {
         let profiles = vec![profile("A", 0.5), profile("B", 0.8)];
-        assert!(contradicts(&[1.0, 0.0], "A", &profiles));
-        assert!(!contradicts(&[1.0, 0.0], "B", &profiles));
+        assert!(contradicts(
+            &[1.0, 0.0],
+            "A",
+            &profiles,
+            mr_ml::DEFAULT_MIN_MARGIN
+        ));
+        assert!(!contradicts(
+            &[1.0, 0.0],
+            "B",
+            &profiles,
+            mr_ml::DEFAULT_MIN_MARGIN
+        ));
     }
 
     #[test]
     fn close_scores_and_missing_profiles_do_not_force_relabeling() {
         let profiles = vec![profile("A", 0.70), profile("B", 0.71)];
-        assert!(!contradicts(&[1.0, 0.0], "A", &profiles));
-        assert!(!contradicts(&[1.0, 0.0], "C", &profiles));
+        assert!(!contradicts(
+            &[1.0, 0.0],
+            "A",
+            &profiles,
+            mr_ml::DEFAULT_MIN_MARGIN
+        ));
+        assert!(!contradicts(
+            &[1.0, 0.0],
+            "C",
+            &profiles,
+            mr_ml::DEFAULT_MIN_MARGIN
+        ));
     }
 
     #[test]
     fn unsupported_cluster_identity_is_rejected() {
-        assert!(contradicts(&[1.0, 0.0], "A", &[profile("A", 0.2)]));
+        assert!(contradicts(
+            &[1.0, 0.0],
+            "A",
+            &[profile("A", 0.2)],
+            mr_ml::DEFAULT_MIN_MARGIN
+        ));
     }
     #[test]
     fn ambiguous_alternative_is_not_forced_into_a_profile() {
@@ -237,7 +395,12 @@ mod tests {
             profile("E", 0.49),
         ];
         let query = vec![1.0, 0.0];
-        assert!(contradicts(&query, "A", &profiles));
+        assert!(contradicts(
+            &query,
+            "A",
+            &profiles,
+            mr_ml::DEFAULT_MIN_MARGIN
+        ));
         let result = match_voiceprints_matrix(
             &[query],
             &profiles,
@@ -286,6 +449,152 @@ mod tests {
             nearest_anonymous(&infos, &[1.0, 0.0, 0.0], "Собеседник 1"),
             None
         );
+    }
+
+    fn utterance(start: f64, end: f64, speaker: &str) -> Utterance {
+        Utterance {
+            start,
+            end,
+            speaker: speaker.to_string(),
+            channel: Some(0),
+            text: String::new(),
+            diarized: true,
+            silhouette: 0.5,
+            words: vec![],
+            ctc_used: false,
+        }
+    }
+
+    fn neighbor(speaker: &str, end: f64, matched: bool) -> ChannelNeighbor {
+        ChannelNeighbor {
+            speaker: speaker.to_string(),
+            end,
+            embedding: vec![1.0, 0.0],
+            matched,
+        }
+    }
+
+    #[test]
+    fn continuation_chain_inherits_previous_matched_card() {
+        let prev = neighbor("A", 10.0, true);
+        let current = utterance(11.0, 13.0, "Собеседник 1");
+        assert!(chain_inherit(&prev, &current, &[0.8, 0.6]));
+        assert!(!chain_inherit(
+            &neighbor("A", 10.0, false),
+            &current,
+            &[0.8, 0.6]
+        ));
+    }
+
+    #[test]
+    fn continuation_chain_rejects_different_voice() {
+        let prev = neighbor("A", 10.0, true);
+        let current = utterance(11.0, 13.0, "Собеседник 1");
+        let other = [0.3, 0.91f64.sqrt()];
+        assert!(cosine_similarity(&[1.0, 0.0], &other) < CHAIN_MIN_SIM);
+        assert!(!chain_inherit(&prev, &current, &other));
+    }
+
+    #[test]
+    fn continuation_chain_rejects_long_pause() {
+        let prev = neighbor("A", 10.0, true);
+        let current = utterance(13.0, 15.0, "Собеседник 1");
+        assert!(!chain_inherit(&prev, &current, &[1.0, 0.0]));
+    }
+
+    #[test]
+    fn short_utterance_is_adopted_by_agreeing_neighbors() {
+        let mut utterances = vec![
+            utterance(0.0, 2.0, "A"),
+            utterance(2.5, 3.5, "B"),
+            utterance(3.18, 4.09, "Микс"),
+            utterance(5.64, 7.5, "A"),
+        ];
+        utterances[1].channel = Some(1);
+        let infos = vec![info("A", true, vec![1.0, 0.0, 0.0])];
+        let adopted =
+            adopt_short_between_matched_neighbors(&mut utterances, &infos, &HashSet::new());
+        assert_eq!(adopted, 1);
+        assert_eq!(utterances[2].speaker, "A");
+        assert_eq!(utterances[2].silhouette, 0.0);
+    }
+
+    #[test]
+    fn disagreeing_neighbors_do_not_adopt_short_utterance() {
+        let mut different_cards = vec![
+            utterance(0.0, 2.0, "A"),
+            utterance(3.0, 3.8, "Микс"),
+            utterance(5.0, 7.0, "B"),
+        ];
+        let matched_both = vec![
+            info("A", true, vec![1.0, 0.0, 0.0]),
+            info("B", true, vec![0.0, 1.0, 0.0]),
+        ];
+        assert_eq!(
+            adopt_short_between_matched_neighbors(
+                &mut different_cards,
+                &matched_both,
+                &HashSet::new()
+            ),
+            0
+        );
+        assert_eq!(different_cards[1].speaker, "Микс");
+
+        let mut unmatched = vec![
+            utterance(0.0, 2.0, "A"),
+            utterance(3.0, 3.8, "Микс"),
+            utterance(5.0, 7.0, "A"),
+        ];
+        let anon = vec![info("A", false, vec![1.0, 0.0, 0.0])];
+        assert_eq!(
+            adopt_short_between_matched_neighbors(&mut unmatched, &anon, &HashSet::new()),
+            0
+        );
+        assert_eq!(unmatched[1].speaker, "Микс");
+    }
+
+    #[test]
+    fn abandoned_mix_card_is_adopted_but_stable_matched_card_is_not() {
+        let mut utterances = vec![
+            utterance(0.0, 2.0, "B"),
+            utterance(3.0, 3.8, "Микс"),
+            utterance(5.0, 7.0, "B"),
+        ];
+        let infos = vec![
+            info("B", true, vec![1.0, 0.0, 0.0]),
+            info("Микс", true, vec![0.0, 1.0, 0.0]),
+        ];
+        let abandoned = HashSet::from(["Микс".to_string()]);
+        assert_eq!(
+            adopt_short_between_matched_neighbors(&mut utterances, &infos, &abandoned),
+            1
+        );
+        assert_eq!(utterances[1].speaker, "B");
+
+        let mut stable = vec![
+            utterance(0.0, 2.0, "B"),
+            utterance(3.0, 3.8, "Микс"),
+            utterance(5.0, 7.0, "B"),
+        ];
+        assert_eq!(
+            adopt_short_between_matched_neighbors(&mut stable, &infos, &HashSet::new()),
+            0
+        );
+        assert_eq!(stable[1].speaker, "Микс");
+    }
+
+    #[test]
+    fn short_utterance_flip_requires_wide_margin() {
+        let noisy = vec![profile("A", 0.5), profile("B", 0.5289)];
+        assert!(!contradicts(&[1.0, 0.0], "A", &noisy, SHORT_FLIP_MARGIN));
+        assert!(contradicts(
+            &[1.0, 0.0],
+            "A",
+            &noisy,
+            mr_ml::DEFAULT_MIN_MARGIN
+        ));
+        let real_flip = vec![profile("A", 0.5), profile("B", 0.8)];
+        assert!(contradicts(&[1.0, 0.0], "A", &real_flip, SHORT_FLIP_MARGIN));
     }
 
     #[test]

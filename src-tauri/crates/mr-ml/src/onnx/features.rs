@@ -650,9 +650,9 @@ pub fn wespeaker_fbank(samples: &[f32]) -> Vec<Vec<f32>> {
 /// ERes2NetV2/CAM++ (3D-Speaker) fbank [frames × 80] + CMN: кухня
 /// `torchaudio.compliance.kaldi.fbank` (hann, преэмфасис и DC-смещение покадрово)
 /// и mean-нормализация из `speakerlab.process.postprocess.FBank`.
-/// Масштаб waveform ×2^15 схлопывается в CMN-константу.
 pub fn eres2netv2_fbank(samples: &[f32]) -> Vec<Vec<f32>> {
-    let mut frames = log_mel_frames(samples, ERES2NETV2_FRONTEND);
+    let pcm16: Vec<f32> = samples.iter().map(|sample| sample * 32768.0).collect();
+    let mut frames = log_mel_frames(&pcm16, ERES2NETV2_FRONTEND);
     cmn(&mut frames);
     frames
 }

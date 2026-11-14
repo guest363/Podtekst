@@ -157,6 +157,12 @@ def _fallback_ratio(rows: list[dict], numerator: str, denominator: str, key: str
 
 
 def aggregate(rows: list[dict]) -> dict:
+    cpwer_versions = {
+        row.get("cpwer_version") or "legacy-global-v1"
+        for row in rows if _value(row, "cpWER") is not None
+    }
+    if len(cpwer_versions) > 1:
+        raise ValueError("нельзя агрегировать разные версии cpWER")
     durations = [value for row in rows if (value := _value(row, "duration")) is not None]
     rtf_values = [
         value
@@ -181,6 +187,7 @@ def aggregate(rows: list[dict]) -> dict:
         "SCA": _mean(rows, "SCA"),
         "MAE": _mean(rows, "MAE"),
         "cpWER": _fallback_ratio(rows, "cpwer_errors", "cpwer_ref_words", "cpWER"),
+        "cpwer_version": next(iter(cpwer_versions), None),
         "attribution": attribution,
         "rtf_p50": _percentile(rtf_values, 50),
         "rtf_p95": _percentile(rtf_values, 95),
@@ -301,7 +308,12 @@ def compare_baseline(groups: dict[str, dict], baseline: dict[str, dict]) -> list
                     }
                 )
                 continue
-            delta, status = _status(metric, base, current_value)
+            if (metric == "cpWER" and
+                    (item.get("cpwer_version") or "legacy-global-v1") !=
+                    (current.get("cpwer_version") or "legacy-global-v1")):
+                delta, status = "—", "разные версии cpWER"
+            else:
+                delta, status = _status(metric, base, current_value)
             comparisons.append(
                 {
                     "group": group,
@@ -353,6 +365,10 @@ def render(
     ]
     if overall["failed"] or overall["errors"]:
         lines.extend(["", "**В прогоне есть сбои или ошибки — см. раздел «Ошибки».**"])
+    if overall["cpwer_version"]:
+        lines.append(f"- Версия cpWER: `{overall['cpwer_version']}`.")
+        if overall["cpwer_version"] == "legacy-global-v1":
+            lines.extend(["", "**Старый cpWER допускает выравнивание между спикерами; числа требуют пересчёта.**"])
     lines.extend(["", "## По наборам", ""])
 
     header = [
@@ -505,7 +521,7 @@ def render(
             "",
             "## Ограничения",
             "",
-            "- cpWER перебирает перестановки до 8 спикеров.",
+            "- cpWER v2 минимизирует сумму ошибок по отдельным потокам спикеров; лимит 8 спикеров.",
             "- Attribution accuracy требует эталонный текст с метками спикеров.",
             "- RTF p50/p95 включает все успешные файлы; прогрев отдельно не исключается.",
             "- Peak RSS снят через `/usr/bin/time -v`, если он доступен.",

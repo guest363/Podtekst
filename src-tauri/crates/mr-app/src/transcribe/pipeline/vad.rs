@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -23,6 +24,18 @@ pub(super) struct VadOutput {
     pub(super) channel_vad: HashMap<usize, Vec<f32>>,
     pub(super) channel_grouped: HashMap<usize, Vec<(f64, f64)>>,
     pub(super) echo: Option<EchoEvidence>,
+}
+
+fn combine_probabilities(original: &[f32], normalized: &[f32]) -> Vec<f32> {
+    (0..original.len().max(normalized.len()))
+        .map(|index| {
+            original
+                .get(index)
+                .copied()
+                .unwrap_or(0.0)
+                .max(normalized.get(index).copied().unwrap_or(0.0))
+        })
+        .collect()
 }
 
 fn filter_echo_segments(
@@ -71,7 +84,8 @@ fn filter_echo_segments(
 }
 
 pub(super) fn run(
-    channel_samples: &HashMap<usize, Vec<f32>>,
+    channel_samples: &HashMap<usize, Cow<'_, [f32]>>,
+    original_samples: &HashMap<usize, Vec<f32>>,
     chan_list: &[(usize, String)],
     is_stereo: bool,
     vad: &mut SileroVad,
@@ -98,21 +112,58 @@ pub(super) fn run(
             min_silence_sec = VAD_MIN_SILENCE_SEC;
             "ev=vad.start"
         );
-        let (probs, stats) = vad
-            .process_all_with_stats(samples, |done, total| {
-                let pct = (base + span * done as f64 / total.max(1) as f64) as u8;
-                on_event(
-                    pct.clamp(6, 14),
-                    &format!("Поиск речи ({label}): {done} из {total} окон"),
-                );
-            })
-            .map_err(|e| format!("VAD: {e}"))?;
+        let original = &original_samples[ch];
+        let original_windows = original.len().div_ceil(VAD_WINDOW);
+        let normalized = original.as_slice() != &samples[..];
+        let total_windows = original_windows + if normalized { windows } else { 0 };
+        let progress = |done: usize| {
+            let pct = (base + span * done as f64 / total_windows.max(1) as f64) as u8;
+            on_event(
+                pct.clamp(6, 14),
+                &format!("Поиск речи ({label}): {done} из {total_windows} окон"),
+            );
+        };
+        let (original_probs, original_stats) = vad
+            .process_all_with_stats(original, |done, _| progress(done))
+            .map_err(|e| format!("VAD (исходный звук): {e}"))?;
+        write_pass(*ch, "raw", &original_probs, None);
+        let (probs, stats, raw_rescued, new_norm_speech) = if normalized {
+            let (normalized_probs, stats) = vad
+                .process_all_with_stats(samples, |done, _| progress(original_windows + done))
+                .map_err(|e| format!("VAD (нормализованный звук): {e}"))?;
+            write_pass(*ch, "frontend", &normalized_probs, None);
+            let probs = combine_probabilities(&original_probs, &normalized_probs);
+            let mut raw_rescued = 0;
+            let mut new_norm_speech = 0;
+            for index in 0..probs.len() {
+                let raw = original_probs
+                    .get(index)
+                    .is_some_and(|&prob| prob >= VAD_THRESHOLD);
+                let normalized = normalized_probs
+                    .get(index)
+                    .is_some_and(|&prob| prob >= VAD_THRESHOLD);
+                raw_rescued += usize::from(raw && !normalized);
+                new_norm_speech += usize::from(normalized && !raw);
+            }
+            (probs, stats, raw_rescued, new_norm_speech)
+        } else {
+            write_pass(*ch, "frontend", &original_probs, Some("raw"));
+            (original_probs, original_stats, 0, 0)
+        };
+        log::debug!(
+            target: "vad",
+            ch = *ch as i64,
+            normalized = normalized,
+            raw_rescued = raw_rescued,
+            new_norm_speech = new_norm_speech;
+            "ev=vad.frontend"
+        );
         channel_vad_stats.insert(*ch, stats);
         channel_vad.insert(*ch, probs);
     }
     let mut evidence: Option<EchoEvidence> = None;
     if is_stereo {
-        if let (Some(mic), Some(system)) = (channel_samples.get(&0), channel_samples.get(&1)) {
+        if let (Some(mic), Some(system)) = (original_samples.get(&0), original_samples.get(&1)) {
             let mic_probs = channel_vad.get(&0).map(Vec::as_slice);
             let detected = channel_mix::classify_echo(mic, system, mic_probs);
             if let Some(echo) = detected.filter(EchoEvidence::is_strong) {
@@ -158,10 +209,8 @@ pub(super) fn run(
             }
         }
     }
-    for (ch_i, (ch, label)) in chan_list.iter().enumerate() {
-        let samples = &channel_samples[ch];
-        let base = 6.0 + 8.0 * ch_i as f64 / channel_count;
-        let span = 8.0 / channel_count;
+    for (ch, label) in chan_list {
+        let samples = &original_samples[ch];
         let probs = &channel_vad[ch];
         let stats = channel_vad_stats.get(ch).copied().unwrap_or_default();
         let mut segs = log_vad_summary(*ch as i32, probs, stats);
@@ -178,7 +227,7 @@ pub(super) fn run(
             *ch as i32,
             if *ch == 0 { evidence.as_ref() } else { None },
             if *ch == 0 {
-                channel_samples.get(&1).map(Vec::as_slice)
+                original_samples.get(&1).map(Vec::as_slice)
             } else {
                 None
             },
@@ -195,7 +244,7 @@ pub(super) fn run(
             );
         }
         on_event(
-            (base + span) as u8,
+            14,
             &format!("{label}: найдено {} фрагментов", grouped.len()),
         );
         channel_grouped.insert(
@@ -212,6 +261,23 @@ pub(super) fn run(
         channel_grouped,
         echo: evidence,
     })
+}
+
+fn write_pass(
+    channel: usize,
+    pass: &'static str,
+    probabilities: &[f32],
+    reused_from: Option<&str>,
+) {
+    if !cfg!(debug_assertions) || !crate::logging::dump_enabled() {
+        return;
+    }
+    crate::logging::write_artifact_f32(&format!("vad/ch{channel}.{pass}.probs.f32"), probabilities);
+    let segments = super::super::diag::speech_segments(probabilities);
+    crate::logging::write_artifact_json(
+        &format!("vad/ch{channel}.{pass}.segments.json"),
+        &serde_json::json!({"segments": segments, "reused_from": reused_from}),
+    );
 }
 
 #[cfg(test)]
@@ -243,6 +309,20 @@ mod tests {
             residual: vec![0.0; n],
             frames,
         }
+    }
+
+    #[test]
+    fn combined_frames_retain_raw_and_find_quiet_normalized_speech() {
+        assert_eq!(
+            combine_probabilities(&[0.8, 0.4, 0.1, 0.7], &[0.2, 0.95, 0.05, 0.3]),
+            vec![0.8, 0.95, 0.1, 0.7]
+        );
+    }
+
+    #[test]
+    fn combined_frames_preserve_either_mismatched_tail() {
+        assert_eq!(combine_probabilities(&[0.8, 0.7], &[0.2]), vec![0.8, 0.7]);
+        assert_eq!(combine_probabilities(&[0.2], &[0.8, 0.7]), vec![0.8, 0.7]);
     }
 
     #[test]

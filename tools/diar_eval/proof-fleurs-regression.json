@@ -1,0 +1,80 @@
+{
+  "schema": 1,
+  "source": "https://simran-khanuja.github.io/assets/fleurs_slt.pdf",
+  "languages": {
+    "ru_ru": {
+      "tsv_sha256": "cd54f261220f49afbb4c128633a737eca4a22f6c0a8233d3cc891478d06676e6",
+      "selected": [
+        {
+          "source_id": "1784070041613537314.wav",
+          "sentence_id": "1689",
+          "gender": "MALE",
+          "file": "00.wav",
+          "sha256": "1ddd2d195f4718e9b0621f4fa05fafed6f883f6bf4edb03274ea5e54315fa042",
+          "text_sha256": "2db223f2ef250223a4a87af4bfab6dd63a5946bf3e8e442a2953c490ab2000c2"
+        },
+        {
+          "source_id": "4293873698682801263.wav",
+          "sentence_id": "1689",
+          "gender": "MALE",
+          "file": "01.wav",
+          "sha256": "8c3684c903610668117050c432279f9a4c3915bdff7d65bdec2a35d092ab5048",
+          "text_sha256": "2db223f2ef250223a4a87af4bfab6dd63a5946bf3e8e442a2953c490ab2000c2"
+        },
+        {
+          "source_id": "5033446029004251954.wav",
+          "sentence_id": "1689",
+          "gender": "MALE",
+          "file": "02.wav",
+          "sha256": "ee777afb35609fdf1c37e13def251bf7000ef736598ecf0582d7d561941868c0",
+          "text_sha256": "2db223f2ef250223a4a87af4bfab6dd63a5946bf3e8e442a2953c490ab2000c2"
+        },
+        {
+          "source_id": "18164877222687576661.wav",
+          "sentence_id": "1660",
+          "gender": "FEMALE",
+          "file": "03.wav",
+          "sha256": "bfe6fde5c41e1797ebb77d588282ef48de37053e66726954e3d5ba84b610182d",
+          "text_sha256": "8e36af0a63eb984c7f3af7b5969496cd17f91c0994349070637cd4b193c1f38a"
+        }
+      ]
+    },
+    "en_us": {
+      "tsv_sha256": "74c046239374deeb60fa63f258f907388093a32bcaa3140965f70ef05c79f7ca",
+      "selected": [
+        {
+          "source_id": "12742373433258665797.wav",
+          "sentence_id": "1660",
+          "gender": "FEMALE",
+          "file": "00.wav",
+          "sha256": "f17abcd4a9abded45086642ab68174b5447b6e73dcb2c0fcf6a9b1f5e788688c",
+          "text_sha256": "0a5e4c25e0f95b70f6aecfc25dd3652466046e596ee6b1b805f9cf36649380db"
+        },
+        {
+          "source_id": "9327483361259434782.wav",
+          "sentence_id": "1660",
+          "gender": "FEMALE",
+          "file": "01.wav",
+          "sha256": "88f28c3e1657c4164ed4457ec7d08595a937d4ffc618b4f56841d820603232f2",
+          "text_sha256": "0a5e4c25e0f95b70f6aecfc25dd3652466046e596ee6b1b805f9cf36649380db"
+        },
+        {
+          "source_id": "10614481583312370701.wav",
+          "sentence_id": "1662",
+          "gender": "MALE",
+          "file": "02.wav",
+          "sha256": "0f92f2bed63210286148e6947faf7ca90bb635ec7525bcb7f48bdedfe79b425d",
+          "text_sha256": "e610af57a43aea7c5089684ed98e0ea2af792029bffa836621a772fec9f25516"
+        },
+        {
+          "source_id": "7378917572989533960.wav",
+          "sentence_id": "1662",
+          "gender": "MALE",
+          "file": "03.wav",
+          "sha256": "ac2ae4691326457aca5400a6b903fe88b71dd2b588dfd9f3d221035a9415ce43",
+          "text_sha256": "e610af57a43aea7c5089684ed98e0ea2af792029bffa836621a772fec9f25516"
+        }
+      ]
+    }
+  }
+}

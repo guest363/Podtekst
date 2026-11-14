@@ -17,6 +17,8 @@ use super::report;
 use super::{TranscribeOptions, TranscribeReport};
 
 mod asr;
+mod geometry;
+mod level;
 mod speakers;
 mod vad;
 
@@ -52,7 +54,10 @@ pub fn transcribe_file(
         dirty = option_env!("PODTEKST_GIT_DIRTY").unwrap_or("unknown");
         "ev=run.start"
     );
-    let result = transcribe_file_inner(audio_path, opts, on_event);
+    let result = super::experiment::initialize().and_then(|experiment| {
+        experiment.record();
+        transcribe_file_inner(audio_path, opts, on_event)
+    });
     match &result {
         Ok(report) => {
             let json_bytes = std::fs::metadata(&report.json_path)
@@ -311,8 +316,16 @@ fn transcribe_file_inner(
         .filter(|(i, _)| chan_list.iter().any(|(ch, _)| ch == i))
         .collect();
 
+    let diarization_samples = level::diarization_channels(&channel_samples);
     let vad = models.ensure_vad()?;
-    let vad_output = vad::run(&channel_samples, &chan_list, is_stereo, vad, on_event)?;
+    let vad_output = vad::run(
+        &diarization_samples,
+        &channel_samples,
+        &chan_list,
+        is_stereo,
+        vad,
+        on_event,
+    )?;
     let channel_vad = vad_output.channel_vad;
     let channel_grouped = vad_output.channel_grouped;
     let echo = vad_output.echo;
@@ -327,6 +340,7 @@ fn transcribe_file_inner(
     )?;
     let (mut speakers_info, mut merged, speakers) = speakers::run(speakers::Input {
         channel_samples: &channel_samples,
+        frontend_samples: &diarization_samples,
         chan_list: &chan_list,
         channel_vad: &channel_vad,
         channel_utts,
