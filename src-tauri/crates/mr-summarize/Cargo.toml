@@ -1,6 +1,6 @@
 [package]
 name = "mr-summarize"
-version = "0.7.5"
+version = "0.7.6"
 edition = "2021"
 rust-version = "1.92"
 description = "Доменный крейт локальных итогов: шаблоны, эвристика, парсер, заземление, артефакт"
