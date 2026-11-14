@@ -490,7 +490,10 @@ mod tests {
         le16(&mut wav, 0x0011); // WAVE_FORMAT_IMA_ADPCM
         le16(&mut wav, 1);
         le32(&mut wav, 22_050);
-        le32(&mut wav, 22_050 * u32::from(block_align) / u32::from(samples_per_block));
+        le32(
+            &mut wav,
+            22_050 * u32::from(block_align) / u32::from(samples_per_block),
+        );
         le16(&mut wav, block_align);
         le16(&mut wav, 4);
         le16(&mut wav, 2);
