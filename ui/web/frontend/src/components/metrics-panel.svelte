@@ -19,22 +19,13 @@ const pluralTurns = (n: number): string => {
   return 'реплик'
 }
 
-const pluralParticipants = (n: number): string => {
+const pluralWords = (n: number): string => {
   const rem10 = n % 10
   const rem100 = n % 100
-  if (rem100 >= 11 && rem100 <= 19) return 'участников'
-  if (rem10 === 1) return 'участник'
-  if (rem10 >= 2 && rem10 <= 4) return 'участника'
-  return 'участников'
-}
-
-const pluralTimes = (n: number): string => {
-  const rem10 = n % 10
-  const rem100 = n % 100
-  if (rem100 >= 11 && rem100 <= 19) return 'раз'
-  if (rem10 === 1) return 'раз'
-  if (rem10 >= 2 && rem10 <= 4) return 'раза'
-  return 'раз'
+  if (rem100 >= 11 && rem100 <= 19) return 'слов'
+  if (rem10 === 1) return 'слово'
+  if (rem10 >= 2 && rem10 <= 4) return 'слова'
+  return 'слов'
 }
 
 const fmtSpan = (sec: number | null): string => {
@@ -140,29 +131,23 @@ const participants = $derived.by(() =>
         line.push(`монолог ${fmtSpan(group.maxMonologue)}`)
       }
       if (good && group.speech > 0) {
-        line.push(`${Math.round((group.words / group.speech) * 60)} слов в минуту`)
-      }
-      const interrupts: string[] = []
-      if (group.interruptions > 0) {
-        interrupts.push(`перебил ${group.interruptions} ${pluralTimes(group.interruptions)}`)
-      }
-      if (group.suffered > 0) {
-        interrupts.push(`его перебили ${group.suffered} ${pluralTimes(group.suffered)}`)
+        line.push(
+          `${Math.round((group.words / group.speech) * 60)} ${pluralWords(Math.round((group.words / group.speech) * 60))} в минуту`,
+        )
       }
       return {
         key: group.name,
         name: group.name,
         sharePct: Math.round(group.share * 100),
         color: speakerColor(group.name),
-        meta: [line.join(' · '), interrupts.join(' · ')].filter(Boolean),
+        meta: line.join(' · '),
       }
     }),
 )
 
-const hiddenSpeakers = $derived(grouped.length - participants.length)
 const evenShare = $derived(participants.length > 0 ? 100 / participants.length : 0)
 
-type Row = { key: string; label: string; value: string; hint?: string; seek?: number }
+type Row = { key: string; label: string; value: string; seek?: number }
 
 const rhythmRows = $derived.by((): Row[] => {
   if (!metrics) return []
@@ -172,7 +157,6 @@ const rhythmRows = $derived.by((): Row[] => {
       key: 'turn',
       label: 'Типичная реплика',
       value: fmtSpan(metrics.totals.turn_sec_median),
-      hint: 'Половина реплик короче, половина длиннее.',
     })
   }
   if (metrics.navigation.longest_monologue) {
@@ -185,15 +169,9 @@ const rhythmRows = $derived.by((): Row[] => {
     })
   }
   rows.push({
-    key: 'monologues',
-    label: 'Монологи от 30 секунд',
-    value: String(metrics.totals.monologues_over_30s),
-  })
-  rows.push({
     key: 'interruptions',
     label: 'Перебивания',
     value: `${metrics.totals.interruptions}, из них ${metrics.totals.interruptions_successful} удались`,
-    hint: 'Участники начинали говорить, пока другой не закончил. Если первый сразу замолкал, перебивание удалось.',
   })
   if (metrics.totals.response_latency_ms_median !== null) {
     rows.push({
@@ -315,7 +293,10 @@ const statusText = $derived(
 )
 
 const glossary: Array<[string, string]> = [
-  ['Доля речи', 'Сколько времени из всей речи занял участник. Это не оценка вклада.'],
+  [
+    'Доля речи',
+    'Сколько времени из всей речи занял участник. Отметка на полосе показывает равную долю. Это не оценка вклада.',
+  ],
   ['Типичная реплика', 'Половина реплик короче, половина длиннее.'],
   ['Монолог', 'Непрерывная речь одного участника. Пауза до 1,5 секунды её не прерывает.'],
   [
@@ -362,9 +343,6 @@ const glossary: Array<[string, string]> = [
         <span class="metrics-value">{item.value}</span>
       {/if}
     </div>
-    {#if item.hint}
-      <p class="metrics-hint">{item.hint}</p>
-    {/if}
   </div>
 {/snippet}
 
@@ -374,7 +352,7 @@ const glossary: Array<[string, string]> = [
     <p class="metrics-loading">Считаем метрики встречи.</p>
   {:else if !metrics}
     <p class="metrics-empty">
-      {error ? 'Не удалось посчитать метрики. Попробуйте ещё раз.' : 'Для этой записи метрики недоступны.'}
+      {error ? 'Не удалось посчитать метрики. Откройте запись заново.' : 'Для этой записи метрики недоступны.'}
     </p>
   {:else}
     <div class="metrics-stats">
@@ -396,9 +374,6 @@ const glossary: Array<[string, string]> = [
       </div>
     </div>
 
-    <p class="metrics-note">
-      Метрики описывают, как звучала встреча, и не оценивают участников.
-    </p>
     <p class="metrics-quality-line" class:is-bad={!good}>Качество записи: {gradeText}</p>
 
     <details class="metrics-glossary">
@@ -429,23 +404,10 @@ const glossary: Array<[string, string]> = [
                   <span class="participant-even" style={`left: ${evenShare}%`}></span>
                 {/if}
               </div>
-              {#each person.meta as line}
-                <div class="participant-meta">{line}</div>
-              {/each}
+              <div class="participant-meta">{person.meta}</div>
             </div>
           {/each}
         </div>
-        {#if participants.length > 1}
-          <p class="metrics-footnote" title="Если бы все говорили одинаково долго.">
-            Поровну: {Math.round(evenShare)} %.
-          </p>
-        {/if}
-        {#if hiddenSpeakers > 0}
-          <p class="metrics-footnote">
-            Ещё {hiddenSpeakers} {pluralParticipants(hiddenSpeakers)}
-            {hiddenSpeakers === 1 ? 'говорил' : 'говорили'} меньше 0,5 % времени.
-          </p>
-        {/if}
       </div>
     {/if}
 
@@ -494,10 +456,16 @@ const glossary: Array<[string, string]> = [
     </div>
 
     <div class="metrics-section">
-      <h3 class="metrics-heading">Качество записи</h3>
-      {#each qualityRows as item (item.key)}
-        {@render row(item)}
-      {/each}
+      {#if qualityRows.length > 0}
+        <details class="metrics-quality-details">
+          <summary>Технические показатели</summary>
+          <div class="metrics-quality-list">
+            {#each qualityRows as item (item.key)}
+              {@render row(item)}
+            {/each}
+          </div>
+        </details>
+      {/if}
       {#if qualityWarnings.length > 0}
         <ul class="metrics-warnings" role="list">
           {#each qualityWarnings as warning (warning)}
@@ -532,7 +500,7 @@ const glossary: Array<[string, string]> = [
   .metrics-panel {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 8px;
     flex: 1;
     min-height: 0;
     overflow-y: auto;
@@ -558,8 +526,8 @@ const glossary: Array<[string, string]> = [
   .metrics-stats {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px 16px;
-    padding-bottom: 2px;
+    gap: 8px 16px;
+    padding-bottom: 0;
   }
 
   .metrics-stat {
@@ -570,7 +538,7 @@ const glossary: Array<[string, string]> = [
   }
 
   .metrics-stat-value {
-    font-size: 20px;
+    font-size: 18px;
     font-weight: 800;
     letter-spacing: -0.02em;
     line-height: 1.15;
@@ -579,13 +547,6 @@ const glossary: Array<[string, string]> = [
 
   .metrics-stat-label {
     font-size: 11px;
-    color: var(--text-muted);
-  }
-
-  .metrics-note {
-    margin: 0;
-    font-size: 11.5px;
-    line-height: 1.5;
     color: var(--text-muted);
   }
 
@@ -603,8 +564,8 @@ const glossary: Array<[string, string]> = [
   .metrics-section {
     display: flex;
     flex-direction: column;
-    gap: 7px;
-    padding-top: 12px;
+    gap: 6px;
+    padding-top: 8px;
     border-top: 1px solid var(--border-soft);
   }
 
@@ -619,7 +580,7 @@ const glossary: Array<[string, string]> = [
   .metrics-participants {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 9px;
   }
 
   .participant {
@@ -729,20 +690,6 @@ const glossary: Array<[string, string]> = [
     border-radius: 3px;
   }
 
-  .metrics-hint {
-    margin: 0;
-    font-size: 11.5px;
-    line-height: 1.4;
-    color: var(--text-muted);
-  }
-
-  .metrics-footnote {
-    margin: 0;
-    font-size: 11.5px;
-    line-height: 1.4;
-    color: var(--text-muted);
-  }
-
   .metrics-muted {
     margin: 0;
     font-size: 11.5px;
@@ -790,6 +737,30 @@ const glossary: Array<[string, string]> = [
     color: var(--text-muted);
   }
 
+  .metrics-quality-details {
+    font-size: 11.5px;
+    color: var(--text-muted);
+  }
+
+  .metrics-quality-details summary {
+    cursor: pointer;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  .metrics-quality-details summary:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  .metrics-quality-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+  }
+
   .metrics-warnings {
     display: flex;
     flex-direction: column;
@@ -819,8 +790,7 @@ const glossary: Array<[string, string]> = [
   }
 
   .metrics-glossary {
-    border-top: 1px solid var(--border-soft);
-    padding-top: 10px;
+    margin-top: -2px;
     font-size: 11.5px;
     color: var(--text-muted);
   }
