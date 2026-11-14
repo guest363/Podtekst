@@ -271,9 +271,11 @@ pub fn has_audio_track(path: &Path) -> bool {
         .map(|e| e.eq_ignore_ascii_case("wav"))
         .unwrap_or(false);
     if is_wav {
-        return hound::WavReader::open(path)
-            .map(|r| r.spec().channels > 0 && r.len() > 0)
-            .unwrap_or(false);
+        // hound читает только PCM: ADPCM/μ-law WAV от диктофонов он не открывает,
+        // и отказ hound не значит «дорожки нет» — решает symphonia-зонд ниже.
+        if let Ok(reader) = hound::WavReader::open(path) {
+            return reader.spec().channels > 0 && reader.len() > 0;
+        }
     }
 
     // Сначала пробуем нативный symphonia-зонд (MP3, M4A, OGG, FLAC, WAV, MP4 с AAC).
@@ -458,6 +460,69 @@ mod tests {
     fn decode_missing_file_errors() {
         assert!(decode_to_mono_16k(Path::new("/nonexistent-xyz/file.mp3")).is_err());
         assert!(decode_to_channels_16k(Path::new("/nonexistent-xyz/file.mp3")).is_err());
+    }
+
+    /// Диктофонные WAV пишутся в IMA ADPCM, который hound не открывает:
+    /// has_audio_track должен решать через symphonia-зонд, декодер — нативно.
+    #[test]
+    fn adpcm_wav_has_audio_and_decodes() {
+        let dir = std::env::temp_dir().join(format!(
+            "mr-adpcm-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("adpcm.wav");
+        let (block_align, samples_per_block, blocks) = (512u16, 1017u16, 3u16);
+        let le16 = |v: &mut Vec<u8>, x: u16| v.extend_from_slice(&x.to_le_bytes());
+        let le32 = |v: &mut Vec<u8>, x: u32| v.extend_from_slice(&x.to_le_bytes());
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        le32(
+            &mut wav,
+            4 + 8 + 20 + 8 + block_align as u32 * blocks as u32,
+        );
+        wav.extend_from_slice(b"WAVEfmt ");
+        le32(&mut wav, 20);
+        le16(&mut wav, 0x0011); // WAVE_FORMAT_IMA_ADPCM
+        le16(&mut wav, 1);
+        le32(&mut wav, 22_050);
+        le32(
+            &mut wav,
+            22_050 * u32::from(block_align) / u32::from(samples_per_block),
+        );
+        le16(&mut wav, block_align);
+        le16(&mut wav, 4);
+        le16(&mut wav, 2);
+        le16(&mut wav, samples_per_block);
+        wav.extend_from_slice(b"data");
+        le32(&mut wav, u32::from(block_align) * u32::from(blocks));
+        for _ in 0..blocks {
+            le16(&mut wav, 1000);
+            wav.push(0);
+            wav.push(20);
+            wav.extend(vec![0x77; block_align as usize - 4]);
+        }
+        std::fs::write(&path, &wav).unwrap();
+
+        assert!(has_audio_track(&path), "ADPCM WAV признан без аудио");
+        let chans = decode_to_channels_16k(&path).expect("декодирование IMA ADPCM");
+        assert_eq!(chans.len(), 1);
+        let n = chans[0].len();
+        let expected = blocks as usize * samples_per_block as usize * 16_000 / 22_050;
+        assert!(
+            (expected * 9 / 10..=expected * 11 / 10).contains(&n),
+            "ожидалось ~{expected} сэмплов @16кГц, получено {n}"
+        );
+        assert!(
+            chans[0].iter().any(|&x| x > 0.5),
+            "декодер выдал тишину вместо нарастающего тона"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Видео требует ffmpeg-извлечения: MKV symphonia не берёт, `auto` — берёт.
