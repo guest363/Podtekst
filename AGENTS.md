@@ -114,6 +114,7 @@ cd ui/web/frontend && yarn lint && yarn check && yarn build  # Фронт: Biome
 | Каталог и загрузка ИИ-моделей (манифест, SHA-256) | `src-tauri/crates/mr-models/AGENTS.md` |
 | Домен локальных итогов (шаблоны, эвристика, парсер, grounding) | `src-tauri/crates/mr-summarize/AGENTS.md` |
 | Голосовые пакеты, экспорт и импорт биометрии | `src-tauri/crates/mr-packs/AGENTS.md` |
+| Метрики речи (доли, монологи, F0, качество записи) | `src-tauri/crates/mr-metrics/AGENTS.md` |
 | Web UI (Svelte 5 + Vite + TS, собирает `run.sh`) | `ui/web/frontend/AGENTS.md` |
 | CI: тесты + бинарники + Tauri-бандлы | `.github/workflows/release.yml` |
 | Релизный цикл и публикация версий | `docs/RELEASING.md` |

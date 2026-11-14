@@ -1,5 +1,5 @@
 #[derive(Clone, Copy, Default)]
-pub(crate) struct Cx {
+pub struct Cx {
     pub re: f32,
     pub im: f32,
 }
@@ -9,21 +9,21 @@ impl Cx {
         Self { re, im }
     }
 
-    pub fn mul(self, o: Cx) -> Cx {
+    pub(crate) fn mul(self, o: Cx) -> Cx {
         Cx::new(
             self.re * o.re - self.im * o.im,
             self.re * o.im + self.im * o.re,
         )
     }
 
-    pub fn mul_conj(self, o: Cx) -> Cx {
+    pub(crate) fn mul_conj(self, o: Cx) -> Cx {
         Cx::new(
             self.re * o.re + self.im * o.im,
             self.im * o.re - self.re * o.im,
         )
     }
 
-    pub fn scale(self, s: f32) -> Cx {
+    pub(crate) fn scale(self, s: f32) -> Cx {
         Cx::new(self.re * s, self.im * s)
     }
 
@@ -32,7 +32,7 @@ impl Cx {
     }
 }
 
-pub(crate) fn transform(data: &mut [Cx], inverse: bool) {
+pub fn transform(data: &mut [Cx], inverse: bool) {
     let n = data.len();
     assert!(n.is_power_of_two() && n >= 2);
     let bits = n.trailing_zeros();
@@ -62,11 +62,11 @@ pub(crate) fn transform(data: &mut [Cx], inverse: bool) {
     }
 }
 
-pub(crate) fn fft(data: &mut [Cx]) {
+pub fn fft(data: &mut [Cx]) {
     transform(data, false);
 }
 
-pub(crate) fn ifft(data: &mut [Cx]) {
+pub fn ifft(data: &mut [Cx]) {
     let s = 1.0 / data.len() as f32;
     transform(data, true);
     for x in data.iter_mut() {

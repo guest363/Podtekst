@@ -15,6 +15,7 @@ mod ipc;
 mod journal;
 mod logging;
 mod media_registry;
+mod metrics;
 mod privacy;
 mod recording;
 pub(crate) mod screen;
@@ -891,6 +892,56 @@ mod live_api_tests {
         assert_eq!(v.get("ok").and_then(|x| x.as_bool()), Some(true));
         let saved_name = "тест звук.wav";
         assert!(rec.join(saved_name).exists(), "файл не сохранён на диск");
+
+        let (st, v) = json(http(
+            port,
+            "GET",
+            &format!("/api/transcript/metrics?file={fname_enc}"),
+            &[],
+            &[],
+        ));
+        assert_eq!(st, 404, "без расшифровки метрики должны давать 404");
+        assert!(v.get("error").is_some(), "нет текста ошибки: {v}");
+
+        let transcript = serde_json::json!({
+            "schema": 1,
+            "meta": {
+                "audio": saved_name,
+                "speakers_info": [
+                    {"id": "A", "name": "Я", "matched_name": "Я"},
+                    {"id": "B", "name": "Собеседник", "matched_name": null}
+                ]
+            },
+            "utterances": [
+                {"start": 0.0, "end": 0.5, "speaker": "A", "channel": 0, "text": "раз два"},
+                {"start": 0.6, "end": 1.0, "speaker": "B", "channel": 1, "text": "да"}
+            ]
+        });
+        std::fs::write(
+            rec.join("тест звук.transcript.json"),
+            serde_json::to_vec(&transcript).unwrap(),
+        )
+        .unwrap();
+        let (st, v) = json(http(
+            port,
+            "GET",
+            &format!("/api/transcript/metrics?file={fname_enc}"),
+            &[],
+            &[],
+        ));
+        assert_eq!(st, 200, "метрики не посчитались: {v}");
+        assert_eq!(v.get("schema").and_then(|x| x.as_u64()), Some(1));
+        let speakers = v
+            .get("speakers")
+            .and_then(|x| x.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(speakers.len(), 2, "нет метрик по спикерам: {v}");
+        let share: f64 = speakers
+            .iter()
+            .filter_map(|s| s.get("share").and_then(|x| x.as_f64()))
+            .sum();
+        assert!((share - 1.0).abs() < 0.01, "доли не сходятся: {share}");
 
         let (st, v) = json(http(port, "GET", "/api/recordings", &[], &[]));
         assert_eq!(st, 200);
