@@ -510,7 +510,7 @@ pub fn arm_idle_monitor() {
     });
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix, not(target_os = "android")))]
 pub(super) fn install_test_child(program: &str, args: &[&str]) -> u32 {
     let child = Command::new(program)
         .args(args)
@@ -536,7 +536,7 @@ pub(super) fn install_test_child(program: &str, args: &[&str]) -> u32 {
     pid
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix, not(target_os = "android")))]
 pub(super) fn test_state_pid() -> Option<u32> {
     sidecar_cell()
         .lock()

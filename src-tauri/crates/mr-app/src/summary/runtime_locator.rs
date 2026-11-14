@@ -398,6 +398,7 @@ mod tests {
     use super::*;
     use crate::summary::config::RUNTIME_COMMIT;
 
+    #[cfg(unix)]
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "mr-runtime-{tag}-{}-{}",
