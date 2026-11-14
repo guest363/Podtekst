@@ -96,7 +96,8 @@ pub(super) fn apply() -> Result<(), String> {
             p.pct = 100;
             p.stage = "restart";
         }
-        // app.restart завершает процесс без возврата из run_cli: закрываем маркер сами.
+        // Windows: процесс уже завершён внутри download_and_install (см. on_before_exit).
+        // Linux/macOS: install возвращает управление, app.restart завершает без возврата.
         crate::crash::mark_clean();
         // Не возвращается: новый процесс уже с обновлённой версией.
         app.restart();
@@ -106,7 +107,11 @@ pub(super) fn apply() -> Result<(), String> {
 
 async fn install(app: &tauri::AppHandle) -> Result<(), String> {
     let updater = app
-        .updater()
+        .updater_builder()
+        // Windows: плагин запускает установщик и выходит через std::process::exit(0)
+        // внутри download_and_install, поэтому маркер чистого выхода - только здесь.
+        .on_before_exit(crate::crash::mark_clean)
+        .build()
         .map_err(|e| format!("Апдейтер недоступен: {e}"))?;
     let update = updater
         .check()
