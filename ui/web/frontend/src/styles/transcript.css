@@ -242,19 +242,19 @@ body:has(.transcript-page) {
 }
 
 .transcript-grid.summary-open {
-  grid-template-columns: 0px minmax(0, 1fr) clamp(360px, 26vw, 440px);
+  grid-template-columns: 0px minmax(0, 1fr) clamp(400px, 27vw, 460px);
 }
 
 .transcript-grid.sidebar-open.summary-open {
-  grid-template-columns: 320px minmax(0, 1fr) clamp(360px, 26vw, 440px);
+  grid-template-columns: 320px minmax(0, 1fr) clamp(400px, 27vw, 460px);
 }
 
 .transcript-grid.metrics-open {
-  grid-template-columns: 0px minmax(0, 1fr) clamp(360px, 26vw, 440px);
+  grid-template-columns: 0px minmax(0, 1fr) clamp(400px, 27vw, 460px);
 }
 
 .transcript-grid.sidebar-open.metrics-open {
-  grid-template-columns: 320px minmax(0, 1fr) clamp(360px, 26vw, 440px);
+  grid-template-columns: 320px minmax(0, 1fr) clamp(400px, 27vw, 460px);
 }
 
 .transcript-speakers-wrap {
