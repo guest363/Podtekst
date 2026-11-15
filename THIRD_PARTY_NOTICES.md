@@ -57,6 +57,20 @@ WAV-файлы `src-tauri/crates/mr-ml/tests/fixtures/speaker*.wav` - офици
   https://developer.android.com/jetpack/androidx .
 * **Gradle wrapper** - Apache-2.0, https://gradle.org/license/ .
 
+## Системные библиотеки Linux (AppImage, DEB, RPM)
+
+* **GTK 3** - LGPL-2.1-or-later,
+  https://gitlab.gnome.org/GNOME/gtk/-/blob/gtk-3-24/COPYING
+* **WebKitGTK** - LGPL-2.0-or-later + BSD-style, https://webkitgtk.org/ ,
+  исходники https://github.com/WebKit/WebKit
+
+Обе библиотеки приложение использует как системные разделяемые
+(`libgtk-3.so`, `libwebkit2gtk-4.1.so`); их исходный код и тексты лицензий
+доступны по ссылкам выше. Если бандл (AppImage) включает эти библиотеки
+внутрь, пользователь может заменить их своими сборками: достаточно подменить
+файлы в каталоге бандла. Приложение не проверяет их подпись и не препятствует
+такой замене - это условие LGPL.
+
 ## Иконки
 
 `icon.png`, `icon.svg`, `icon.ico`, `icon.icns` - собственные материалы проекта.
