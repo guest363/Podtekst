@@ -59,6 +59,11 @@ fn can_update_follows_probes_and_pair() {
     let arch = std::env::consts::ARCH;
     let current = probe(Some("9.0.2"), "app", Some(arch));
     let other = probe(Some("7.1.1"), "app", Some(arch));
+    let foreign = if arch == "aarch64" {
+        "x86_64"
+    } else {
+        "aarch64"
+    };
     let system = probe(Some("7.1.1"), "path", Some(arch));
 
     assert!(!needs_update(
@@ -79,12 +84,15 @@ fn can_update_follows_probes_and_pair() {
         Some(&other),
         Some(&other)
     ));
-    assert!(needs_update(
-        &dir,
-        Some(&packages),
-        Some(&probe(Some("9.0.2"), "app", Some("aarch64"))),
-        Some(&current)
-    ));
+    assert!(
+        needs_update(
+            &dir,
+            Some(&packages),
+            Some(&probe(Some("9.0.2"), "app", Some(foreign))),
+            Some(&current)
+        ),
+        "проб чужой архитектуры — повод переустановить"
+    );
     assert!(
         needs_update(&dir, Some(&packages), Some(&current), Some(&other)),
         "пара ffmpeg/ffprobe расходится"
