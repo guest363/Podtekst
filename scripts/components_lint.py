@@ -16,6 +16,7 @@ MANIFEST = ROOT / "src-tauri/crates/mr-models/models-manifest.json"
 PINS = ROOT / "src-tauri/crates/mr-app/components-pins.json"
 
 SHA256 = re.compile(r"[0-9a-f]{64}")
+VERSION = re.compile(r"\d+(\.\d+){1,2}")
 DRIVE = re.compile(r"[A-Za-z]:")
 KINDS = ("hf", "github")
 OS_VALUES = ("windows", "macos", "linux")
@@ -228,8 +229,9 @@ def check_pins(pins, errors):
         if os_name in OS_VALUES and arch in ARCH_VALUES:
             targets.add((os_name, arch))
 
-        if not is_text(package.get("version")):
-            errors.append(f"{where}: version пуст")
+        version = package.get("version")
+        if not is_text(version) or VERSION.fullmatch(version) is None:
+            errors.append(f"{where}: version={version!r}, ожидается X.Y или X.Y.Z")
         if not is_text(package.get("source")):
             errors.append(f"{where}: source пуст")
         if not is_text(package.get("url")) or not package["url"].startswith("https://"):
@@ -237,17 +239,11 @@ def check_pins(pins, errors):
         if package.get("format") not in FORMATS:
             errors.append(f"{where}: format={package.get('format')!r}, допустимо {', '.join(FORMATS)}")
 
-        sha = package.get("sha256")
-        if sha is None:
-            if package.get("source") != "johnvansickle":
-                errors.append(f"{where}: sha256=null допустим только для источника johnvansickle")
-            elif not is_text(package.get("version")):
-                errors.append(f"{where}: пакет без sha256 обязан иметь version")
-        elif not is_sha256(sha):
-            errors.append(f"{where}: sha256 должен быть 64 hex-символа или null")
+        if not is_sha256(package.get("sha256")):
+            errors.append(f"{where}: sha256 должен быть 64 hex-символа")
 
-        if is_text(package.get("version")):
-            versions_by_target.setdefault(target, set()).add(package["version"])
+        if is_text(version):
+            versions_by_target.setdefault(target, set()).add(version)
 
         names = package.get("provides")
         if not isinstance(names, list) or not names:
@@ -305,15 +301,10 @@ def self_test():
             "provides": ["ffmpeg", "ffprobe"],
             "format": "tar.xz",
             "url": "https://example.com/a.tar.xz",
-            "sha256": None,
+            "sha256": "c" * 63 + "d",
         }
         entry.update(patch)
         return entry
-
-    def hashed(**patch):
-        base = {"source": "gyan", "format": "zip", "url": "https://example.com/a.zip"}
-        base.update(patch)
-        return pin(**base) | {"sha256": "c" * 63 + "d"}
 
     def pins(*packages):
         return {"schema": 1, "packages": list(packages)}
@@ -322,8 +313,20 @@ def self_test():
         return {"updated_at": "2026-11-15T00:00:00", "models": list(entries)}
 
     full_pins = pins(
-        hashed(os="windows", arch="x86_64"),
-        hashed(os="macos", arch="aarch64", source="martin-riedl"),
+        pin(
+            os="windows",
+            arch="x86_64",
+            source="gyan",
+            format="zip",
+            url="https://example.com/a.zip",
+        ),
+        pin(
+            os="macos",
+            arch="aarch64",
+            source="martin-riedl",
+            format="zip",
+            url="https://example.com/a.zip",
+        ),
         pin(),
         pin(arch="aarch64"),
     )
@@ -370,14 +373,19 @@ def self_test():
         ),
         ("коллизия регистра", models(bad_file), "регистра"),
         (
-            "null sha не для johnvansickle",
+            "null sha",
             pins(full_pins["packages"][0] | {"sha256": None}),
-            "johnvansickle",
+            "sha256",
         ),
         (
-            "null sha без version",
-            pins(*full_pins["packages"][:2], pin(version="")),
-            "обязан иметь version",
+            "version с суффиксом",
+            pins(pin(version="7.0.2-static")),
+            "version",
+        ),
+        (
+            "version без минорной",
+            pins(pin(version="7")),
+            "version",
         ),
         ("нет покрытия linux/aarch64", pins(*full_pins["packages"][:3]), "linux/aarch64"),
         (

@@ -224,7 +224,7 @@ fn parse_version(raw: &str) -> Option<String> {
     version_token(words.next()?)
 }
 
-fn version_token(token: &str) -> Option<String> {
+pub fn version_token(token: &str) -> Option<String> {
     // JVS пишет `n7.0.2-static`, поэтому префикс `n` — часть версии.
     let token = token.strip_prefix('n').unwrap_or(token);
     let core: String = token

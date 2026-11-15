@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::download::{download_with_resume, file_matches, tmp_dir, DownloadLock, ProgressEvent};
 use crate::manifest::{ModelEntry, ModelFile, ModelsManifest};
@@ -10,6 +10,9 @@ use crate::{is_placeholder_sha, models_dir, sha256_of_file, ModelsError, Result}
 
 const STAGING_SUFFIX: &str = ".new";
 const OLD_MARK: &str = ".old-";
+/// Докачка, брошенная больше месяца назад, вряд ли продолжится: Range с чужого
+/// смещения бесполезен, а место файл занимает.
+const PART_MAX_AGE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 /// Запас сверх двух полных наборов: манифест, логи и WAV-заголовки записи.
 const SPACE_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
 
@@ -72,6 +75,8 @@ pub fn recover_interrupted(root: &Path) -> Result<()> {
                 .and_then(|m| m.modified())
                 .unwrap_or(UNIX_EPOCH);
             olds.push((at, path));
+        } else {
+            remove_stale_parts(&path);
         }
     }
     // Самый свежий каталог восстанавливаем первым: он и есть последняя версия.
@@ -92,6 +97,26 @@ pub fn recover_interrupted(root: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn remove_stale_parts(model_dir: &Path) {
+    let Ok(entries) = fs::read_dir(tmp_dir(model_dir)) else {
+        return;
+    };
+    let now = SystemTime::now();
+    for entry in entries.flatten() {
+        if !entry.file_name().to_string_lossy().ends_with(".part") {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .map(|at| now.duration_since(at).is_ok_and(|age| age > PART_MAX_AGE))
+            .unwrap_or(false);
+        if stale {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
 }
 
 pub(crate) fn ensure_recovered(root: &Path) {
@@ -324,6 +349,28 @@ mod tests {
             model.join(".tmp/b.onnx.part").is_file(),
             "недокачанный .part переживает перезапуск"
         );
+    }
+
+    #[test]
+    fn stale_parts_are_removed_and_fresh_kept() {
+        let tmp = testdir::new("recover-parts");
+        let root = models_dir(&tmp);
+        let parts = root.join("m/.tmp");
+        fs::create_dir_all(&parts).unwrap();
+        let stale = parts.join("old.onnx.part");
+        let fresh = parts.join("new.onnx.part");
+        fs::write(&stale, b"old").unwrap();
+        fs::write(&fresh, b"new").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&stale)
+            .unwrap()
+            .set_modified(SystemTime::now() - (PART_MAX_AGE + Duration::from_secs(1)))
+            .unwrap();
+        recover_interrupted(&root).unwrap();
+        assert!(!stale.exists(), "протухший .part удалён");
+        assert!(fresh.is_file(), "свежий .part сохранён для докачки");
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[cfg(unix)]

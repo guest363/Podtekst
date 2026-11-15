@@ -102,11 +102,7 @@ static BUNDLED: OnceLock<ModelsManifest> = OnceLock::new();
 pub fn bundled() -> &'static ModelsManifest {
     const BUNDLED_JSON: &str = include_str!("../models-manifest.json");
     BUNDLED.get_or_init(|| {
-        serde_json::from_str(BUNDLED_JSON).unwrap_or(ModelsManifest {
-            manifest_version: 1,
-            updated_at: String::new(),
-            models: vec![],
-        })
+        serde_json::from_str(BUNDLED_JSON).expect("вшитый models-manifest.json должен разбираться")
     })
 }
 

@@ -16,7 +16,7 @@ pub(super) struct Package {
     pub provides: Vec<String>,
     pub format: String,
     pub url: String,
-    pub sha256: Option<String>,
+    pub sha256: String,
 }
 
 #[derive(Deserialize)]
@@ -120,6 +120,18 @@ mod tests {
             expected_version(&for_target("windows", "x86_64").unwrap()).as_deref(),
             Some("9.0.2")
         );
+    }
+
+    #[test]
+    fn pinned_versions_are_bare_tokens() {
+        for package in all() {
+            assert_eq!(
+                mr_audio::tools::version_token(&package.version).as_deref(),
+                Some(package.version.as_str()),
+                "version пина {} должен быть без префикса и суффикса",
+                package.version
+            );
+        }
     }
 
     #[test]

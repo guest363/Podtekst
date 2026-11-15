@@ -8,7 +8,6 @@ use std::time::Duration;
 use super::pins::Package;
 
 const CHUNK: usize = 256 * 1024;
-const LINUX_MIN_BYTES: u64 = 10 * 1024 * 1024;
 
 pub(super) fn download(
     package: &Package,
@@ -65,24 +64,12 @@ fn extension(format: &str) -> &'static str {
 }
 
 pub(super) fn verify_archive(package: &Package, archive: &Path) -> Result<(), String> {
-    let size = std::fs::metadata(archive)
-        .map_err(|e| format!("архив: {e}"))?
-        .len();
-    match package.sha256.as_deref() {
-        Some(expected) => {
-            let actual = sha256(archive)?;
-            if !actual.eq_ignore_ascii_case(expected) {
-                return Err(format!(
-                    "контрольная сумма архива не совпала: ожидалась {expected}, получена {actual}"
-                ));
-            }
-        }
-        None => {
-            // Пин JVS не публикует sha256: размер отсекает обрезанную загрузку.
-            if size <= LINUX_MIN_BYTES {
-                return Err(format!("архив слишком мал: {size} байт"));
-            }
-        }
+    let actual = sha256(archive)?;
+    if !actual.eq_ignore_ascii_case(&package.sha256) {
+        return Err(format!(
+            "контрольная сумма архива не совпала: ожидалась {}, получена {actual}",
+            package.sha256
+        ));
     }
     Ok(())
 }
@@ -216,7 +203,7 @@ mod tests {
             provides: vec!["ffmpeg".to_string()],
             format: format.to_string(),
             url: "https://example.invalid/a".to_string(),
-            sha256: None,
+            sha256: "0".repeat(64),
         }
     }
 
@@ -279,16 +266,6 @@ mod tests {
         let error = extract(&package("zip"), &archive, &dir.join("out"))
             .expect_err("ссылка в zip запрещена");
         assert!(error.contains("ссылка"), "{error}");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn zip_without_sha_must_not_be_tiny() {
-        let dir = temp_dir("tiny");
-        let archive = dir.join("a.zip");
-        std::fs::write(&archive, b"MZ").unwrap();
-        let error = verify_archive(&package("zip"), &archive).expect_err("маленький архив");
-        assert!(error.contains("мал"), "{error}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

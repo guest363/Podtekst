@@ -19,7 +19,7 @@ fn package(version: &str, tools: &[&str]) -> pins::Package {
         provides: tools.iter().map(|name| name.to_string()).collect(),
         format: "zip".to_string(),
         url: "https://example.invalid/a.zip".to_string(),
-        sha256: None,
+        sha256: "0".repeat(64),
     }
 }
 
@@ -156,12 +156,12 @@ fn failed_checks_keep_the_working_binary() {
         writer.finish().unwrap();
     }
     let mut package = package("9.0.2", &["ffmpeg"]);
-    package.sha256 = Some("0".repeat(64));
+    package.sha256 = "0".repeat(64);
     let error = install_archive(&package, &archive, &bin, &work).expect_err("sha256 не совпадает");
     assert!(error.contains("контрольная сумма"), "{error}");
     assert_eq!(std::fs::read(bin.join(bin_name("ffmpeg"))).unwrap(), b"old");
 
-    package.sha256 = Some(mr_models::sha256_of_file(&archive).unwrap());
+    package.sha256 = mr_models::sha256_of_file(&archive).unwrap();
     let error = install_archive(&package, &archive, &bin, &work).expect_err("не бинарник");
     assert!(
         error.contains("архитектура") || error.contains("не запускается"),
@@ -187,7 +187,7 @@ fn install_archive_publishes_pinned_version_and_replaces_broken() {
     let archive = dir.join("a.zip");
     write_zip(&archive, "ffmpeg", &std::fs::read(&fake).unwrap());
     let mut package = package("9.0.2", &["ffmpeg"]);
-    package.sha256 = Some(mr_models::sha256_of_file(&archive).unwrap());
+    package.sha256 = mr_models::sha256_of_file(&archive).unwrap();
 
     let (version, hashes) = install_archive(&package, &archive, &bin, &work).expect("установка");
     assert_eq!(version, "9.0.2", "версия из пробы, а не из пина");

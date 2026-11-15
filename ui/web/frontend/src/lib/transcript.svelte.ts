@@ -498,7 +498,7 @@ export const downloadModel = async (m: ModelInfo): Promise<boolean> => {
       try {
         const d = await readJsonSafe<ModelsResponse>(await fetch('/api/models'))
         const cur = (d.models || []).find((x) => x.id === m.id)
-        if (cur?.is_installed && !cur.has_update) {
+        if (cur?.is_installed && !cur.has_update && !cur.needs_reinstall) {
           clearInterval(timer)
           delete engine.downloading[m.id]
           delete downloadOutcome[m.id]

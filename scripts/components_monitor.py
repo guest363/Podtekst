@@ -191,10 +191,11 @@ def pin_rows(pins, offline, rows, cache):
 
 def summarize(rows):
     updated = ("есть новее", "нет на апстриме")
-    unavailable = ("офлайн", "нет upstream", "нет данных", "неизвестный источник")
+    network = ("ошибка сети", "нет данных")
+    unavailable = ("офлайн", "нет upstream", "неизвестный источник")
     return {
         "updates": sum(row["status"] in updated for row in rows),
-        "network_errors": sum(row["status"] == "ошибка сети" for row in rows),
+        "network_errors": sum(row["status"] in network for row in rows),
         "unchecked": sum(row["status"] in unavailable for row in rows),
     }
 
