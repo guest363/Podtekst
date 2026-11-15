@@ -50,9 +50,34 @@ const pct = (value: number): string => `${Math.round(value)} %`
 
 const good = $derived(metrics?.quality.grade === 'good')
 const speakers = $derived(metrics?.speakers ?? [])
+const warningCodes = $derived(metrics?.warnings ?? [])
+const noAudio = $derived(warningCodes.includes('no_audio'))
+const fewTurns = $derived(warningCodes.includes('few_turns'))
+const prosodyUnavailable = $derived(warningCodes.includes('prosody_unavailable'))
+const qualityUnavailable = $derived(warningCodes.includes('quality_unavailable'))
+const clippingOnly = $derived(
+  warningCodes.includes('clipping') &&
+    !warningCodes.some((code) =>
+      ['low_snr', 'narrow_band', 'no_audio', 'prosody_unavailable', 'quality_unavailable'].includes(
+        code,
+      ),
+    ) &&
+    (metrics?.quality.snr_db ?? 0) >= 20 &&
+    (metrics?.quality.bandwidth_hz ?? 0) >= 6400,
+)
+const prosodyUsable = $derived(good || clippingOnly)
+const qualityReason = $derived.by(() => {
+  if (noAudio) return 'звук не читается'
+  if (prosodyUnavailable) return 'не удалось выделить голос'
+  if (qualityUnavailable) return 'не удалось оценить звук'
+  if (warningCodes.includes('low_snr')) return 'много шума'
+  if (warningCodes.includes('narrow_band')) return 'узкий диапазон частот'
+  return 'качество ниже порога'
+})
+const prosodyReason = $derived(`Темп и высота голоса недоступны: ${qualityReason}.`)
 
 const wpm = $derived.by(() => {
-  if (!good) return null
+  if (!prosodyUsable) return null
   let words = 0
   let speech = 0
   for (const speaker of speakers) {
@@ -63,7 +88,7 @@ const wpm = $derived.by(() => {
 })
 
 const pausePct = $derived.by(() => {
-  if (!good) return null
+  if (!prosodyUsable) return null
   let weighted = 0
   let speech = 0
   for (const speaker of speakers) {
@@ -130,7 +155,7 @@ const participants = $derived.by(() =>
       if (group.maxMonologue !== null) {
         line.push(`монолог ${fmtSpan(group.maxMonologue)}`)
       }
-      if (good && group.speech > 0) {
+      if (prosodyUsable && group.speech > 0) {
         line.push(
           `${Math.round((group.words / group.speech) * 60)} ${pluralWords(Math.round((group.words / group.speech) * 60))} в минуту`,
         )
@@ -192,7 +217,7 @@ const rhythmRows = $derived.by((): Row[] => {
 })
 
 const baselineRows = $derived.by(() => {
-  if (!good) return []
+  if (!prosodyUsable) return []
   const visible = new Set(participants.map((person) => person.name.trim().toLowerCase()))
   const seen = new Set<string>()
   return speakers
@@ -262,25 +287,12 @@ const qualityWarnings = $derived(
 )
 
 const gradeText = $derived(
-  metrics?.quality.grade === 'good'
+  good
     ? 'темпу и высоте голоса можно доверять'
-    : metrics?.quality.grade === 'degraded'
-      ? 'темп и высота голоса недоступны'
-      : 'звук не удалось проанализировать',
+    : clippingOnly
+      ? 'есть перегрузка микрофона, значения могут быть неточными'
+      : `темп и высота голоса недоступны: ${qualityReason}`,
 )
-
-const warningCodes = $derived(metrics?.warnings ?? [])
-const noAudio = $derived(warningCodes.includes('no_audio'))
-const fewTurns = $derived(warningCodes.includes('few_turns'))
-const prosodyUnavailable = $derived(warningCodes.includes('prosody_unavailable'))
-const qualityUnavailable = $derived(warningCodes.includes('quality_unavailable'))
-const prosodyReason = $derived.by(() => {
-  if (noAudio) return 'Звук не анализировался, поэтому темпа и высоты голоса нет.'
-  if (prosodyUnavailable) return 'Не удалось выделить голос, поэтому темпа и высоты голоса нет.'
-  if (qualityUnavailable)
-    return 'Не удалось оценить качество записи, поэтому темп и высота голоса скрыты.'
-  return 'Качество записи ниже нужного, поэтому темп и высота голоса не показываются.'
-})
 
 const statusText = $derived(
   loading
@@ -423,7 +435,7 @@ const glossary: Array<[string, string]> = [
 
     <div class="metrics-section">
       <h3 class="metrics-heading">Отклонение от обычного уровня</h3>
-      {#if !good}
+      {#if !prosodyUsable}
         <p class="metrics-muted">{prosodyReason}</p>
       {:else if baselineRows.length > 0}
         <div class="metrics-baseline">
