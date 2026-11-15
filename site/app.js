@@ -3,7 +3,7 @@
 
   var menu = document.getElementById("mobile-menu");
   var menuToggle = document.querySelector(".menu-toggle");
-  var menuBackground = document.querySelectorAll(".site-header, main, .site-footer");
+  var menuBackground = document.querySelectorAll(".site-header .brand, .site-header .nav, .site-header .header-cta, main, .site-footer");
   var lastFocused = null;
   var closeTimer = 0;
 
