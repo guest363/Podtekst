@@ -395,11 +395,11 @@ mod tests {
         let log = dir.join("app.log");
         std::fs::write(
             &log,
-            "2026-11-03 10:00:00 [ATTACH_VIDEO] -> /home/user/Recordings/Обсуждение бюджета.mp4\n",
+            "2026-11-03 10:00:00 [ATTACH_VIDEO] -> /home/user/Recordings/file-123.mp4\n",
         )
         .unwrap();
         let tail = log_tail_in(&log);
-        assert!(!tail.contains("Обсуждение"), "{tail}");
+        assert!(!tail.contains("file-123"), "{tail}");
         assert!(!tail.contains("/home/user"), "{tail}");
         assert!(tail.contains("recording-"), "{tail}");
         let _ = std::fs::remove_dir_all(&dir);

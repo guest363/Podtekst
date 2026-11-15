@@ -626,8 +626,8 @@ pub fn whisper_mel(samples: &[f32]) -> Vec<Vec<f32>> {
 /// Ширина мел-кадра GigaAM/NeMo — контракт экспортированной модели.
 pub const GIGAAM_MEL_BANDS: usize = 64;
 
-/// Проверка формы мел-спектрограммы перед укладкой в тензор: `row[c]` без
-/// проверки паникует на короткой строке из чужого/битого мел-кэша.
+/// Мел-кадр короче `width` — ошибка, а не паника: `row[c]` обрывает
+/// расшифровку на короткой строке из чужого/битого мел-кэша.
 pub fn ensure_mel_width(mel: &[Vec<f32>], width: usize) -> Result<(), String> {
     match mel.iter().position(|row| row.len() < width) {
         Some(index) => Err(format!(

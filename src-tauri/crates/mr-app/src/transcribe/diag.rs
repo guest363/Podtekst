@@ -7,7 +7,10 @@ use super::asr_engine::models_root;
 
 pub(super) const VAD_THRESHOLD: f32 = 0.30;
 pub(super) const VAD_NEG_THRESHOLD: f32 = 0.15;
-pub(super) const VAD_MIN_SPEECH_SEC: f32 = 0.12;
+// Калибровка по small-сьюту (2026-11-15): порог выше одного окна VAD (0.06/0.12)
+// срезает тихие хвосты реплик и даёт +0.7 п.п. DER на тихой паре; клики без
+// энергии отсекает только энергетический гейт — отдельная задача.
+pub(super) const VAD_MIN_SPEECH_SEC: f32 = 0.03;
 pub(super) const VAD_MIN_SILENCE_SEC: f32 = 0.30;
 pub(super) const VAD_SPEECH_PAD_SEC: f32 = 0.25;
 

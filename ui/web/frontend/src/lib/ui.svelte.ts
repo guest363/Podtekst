@@ -105,8 +105,8 @@ export const initRouting = (): void => {
 type Handler = (data?: unknown) => void
 const handlers = new Map<string, Handler[]>()
 
-/** Возвращает отписку: компоненты живут условно и обязаны снимать обработчик
- *  в cleanup, иначе после N переходов одно событие даёт N запросов. */
+/** Без отписки в cleanup после N переходов одно событие даёт N запросов:
+ *  поэтому возвращаем функцию снятия обработчика. */
 export const on = (evt: string, fn: Handler): (() => void) => {
   const list = handlers.get(evt) ?? []
   list.push(fn)

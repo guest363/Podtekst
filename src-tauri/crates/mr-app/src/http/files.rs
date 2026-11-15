@@ -808,7 +808,7 @@ mod tests {
 
     #[test]
     fn rename_no_replace_keeps_both_files_on_collision() {
-        let dir = std::env::temp_dir().join(format!("mr-rename-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mr-rename-no-replace-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let from = dir.join("recording.wav");

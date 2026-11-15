@@ -253,9 +253,9 @@ mod tests {
 
     #[test]
     fn hides_file_names_in_free_text_and_keeps_technical_suffixes() {
-        let line = "[ATTACH_VIDEO] Получен видеопоток: 100 байт для аудио \"/home/u/Встреча с командой.wav\"";
+        let line = "[ATTACH_VIDEO] Получен видеопоток: 100 байт для аудио \"/home/u/file-123.wav\"";
         let redacted = redact_text(line);
-        assert!(!redacted.contains("Встреча"), "{redacted}");
+        assert!(!redacted.contains("file-123"), "{redacted}");
         assert!(!redacted.contains("/home/u"), "{redacted}");
         assert!(redacted.contains("recording-"), "{redacted}");
         assert!(redacted.contains(".wav\""), "{redacted}");
@@ -264,11 +264,11 @@ mod tests {
     #[test]
     fn redacts_windows_and_relative_home_paths() {
         for line in [
-            r"C:\Users\user\Music\Встреча.mp4",
-            "~/Recordings/Встреча.mp4",
+            r"C:\Users\user\Music\file-456.mp4",
+            "~/Recordings/file-456.mp4",
         ] {
             let redacted = redact_text(line);
-            assert!(!redacted.contains("Встреча"), "{redacted}");
+            assert!(!redacted.contains("file-456"), "{redacted}");
             assert!(redacted.contains("recording-"), "{redacted}");
         }
     }
@@ -287,8 +287,8 @@ mod tests {
 
     #[test]
     fn token_is_stable_and_idempotent() {
-        let once = path_token("Встреча с командой.wav");
-        assert_eq!(once, path_token("Встреча с командой.wav"));
+        let once = path_token("file-123.wav");
+        assert_eq!(once, path_token("file-123.wav"));
         let line = format!("audio {once} saved");
         assert_eq!(redact_text(&line), line);
     }

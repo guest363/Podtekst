@@ -33,7 +33,7 @@ use self::metrics_api::{serve_metrics, serve_reset_baseline};
 use self::people::{
     handle_people_add, handle_people_move, handle_voiceprint_delete,
     handle_voiceprint_learn_sample, handle_voiceprint_sample_delete, handle_voiceprint_save,
-    load_all_voiceprints, load_external_people, read_people_list, remove_person,
+    load_all_voiceprints, load_external_people, lock_people, read_people_list, remove_person,
     save_external_people, serve_voiceprint_detail, update_people,
 };
 use self::system_api::{handle_system, handle_system_check, handle_system_open};
@@ -915,6 +915,7 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) -> b
                             400,
                         );
                     } else {
+                        let _people = lock_people();
                         let mut list = load_external_people();
                         if !list.iter().any(|p| {
                             p.get("name")
@@ -938,6 +939,7 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) -> b
                         .unwrap_or("")
                         .trim()
                         .to_lowercase();
+                    let _people = lock_people();
                     let mut list = load_external_people();
                     let before = list.len();
                     list.retain(|p| {
