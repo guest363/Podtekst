@@ -6,8 +6,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use super::config::{
-    self, ClassifierMode, GpuMode, ESTIMATE_PEAK_MB, MAX_CHARS, MAX_SECONDS, MIN_SYSTEM_RAM_MB,
-    MODEL_ID, RECOMMENDED_RAM_MB, REQUIRED_FREE_MB, WARN_CHARS,
+    self, ClassifierMode, GpuMode, MAX_CHARS, MAX_SECONDS, RECOMMENDED_RAM_MB, WARN_CHARS,
 };
 use super::{runtime_ready, ApiError};
 
@@ -112,8 +111,8 @@ pub fn model_path() -> Option<std::path::PathBuf> {
         }
     }
     let path = mr_models::models_dir(&crate::config::app_data_dir())
-        .join(MODEL_ID)
-        .join(config::MODEL_FILE);
+        .join(config::model_id())
+        .join(config::model_file());
     path.is_file().then_some(path)
 }
 
@@ -129,10 +128,10 @@ pub fn limits() -> Value {
     json!({
         "max_chars": MAX_CHARS,
         "max_seconds": MAX_SECONDS,
-        "min_free_ram_mb": REQUIRED_FREE_MB,
-        "min_system_ram_mb": MIN_SYSTEM_RAM_MB,
+        "min_free_ram_mb": config::required_free_mb(),
+        "min_system_ram_mb": config::min_system_ram_mb(),
         "warn_chars": WARN_CHARS,
-        "estimate_peak_mb": ESTIMATE_PEAK_MB,
+        "estimate_peak_mb": config::estimate_peak_mb(),
         "recommended_ram_mb": RECOMMENDED_RAM_MB,
     })
 }

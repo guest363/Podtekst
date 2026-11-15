@@ -31,6 +31,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  components-lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Compile scripts
+        run: python3 -m py_compile scripts/components_lint.py scripts/components_monitor.py .github/scripts/updater_manifest.py
+      - name: Self-test release notes gate
+        run: python3 .github/scripts/updater_manifest.py --self-test
+      - name: Lint models manifest and ffmpeg pins (offline, no network)
+        run: python3 scripts/components_lint.py
+
   rust:
     needs: frontend
     runs-on: ubuntu-24.04

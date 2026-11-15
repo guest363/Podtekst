@@ -1,27 +1,80 @@
 use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
 use super::SummaryJobError;
 use crate::config::app_data_dir;
 
-/// Измеренный пик на 8k контекста (VmHWM 5.424 ГиБ) плюс запас ~1.1 ГиБ.
-pub const ESTIMATE_PEAK_MB: u64 = 5530;
-pub const REQUIRED_FREE_MB: u64 = 6656;
-pub const MIN_SYSTEM_RAM_MB: u64 = 12288;
 pub const RECOMMENDED_RAM_MB: u64 = 16384;
 pub const MAX_CHARS: usize = 180_000;
 pub const MAX_SECONDS: u64 = 7200;
 pub const WARN_CHARS: usize = 400;
-pub const CONTEXT_TOKENS: u32 = 16384;
-pub const MODEL_ID: &str = "sum-qwen3-4b-instruct-2507-q4km";
-pub const MODEL_FILE: &str = "Qwen3-4B-Instruct-2507-Q4_K_M.gguf";
-pub const MODEL_TITLE: &str = "Qwen3-4B Instruct 2507 (итоги, Q4_K_M)";
-pub const MODEL_TITLE_EN: &str = "Qwen3-4B Instruct 2507 (summary, Q4_K_M)";
-pub const MODEL_SHA256: &str = "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597";
 pub const RUNTIME_COMMIT: &str = "fd27b2034";
+
+/// Модель итогов из вшитого манифеста: имя файла, SHA-256 и пороги памяти
+/// (5530 МБ пика и 6656 МБ свободно — замер VmHWM 5.424 ГиБ плюс запас)
+/// живут там, а не дублируются константами.
+fn summary_model() -> &'static mr_models::ModelEntry {
+    static ENTRY: OnceLock<&'static mr_models::ModelEntry> = OnceLock::new();
+    ENTRY.get_or_init(|| {
+        mr_models::bundled()
+            .models
+            .iter()
+            .find(|m| m.kind == "summary")
+            .expect("манифест содержит модель итогов")
+    })
+}
+
+pub fn model_id() -> &'static str {
+    &summary_model().id
+}
+
+pub fn model_file() -> &'static str {
+    summary_file().filename.as_str()
+}
+
+pub fn model_title() -> &'static str {
+    &summary_model().title
+}
+
+pub fn model_title_en() -> &'static str {
+    let entry = summary_model();
+    if entry.title_en.is_empty() {
+        &entry.title
+    } else {
+        &entry.title_en
+    }
+}
+
+pub fn min_system_ram_mb() -> u64 {
+    summary_model().min_system_ram_mb
+}
+
+pub fn model_sha256() -> &'static str {
+    summary_file().sha256.as_str()
+}
+
+pub fn context_tokens() -> u32 {
+    summary_model().context_tokens
+}
+
+pub fn estimate_peak_mb() -> u64 {
+    summary_model().ram_mb
+}
+
+pub fn required_free_mb() -> u64 {
+    summary_model().required_free_mb
+}
+
+fn summary_file() -> &'static mr_models::ModelFile {
+    summary_model()
+        .files
+        .first()
+        .expect("у модели итогов есть файл весов")
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -229,6 +282,26 @@ mod tests {
         assert_eq!(GpuMode::parse("auto"), Some(GpuMode::Auto));
         assert_eq!(GpuMode::parse(" OFF "), Some(GpuMode::Off));
         assert_eq!(GpuMode::parse("cuda"), None);
+    }
+
+    /// Пороги памяти откалиброваны замером (VmHWM): менять их можно только
+    /// вместе с новым замером, поэтому они закреплены тестом.
+    #[test]
+    fn model_facts_come_from_manifest_and_stay_calibrated() {
+        let entry = summary_model();
+        assert_eq!(model_id(), entry.id);
+        assert_eq!(model_file(), "Qwen3-4B-Instruct-2507-Q4_K_M.gguf");
+        assert_eq!(model_sha256(), entry.files[0].sha256);
+        assert_eq!(model_sha256().len(), 64);
+        assert_eq!(context_tokens(), 16384);
+        assert_eq!(estimate_peak_mb(), 5530);
+        assert_eq!(required_free_mb(), 6656);
+        assert_eq!(min_system_ram_mb(), 12288);
+        assert_eq!(model_title(), entry.title);
+        assert_eq!(model_title_en(), entry.title_en);
+        assert_eq!(min_system_ram_mb(), entry.min_system_ram_mb);
+        assert!(entry.order > 0, "у модели есть порядок версии");
+        assert!(!entry.upstream.revision.is_empty(), "ревизия закреплена");
     }
     #[test]
     fn env_override_is_not_persisted_by_settings_update() {

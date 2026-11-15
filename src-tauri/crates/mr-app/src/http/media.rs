@@ -1,6 +1,6 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
 use serde_json::json;
@@ -65,9 +65,7 @@ fn cached_value(
 /// Длительность файла с кэшем по (путь, размер, mtime): `ffprobe` — внешний процесс,
 /// а список записей запрашивается при каждом обновлении UI.
 fn media_duration_cached(path: &Path, len: u64, mtime: u64) -> f64 {
-    use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<FileCache>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    let cache = DURATION_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
     cached_value(
         cache,
         path.to_string_lossy().to_string(),
@@ -77,10 +75,20 @@ fn media_duration_cached(path: &Path, len: u64, mtime: u64) -> f64 {
     )
 }
 
+/// Сброс после установки ffprobe: старые длительности прочитаны прежней версией.
+pub(crate) fn invalidate_durations() {
+    if let Some(cache) = DURATION_CACHE.get() {
+        if let Ok(mut guard) = cache.lock() {
+            guard.clear();
+        }
+    }
+}
+
+static DURATION_CACHE: OnceLock<Mutex<FileCache>> = OnceLock::new();
+
 /// Число спикеров из .transcript.json с кэшем: без него каждый листинг
 /// парсил мегабайтные JSON всех записей.
 fn speakers_count_cached(path: &Path, len: u64, mtime: u64) -> u64 {
-    use std::sync::{Mutex, OnceLock};
     static CACHE: OnceLock<Mutex<FileCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
     cached_value(

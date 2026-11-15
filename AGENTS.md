@@ -52,7 +52,7 @@ cd ui/web/frontend && yarn lint && yarn check && yarn build  # Фронт: Biome
   `yarn install --immutable && yarn build`). В рантайме Node нет. Штамп с хешем исходников
   коммитится внутрь `ui/web/static/.mr-stamp`: чистый клон с неизменёнными исходниками
   запускается без Node.
-- **Модели** скачиваются один раз через карточку «Модели ИИ» в UI
+- **Модели** скачиваются один раз через вкладку «Компоненты» в UI
   (`POST /api/models/update`, докачка `.part` + проверка `SHA-256` из `core/models-manifest.json`
   - точнее, `src-tauri/crates/mr-models/models-manifest.json`),
   лежат в `<app_data>/models/<id>/`.

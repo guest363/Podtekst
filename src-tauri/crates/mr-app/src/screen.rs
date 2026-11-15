@@ -76,6 +76,17 @@ pub(crate) fn is_screen_capture_supported() -> bool {
 }
 
 #[cfg(any(windows, target_os = "macos"))]
+static ENCODER_CACHE: Mutex<(Option<&'static str>, Option<Instant>)> = Mutex::new((None, None));
+
+/// Сброс после установки ffmpeg: старый выбранный энкодер мог исчезнуть.
+pub(crate) fn invalidate_encoders() {
+    #[cfg(any(windows, target_os = "macos"))]
+    if let Ok(mut cache) = ENCODER_CACHE.lock() {
+        *cache = (None, None);
+    }
+}
+
+#[cfg(any(windows, target_os = "macos"))]
 fn cached_encoder(
     cache: &'static Mutex<(Option<&'static str>, Option<Instant>)>,
     probe: fn() -> Option<&'static str>,
@@ -98,7 +109,6 @@ fn cached_encoder(
 
 #[cfg(windows)]
 fn windows_encoder() -> Option<&'static str> {
-    static ENCODER_CACHE: Mutex<(Option<&'static str>, Option<Instant>)> = Mutex::new((None, None));
     cached_encoder(&ENCODER_CACHE, probe_windows_encoder)
 }
 
@@ -120,7 +130,6 @@ fn probe_windows_encoder() -> Option<&'static str> {
 
 #[cfg(target_os = "macos")]
 fn macos_encoder() -> Option<&'static str> {
-    static ENCODER_CACHE: Mutex<(Option<&'static str>, Option<Instant>)> = Mutex::new((None, None));
     cached_encoder(&ENCODER_CACHE, probe_macos_encoder)
 }
 

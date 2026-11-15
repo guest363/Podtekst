@@ -1,17 +1,24 @@
 {
-  "manifest_version": 1,
-  "updated_at": "2026-10-29T00:00:00",
+  "manifest_version": 2,
+  "updated_at": "2026-11-15T00:00:00",
   "models": [
     {
       "id": "vad-silero-v6",
       "title": "Silero VAD v6.2 (детектор речи)",
       "version": "6.2.3",
+      "order": 1,
+      "upstream": {
+        "kind": "github",
+        "repo": "snakers4/silero-vad",
+        "revision": "v6.2.3",
+        "version": "6.2.3"
+      },
       "files": [
         {
           "filename": "silero_vad.onnx",
           "url_hf": "https://raw.githubusercontent.com/snakers4/silero-vad/v6.2.3/src/silero_vad/data/silero_vad.onnx",
           "mirrors": [
-            "https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.onnx"
+            "https://github.com/snakers4/silero-vad/raw/v6.2.3/src/silero_vad/data/silero_vad.onnx"
           ],
           "size_bytes": 2327524,
           "sha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
@@ -26,31 +33,38 @@
       "id": "asr-gigaam-v3-rnnt-int8",
       "title": "GigaAM-v3 e2e RNNT int8 (русский язык, SOTA)",
       "version": "3.1.0",
+      "order": 2,
+      "upstream": {
+        "kind": "hf",
+        "repo": "istupakov/gigaam-v3-onnx",
+        "revision": "322c3b29492673eb7d0b434bfa9dfb8653e34d02",
+        "version": "3.1.0"
+      },
       "files": [
         {
           "filename": "gigaam_enc_q.onnx",
-          "url_hf": "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/v3_e2e_rnnt_encoder.int8.onnx",
+          "url_hf": "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/322c3b29492673eb7d0b434bfa9dfb8653e34d02/v3_e2e_rnnt_encoder.int8.onnx",
           "size_bytes": 224570477,
           "sha256": "4e0e076a6076cd110277e529b8ac8f32cd5297f7fbebad5341ae8ddb7d00817b",
           "optional": false
         },
         {
           "filename": "gigaam_dec_q.onnx",
-          "url_hf": "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/v3_e2e_rnnt_decoder.int8.onnx",
+          "url_hf": "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/322c3b29492673eb7d0b434bfa9dfb8653e34d02/v3_e2e_rnnt_decoder.int8.onnx",
           "size_bytes": 1159170,
           "sha256": "89014e134865615b91e037157e46e389b1271e6072460efc010ea08e61e23146",
           "optional": false
         },
         {
           "filename": "gigaam_joint_q.onnx",
-          "url_hf": "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/v3_e2e_rnnt_joint.int8.onnx",
+          "url_hf": "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/322c3b29492673eb7d0b434bfa9dfb8653e34d02/v3_e2e_rnnt_joint.int8.onnx",
           "size_bytes": 687791,
           "sha256": "ade116563dbf66e503b0994efab6b5861412743e52bf31c39fc3fffa3783d5d1",
           "optional": false
         },
         {
           "filename": "gigaam_vocab.txt",
-          "url_hf": "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/v3_e2e_rnnt_vocab.txt",
+          "url_hf": "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/322c3b29492673eb7d0b434bfa9dfb8653e34d02/v3_e2e_rnnt_vocab.txt",
           "size_bytes": 13354,
           "sha256": "39abae20e692998290c574e606f11a9edef2902a1995463fcff63d1490cf22b7",
           "optional": false
@@ -64,17 +78,24 @@
       "id": "asr-gigaam-v3-e2e-ctc-int8",
       "title": "GigaAM-v3 e2e CTC int8 (словарь терминов + уверенность слов)",
       "version": "3.1.0",
+      "order": 3,
+      "upstream": {
+        "kind": "hf",
+        "repo": "istupakov/gigaam-v3-onnx",
+        "revision": "322c3b29492673eb7d0b434bfa9dfb8653e34d02",
+        "version": "3.1.0"
+      },
       "files": [
         {
           "filename": "gigaam_ctc_q.onnx",
-          "url_hf": "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/v3_e2e_ctc.int8.onnx",
+          "url_hf": "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/322c3b29492673eb7d0b434bfa9dfb8653e34d02/v3_e2e_ctc.int8.onnx",
           "size_bytes": 224893347,
           "sha256": "2e3fcb7a7b66030336fd10c2fcfb033bd1dc7e1bf238fe5cfd83b1d0cfc9d28e",
           "optional": false
         },
         {
           "filename": "gigaam_ctc_vocab.txt",
-          "url_hf": "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/main/v3_e2e_ctc_vocab.txt",
+          "url_hf": "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/322c3b29492673eb7d0b434bfa9dfb8653e34d02/v3_e2e_ctc_vocab.txt",
           "size_bytes": 2007,
           "sha256": "142de7570b3de5b3035ce111a89c228e80e6085273731d944093ddf24fa539cd",
           "optional": false
@@ -88,31 +109,38 @@
       "id": "asr-whisper-large-v3-turbo-q",
       "title": "Whisper large-v3-turbo (мультиязычный fallback, 30+ языков)",
       "version": "1.0.0",
+      "order": 4,
+      "upstream": {
+        "kind": "hf",
+        "repo": "onnx-community/whisper-large-v3-turbo",
+        "revision": "360ebcde2559d60bb474678be3c1de9ef347d01a",
+        "version": "3.0"
+      },
       "files": [
         {
           "filename": "whisper_enc_q.onnx",
-          "url_hf": "https://huggingface.co/onnx-community/whisper-large-v3-turbo/resolve/main/onnx/encoder_model_quantized.onnx",
+          "url_hf": "https://huggingface.co/onnx-community/whisper-large-v3-turbo/resolve/360ebcde2559d60bb474678be3c1de9ef347d01a/onnx/encoder_model_quantized.onnx",
           "size_bytes": 644822195,
           "sha256": "d2f853dc3254fdc0079f55dd4433ea716ac98ec5574d3b475f288f2a77cebba9",
           "optional": false
         },
         {
           "filename": "whisper_dec_merged_q.onnx",
-          "url_hf": "https://huggingface.co/onnx-community/whisper-large-v3-turbo/resolve/main/onnx/decoder_model_merged_quantized.onnx",
+          "url_hf": "https://huggingface.co/onnx-community/whisper-large-v3-turbo/resolve/360ebcde2559d60bb474678be3c1de9ef347d01a/onnx/decoder_model_merged_quantized.onnx",
           "size_bytes": 439936716,
           "sha256": "61481bd3be3a445d5a4b9070e8f8b2c6cc4fbbbbdc9f0e7ed048a132b8b84e0d",
           "optional": false
         },
         {
           "filename": "whisper_tokenizer.json",
-          "url_hf": "https://huggingface.co/onnx-community/whisper-large-v3-turbo/resolve/main/tokenizer.json",
+          "url_hf": "https://huggingface.co/onnx-community/whisper-large-v3-turbo/resolve/360ebcde2559d60bb474678be3c1de9ef347d01a/tokenizer.json",
           "size_bytes": 2480617,
           "sha256": "6d8cbd7cd0d8d5815e478dac67b85a26bbe77c1f5e0c6d76d1ce2abc0e5f21ca",
           "optional": false
         },
         {
           "filename": "whisper_generation_config.json",
-          "url_hf": "https://huggingface.co/onnx-community/whisper-large-v3-turbo/resolve/main/generation_config.json",
+          "url_hf": "https://huggingface.co/onnx-community/whisper-large-v3-turbo/resolve/360ebcde2559d60bb474678be3c1de9ef347d01a/generation_config.json",
           "size_bytes": 3897,
           "sha256": "16f95291d2f47c944d3c2b19390bba7965666555c1ea2a0bdc850d1fab45612f",
           "optional": false
@@ -126,10 +154,17 @@
       "id": "diar-pyannote-segmentation-3",
       "title": "PyAnnote Segmentation 3.0 (речь и перекрытия)",
       "version": "3.0.0",
+      "order": 5,
+      "upstream": {
+        "kind": "hf",
+        "repo": "onnx-community/pyannote-segmentation-3.0",
+        "revision": "733a93b6473d019a773298e08cefa686894b1854",
+        "version": "3.0"
+      },
       "files": [
         {
           "filename": "pyannote-segmentation-3.0.onnx",
-          "url_hf": "https://huggingface.co/onnx-community/pyannote-segmentation-3.0/resolve/main/onnx/model.onnx",
+          "url_hf": "https://huggingface.co/onnx-community/pyannote-segmentation-3.0/resolve/733a93b6473d019a773298e08cefa686894b1854/onnx/model.onnx",
           "size_bytes": 5986908,
           "sha256": "057ee564753071c0b09b5b611648b50ac188d50846bff5f01e9f7bbf1591ea25",
           "optional": false
@@ -143,10 +178,17 @@
       "id": "diar-eres2netv2-emb",
       "title": "ERes2NetV2 192-dim (SOTA голосовые отпечатки)",
       "version": "2.0.0",
+      "order": 6,
+      "upstream": {
+        "kind": "hf",
+        "repo": "protocolvoice/asr-models",
+        "revision": "5c38f63a48b67384745d7abbe02a4e539ac47868",
+        "version": "2.0"
+      },
       "files": [
         {
           "filename": "eres2netv2_emb.onnx",
-          "url_hf": "https://huggingface.co/protocolvoice/asr-models/resolve/main/speaker_embedding_v2.onnx",
+          "url_hf": "https://huggingface.co/protocolvoice/asr-models/resolve/5c38f63a48b67384745d7abbe02a4e539ac47868/speaker_embedding_v2.onnx",
           "size_bytes": 71441526,
           "sha256": "bf1a75b9930474cf3389ef415e6e5d38ca96fea4a3a00f7e301d080a58ee2239",
           "optional": false
@@ -162,11 +204,19 @@
       "kind": "summary",
       "tier": "",
       "title": "Qwen3-4B Instruct 2507 (итоги, Q4_K_M)",
+      "title_en": "Qwen3-4B Instruct 2507 (summary, Q4_K_M)",
       "version": "2507-q4km-1",
+      "order": 7,
+      "upstream": {
+        "kind": "hf",
+        "repo": "unsloth/Qwen3-4B-Instruct-2507-GGUF",
+        "revision": "a06e946bb6b655725eafa393f4a9745d460374c9",
+        "version": "2507"
+      },
       "files": [
         {
           "filename": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
-          "url_hf": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "url_hf": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
           "mirrors": [],
           "size_bytes": 2497281120,
           "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",

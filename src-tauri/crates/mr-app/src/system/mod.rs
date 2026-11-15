@@ -75,6 +75,7 @@ pub(crate) fn snapshot(recording: bool, elapsed: u64, mode: &str) -> Value {
             "missing_core": missing_core,
             "updates": updates,
             "items": models,
+            "manifest_updated_at": mr_models::manifest_updated_at(),
             "summary": crate::summary::system_block(),
         },
         "ffmpeg": crate::ffmpeg_dl::status_json(),

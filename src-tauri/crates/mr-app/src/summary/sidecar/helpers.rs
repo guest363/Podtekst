@@ -5,7 +5,7 @@ use std::process::{Child, Command};
 use sha2::{Digest, Sha256};
 
 use crate::summary::backend::BackendError;
-use crate::summary::config::MODEL_ID;
+use crate::summary::config;
 
 fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
@@ -113,7 +113,7 @@ pub(super) fn build_args(
         "--n-gpu-layers".to_string(),
         gpu_layers.to_string(),
         "--alias".to_string(),
-        MODEL_ID.to_string(),
+        config::model_id().to_string(),
     ];
     if gpu_layers > 0 {
         if let Some(index) = gpu_device {

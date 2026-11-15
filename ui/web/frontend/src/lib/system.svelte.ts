@@ -75,6 +75,7 @@ export type ModelItem = {
   installed_version?: string | null
   is_installed: boolean
   has_update?: boolean
+  needs_reinstall?: boolean
   total_size_bytes?: number
   on_disk_bytes?: number
   license?: string

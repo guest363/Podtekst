@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 
 use super::backend::CancelToken;
 use super::catalog::{model_path, model_ready, verified_model_sha};
-use super::config::{self, MODEL_SHA256};
+use super::config::{self};
 use super::memory;
 use super::pipeline;
 use super::runner::{run_pipeline, JobFinish};
@@ -267,7 +267,7 @@ pub fn generate(input: &GenerateInput, recording: bool) -> Result<StartOutcome, 
     }
     let fake = super::backend::fake_mode().is_some();
     let model_sha = if fake {
-        MODEL_SHA256.to_string()
+        config::model_sha256().to_string()
     } else {
         if super::headless() && !runtime_ready() {
             return Err(ApiError::new(
@@ -290,7 +290,7 @@ pub fn generate(input: &GenerateInput, recording: bool) -> Result<StartOutcome, 
                 "Модель итогов не читается. Скачайте её заново.",
             ));
         };
-        if sha != MODEL_SHA256 {
+        if sha != config::model_sha256() {
             return Err(ApiError::new(
                 422,
                 "model_corrupt",
@@ -399,7 +399,7 @@ fn cache_matches(artifact: &mr_summarize::SummaryArtifact, input: &GenerateInput
     artifact.preset.id == input.preset_id
         && artifact.preset.version == mr_summarize::preset::PRESET_VERSION
         && artifact.detail.as_str() == input.detail
-        && artifact.generator.model_sha256 == MODEL_SHA256
+        && artifact.generator.model_sha256 == config::model_sha256()
         && artifact.generator.prompt_version
             == mr_summarize::preset::get(&input.preset_id)
                 .map(|p| p.prompt_version)

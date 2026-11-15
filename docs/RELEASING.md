@@ -18,8 +18,12 @@ GitHub Release.
 Описание пишется руками: 8-15 строк по-русски, что изменилось для человека
 и как обновиться. Workflow публикует его как тело релиза, кладёт в `notes`
 файла `latest.json` (до 16 КБ) и падает, если файла нет или в нём нет ссылки
-на `docs/UNSIGNED-INSTALL.md`. Список коммитов вместо вычитанного текста
-не выпускаем.
+на `docs/UNSIGNED-INSTALL.md`. С версии 0.9.0 в заметках обязательна строка,
+которая начинается с «Компоненты:»: в ней перечислены версии моделей и ffmpeg
+этой сборки. Старые заметки не переписываются: до 0.9.0 эта строка не требуется.
+Флаг `--allow-legacy-notes` снимает только требование ссылки на
+`UNSIGNED-INSTALL.md` и только в dry run. Список коммитов вместо вычитанного
+текста не выпускаем.
 
 Версия в теге обязана совпадать с версией в `mr-app/Cargo.toml`,
 `tauri.conf.json` и `ui/web/frontend/package.json`. Workflow проверяет все три
@@ -54,6 +58,14 @@ git status --short
 - [ ] в `git ls-files` нет личных данных, логов, APK и моделей;
 - [ ] `THIRD_PARTY_LICENSES.md` обновлён;
 - [ ] `CHANGELOG.md` содержит секцию версии;
+- [ ] `./scripts/components.sh lint` проходит без ошибок;
+- [ ] `./scripts/components.sh verify-ffmpeg` подтверждает пин текущей платформы;
+- [ ] `./scripts/components.sh monitor` прогнан: расхождений с апстримом нет
+      или их отложили намеренно;
+- [ ] отчёт `./scripts/components.sh report` из `runs/components/` приложен к PR
+      подготовки версии;
+- [ ] в `.github/release-notes/` есть строка «Компоненты:»: версии моделей и
+      ffmpeg, вошедшие в сборку;
 - [ ] в `.github/release-notes/` лежит описание для тега версии со ссылкой
       на `docs/UNSIGNED-INSTALL.md`;
 - [ ] лендинг обновлён: `softwareVersion` и тексты с версией в `site/index.html`

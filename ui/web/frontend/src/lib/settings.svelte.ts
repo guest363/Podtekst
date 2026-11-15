@@ -21,7 +21,7 @@ type SummarySettingsResponse = {
 type TranscribeAutoResponse = { enabled?: boolean }
 type RecordModeResponse = { mode?: 'mix' | 'split'; explicit?: boolean }
 type VoicepacksResponse = { ok?: boolean; packs?: Voicepack[] }
-type ModelsResponse = { ok?: boolean; models?: ModelInfo[] }
+type ModelsResponse = { ok?: boolean; models?: ModelInfo[]; manifest_updated_at?: string }
 type HotwordsResponse = {
   ok?: boolean
   error?: string
@@ -46,6 +46,7 @@ type SettingsState = {
   ctcEnabled: boolean
   hotwordsLoaded: boolean
   summaryFeature: boolean | null
+  manifestUpdatedAt: string
 }
 
 // 0 — автоопределение диаризации; 2..6 — фиксированное число спикеров.
@@ -69,6 +70,7 @@ export const settings: SettingsState = $state({
   ctcEnabled: true,
   hotwordsLoaded: false,
   summaryFeature: null,
+  manifestUpdatedAt: '',
 })
 
 export const loadSummaryFeature = async (): Promise<void> => {
@@ -186,6 +188,13 @@ type FfmpegState = {
   pct: number
   error: string | null
   manualUrl: string
+  version: string
+  ffprobeVersion: string
+  source: string
+  expectedVersion: string
+  installed: boolean
+  canUpdate: boolean
+  pairOk: boolean | null
 }
 
 export const ffmpeg: FfmpegState = $state({
@@ -194,8 +203,17 @@ export const ffmpeg: FfmpegState = $state({
   downloading: false,
   pct: 0,
   error: null,
-  manualUrl: 'https://www.gyan.dev/ffmpeg/builds/',
+  manualUrl: '',
+  version: '',
+  ffprobeVersion: '',
+  source: '',
+  expectedVersion: '',
+  installed: false,
+  canUpdate: false,
+  pairOk: null,
 })
+
+const asText = (value: unknown): string => (typeof value === 'string' ? value : '')
 
 const applyFfmpegStatus = (f: Record<string, unknown> | undefined): void => {
   if (!f || typeof f !== 'object') return
@@ -205,6 +223,13 @@ const applyFfmpegStatus = (f: Record<string, unknown> | undefined): void => {
   ffmpeg.pct = Number(f.pct) || 0
   ffmpeg.error = typeof f.error === 'string' ? f.error : null
   if (typeof f.manual_url === 'string') ffmpeg.manualUrl = f.manual_url
+  ffmpeg.version = asText(f.version)
+  ffmpeg.ffprobeVersion = asText(f.ffprobe_version)
+  ffmpeg.source = asText(f.source)
+  ffmpeg.expectedVersion = asText(f.expected_version)
+  ffmpeg.installed = f.installed === true
+  ffmpeg.canUpdate = f.can_update === true
+  ffmpeg.pairOk = typeof f.pair_ok === 'boolean' ? f.pair_ok : null
 }
 
 export const loadFfmpeg = async (): Promise<void> => {
@@ -218,16 +243,20 @@ export const loadFfmpeg = async (): Promise<void> => {
 
 let ffmpegPoll: ReturnType<typeof setInterval> | undefined
 
-export const downloadFfmpeg = async (): Promise<void> => {
+export const downloadFfmpeg = async (force = false): Promise<void> => {
   try {
-    const r = await fetch('/api/tools/ffmpeg/download', { method: 'POST' })
+    const r = await fetch('/api/tools/ffmpeg/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force }),
+    })
     const d = await readJsonSafe<OkResponse>(r)
     if (!d.ok) {
-      toast(d.error || 'Не удалось запустить скачивание', 'error')
+      toast(d.error || 'Не удалось запустить установку ffmpeg. Попробуйте позже', 'error')
       return
     }
-  } catch (e) {
-    toast(`Ошибка: ${errText(e)}`, 'error')
+  } catch {
+    toast('Не удалось запустить установку ffmpeg. Проверьте соединение и попробуйте снова', 'error')
     return
   }
   ffmpeg.downloading = true
@@ -239,7 +268,7 @@ export const downloadFfmpeg = async (): Promise<void> => {
       if (!ffmpeg.downloading && ffmpegPoll) {
         clearInterval(ffmpegPoll)
         ffmpegPoll = undefined
-        if (ffmpeg.available && !ffmpeg.error) toast('ffmpeg установлен')
+        if (ffmpeg.available && !ffmpeg.error) toast('ffmpeg готов к работе')
       }
     })()
   }, 1000)
@@ -260,6 +289,8 @@ export const loadModels = async (): Promise<void> => {
     const r = await fetch('/api/models')
     const d = await readJsonSafe<ModelsResponse>(r)
     settings.models = d.ok && d.models ? d.models : []
+    settings.manifestUpdatedAt =
+      typeof d.manifest_updated_at === 'string' ? d.manifest_updated_at : ''
   } catch {
     settings.models = []
   }

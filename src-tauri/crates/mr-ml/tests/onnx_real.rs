@@ -7,6 +7,13 @@ use std::path::PathBuf;
 fn models_dir() -> Option<PathBuf> {
     let d = std::env::var("MR_MODELS_DIR").unwrap_or_else(|_| "/tmp/opencode/models".to_string());
     let p = PathBuf::from(d);
+    let require_real = std::env::var("REQUIRE_REAL").is_ok_and(|v| v == "1");
+    if require_real && !p.is_dir() {
+        panic!(
+            "REQUIRE_REAL=1, но каталог моделей не найден: {}",
+            p.display()
+        );
+    }
     p.is_dir().then_some(p)
 }
 

@@ -30,8 +30,8 @@ impl SummaryBackend for FakeBackend {
             runtime: "fake".to_string(),
             version: "fake".to_string(),
             commit: "fake".to_string(),
-            model_id: super::config::MODEL_ID.to_string(),
-            n_ctx: super::config::CONTEXT_TOKENS,
+            model_id: super::config::model_id().to_string(),
+            n_ctx: super::config::context_tokens(),
             threads: 2,
         })
     }

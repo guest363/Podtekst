@@ -514,10 +514,15 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     json_response(request, status, 200);
                 }
                 (tiny_http::Method::Post, "/api/tools/ffmpeg/download") => {
-                    // Тело не парсим, но сливаем, чтобы соединение не зависло
-                    let mut body = Vec::new();
-                    let _ = request.as_reader().read_to_end(&mut body);
-                    match crate::ffmpeg_dl::start_download() {
+                    let query_force = query_param(&query, "force").as_deref() == Some("1");
+                    let body = read_body_to_json(&mut request);
+                    let force =
+                        query_force || body.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let (recording, screen) = {
+                        let st = state.lock().unwrap_or_else(|e| e.into_inner());
+                        (st.is_recording, st.screen_session.is_some())
+                    };
+                    match crate::ffmpeg_dl::start_download(force, recording, screen) {
                         Ok(()) => json_response(request, json!({"ok": true}), 200),
                         Err(e) => json_response(request, json!({"ok": false, "error": e}), 409),
                     }
@@ -747,7 +752,15 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     let app = app_data_dir();
                     let manifest = mr_models::load_bundled_manifest();
                     let status = mr_models::get_models_status(&app, &manifest);
-                    json_response(request, json!({"ok": true, "models": status}), 200);
+                    json_response(
+                        request,
+                        json!({
+                            "ok": true,
+                            "models": status,
+                            "manifest_updated_at": mr_models::manifest_updated_at(),
+                        }),
+                        200,
+                    );
                 }
                 (tiny_http::Method::Get, "/api/system") => {
                     let (recording, elapsed, mode) = {
@@ -1182,7 +1195,29 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 }
                 (tiny_http::Method::Post, "/api/models/update") => {
                     let body = read_body_to_json(&mut request);
-                    handle_models_update(request, body);
+                    let (recording, screen) = {
+                        let st = state.lock().unwrap_or_else(|e| e.into_inner());
+                        (st.is_recording, st.screen_session.is_some())
+                    };
+                    if recording || screen {
+                        let message = if recording {
+                            "Идёт запись. Остановите запись и повторите."
+                        } else {
+                            "Идёт запись экрана. Остановите запись и повторите."
+                        };
+                        json_response(
+                            request,
+                            json!({
+                                "ok": false,
+                                "error": message,
+                                "error_code": if recording { "busy_recording" } else { "busy_screen" },
+                                "retryable": true,
+                            }),
+                            409,
+                        );
+                    } else {
+                        handle_models_update(request, body);
+                    }
                 }
                 _ => {
                     let resp = tiny_http::Response::from_string("Not Found").with_status_code(404);

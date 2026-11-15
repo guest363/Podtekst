@@ -7,11 +7,15 @@ platforms с url и signature. Размер пакета в схему не вх
 
 import argparse
 import base64
+import contextlib
 import datetime
 import hashlib
+import io
 import json
 import re
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 from urllib.parse import quote
 
@@ -23,6 +27,9 @@ PLATFORMS = {
 REQUIRED_PLATFORMS = set(PLATFORMS.values())
 NOTES_LIMIT = 16 * 1024
 UNSIGNED_DOC = "docs/UNSIGNED-INSTALL.md"
+COMPONENTS_PREFIX = "Компоненты:"
+# Первый выпуск, в котором версии компонентов входят в заметки релиза.
+COMPONENTS_SINCE = (0, 9, 0)
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -83,7 +90,19 @@ def check_versions(root, tag):
     return version
 
 
-def check_notes(root, tag, allow_legacy_notes=False):
+def release_version(version):
+    """Версия заметок X.Y или X.Y.Z; предрелизный суффикс отбрасывается."""
+    core = version.split("-", 1)[0]
+    parts = core.split(".")
+    if len(parts) not in (2, 3) or not all(part.isdigit() for part in parts):
+        fail(f"версия {version!r} не разбирается: ожидается X.Y или X.Y.Z")
+    numbers = [int(part) for part in parts]
+    if len(numbers) == 2:
+        numbers.append(0)
+    return tuple(numbers)
+
+
+def check_notes(root, tag, version, allow_legacy_notes=False):
     path = root / ".github/release-notes" / f"{tag}.md"
     if not path.is_file():
         fail(f"нет описания релиза: {path.relative_to(root)}")
@@ -92,6 +111,13 @@ def check_notes(root, tag, allow_legacy_notes=False):
         fail(f"пустое описание релиза: {path.relative_to(root)}")
     if not allow_legacy_notes and UNSIGNED_DOC not in text:
         fail(f"в {path.relative_to(root)} нет ссылки на {UNSIGNED_DOC}")
+    # Старые заметки не переписываем: строка обязательна только с COMPONENTS_SINCE.
+    if release_version(version) >= COMPONENTS_SINCE:
+        if not any(line.lstrip().startswith(COMPONENTS_PREFIX) for line in text.splitlines()):
+            fail(
+                f"в {path.relative_to(root)} нет строки, начинающейся с «{COMPONENTS_PREFIX}»: "
+                "перечислите версии моделей и ffmpeg этой сборки"
+            )
     return text
 
 
@@ -230,23 +256,79 @@ def write_checksums(artifacts):
     (artifacts / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def self_test():
+    for version, expected in (
+        ("0.9.0", (0, 9, 0)),
+        ("0.9", (0, 9, 0)),
+        ("0.9.0-rc1", (0, 9, 0)),
+        ("0.8.9", (0, 8, 9)),
+    ):
+        actual = release_version(version)
+        if actual != expected:
+            print(f"self-test FAIL [{version}]: {actual} != {expected}")
+            return 1
+    for version in ("v0.9", "0.9.x", "0.9.0.1", ""):
+        with contextlib.redirect_stdout(io.StringIO()):
+            try:
+                release_version(version)
+            except SystemExit:
+                continue
+        print(f"self-test FAIL [{version!r}]: мусорная версия принята")
+        return 1
+
+    root = Path(tempfile.mkdtemp(prefix="updater-notes-"))
+    try:
+        notes = root / ".github/release-notes"
+        notes.mkdir(parents=True)
+        body = f"Изменения.\n\n{UNSIGNED_DOC}\n"
+        (notes / "v0.9.0-rc1.md").write_text(body, encoding="utf-8")
+        rejected = False
+        with contextlib.redirect_stdout(io.StringIO()):
+            try:
+                check_notes(root, "v0.9.0-rc1", "0.9.0-rc1")
+            except SystemExit:
+                rejected = True
+        if not rejected:
+            print("self-test FAIL: предрелиз 0.9.0-rc1 без строки «Компоненты:» принят")
+            return 1
+        (notes / "v0.9.0-rc1.md").write_text(
+            body + "\nКомпоненты: модели 1, ffmpeg 7.0.2\n", encoding="utf-8"
+        )
+        check_notes(root, "v0.9.0-rc1", "0.9.0-rc1")
+        (notes / "v0.8.9.md").write_text(body, encoding="utf-8")
+        check_notes(root, "v0.8.9", "0.8.9")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    print("updater-manifest: self-test OK")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="Собрать latest.json и SHA256SUMS релиза")
     parser.add_argument("--root", type=Path, default=Path("."))
-    parser.add_argument("--tag", required=True)
+    parser.add_argument("--tag")
     parser.add_argument("--artifacts", type=Path)
     parser.add_argument("--repo")
     parser.add_argument("--check-only", action="store_true")
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="прогнать встроенные примеры разбора версий и гейта заметок",
+    )
     parser.add_argument(
         "--allow-legacy-notes",
         action="store_true",
         help="не требовать ссылку на UNSIGNED-INSTALL.md (только для dry run)",
     )
     args = parser.parse_args()
+    if args.self_test:
+        sys.exit(self_test())
+    if not args.tag:
+        parser.error("нужен --tag")
 
     root = args.root.resolve()
     version = check_versions(root, args.tag)
-    notes = check_notes(root, args.tag, args.allow_legacy_notes)
+    notes = check_notes(root, args.tag, version, args.allow_legacy_notes)
     if args.check_only:
         print(f"Версии и заметки релиза согласованы: {args.tag}")
         return
