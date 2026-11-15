@@ -71,18 +71,29 @@ fn rejects_far_outlier_without_merging_supported_speakers() {
 }
 
 #[test]
-fn rejects_cluster_under_five_percent_even_when_distinct() {
-    let units = vec![unit(0, 0.0, 60.0, 0), unit(1, 60.0, 62.9, 1)];
-    let labels = reject_small_clusters(&units, &[0, 1], vec![0, 1], &[4.0, 2.9], &[], None);
+fn rejects_cluster_under_share_minimum_even_when_distinct() {
+    let units = vec![unit(0, 0.0, 70.0, 0), unit(1, 70.0, 72.1, 1)];
+    let labels = reject_small_clusters(&units, &[0, 1], vec![0, 1], &[4.0, 2.1], &[], None);
     assert_eq!(
         labels.core_units,
         vec![0],
-        "2.9s minority must leave core below 5%"
+        "2.1s minority must leave core below 3%"
     );
 }
 
 #[test]
-fn rejects_cluster_under_absolute_minimum_even_above_five_percent() {
+fn keeps_short_but_sustained_speaker_above_share_minimum() {
+    let units = vec![unit(0, 0.0, 60.0, 0), unit(1, 60.0, 62.5, 1)];
+    let labels = reject_small_clusters(&units, &[0, 1], vec![0, 1], &[4.0, 2.5], &[], None);
+    assert_eq!(
+        labels.core_units,
+        vec![0, 1],
+        "2.5s speaker above 3% and 2.0s must survive"
+    );
+}
+
+#[test]
+fn rejects_cluster_under_absolute_minimum_even_above_share_minimum() {
     let units = vec![unit(0, 0.0, 8.0, 0), unit(1, 8.0, 9.2, 1)];
     let labels = reject_small_clusters(&units, &[0, 1], vec![0, 1], &[4.0, 1.2], &[], None);
     assert_eq!(
@@ -242,8 +253,8 @@ fn distant_embeddings_keep_cut_between_runs() {
 
 #[test]
 fn valid_cluster_at_both_minima_survives() {
-    let units = vec![unit(0, 0.0, 28.5, 0), unit(1, 28.5, 30.0, 1)];
-    let labels = reject_small_clusters(&units, &[0, 1], vec![0, 1], &[4.0, 1.5], &[], None);
+    let units = vec![unit(0, 0.0, 28.5, 0), unit(1, 28.5, 30.5, 1)];
+    let labels = reject_small_clusters(&units, &[0, 1], vec![0, 1], &[4.0, 2.0], &[], None);
     assert_ne!(labels.labels[0], labels.labels[1]);
 }
 
@@ -361,9 +372,9 @@ fn significant_coverage_survives_single_local_segmentation() {
 fn sampled_short_majority_does_not_inflate_minority_share() {
     let mut units = Vec::new();
     let mut labels = Vec::new();
-    for utterance in 0..26 {
+    for utterance in 0..51 {
         let start = utterance as f64 * 3.0;
-        let (duration, label) = if utterance < 25 { (2.4, 0) } else { (2.9, 1) };
+        let (duration, label) = if utterance < 50 { (2.4, 0) } else { (2.9, 1) };
         for (from, to) in super::super::acoustic_windows::bounds(start, start + duration) {
             if to - from >= super::super::CORE_MIN_DUR {
                 units.push(unit(utterance, from, to, label));
@@ -376,7 +387,7 @@ fn sampled_short_majority_does_not_inflate_minority_share() {
     let labels = reject_small_clusters(&units, &core, labels, &weights, &[], None);
     assert!(
         labels.labels.iter().all(|label| *label == labels.labels[0]),
-        "2.9s is below 5% of 60s+2.9s speech with actual short-window sampling"
+        "2.9s is below 3% of 120s+2.9s speech with actual short-window sampling"
     );
 }
 
