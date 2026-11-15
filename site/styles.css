@@ -163,11 +163,8 @@ h3 { font-size: 19px; line-height: 1.3; letter-spacing: -0.022em; }
 .trust-list li::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--green); }
 .hero-note { margin-top: 14px; color: var(--faint); font-size: 12.5px; line-height: 1.65; }
 .product-shot { min-width: 0; }
-.product-shot img { width: 100%; height: auto; border: 1px solid #d8dde4; border-radius: var(--radius); background: #fff; box-shadow: var(--shadow); }
+.product-shot img, .product-shot video { width: 100%; height: auto; border: 1px solid #d8dde4; border-radius: var(--radius); background: #fff; box-shadow: var(--shadow); }
 .product-shot figcaption { margin-top: 12px; color: var(--faint); font-size: 12px; line-height: 1.5; text-align: right; }
-.hero-shot { position: relative; }
-.hero-shot::before { content: ""; position: absolute; inset: -16px -16px 26px 32px; z-index: -1; border: 1px solid var(--line); border-radius: 16px; }
-
 .split-layout { display: grid; grid-template-columns: 0.78fr 1.22fr; gap: 80px; align-items: start; }
 .section-intro .lead { margin-top: 22px; }
 .section-intro .text-link { margin-top: 24px; }
@@ -289,7 +286,6 @@ h3 { font-size: 19px; line-height: 1.3; letter-spacing: -0.022em; }
   .hero-copy { max-width: 640px; }
   .hero h1 { max-width: 650px; font-size: clamp(3rem, 8vw, 4.3rem); }
   .hero .lead { max-width: 600px; }
-  .hero-shot::before { display: none; }
   .split-layout, .faq-grid { grid-template-columns: 1fr; gap: 40px; }
   .section-heading { grid-template-columns: 1fr; gap: 20px; align-items: start; margin-bottom: 40px; }
   .section-heading .lead { justify-self: start; }
@@ -325,7 +321,7 @@ h3 { font-size: 19px; line-height: 1.3; letter-spacing: -0.022em; }
   .trust-list { gap: 7px 14px; font-size: 12px; }
   .hero-note { font-size: 12px; }
   .product-shot figcaption { font-size: 12px; text-align: left; }
-  .product-shot img { border-radius: 8px; }
+  .product-shot img, .product-shot video { border-radius: 8px; }
   .privacy-lists { grid-template-columns: 1fr; gap: 30px; }
   .data-flow { align-items: flex-start; flex-direction: column; gap: 7px; }
   .data-flow span[aria-hidden="true"] { padding-left: 12px; transform: rotate(90deg); }

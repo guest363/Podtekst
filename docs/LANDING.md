@@ -31,6 +31,8 @@ Workflow `.github/workflows/pages.yml` публикует содержимое `
 - `site/favicon.ico` - растровые иконки 16-128 px; собирается без кадра 256 px.
 - `site/assets/icon.svg`, `site/assets/icon.png` - векторный фавикон и apple-touch-icon.
 - `site/assets/screenshots/` - реальные экраны приложения в WebP.
+- `site/assets/demo-transcript.mp4` - живое демо реального UI (скринкаст CDP:
+  открытие записи, панель метрик, переход к перехвату), постер = transcript.webp.
 - `site/assets/og-image.png` - соцпревью 1200 x 630.
 - `site/robots.txt`, `site/sitemap.xml` - индексация.
 
@@ -46,8 +48,11 @@ Workflow `.github/workflows/pages.yml` публикует содержимое `
 документации. Для съёмки через Chrome DevTools Protocol можно переиспользовать
 `ChromeRunner` и `CdpClient` из `docs/generate_screenshots.py`.
 
-После изменения интерфейса обновите оба WebP и их `alt`, `width`, `height`.
-Первый экран предзагружается, остальные скриншоты загружаются лениво. Шаблон
+После изменения интерфейса обновите оба WebP, демо-MP4 и их `alt`, `width`,
+`height`. Первый экран предзагружается; скриншоты загружаются лениво,
+демо-MP4 скачивается при загрузке страницы (autoplay в разметке), но играет
+только в видимой области (IntersectionObserver) и не запускается
+при `prefers-reduced-motion`. Шаблон
 `docs/og-template.html` использует тот же экран расшифровки; из него снимается
 `site/assets/og-image.png`.
 
