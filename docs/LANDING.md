@@ -25,8 +25,11 @@ Workflow `.github/workflows/pages.yml` публикует содержимое `
 
 - `site/index.html` - главная, OG/Twitter-метаданные и JSON-LD.
 - `site/support/index.html` - поддержка, условия перевода и хлебные крошки.
+- `site/404.html` - страница ошибки с абсолютными путями `/Podtekst/`, noindex.
 - `site/styles.css` - общие токены, типографика, адаптив, стили статей.
 - `site/app.js` - доступное мобильное меню и определение ОС для кнопки загрузки.
+- `site/favicon.ico` - растровые иконки 16-128 px; собирается без кадра 256 px.
+- `site/assets/icon.svg`, `site/assets/icon.png` - векторный фавикон и apple-touch-icon.
 - `site/assets/screenshots/` - реальные экраны приложения в WebP.
 - `site/assets/og-image.png` - соцпревью 1200 x 630.
 - `site/robots.txt`, `site/sitemap.xml` - индексация.

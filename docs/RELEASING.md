@@ -55,7 +55,10 @@ git status --short
 - [ ] `THIRD_PARTY_LICENSES.md` обновлён;
 - [ ] `CHANGELOG.md` содержит секцию версии;
 - [ ] в `.github/release-notes/` лежит описание для тега версии со ссылкой
-      на `docs/UNSIGNED-INSTALL.md`.
+      на `docs/UNSIGNED-INSTALL.md`;
+- [ ] лендинг обновлён: `softwareVersion` и тексты с версией в `site/index.html`
+      (JSON-LD, блок «Возможности»), скриншоты `site/assets/screenshots/` и
+      `og-image.png` пересняты при изменении UI, `lastmod` в `site/sitemap.xml`.
 
 ## 3. Тег и релиз
 
