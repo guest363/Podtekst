@@ -20,8 +20,6 @@ static LOCK: Mutex<()> = Mutex::new(());
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Store {
     #[serde(default)]
-    version: u32,
-    #[serde(default)]
     people: BTreeMap<String, Person>,
 }
 
@@ -42,7 +40,9 @@ struct Sample {
 pub(crate) fn apply(metrics: &mut Metrics, source: &str) {
     let _guard = LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let path = app_data_dir().join("metrics-baseline.json");
-    let mut store = load(&path);
+    let Some(mut store) = load(&path) else {
+        return;
+    };
     let mut changed = false;
 
     for speaker in &mut metrics.speakers {
@@ -60,21 +60,21 @@ pub(crate) fn apply(metrics: &mut Metrics, source: &str) {
         if speaker.f0_median_hz.is_some() || speaker.energy_dbfs.is_some() {
             changed = true;
         }
-        let f0_delta = f0.map(|median| {
-            let semitones = |hz: f64| 12.0 * (hz / 27.5).log2();
-            semitones(speaker.f0_median_hz.unwrap_or_default()) - semitones(median)
-        });
-        let n_meetings = person.f0.len().max(person.energy.len());
-        let available = f0.is_some() || energy.is_some();
+        let n_meetings = person.f0.len().max(person.energy.len()).saturating_sub(1);
+        let semitones = |hz: f64| 12.0 * (hz / 27.5).log2();
+        let f0_delta = match (speaker.f0_median_hz, f0) {
+            (Some(current), Some(median)) => Some(semitones(current) - semitones(median)),
+            _ => None,
+        };
+        let energy_delta = match (speaker.energy_dbfs, energy) {
+            (Some(current), Some(median)) => Some(current - median),
+            _ => None,
+        };
         speaker.baseline = Some(Baseline {
-            available: available && n_meetings >= MIN_MEETINGS,
+            available: f0_delta.is_some() || energy_delta.is_some(),
             n_meetings,
-            f0_delta_st: if available { f0_delta } else { None },
-            energy_delta_db: if available {
-                energy.map(|median| speaker.energy_dbfs.unwrap_or_default() - median)
-            } else {
-                None
-            },
+            f0_delta_st: f0_delta,
+            energy_delta_db: energy_delta,
         });
     }
 
@@ -88,11 +88,8 @@ pub(crate) fn apply(metrics: &mut Metrics, source: &str) {
 }
 
 fn is_person(name: &str) -> bool {
-    !name.is_empty()
-        && name != "Собеседник"
-        && name != "Гость"
-        && !name.starts_with("Спикер")
-        && !name.starts_with("SPEAKER_")
+    const PLACEHOLDERS: [&str; 5] = ["Собеседник", "Участник", "Гость", "Спикер", "SPEAKER_"];
+    !name.is_empty() && !PLACEHOLDERS.iter().any(|prefix| name.starts_with(prefix))
 }
 
 fn update(samples: &mut Vec<Sample>, source: &str, value: f64) -> Option<f64> {
@@ -129,11 +126,21 @@ fn median(values: &[f64]) -> Option<f64> {
     })
 }
 
-fn load(path: &Path) -> Store {
-    std::fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default()
+fn load(path: &Path) -> Option<Store> {
+    match std::fs::read(path) {
+        Ok(bytes) => match serde_json::from_slice(&bytes) {
+            Ok(store) => Some(store),
+            Err(error) => {
+                log::warn!(target: "metrics", "ev=baseline.load error={error}");
+                None
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(Store::default()),
+        Err(error) => {
+            log::warn!(target: "metrics", "ev=baseline.load error={error}");
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -147,6 +154,21 @@ mod tests {
         update(&mut samples, "a", 12.0);
         assert_eq!(samples.len(), 1);
         assert_eq!(samples[0].v, 12.0);
+    }
+
+    #[test]
+    fn placeholders_are_not_people() {
+        for name in [
+            "Собеседник 1",
+            "Участник 2",
+            "Гость",
+            "Спикер 3",
+            "SPEAKER_00",
+            "",
+        ] {
+            assert!(!is_person(name), "{name}");
+        }
+        assert!(is_person("Иван"));
     }
 
     #[test]

@@ -2425,6 +2425,7 @@ dependencies = [
  "hound",
  "mr-audio",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

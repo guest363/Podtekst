@@ -13,6 +13,7 @@ type Props = {
   file?: string
   speakers?: SpeakerInfo[]
   currentTime?: number
+  inert?: boolean
   meta?: {
     title: string
     source: string
@@ -27,6 +28,7 @@ let {
   file = '',
   speakers = [],
   currentTime = 0,
+  inert = false,
   meta,
   onseek,
 }: Props = $props()
@@ -433,7 +435,7 @@ let hitCount = $derived(
 
 <svelte:window onwheel={disableFollow} ontouchstart={disableFollow} onkeydown={disableFollow} />
 
-<div class="transcript-doc" bind:this={doc}>
+<div class="transcript-doc" bind:this={doc} {inert}>
   <div class="transcript-doc-header">
     <div class="pane-title">Текст расшифровки</div>
     <div class="doc-search-box">

@@ -569,17 +569,33 @@ const httpStatusError = (status: number, detail: string): HttpStatusError =>
 export const isHttpStatus = (error: unknown, status: number): boolean =>
   error instanceof Error && 'status' in error && error.status === status
 
-// Метрики считаются по аудио: таймаут здесь недопустим, отменяет только вызывающая сторона.
+// Метрики считаются по аудио: часовая запись — секунды, поэтому потолок выше обычного.
+const METRICS_TIMEOUT_MS = 120_000
+
 export const fetchTranscriptMetrics = async (
   path: string,
   signal?: AbortSignal,
 ): Promise<SpeechMetrics> => {
-  const res = await fetch(`/api/transcript/metrics?file=${encPath(path)}`, { signal })
-  if (!res.ok) {
-    const detail = await readJsonSafe<{ error?: string }>(res).catch(() => null)
-    throw httpStatusError(res.status, detail?.error || `HTTP ${res.status}`)
+  const controller = new AbortController()
+  const timer = setTimeout(
+    () => controller.abort(new DOMException('timeout', 'TimeoutError')),
+    METRICS_TIMEOUT_MS,
+  )
+  const abort = (): void => controller.abort()
+  signal?.addEventListener('abort', abort)
+  try {
+    const res = await fetch(`/api/transcript/metrics?file=${encPath(path)}`, {
+      signal: controller.signal,
+    })
+    if (!res.ok) {
+      const detail = await readJsonSafe<{ error?: string }>(res).catch(() => null)
+      throw httpStatusError(res.status, detail?.error || `HTTP ${res.status}`)
+    }
+    return readJsonSafe<SpeechMetrics>(res)
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', abort)
   }
-  return readJsonSafe<SpeechMetrics>(res)
 }
 
 export const baseName = (p: string): string => {

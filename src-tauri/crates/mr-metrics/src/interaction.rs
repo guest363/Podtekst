@@ -40,9 +40,10 @@ pub fn compute(turns: &[Turn], duration_sec: f64, names: &HashMap<String, String
 
     let merged = merge_intervals(&sorted);
     let speech_sec: f64 = merged.iter().map(|(a, b)| b - a).sum();
-    let duration_sec = duration_sec
-        .max(sorted.last().map(|t| t.end).unwrap_or(0.0))
-        .max(0.0);
+    let duration_sec = sorted
+        .iter()
+        .map(|turn| turn.end)
+        .fold(duration_sec.max(0.0), f64::max);
 
     let mut acc: HashMap<&str, Acc> = HashMap::new();
     let mut intervals: HashMap<&str, Vec<(f64, f64)>> = HashMap::new();

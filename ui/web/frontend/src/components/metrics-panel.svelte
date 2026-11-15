@@ -54,6 +54,7 @@ const speakers = $derived(metrics?.speakers ?? [])
 const warningCodes = $derived(metrics?.warnings ?? [])
 const noAudio = $derived(warningCodes.includes('no_audio'))
 const fewTurns = $derived(warningCodes.includes('few_turns'))
+const monoOnly = $derived(warningCodes.includes('mono_no_overlap'))
 const prosodyUnavailable = $derived(warningCodes.includes('prosody_unavailable'))
 const qualityUnavailable = $derived(warningCodes.includes('quality_unavailable'))
 const clippingOnly = $derived(
@@ -66,13 +67,14 @@ const clippingOnly = $derived(
     (metrics?.quality.snr_db ?? 0) >= 20 &&
     (metrics?.quality.bandwidth_hz ?? 0) >= 6400,
 )
-const prosodyUsable = $derived(good || clippingOnly)
+// Гейт решает бэкенд: при плохом звуке L2-поля приходят null.
+const prosodyUsable = $derived(speakers.some((speaker) => speaker.voiced_sec !== null))
 const qualityReason = $derived.by(() => {
   if (noAudio) return 'звук не читается'
-  if (prosodyUnavailable) return 'не удалось выделить голос'
   if (qualityUnavailable) return 'не удалось оценить звук'
   if (warningCodes.includes('low_snr')) return 'много шума'
   if (warningCodes.includes('narrow_band')) return 'узкий диапазон частот'
+  if (prosodyUnavailable) return 'не удалось выделить голос'
   return 'качество ниже порога'
 })
 const prosodyReason = $derived(`Темп и высота голоса недоступны: ${qualityReason}.`)
@@ -199,7 +201,9 @@ const rhythmRows = $derived.by((): Row[] => {
   rows.push({
     key: 'interruptions',
     label: 'Перебивания',
-    value: `${metrics.totals.interruptions}, из них ${metrics.totals.interruptions_successful} удались`,
+    value: monoOnly
+      ? 'недоступно в моно'
+      : `${metrics.totals.interruptions}, из них ${metrics.totals.interruptions_successful} удались`,
     tip: 'Один начал говорить, пока другой не закончил. Если первый сразу замолкал, перебивание удалось.',
   })
   if (metrics.totals.response_latency_ms_median !== null) {

@@ -39,6 +39,17 @@ pub struct Quality {
     pub channel_balance_db: Option<f64>,
 }
 
+const PROSODY_SNR_DB: f64 = 20.0;
+const PROSODY_BAND_HZ: f64 = 6_400.0;
+
+impl Quality {
+    /// Шум и узкая полоса искажают F0 сильнее, чем перегрузка: клиппинг меняет громкость, но не период.
+    pub fn permits_prosody(&self) -> bool {
+        self.snr_db.is_some_and(|snr| snr >= PROSODY_SNR_DB)
+            && self.bandwidth_hz.is_some_and(|hz| hz >= PROSODY_BAND_HZ)
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Baseline {
     pub available: bool,
@@ -156,6 +167,11 @@ pub fn analyze(
                 let _ = error;
             }
         }
+        // L2 не считается на плохом звуке: иначе шум микрофона станет свойством говорящего [SPEC §5.1].
+        if !metrics.quality.permits_prosody() {
+            log_warning(&mut metrics, "prosody_unavailable");
+            return metrics;
+        }
         match prosody::analyze(path, turns, channels) {
             Ok(per_speaker) => {
                 for speaker in &mut metrics.speakers {
@@ -178,11 +194,6 @@ pub fn analyze(
         }
     } else {
         log_warning(&mut metrics, "no_audio");
-    }
-    for speaker in &mut metrics.speakers {
-        if speaker.articulation_rate.is_none() && speaker.speech_sec > 0.0 {
-            speaker.articulation_rate = Some(speaker.vowels as f64 / speaker.speech_sec);
-        }
     }
     metrics
 }

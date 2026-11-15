@@ -11,3 +11,6 @@ repository = "https://github.com/guest363/podtekst"
 serde = { workspace = true }
 mr-audio = { path = "../mr-audio" }
 hound = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

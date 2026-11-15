@@ -72,7 +72,10 @@ pub fn analyze(
         _ => None,
     };
     let clipping_ratio = (sample_count > 0).then(|| clipping as f64 / sample_count as f64);
-    let bandwidth_hz = (spectrum_frames > 0).then(|| band_edge(&spectrum));
+    let bandwidth_hz = spectrum
+        .iter()
+        .any(|power| *power > 0.0)
+        .then(|| band_edge(&spectrum));
     let channel_balance_db = if usable >= 2 {
         match (
             percentile(&channel_db[0], 0.5),
@@ -99,31 +102,26 @@ pub fn analyze(
         warnings.push("channel_balance".to_string());
     }
 
-    let grade = match snr_db {
-        None => Grade::Degraded,
-        Some(snr) if snr < 10.0 => Grade::Unavailable,
-        Some(snr) if snr < 20.0 => Grade::Degraded,
-        Some(_) => {
-            let clipping_ok = clipping_ratio.is_none_or(|v| v <= 0.001);
-            let band_ok = bandwidth_hz.is_none_or(|v| v >= 6_400.0);
-            if clipping_ok && band_ok {
-                Grade::Good
-            } else {
-                Grade::Degraded
-            }
+    let mut quality = Quality {
+        grade: Grade::Degraded,
+        snr_db,
+        clipping_ratio,
+        bandwidth_hz,
+        channel_balance_db,
+    };
+    quality.grade = if !quality.permits_prosody() {
+        if quality.snr_db.is_some_and(|snr| snr < 10.0) {
+            Grade::Unavailable
+        } else {
+            Grade::Degraded
         }
+    } else if quality.clipping_ratio.is_none_or(|value| value <= 0.001) {
+        Grade::Good
+    } else {
+        Grade::Degraded
     };
 
-    Ok((
-        Quality {
-            grade,
-            snr_db,
-            clipping_ratio,
-            bandwidth_hz,
-            channel_balance_db,
-        },
-        warnings,
-    ))
+    Ok((quality, warnings))
 }
 
 fn wav_err(error: hound::Error) -> mr_audio::AudioError {
@@ -234,6 +232,32 @@ mod tests {
         assert!(in_speech(&intervals, 1.5));
         assert!(!in_speech(&intervals, 3.0));
         assert!(in_speech(&intervals, 5.5));
+    }
+
+    #[test]
+    fn grade_follows_prosody_gate() {
+        let clean = Quality {
+            snr_db: Some(30.0),
+            bandwidth_hz: Some(7_000.0),
+            ..Quality::default()
+        };
+        assert!(clean.permits_prosody());
+        let clipped = Quality {
+            clipping_ratio: Some(0.2),
+            ..clean.clone()
+        };
+        assert!(clipped.permits_prosody(), "перегрузка не мешает F0");
+        let noisy = Quality {
+            snr_db: Some(12.0),
+            ..clean.clone()
+        };
+        assert!(!noisy.permits_prosody());
+        let narrow = Quality {
+            bandwidth_hz: Some(3_400.0),
+            ..clean
+        };
+        assert!(!narrow.permits_prosody());
+        assert!(!Quality::default().permits_prosody());
     }
 
     #[test]

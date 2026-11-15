@@ -143,7 +143,6 @@ fn db_of(samples: &[f32]) -> f64 {
     20.0 * (mean.sqrt().max(1e-9)).log10() as f64
 }
 
-/// YIN: CMNDF, первый минимум ниже порога; интерполяция не применяется.
 fn yin(frame: &[f32]) -> Option<(f32, f32)> {
     let tau_min = (RATE / F0_MAX).floor() as usize;
     let tau_max = (RATE / F0_MIN).ceil() as usize;
@@ -169,9 +168,25 @@ fn yin(frame: &[f32]) -> Option<(f32, f32)> {
         }
     }
     let best = (tau_min..tau_max)
-        .find(|tau| normalized[*tau] < 0.15 && normalized[*tau] <= normalized[tau + 1])
+        .find(|tau| normalized[*tau] < 0.1 && normalized[*tau] <= normalized[tau + 1])
         .or_else(|| (tau_min..=tau_max).min_by(|a, b| normalized[*a].total_cmp(&normalized[*b])))?;
-    Some((RATE / best as f32, 1.0 - normalized[best]))
+    Some((
+        RATE / refined_tau(&normalized, best),
+        1.0 - normalized[best],
+    ))
+}
+
+/// Минимум CMNDF между отсчётами: без параболы F0 квантуется шагом сетки (5 Гц на 200 Гц).
+fn refined_tau(normalized: &[f32], tau: usize) -> f32 {
+    if tau == 0 || tau + 1 >= normalized.len() {
+        return tau as f32;
+    }
+    let (low, mid, high) = (normalized[tau - 1], normalized[tau], normalized[tau + 1]);
+    let curvature = low - 2.0 * mid + high;
+    if curvature.abs() < 1e-12 {
+        return tau as f32;
+    }
+    tau as f32 + 0.5 * (low - high) / curvature
 }
 
 #[cfg(test)]
@@ -188,7 +203,7 @@ mod tests {
     fn yin_finds_tone() {
         let samples = tone(220.0, RATE, 0.1);
         let (hz, clarity) = yin(&samples[..FRAME]).expect("pitch");
-        assert!((hz - 220.0).abs() < 5.0, "hz={hz}");
+        assert!((hz - 220.0).abs() < 1.0, "hz={hz}");
         assert!(clarity > 0.8, "clarity={clarity}");
     }
 

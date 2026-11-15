@@ -14,7 +14,6 @@ use crate::config::save_dir;
 struct Doc {
     #[serde(default)]
     meta: Meta,
-    #[serde(default)]
     utterances: Vec<UtteranceJson>,
 }
 
@@ -140,20 +139,24 @@ pub(super) fn serve_metrics(request: tiny_http::Request, query: &str) {
         let candidate = parent.join(&doc.meta.audio);
         Some(candidate).filter(|path| path.exists() && inside_save_dir(path))
     };
-    let (audio, channels) = audio_path
+    let (audio, channels, duration_sec) = audio_path
         .filter(|path| {
             path.extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("wav"))
         })
         .and_then(|path| {
-            hound::WavReader::open(&path)
-                .ok()
-                .map(|reader| (path, reader.spec().channels as usize))
+            hound::WavReader::open(&path).ok().map(|reader| {
+                let spec = reader.spec();
+                let duration = reader.duration() as f64 / spec.sample_rate as f64;
+                (path, spec.channels as usize, duration)
+            })
         })
-        .map_or((None, 0), |(path, channels)| (Some(path), channels));
+        .map_or((None, 0, 0.0), |(path, channels, duration)| {
+            (Some(path), channels, duration)
+        });
 
     let started = std::time::Instant::now();
-    let mut metrics = mr_metrics::analyze(&turns, 0.0, audio.as_deref(), channels, &names);
+    let mut metrics = mr_metrics::analyze(&turns, duration_sec, audio.as_deref(), channels, &names);
     crate::metrics::apply(&mut metrics, &stem);
     log::debug!(
         target: "metrics",

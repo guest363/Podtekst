@@ -651,6 +651,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
         file={ui.currentTranscriptPath}
         speakers={transcript.speakers}
         currentTime={playbackTime}
+        inert={panelDrawer && metricsOpen}
         meta={transcriptMeta}
         onseek={seekTo}
       />
