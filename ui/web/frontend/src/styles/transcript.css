@@ -414,8 +414,6 @@ body:has(.transcript-page) {
   grid-row: 1;
   justify-self: stretch;
   width: 100%;
-  max-width: 80ch;
-  margin-inline: auto;
   position: relative;
   gap: 14px;
 }

@@ -1,6 +1,7 @@
 <script lang="ts">
 import type { SpeechMetrics } from '../lib/api'
 import { fmtClock, speakerColor } from '../lib/api'
+import InfoTip from './info-tip.svelte'
 
 type Props = {
   metrics: SpeechMetrics | null
@@ -172,7 +173,7 @@ const participants = $derived.by(() =>
 
 const evenShare = $derived(participants.length > 0 ? 100 / participants.length : 0)
 
-type Row = { key: string; label: string; value: string; seek?: number }
+type Row = { key: string; label: string; value: string; seek?: number; tip?: string }
 
 const rhythmRows = $derived.by((): Row[] => {
   if (!metrics) return []
@@ -182,6 +183,7 @@ const rhythmRows = $derived.by((): Row[] => {
       key: 'turn',
       label: 'Типичная реплика',
       value: fmtSpan(metrics.totals.turn_sec_median),
+      tip: 'Половина реплик короче, половина длиннее.',
     })
   }
   if (metrics.navigation.longest_monologue) {
@@ -190,6 +192,7 @@ const rhythmRows = $derived.by((): Row[] => {
       key: 'monologue',
       label: 'Самый длинный монолог',
       value: `${fmtSpan(monologue.end - monologue.start)} · с ${fmtClock(monologue.start)}`,
+      tip: 'Непрерывная речь одного участника. Пауза до 1,5 секунды её не прерывает.',
       seek: monologue.start,
     })
   }
@@ -197,12 +200,14 @@ const rhythmRows = $derived.by((): Row[] => {
     key: 'interruptions',
     label: 'Перебивания',
     value: `${metrics.totals.interruptions}, из них ${metrics.totals.interruptions_successful} удались`,
+    tip: 'Один начал говорить, пока другой не закончил. Если первый сразу замолкал, перебивание удалось.',
   })
   if (metrics.totals.response_latency_ms_median !== null) {
     rows.push({
       key: 'latency',
       label: 'Пауза перед репликой',
       value: fmtMs(metrics.totals.response_latency_ms_median),
+      tip: 'Сколько времени проходит от конца реплики до начала реплики другого участника.',
     })
   }
   rows.push({
@@ -341,7 +346,10 @@ const glossary: Array<[string, string]> = [
 {#snippet row(item: Row)}
   <div class="metrics-item">
     <div class="metrics-row">
-      <span class="metrics-label">{item.label}</span>
+      <span class="metrics-label">
+        {item.label}
+        {#if item.tip}<InfoTip text={item.tip} />{/if}
+      </span>
       {#if item.seek !== undefined && onseek}
         <button
           type="button"
@@ -378,27 +386,25 @@ const glossary: Array<[string, string]> = [
       </div>
       <div class="metrics-stat">
         <span class="metrics-stat-value">{wpm ?? 'нет'}</span>
-        <span class="metrics-stat-label">слов в минуту</span>
+        <span class="metrics-stat-label">
+          слов в минуту
+          <InfoTip text="Сколько слов участники говорят за минуту речи. Паузы между репликами не входят." />
+        </span>
       </div>
       <div class="metrics-stat">
         <span class="metrics-stat-value">{pausePct === null ? 'нет' : `${pausePct} %`}</span>
-        <span class="metrics-stat-label">паузы внутри реплик</span>
+        <span class="metrics-stat-label">
+          паузы внутри реплик
+          <InfoTip text="Какая часть времени внутри реплик приходится на молчание." />
+        </span>
       </div>
     </div>
 
-    <p class="metrics-quality-line" class:is-bad={!good}>Качество записи: {gradeText}</p>
+    <p class="metrics-quality-line" class:is-bad={!good}>
+      Качество записи<InfoTip text="От качества записи зависит, можно ли доверять темпу и высоте голоса." />:
+      {gradeText}
+    </p>
 
-    <details class="metrics-glossary">
-      <summary>Что означают метрики</summary>
-      <dl>
-        {#each glossary as [term, definition] (term)}
-          <div>
-            <dt>{term}</dt>
-            <dd>{definition}</dd>
-          </div>
-        {/each}
-      </dl>
-    </details>
 
     {#if speakers.length > 0}
       <div class="metrics-section">
@@ -434,7 +440,10 @@ const glossary: Array<[string, string]> = [
     </div>
 
     <div class="metrics-section">
-      <h3 class="metrics-heading">Отклонение от обычного уровня</h3>
+      <h3 class="metrics-heading">
+        Отклонение от обычного уровня
+        <InfoTip text="Обычный уровень участника по прошлым встречам. Нужно минимум 5 встреч. Полутон - шаг высоты голоса, децибел - единица громкости." />
+      </h3>
       {#if !prosodyUsable}
         <p class="metrics-muted">{prosodyReason}</p>
       {:else if baselineRows.length > 0}
@@ -492,6 +501,18 @@ const glossary: Array<[string, string]> = [
         </p>
       {/if}
     </div>
+
+    <details class="metrics-glossary">
+      <summary>Все определения</summary>
+      <dl>
+        {#each glossary as [term, definition] (term)}
+          <div>
+            <dt>{term}</dt>
+            <dd>{definition}</dd>
+          </div>
+        {/each}
+      </dl>
+    </details>
 
   {/if}
 </section>
