@@ -42,7 +42,7 @@ WAV-файлы `src-tauri/crates/mr-ml/tests/fixtures/speaker*.wav` - офици
 ## Встроенные компоненты
 
 * **Rust-крейты** (`Cargo.lock`) - MIT, Apache-2.0, MPL-2.0, Unicode-3.0,
-  CDLA-Permissive-2.0, BSD, ISC, Zlib и 0BSD. Полный список - `THIRD_PARTY_LICENSES.md`.
+  CDLA-Permissive-2.0, BSD, ISC, Zlib, 0BSD и другие лицензии из `THIRD_PARTY_LICENSES.md`.
   MPL-2.0-крейты (`symphonia`) используются без изменений; исходники доступны
   на crates.io.
 * **screencapturekit** (macOS, системный звук через ScreenCaptureKit) - MIT OR Apache-2.0,
