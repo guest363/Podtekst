@@ -68,6 +68,23 @@
     }
   }
 
+  var demo = document.querySelector("[data-demo-video]");
+  if (demo && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    demo.removeAttribute("autoplay");
+    demo.pause();
+  } else if (demo) {
+    var demoWatch = new IntersectionObserver(function (entries) {
+      for (var i = 0; i < entries.length; i += 1) {
+        if (entries[i].isIntersecting) {
+          demo.play().catch(function () {});
+        } else {
+          demo.pause();
+        }
+      }
+    });
+    demoWatch.observe(demo);
+  }
+
   if (menuToggle) {
     menuToggle.addEventListener("click", function () {
       if (menuToggle.getAttribute("aria-expanded") === "true") {
