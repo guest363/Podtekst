@@ -1,18 +1,43 @@
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
 use super::{fit_bytes, MAX_FILES, MAX_TOTAL_BYTES, SCHEMA};
 
+/// `ack.json` — read-modify-write: два параллельных `ack` (две вкладки,
+/// `ack` + `ack_all`) иначе теряют подтверждение.
+static ACKS: Mutex<()> = Mutex::new(());
+
 pub(super) fn write_crash(dir: &Path, record: Value) -> Option<PathBuf> {
     let _ = std::fs::create_dir_all(dir);
     let id = record.get("id")?.as_str()?.to_string();
-    let path = dir.join(format!("crash-{id}.json"));
     let bytes = fit_bytes(&record)?;
-    std::fs::write(&path, bytes).ok()?;
-    prune(dir);
-    Some(path)
+    // create_new: две паники в одну секунду дают два файла, а не перезапись.
+    for attempt in 0..MAX_FILES * 100 {
+        let name = if attempt == 0 {
+            id.clone()
+        } else {
+            format!("{id}-{attempt}")
+        };
+        let path = dir.join(format!("crash-{name}.json"));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                let _ = file.write_all(&bytes);
+                prune(dir);
+                return Some(path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return None,
+        }
+    }
+    None
 }
 
 fn prune(dir: &Path) {
@@ -79,6 +104,7 @@ pub(super) fn list_in(dir: &Path) -> Vec<Value> {
 }
 
 pub(super) fn ack_in(dir: &Path, id: &str) {
+    let _guard = ACKS.lock().unwrap_or_else(|e| e.into_inner());
     let mut ids = read_acks(dir);
     if !ids.iter().any(|ack| ack == id) {
         ids.push(id.to_string());
@@ -87,6 +113,7 @@ pub(super) fn ack_in(dir: &Path, id: &str) {
 }
 
 pub(super) fn ack_all_in(dir: &Path) {
+    let _guard = ACKS.lock().unwrap_or_else(|e| e.into_inner());
     let ids: Vec<String> = list_in(dir)
         .iter()
         .filter_map(|value| value.get("id").and_then(Value::as_str).map(str::to_string))
@@ -148,10 +175,8 @@ pub(super) fn write_run(dir: &Path, clean: bool) {
 }
 
 pub(super) fn write_json_atomic(path: &Path, value: &Value) -> std::io::Result<()> {
-    let tmp = path.with_extension("json.tmp");
     let body = serde_json::to_vec(value).map_err(std::io::Error::other)?;
-    std::fs::write(&tmp, body)?;
-    std::fs::rename(&tmp, path)
+    crate::fsutil::write_atomic(path, &body)
 }
 
 #[cfg(test)]

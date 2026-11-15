@@ -184,10 +184,12 @@ pub(crate) fn opener_url(url: &str) {
 )]
 pub fn mobile_main() {
     logging::init();
+    logging::claim_owner();
     crash::install_hook();
     let state = Arc::new(Mutex::new(recording::RecordingState::default()));
     cleanup_stale_files();
     summary::init();
+    ipc::expect_ui();
     let code = tauri_shell::run_tauri_window(state, DEFAULT_HTTP_PORT, true);
     summary::shutdown();
     logging::shutdown();
@@ -198,7 +200,9 @@ pub fn mobile_main() {
 pub fn spawn_test_http_server(port: u16) {
     summary::init();
     let state = Arc::new(Mutex::new(recording::RecordingState::default()));
-    std::thread::spawn(move || run_http_server(state, port));
+    std::thread::spawn(move || {
+        run_http_server(state, port);
+    });
 }
 
 #[doc(hidden)]
@@ -422,26 +426,26 @@ pub fn run_cli() {
     }
 
     let ipc_listener = TcpListener::bind(format!("127.0.0.1:{IPC_PORT}"));
-    let _ipc_guard = match ipc_listener {
+    match ipc_listener {
         Ok(l) => {
+            ipc::mark_active();
             let st = state.clone();
             std::thread::spawn(move || {
+                // Каждый клиент — в своём потоке: молчащий сокет не задерживает
+                // остальные команды управления записью.
                 for stream in l.incoming().flatten() {
-                    handle_ipc_client(stream, st.clone(), cli.port);
+                    let st = st.clone();
+                    std::thread::spawn(move || handle_ipc_client(stream, st));
                 }
             });
-            // удерживаем listener в фоне через leak (живёт до конца процесса)
-            None::<TcpListener>
         }
         Err(_) => {
             // Порт занят не нашим инстансом (send_ipc выше не нашёл живого):
             // продолжаем без IPC — окно и HTTP работают, теряется только
             // управление вторым кликом/--toggle.
             println!("Порт IPC {IPC_PORT} занят посторонним процессом — запускаюсь без IPC.");
-            None::<TcpListener>
         }
-    };
-    let _ = &_ipc_guard;
+    }
 
     // Файловый lock как второй рубеж single-instance
     let lock_path = app_data_dir().join("podtekst.lock");
@@ -459,18 +463,22 @@ pub fn run_cli() {
     }) {
         Ok(f) => f,
         Err(e) => {
-            crate::note!("Подтекст уже запущен (lock {}): {e}", lock_path.display());
+            crate::note!(
+                "Подтекст уже запущен (lock {}): {e}",
+                crate::logging::file_token(&lock_path)
+            );
             exit_now(1);
         }
     };
+    // Ротацию app.log делает только владелец: клиент `--toggle` её не трогает.
+    logging::claim_owner();
     cleanup_stale_files();
     system::cleanup_stale();
     summary::init();
     crash::begin_run();
 
     if start_on_launch {
-        let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-        let res = start_recording_with_notify(&mut st);
+        let res = start_recording_with_notify(&state);
         if res.get("ok").and_then(|x| x.as_bool()) != Some(true) {
             if let Some(err) = res.get("error").and_then(|x| x.as_str()) {
                 crate::note!("{err}");
@@ -486,6 +494,7 @@ pub fn run_cli() {
     #[cfg(feature = "tauri-ui")]
     if !cli.web && !cli.browser && !cli.no_browser {
         let visible = cli.show || !cli.tray;
+        ipc::expect_ui();
         let code = tauri_shell::run_tauri_window(state.clone(), cli.port, visible);
         summary::shutdown();
         logging::shutdown();
@@ -503,9 +512,12 @@ pub fn run_cli() {
             opener_url(&url);
         });
     }
-    run_http_server(state, cli.port);
+    let served = run_http_server(state, cli.port);
     logging::shutdown();
     crash::mark_clean();
+    if !served {
+        exit_now(1);
+    }
 }
 
 #[cfg(test)]
@@ -1784,6 +1796,41 @@ mod live_api_tests {
                 }
             }
         }
+
+        std::env::remove_var("MEETING_RECORDER_DATA_DIR");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Тело экспорта больше лимита не должно сохраняться усечённым с `ok: true`.
+    #[test]
+    fn oversized_export_body_is_rejected() {
+        let _guard = super::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let base =
+            std::env::temp_dir().join(format!("mr-export-{}-{}", std::process::id(), now_secs()));
+        std::env::set_var("MEETING_RECORDER_DATA_DIR", &base);
+        std::fs::create_dir_all(&base).unwrap();
+        let cfg = serde_json::json!({"save_dir": base.to_string_lossy()});
+        std::fs::write(base.join("config.json"), serde_json::to_vec(&cfg).unwrap()).unwrap();
+
+        let port = free_port();
+        let state = Arc::new(Mutex::new(recording::RecordingState::default()));
+        std::thread::spawn(move || {
+            run_http_server(state, port);
+        });
+
+        let limit = 16 * 1024 * 1024usize;
+        let oversized = vec![b'x'; limit + 1];
+        let (st, v) = json(http(
+            port,
+            "POST",
+            "/api/export/save_dialog?name=big.docx",
+            &[("Content-Type", "application/octet-stream")],
+            &oversized,
+        ));
+        assert_eq!(st, 413, "усечённый экспорт недопустим: {v}");
+        assert_eq!(v.get("ok").and_then(|x| x.as_bool()), Some(false));
 
         std::env::remove_var("MEETING_RECORDER_DATA_DIR");
         let _ = std::fs::remove_dir_all(&base);

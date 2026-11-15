@@ -59,6 +59,19 @@ pub fn is_autostart_enabled() -> bool {
     autostart_file_path().exists()
 }
 
+static HOTKEY: std::sync::Mutex<Option<bool>> = std::sync::Mutex::new(None);
+
+/// Регистрация глобальной клавиши живёт в Tauri-слое; проверка настроек
+/// показывает факт, а не константу «зарегистрирована».
+#[cfg(feature = "tauri-ui")]
+pub(crate) fn set_hotkey_registered(registered: bool) {
+    *HOTKEY.lock().unwrap_or_else(|e| e.into_inner()) = Some(registered);
+}
+
+pub(crate) fn hotkey_registered() -> Option<bool> {
+    *HOTKEY.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub fn install_autostart(exec_path: &str) -> Result<()> {
     let target = autostart_file_path();
     if let Some(parent) = target.parent() {

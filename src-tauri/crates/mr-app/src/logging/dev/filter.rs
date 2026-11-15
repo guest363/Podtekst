@@ -115,10 +115,13 @@ fn path_mode() -> PathMode {
     }
 }
 
+/// Артефакты (полный текст встречи) пишутся только по явному `MR_DIAG_DUMP`
+/// (`run.sh --dev` выставляет `1`): незнакомая переменная — не согласие.
 pub(super) fn dump_mode() -> Option<bool> {
     match std::env::var("MR_DIAG_DUMP").as_deref() {
         Ok("0") | Ok("off") => None,
         Ok("full") => Some(true),
-        _ => Some(false),
+        Ok("1") | Ok("on") => Some(false),
+        _ => None,
     }
 }

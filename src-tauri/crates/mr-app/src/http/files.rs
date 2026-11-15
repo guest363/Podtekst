@@ -35,6 +35,13 @@ fn other_media_with_stem(dir: &Path, stem: &str, exclude: &Path) -> bool {
     })
 }
 
+/// Переименование без перезаписи: `rename` на Unix молча заменяет приёмник,
+/// поэтому имя занимаем жёсткой ссылкой (та же папка — та же ФС).
+fn rename_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::hard_link(from, to)?;
+    std::fs::remove_file(from)
+}
+
 pub(super) fn handle_recording_rename(
     request: tiny_http::Request,
     body: serde_json::Value,
@@ -138,13 +145,25 @@ pub(super) fn handle_recording_rename(
         }
     }
     let was_owned = crate::media_registry::load_registry().is_owned(&old_path);
-    if std::fs::rename(&old_path, &new_path).is_err() {
-        json_response(
-            request,
-            json!({"ok": false, "error": "Не удалось переименовать файл"}),
-            500,
-        );
-        return;
+    match rename_no_replace(&old_path, &new_path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            // Имя заняли между проверкой и переименованием: чужой файл не трогаем.
+            json_response(
+                request,
+                json!({"ok": false, "error": "Файл с таким именем уже есть"}),
+                409,
+            );
+            return;
+        }
+        Err(_) => {
+            json_response(
+                request,
+                json!({"ok": false, "error": "Не удалось переименовать файл"}),
+                500,
+            );
+            return;
+        }
     }
     crate::media_registry::path_renamed(&old_path, &new_path);
     #[cfg(feature = "onnx")]
@@ -162,7 +181,7 @@ pub(super) fn handle_recording_rename(
         for suffix in SIDECAR_SUFFIXES {
             let from = dir.join(format!("{old_stem}{suffix}"));
             if from.exists() {
-                let _ = std::fs::rename(&from, dir.join(format!("{new_stem}{suffix}")));
+                let _ = rename_no_replace(&from, &dir.join(format!("{new_stem}{suffix}")));
             }
         }
     }
@@ -365,14 +384,30 @@ pub(super) fn handle_upload(mut request: tiny_http::Request) {
         );
         return;
     }
-    if std::fs::rename(&part, &dest).is_err() {
-        let _ = std::fs::remove_file(&part);
-        json_response(
-            request,
-            json!({"ok": false, "error": "Не удалось сохранить файл"}),
-            500,
-        );
-        return;
+    // Имя мог занять параллельный запрос: перепроверяем и берём следующее.
+    let mut dest = dest;
+    let mut attempts = 0;
+    loop {
+        match rename_no_replace(&part, &dest) {
+            Ok(()) => break,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempts < 5 => {
+                attempts += 1;
+                let name = dest
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                dest = crate::recording::unique_media_path(&dir, &name);
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&part);
+                json_response(
+                    request,
+                    json!({"ok": false, "error": format!("Не удалось сохранить файл: {e}")}),
+                    500,
+                );
+                return;
+            }
+        }
     }
     crate::media_registry::mark_imported(&dest);
     json_response(
@@ -496,8 +531,16 @@ pub(super) fn handle_extract_audio(request: tiny_http::Request, body: serde_json
     }
 }
 
-pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
+pub(super) fn handle_attach_video(mut request: tiny_http::Request, blocked: bool) {
     const MAX_UPLOAD: u64 = 4 * 1024 * 1024 * 1024;
+    if blocked {
+        json_response(
+            request,
+            json!({"ok": false, "error": "Сначала остановите запись"}),
+            409,
+        );
+        return;
+    }
     let audio_path_raw = header_value(&request, "X-Audio-Path").unwrap_or_default();
     if audio_path_raw.trim().is_empty() {
         json_response(
@@ -601,7 +644,10 @@ pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
         return;
     }
 
-    crate::note!("[ATTACH_VIDEO] Получен видеопоток: {total} байт для аудио {audio_path:?}");
+    crate::note!(
+        "[ATTACH_VIDEO] Получен видеопоток: {total} байт для аудио {}",
+        crate::logging::file_token(&audio_path)
+    );
 
     let final_video = crate::recording::unique_media_path(&dir, &format!("{stem}.{video_ext}"));
     let ffmpeg_available = mr_audio::tools::ffmpeg_available();
@@ -661,7 +707,10 @@ pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
                 .chars()
                 .take(300)
                 .collect::<String>();
-            crate::note!("ffmpeg copy mux failed: {}", last_err.trim());
+            crate::note!(
+                "ffmpeg copy mux failed: {}",
+                crate::privacy::redact_text(last_err.trim())
+            );
         }
         Err(e) => {
             last_err = e.to_string();
@@ -704,7 +753,10 @@ pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
                     .chars()
                     .take(300)
                     .collect::<String>();
-                crate::note!("ffmpeg transcode mux failed: {}", last_err.trim());
+                crate::note!(
+                    "ffmpeg transcode mux failed: {}",
+                    crate::privacy::redact_text(last_err.trim())
+                );
             }
             Err(e) => {
                 last_err = e.to_string();
@@ -715,7 +767,10 @@ pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
     let _ = std::fs::remove_file(&temp_video);
 
     if success {
-        crate::note!("[ATTACH_VIDEO] Склейка успешна -> {final_video:?}");
+        crate::note!(
+            "[ATTACH_VIDEO] Склейка успешна -> {}",
+            crate::logging::file_token(&final_video)
+        );
         let _ = std::fs::remove_file(&audio_path);
         crate::media_registry::unmark_owned(&audio_path);
         crate::media_registry::mark_owned(&final_video);
@@ -731,7 +786,10 @@ pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
             200,
         );
     } else {
-        crate::note!("[ATTACH_VIDEO] Ошибка склейки ffmpeg: {last_err}");
+        crate::note!(
+            "[ATTACH_VIDEO] Ошибка склейки ffmpeg: {}",
+            crate::privacy::redact_text(&last_err)
+        );
         json_response(
             request,
             json!({
@@ -741,5 +799,32 @@ pub(super) fn handle_attach_video(mut request: tiny_http::Request) {
             }),
             500,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rename_no_replace_keeps_both_files_on_collision() {
+        let dir = std::env::temp_dir().join(format!("mr-rename-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let from = dir.join("recording.wav");
+        let to = dir.join("taken.wav");
+        std::fs::write(&from, b"audio").unwrap();
+        std::fs::write(&to, b"foreign").unwrap();
+
+        let error = rename_no_replace(&from, &to).expect_err("занятое имя не перезаписываем");
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&to).unwrap(), b"foreign");
+        assert!(from.exists(), "источник остаётся на месте");
+
+        let free = dir.join("free.wav");
+        rename_no_replace(&from, &free).unwrap();
+        assert_eq!(std::fs::read(&free).unwrap(), b"audio");
+        assert!(!from.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1,12 +1,10 @@
 [
   {
     "name": "Иван Петров",
-    "role": "Backend Developer (Example Team)",
-    "domain": "example"
+    "role": "Backend Developer (Example Team)"
   },
   {
     "name": "Мария Сидорова",
-    "role": "QA Engineer (Example Team)",
-    "domain": "example"
+    "role": "QA Engineer (Example Team)"
   }
 ]

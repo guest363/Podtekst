@@ -1,11 +1,9 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::sync::Mutex;
 
 use serde_json::{json, Value};
 
-static LOCK: Mutex<()> = Mutex::new(());
 const CANARY: &str = "CANARY_0123456789abcdef0123456789abcdef";
 
 fn free_port() -> u16 {
@@ -131,11 +129,10 @@ fn wait_state(port: u16, file: &str, expected: &str, timeout: std::time::Duratio
     }
 }
 
-// Один последовательный сценарий: env-переменные и общий сервер нельзя
-// безопасно делить между параллельными тестами одного бинарника.
+/// Один последовательный сценарий: env-переменные общие на процесс, поэтому
+/// второй тест в этом бинарнике делить их с ним нельзя.
 #[test]
 fn summary_contract_suite() {
-    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let base = std::env::temp_dir().join(format!(
         "mr-summary-contract-{}-{}",
         std::process::id(),
@@ -265,6 +262,9 @@ fn summary_contract_suite() {
     );
     assert_eq!(st, 202, "generate: {v}");
     let first_job = v["job_id"].as_str().unwrap().to_string();
+    // Контракт: идентификатор job — UUID, по нему приходят SSE-события и cancel.
+    assert_eq!(first_job.len(), 36, "job_id не UUID: {first_job}");
+    assert!(first_job.chars().all(|c| c.is_ascii_hexdigit() || c == '-'));
     // Fake быстрый: summary_busy проверяется в slow-режиме ниже, здесь только
     // форма ответа.
     assert!(wait_idle(port, std::time::Duration::from_secs(20)));
@@ -494,7 +494,7 @@ fn summary_contract_suite() {
     assert_eq!(st, 200);
 
     // Этап и терминал идут одной SSE-шиной, без текста в ответе POST.
-    let (mut sse, total_before) = open_sse(port);
+    let mut sse = open_sse(port);
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "slow");
     let (st, v) = json_call(
         port,
@@ -525,8 +525,7 @@ fn summary_contract_suite() {
         (200, Some(true)),
         "cancel: {v}"
     );
-    let capture =
-        read_sse_until_terminal(&mut sse, total_before, std::time::Duration::from_secs(8));
+    let capture = read_sse_until_terminal(&mut sse, std::time::Duration::from_secs(8));
     assert!(capture.contains("summary-stage"), "нет stage: {capture}");
     assert!(
         capture.contains("summary-error"),
@@ -621,7 +620,7 @@ fn summary_contract_suite() {
         json!({}),
     );
     let before_id = before["summary"]["id"].as_str().unwrap().to_string();
-    let (mut sse, cursor) = open_sse(port);
+    let mut sse = open_sse(port);
     let stale_gate = base.join("gate-stale");
     let _ = std::fs::remove_file(&stale_gate);
     std::env::set_var("MR_SUMMARY_FAKE_GATE", &stale_gate);
@@ -646,7 +645,7 @@ fn summary_contract_suite() {
         "edit during job: {v}"
     );
     std::fs::write(&stale_gate, b"1").unwrap();
-    let capture = read_sse_until_terminal(&mut sse, cursor, std::time::Duration::from_secs(8));
+    let capture = read_sse_until_terminal(&mut sse, std::time::Duration::from_secs(8));
     assert!(
         capture.contains("stale_source"),
         "нет терминального stale_source: {capture}"
@@ -749,7 +748,7 @@ fn summary_contract_suite() {
     let _ = std::fs::remove_file(&race_gate);
     std::env::set_var("MR_SUMMARY_FAKE_GATE", &race_gate);
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "gate");
-    let (mut sse, cursor) = open_sse(port);
+    let mut sse = open_sse(port);
     let (st, v) = json_call(
         port,
         "POST",
@@ -763,7 +762,7 @@ fn summary_contract_suite() {
         .replace("podtekst.summary/v1", "podtekst.summary/v2");
     std::fs::write(&json_path, &v2_during).unwrap();
     std::fs::write(&race_gate, b"1").unwrap();
-    let capture = read_sse_until_terminal(&mut sse, cursor, std::time::Duration::from_secs(20));
+    let capture = read_sse_until_terminal(&mut sse, std::time::Duration::from_secs(20));
     assert!(
         capture.contains("schema_unsupported"),
         "commit не отказал: {capture}"
@@ -992,7 +991,7 @@ fn summary_contract_suite() {
     )
     .unwrap();
     let long_rev = v_rev(port, "long.wav");
-    let (mut sse, cursor) = open_sse(port);
+    let mut sse = open_sse(port);
     let (st, v) = json_call(
         port,
         "POST",
@@ -1002,7 +1001,7 @@ fn summary_contract_suite() {
     );
     assert_eq!(st, 202, "map-reduce: {v}");
     assert!(wait_idle(port, std::time::Duration::from_secs(30)));
-    let capture = read_sse_until_terminal(&mut sse, cursor, std::time::Duration::from_secs(5));
+    let capture = read_sse_until_terminal(&mut sse, std::time::Duration::from_secs(5));
     assert!(
         capture.contains("summary-done"),
         "map-reduce завершился не done: {capture}"
@@ -1129,7 +1128,6 @@ fn summary_contract_suite() {
         .any(|s| s["id"] == "decisions" && !s["items"].as_array().unwrap().is_empty()));
     std::env::set_var("MR_SUMMARY_FAKE_BACKEND", "1");
 
-    assert!(!first_job.is_empty());
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -1138,7 +1136,7 @@ fn v_rev(port: u16, file: &str) -> String {
     v["source_rev"].as_str().unwrap_or("").to_string()
 }
 
-fn open_sse(port: u16) -> (TcpStream, usize) {
+fn open_sse(port: u16) -> TcpStream {
     let mut s = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
     s.set_read_timeout(Some(std::time::Duration::from_secs(10)))
         .unwrap();
@@ -1155,19 +1153,12 @@ fn open_sse(port: u16) -> (TcpStream, usize) {
         }
         head.push(byte[0]);
     }
-    let text = String::from_utf8_lossy(&head);
-    let cursor = text
-        .lines()
-        .find_map(|l| l.strip_prefix("id: ").and_then(|v| v.trim().parse().ok()))
-        .unwrap_or(0);
-    (s, cursor)
+    // Сервер не отдаёт `id:` в заголовках и не реплеит историю: клиент видит
+    // только будущие события, поэтому курсор не нужен.
+    s
 }
 
-fn read_sse_until_terminal(
-    s: &mut TcpStream,
-    _cursor: usize,
-    limit: std::time::Duration,
-) -> String {
+fn read_sse_until_terminal(s: &mut TcpStream, limit: std::time::Duration) -> String {
     let started = std::time::Instant::now();
     let mut out = String::new();
     let mut buf = [0u8; 4096];

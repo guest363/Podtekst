@@ -12,6 +12,7 @@ pub(crate) mod transcript_edit;
 pub(crate) mod update;
 
 use std::io::Read;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -25,7 +26,9 @@ use self::files::{
     handle_upload,
 };
 use self::journal_api::{handle_crash_ack, handle_crashes, handle_journal};
-use self::media::{local_request_allowed, recordings_list, serve_audio_file, serve_media_snippet};
+use self::media::{
+    header_value, local_request_allowed, recordings_list, serve_audio_file, serve_media_snippet,
+};
 use self::metrics_api::{serve_metrics, serve_reset_baseline};
 use self::people::{
     handle_people_add, handle_people_move, handle_voiceprint_delete,
@@ -59,9 +62,40 @@ use crate::config::{
     save_auto_transcribe, save_dir, save_record_mode, static_dir,
 };
 use crate::recording::now_secs;
-use crate::recording::{start_recording_inner, stop_recording_inner, RecordingState};
+use crate::recording::{start_recording, stop_recording, RecordingState};
 
 const DONATE_TIPS_URL: &str = "https://tips.tips/000490393";
+
+/// Защита активной записи: сравниваем канонизированные пути, а не строки —
+/// `…/./файл.wav` и симлинк на каталог указывают на тот же файл.
+fn active_recording_path(state: &Arc<Mutex<RecordingState>>, path: &str) -> bool {
+    let current = {
+        let st = state.lock().unwrap_or_else(|e| e.into_inner());
+        if !st.is_recording {
+            return false;
+        }
+        match st.current_file.clone() {
+            Some(current) => current,
+            None => return false,
+        }
+    };
+    same_file(Path::new(&current), path)
+}
+
+fn same_file(current: &Path, candidate: &str) -> bool {
+    canonical(current) == canonical(Path::new(candidate.trim()))
+}
+
+fn canonical(path: &Path) -> std::path::PathBuf {
+    path.canonicalize()
+        .unwrap_or_else(|_| match (path.parent(), path.file_name()) {
+            (Some(parent), Some(name)) => parent
+                .canonicalize()
+                .map(|dir| dir.join(name))
+                .unwrap_or_else(|_| path.to_path_buf()),
+            _ => path.to_path_buf(),
+        })
+}
 
 fn donation_methods() -> serde_json::Value {
     if DONATE_TIPS_URL.is_empty() {
@@ -74,11 +108,18 @@ fn donation_methods() -> serde_json::Value {
     }])
 }
 
+/// Наш ли это сервер на порту: окно не должно открываться на чужой процесс.
+pub(crate) const SERVER_HEADER: &str = "X-Podtekst-Server";
+
 pub(super) fn json_response(request: tiny_http::Request, value: serde_json::Value, status: u16) {
     let body = serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string());
     let resp = tiny_http::Response::from_string(body)
         .with_status_code(status)
         .with_header(hdr("Content-Type: application/json; charset=utf-8"))
+        .with_header(hdr(&format!(
+            "{SERVER_HEADER}: {}",
+            env!("CARGO_PKG_VERSION")
+        )))
         .with_header(hdr("Cache-Control: no-store"));
     let _ = request.respond(resp);
 }
@@ -185,6 +226,13 @@ pub(super) fn read_body_to_json(request: &mut tiny_http::Request) -> serde_json:
         .take(MAX_JSON_BODY)
         .read_to_end(&mut buf);
     serde_json::from_slice(&buf).unwrap_or(json!({}))
+}
+
+/// Маршруты без тела: вычитываем не больше строки, чтобы не держать в памяти
+/// гигабайт от локального клиента.
+fn drain_small_body(request: &mut tiny_http::Request) {
+    let mut buf = Vec::new();
+    let _ = request.as_reader().take(64 * 1024).read_to_end(&mut buf);
 }
 
 const MAX_ACTIVE_REQUESTS: usize = 64;
@@ -389,12 +437,13 @@ fn serve_pack_snippet(request: tiny_http::Request, query: &str) {
     }
 }
 
-pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
+/// `false` — порт занят: headless-режим должен выйти с ошибкой, а не сообщать успех.
+pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) -> bool {
     let server = match tiny_http::Server::http(format!("127.0.0.1:{port}")) {
         Ok(s) => s,
         Err(e) => {
             crate::note!("Не удалось занять порт {port}: {e}");
-            return;
+            return false;
         }
     };
     people::migrate_voiceprints_v3();
@@ -518,11 +567,7 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     let body = read_body_to_json(&mut request);
                     let force =
                         query_force || body.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
-                    let (recording, screen) = {
-                        let st = state.lock().unwrap_or_else(|e| e.into_inner());
-                        (st.is_recording, st.screen_session.is_some())
-                    };
-                    match crate::ffmpeg_dl::start_download(force, recording, screen) {
+                    match crate::ffmpeg_dl::start_download(force) {
                         Ok(()) => json_response(request, json!({"ok": true}), 200),
                         Err(e) => json_response(request, json!({"ok": false, "error": e}), 409),
                     }
@@ -560,19 +605,13 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 (tiny_http::Method::Post, "/api/recordings/rename") => {
                     let body = read_body_to_json(&mut request);
                     let path = body.get("path").and_then(|x| x.as_str()).unwrap_or("");
-                    let blocked = {
-                        let st = state.lock().unwrap_or_else(|e| e.into_inner());
-                        st.is_recording && st.current_file.as_deref() == Some(path)
-                    };
+                    let blocked = active_recording_path(&state, path);
                     handle_recording_rename(request, body, blocked);
                 }
                 (tiny_http::Method::Post, "/api/recordings/delete") => {
                     let body = read_body_to_json(&mut request);
                     let path = body.get("path").and_then(|x| x.as_str()).unwrap_or("");
-                    let blocked = {
-                        let st = state.lock().unwrap_or_else(|e| e.into_inner());
-                        st.is_recording && st.current_file.as_deref() == Some(path)
-                    };
+                    let blocked = active_recording_path(&state, path);
                     handle_recording_delete(request, body, blocked);
                 }
                 (tiny_http::Method::Get, "/api/record/mode") => {
@@ -804,8 +843,8 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     handle_crash_ack(request, &body);
                 }
                 (tiny_http::Method::Post, "/api/diagnostics") => {
-                    let mut body = Vec::new();
-                    let _ = request.as_reader().read_to_end(&mut body);
+                    // Тело не нужно: читаем не больше строки, чтобы клиент не ждал.
+                    drain_small_body(&mut request);
                     match crate::diagnostics::collect(false) {
                         Ok(path) => {
                             let shared = crate::diagnostics::share(&path);
@@ -823,8 +862,7 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                     }
                 }
                 (tiny_http::Method::Post, "/api/diagnostics/open") => {
-                    let mut body = Vec::new();
-                    let _ = request.as_reader().read_to_end(&mut body);
+                    drain_small_body(&mut request);
                     let dir = crate::diagnostics::output_dir();
                     let _ = std::fs::create_dir_all(&dir);
                     crate::opener_url(&dir.to_string_lossy());
@@ -1121,8 +1159,7 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                         .get("screen")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-                    let res = start_recording_inner(&mut st, mode, screen);
+                    let res = start_recording(&state, mode, screen);
                     json_response(request, res, 200);
                 }
                 (tiny_http::Method::Post, "/api/record/stop") => {
@@ -1131,12 +1168,13 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                         .get("defer_autotranscribe")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-                    let res = stop_recording_inner(&mut st, defer);
+                    let res = stop_recording(&state, defer);
                     json_response(request, res, 200);
                 }
                 (tiny_http::Method::Post, "/api/recording/attach_video") => {
-                    handle_attach_video(request);
+                    let audio = header_value(&request, "X-Audio-Path").unwrap_or_default();
+                    let blocked = active_recording_path(&state, &audio);
+                    handle_attach_video(request, blocked);
                 }
                 (tiny_http::Method::Get, "/api/hotwords") => {
                     serve_hotwords(request);
@@ -1226,8 +1264,38 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
             }
         });
     }
+    true
 }
 
 // Полные реализации подключаются за cargo-фичей `tauri-ui` (Tauri v2 плагины).
 // Здесь — кроссплатформенные файловые реализации, достаточные для прод-использования
 // без WebView: одиночный экземпляр через TCP-сокет, автозапуск через .desktop/LaunchAgent.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_recording_compares_canonical_paths() {
+        let dir = std::env::temp_dir().join(format!("mr-active-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("take.wav");
+        std::fs::write(&file, b"wav").unwrap();
+        let mut recording = crate::recording::RecordingState::default();
+        recording.is_recording = true;
+        recording.current_file = Some(file.to_string_lossy().into_owned());
+        let state = Arc::new(Mutex::new(recording));
+
+        assert!(active_recording_path(&state, &file.to_string_lossy()));
+        // Эквивалентная запись пути не должна обходить защиту активной записи.
+        let dotted = dir.join(".").join("take.wav");
+        assert!(active_recording_path(&state, &dotted.to_string_lossy()));
+        let other = dir.join("other.wav");
+        assert!(!active_recording_path(&state, &other.to_string_lossy()));
+
+        state.lock().unwrap_or_else(|e| e.into_inner()).is_recording = false;
+        assert!(!active_recording_path(&state, &file.to_string_lossy()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

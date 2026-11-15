@@ -236,7 +236,7 @@ pub(super) fn recordings_list() -> Vec<serde_json::Value> {
     out
 }
 
-/// Лимит JSON-тела запроса: локальный UI присылает килобайты,
+/// Имя из заголовка `X-Filename`: только последний сегмент, без `..` и пустых имён.
 pub(super) fn safe_file_name(raw: &str) -> String {
     let decoded = percent_decode(raw);
     let name = Path::new(&decoded)
@@ -505,6 +505,11 @@ fn wav_header_bytes(info: &WavInfo, data_bytes: u32) -> Vec<u8> {
 
 /// Верхний потолок фрагмента: локальный UI, но память ответа ограничиваем.
 const MAX_SNIPPET_SEC: f64 = 300.0;
+/// Байтовый потолок рядом с временным: 300 с при 96 кГц/8 каналах/24 бит —
+/// это ~690 МБ одной аллокации, а запросов может быть 64 параллельно.
+const MAX_SNIPPET_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_SNIPPET_RATE: u32 = 192_000;
+const MAX_SNIPPET_CHANNELS: u16 = 8;
 
 /// Общая нарезка для HTTP-фрагментов и сниппетов: две реализации разъедутся на границах.
 pub(super) fn build_wav_snippet(
@@ -523,6 +528,9 @@ pub(super) fn build_wav_snippet(
     head.truncate(got);
     let info = parse_wav_header(&head)?;
     let channel = channel.filter(|ch| *ch < info.channels as usize);
+    if info.rate > MAX_SNIPPET_RATE || info.channels > MAX_SNIPPET_CHANNELS {
+        return None;
+    }
     let file_len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let data_available = info.data_len.min(file_len.saturating_sub(info.data_offset));
     let block = u64::from(info.channels) * u64::from(info.bits) / 8;
@@ -534,6 +542,9 @@ pub(super) fn build_wav_snippet(
         return None;
     }
     let n_bytes = (last - first) * block;
+    if n_bytes > MAX_SNIPPET_BYTES {
+        return None;
+    }
     file.seek(SeekFrom::Start(info.data_offset + first * block))
         .ok()?;
     let mut pcm = vec![0u8; n_bytes as usize];
@@ -667,6 +678,17 @@ fn save_dir_canon() -> PathBuf {
 
 /// Путь обязан лежать внутри папки записей: иначе 404.
 /// Файл может ещё не существовать (транскрипта нет) — тогда проверяем родителя.
+/// Путь медиафайла: абсолютный — как есть, относительный — от папки записей.
+/// Резолвить до проверок: иначе голое имя файла читается из CWD процесса.
+pub(crate) fn resolve_media_path(raw: &str) -> std::path::PathBuf {
+    let path = std::path::PathBuf::from(raw);
+    if path.is_absolute() {
+        path
+    } else {
+        save_dir().join(path)
+    }
+}
+
 pub(crate) fn inside_save_dir(p: &Path) -> bool {
     let dir = save_dir_canon();
     let abs = if p.is_absolute() {
@@ -729,6 +751,43 @@ mod tests {
         let expected = [pcm[0], pcm[1], pcm[4], pcm[5]];
         assert_eq!(&body[44..], &expected[..]);
         assert!(mono_channel_snippet(&info, &pcm, 2).is_none());
+    }
+
+    /// Потолок в байтах: 300 с при 96 кГц/8 каналах/24 бит — это ~690 МБ,
+    /// поэтому фрагмент такого файла не аллоцируем вовсе.
+    #[test]
+    fn huge_snippet_is_rejected_without_allocation() {
+        let dir = std::env::temp_dir().join(format!("mr-snip-big-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let wav = dir.join("big.wav");
+        let info = WavInfo {
+            audio_format: 1,
+            channels: 8,
+            rate: 96_000,
+            bits: 24,
+            data_offset: 44,
+            data_len: 96_000 * 8 * 3 * 300,
+        };
+        let bytes = wav_header_bytes(&info, info.data_len as u32);
+        std::fs::write(&wav, &bytes).unwrap();
+        // Разреженный файл: 690 МБ на диске не нужны, метаданные настоящие.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&wav)
+            .unwrap()
+            .set_len(44 + info.data_len)
+            .unwrap();
+        assert!(build_wav_snippet(&wav, 0.0, 300.0, None).is_none());
+
+        let exotic = WavInfo {
+            channels: 32,
+            ..info
+        };
+        let mut header = wav_header_bytes(&exotic, 1024);
+        header.resize(44 + 1024, 0);
+        std::fs::write(&wav, &header).unwrap();
+        assert!(build_wav_snippet(&wav, 0.0, 0.1, None).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

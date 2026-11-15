@@ -1,17 +1,12 @@
 #[cfg(target_os = "linux")]
 use std::collections::HashMap;
-#[cfg(any(test, target_os = "macos"))]
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 #[cfg(any(windows, target_os = "macos"))]
 use std::process::{Child, Stdio};
-#[cfg(any(windows, target_os = "macos"))]
 use std::sync::Mutex;
-#[cfg(target_os = "linux")]
-use std::sync::OnceLock;
 use std::time::Duration;
-#[cfg(any(windows, target_os = "macos"))]
 use std::time::Instant;
 
 #[cfg(target_os = "linux")]
@@ -39,16 +34,28 @@ pub(crate) struct ScreenCaptureSession {
     #[cfg(target_os = "linux")]
     conn: zbus::Connection,
     video_path: PathBuf,
+    /// Насколько позже аудио началось видео: расхождение компенсируется при склейке.
+    offset_sec: f64,
     #[cfg(any(windows, target_os = "macos"))]
     child: Child,
 }
 
-// Linux: служба появляется при входе в систему, пробу достаточно одного раза.
-#[cfg(target_os = "linux")]
-static SUPPORTED_CACHE: OnceLock<bool> = OnceLock::new();
+impl ScreenCaptureSession {
+    pub(crate) fn offset_sec(&self) -> f64 {
+        self.offset_sec
+    }
+}
 
-// Успех кэшируется навсегда, неудача — на 30 с: ffmpeg можно доустановить
-// из интерфейса, и переключатель включится без перезапуска.
+/// Момент старта видео относительно начала аудиодорожки.
+fn video_offset(audio_started: Instant) -> f64 {
+    Instant::now().duration_since(audio_started).as_secs_f64()
+}
+
+// Успех кэшируется навсегда, неудача — на 30 с: служба записи появляется при
+// входе в GNOME-сессию, и переключатель включается без перезапуска приложения.
+#[cfg(target_os = "linux")]
+static SUPPORTED_CACHE: Mutex<(Option<bool>, Option<Instant>)> = Mutex::new((None, None));
+
 pub(crate) fn is_screen_capture_supported() -> bool {
     #[cfg(windows)]
     {
@@ -60,19 +67,46 @@ pub(crate) fn is_screen_capture_supported() -> bool {
     }
     #[cfg(target_os = "linux")]
     {
-        *SUPPORTED_CACHE.get_or_init(|| {
-            zbus::block_on(async {
-                let conn = session_connection().await.ok()?;
-                let proxy = screencast_proxy(&conn).await.ok()?;
-                proxy.get_property("ScreencastSupported").await.ok()
-            })
-            .unwrap_or(false)
-        })
+        cached_flag(
+            &SUPPORTED_CACHE,
+            Duration::from_secs(30),
+            probe_screencast_supported,
+        )
     }
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         false
     }
+}
+
+#[cfg(target_os = "linux")]
+fn probe_screencast_supported() -> bool {
+    zbus::block_on(async {
+        let conn = session_connection().await.ok()?;
+        let proxy = screencast_proxy(&conn).await.ok()?;
+        proxy.get_property("ScreencastSupported").await.ok()
+    })
+    .unwrap_or(false)
+}
+
+fn cached_flag(
+    cache: &Mutex<(Option<bool>, Option<Instant>)>,
+    retry_after: Duration,
+    probe: fn() -> bool,
+) -> bool {
+    let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if cache.0 == Some(true) {
+        return true;
+    }
+    if let Some(at) = cache.1 {
+        if at.elapsed() < retry_after {
+            return false;
+        }
+    }
+    cache.1 = Some(Instant::now());
+    let found = probe();
+    cache.0 = Some(found);
+    found
 }
 
 #[cfg(any(windows, target_os = "macos"))]
@@ -83,6 +117,10 @@ pub(crate) fn invalidate_encoders() {
     #[cfg(any(windows, target_os = "macos"))]
     if let Ok(mut cache) = ENCODER_CACHE.lock() {
         *cache = (None, None);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        *SUPPORTED_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = (None, None);
     }
 }
 
@@ -222,14 +260,17 @@ fn spawn_child(cmd: &mut Command, video_path: &Path) -> Result<Child, String> {
     if let Ok(Some(status)) = child.try_wait() {
         return Err(format!("ffmpeg завершился сразу ({status})"));
     }
-    crate::note!("[SCREEN] Запись экрана запущена: {video_path:?}");
+    crate::note!(
+        "[SCREEN] Запись экрана запущена: {}",
+        crate::logging::file_token(&video_path)
+    );
 
     Ok(child)
 }
 
 impl ScreenCaptureSession {
     #[cfg(windows)]
-    pub(crate) fn start(started_ts: u64) -> Result<Self, String> {
+    pub(crate) fn start(started_ts: u64, audio_started: Instant) -> Result<Self, String> {
         let Some(encoder) = windows_encoder() else {
             return Err("ffmpeg с кодировщиком H.264 не найден в PATH".to_string());
         };
@@ -256,15 +297,17 @@ impl ScreenCaptureSession {
         }
         cmd.arg("-pix_fmt").arg("yuv420p").arg(&video_path);
 
+        let offset_sec = video_offset(audio_started);
         Ok(Self {
             child: spawn_child(&mut cmd, &video_path)?,
             video_path,
+            offset_sec,
         })
     }
 
     // shortcut: ffmpeg avfoundation вместо SCK+AVAssetWriter (нет Mac для проверки TCC), заменить после живой проверки.
     #[cfg(target_os = "macos")]
-    pub(crate) fn start(started_ts: u64) -> Result<Self, String> {
+    pub(crate) fn start(started_ts: u64, audio_started: Instant) -> Result<Self, String> {
         let Some(encoder) = macos_encoder() else {
             return Err("ffmpeg с кодировщиком H.264 не найден в PATH".to_string());
         };
@@ -279,12 +322,16 @@ impl ScreenCaptureSession {
             )
         })?;
 
-        Ok(Self { child, video_path })
+        Ok(Self {
+            child,
+            video_path,
+            offset_sec,
+        })
     }
 
     /// Запускает запись экрана (Linux): служба GNOME Shell Screencast по D-Bus.
     #[cfg(target_os = "linux")]
-    pub(crate) fn start(started_ts: u64) -> Result<Self, String> {
+    pub(crate) fn start(started_ts: u64, audio_started: Instant) -> Result<Self, String> {
         let (conn, filename) = zbus::block_on(async {
             let conn = session_connection().await?;
             let template = format!("/tmp/.mr_screen_{started_ts}_%d_%t");
@@ -301,13 +348,20 @@ impl ScreenCaptureSession {
             Ok::<_, String>((conn, filename))
         })?;
         let video_path = PathBuf::from(filename);
-        crate::note!("[SCREEN] Запись экрана запущена: {video_path:?}");
+        crate::note!(
+            "[SCREEN] Запись экрана запущена: {}",
+            crate::logging::file_token(&video_path)
+        );
 
-        Ok(Self { conn, video_path })
+        Ok(Self {
+            conn,
+            video_path,
+            offset_sec: video_offset(audio_started),
+        })
     }
 
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-    pub(crate) fn start(_started_ts: u64) -> Result<Self, String> {
+    pub(crate) fn start(_started_ts: u64, _audio_started: Instant) -> Result<Self, String> {
         Err("Запись экрана не поддерживается на этой платформе".to_string())
     }
 
@@ -375,7 +429,10 @@ fn wait_finalized(video_path: &Path) -> Result<PathBuf, String> {
         if video_path.is_file() {
             let size = std::fs::metadata(video_path).map(|m| m.len()).unwrap_or(0);
             if size > 1000 {
-                crate::note!("[SCREEN] Записано видео: {video_path:?} ({size} байт)");
+                crate::note!(
+                    "[SCREEN] Записано видео: {} ({size} байт)",
+                    crate::logging::file_token(video_path)
+                );
                 return Ok(video_path.to_path_buf());
             }
         }
@@ -409,27 +466,49 @@ impl Drop for ScreenCaptureSession {
     }
 }
 
+/// Аргументы до первого `-i`: видео стартовало позже аудио, поэтому его
+/// шкалу сдвигаем на измеренное расхождение (`-itsoffset`).
+fn mux_args(video_offset_sec: f64) -> Vec<OsString> {
+    let mut args: Vec<OsString> = ["-y", "-itsoffset"]
+        .iter()
+        .map(|arg| OsString::from(*arg))
+        .collect();
+    args.push(OsString::from(format!("{video_offset_sec:.3}")));
+    args
+}
+
 /// Склеивает видеофайл экрана и аудиозапись встречи через ffmpeg.
 pub(crate) fn mux_screen_and_audio(
     video_path: &Path,
     audio_path: &Path,
     final_path: &Path,
+    video_offset_sec: f64,
 ) -> Result<(), String> {
-    crate::note!("[SCREEN] Склейка видео {video_path:?} и аудио {audio_path:?} -> {final_path:?}");
+    crate::note!(
+        "[SCREEN] Склейка видео {} и аудио {} -> {}",
+        crate::logging::file_token(video_path),
+        crate::logging::file_token(audio_path),
+        crate::logging::file_token(final_path)
+    );
 
     // Исходник экрана — единственная копия видео: сбой склейки не должен его удалять.
     let fail = |reason: String| -> Result<(), String> {
         let _ = std::fs::remove_file(final_path);
         let kept = keep_raw_video(video_path, audio_path);
         let note = kept
-            .map(|path| format!("; запись экрана сохранена: {}", path.display()))
+            .map(|path| {
+                format!(
+                    "; запись экрана сохранена: {}",
+                    crate::logging::file_token(&path)
+                )
+            })
             .unwrap_or_default();
         Err(format!("{reason}{note}"))
     };
 
     let mut cmd = Command::new(mr_audio::tools::ffmpeg_path());
-    cmd.arg("-y")
-        .arg("-i")
+    cmd.args(mux_args(video_offset_sec));
+    cmd.arg("-i")
         .arg(video_path)
         .arg("-i")
         .arg(audio_path)
@@ -457,8 +536,8 @@ pub(crate) fn mux_screen_and_audio(
     crate::note!("[SCREEN] Прямое копирование не сработало, запускаю перекодирование...");
     let encoder = fallback_encoder();
     let mut cmd = Command::new(mr_audio::tools::ffmpeg_path());
-    cmd.arg("-y")
-        .arg("-i")
+    cmd.args(mux_args(video_offset_sec));
+    cmd.arg("-i")
         .arg(video_path)
         .arg("-i")
         .arg(audio_path)
@@ -507,8 +586,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_screen_support_check() {
+    fn screen_support_is_checked_without_panic() {
+        // Значение зависит от платформы; важен инвариант: повторный вызов не падает
+        // и не переспрашивает службу чаще, чем разрешает кэш.
         let _ = is_screen_capture_supported();
+        let _ = is_screen_capture_supported();
+    }
+
+    #[test]
+    fn failed_support_probe_is_retried_after_cache_window() {
+        static CACHE: Mutex<(Option<bool>, Option<Instant>)> = Mutex::new((None, None));
+        static FAILS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        fn failing() -> bool {
+            FAILS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            false
+        }
+        assert!(
+            !cached_flag(&CACHE, Duration::from_secs(30), failing),
+            "первая проба"
+        );
+        assert!(
+            !cached_flag(&CACHE, Duration::from_secs(30), failing),
+            "в окне кэша"
+        );
+        assert_eq!(
+            FAILS.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "отрицательный результат не должен переспрашиваться каждую секунду"
+        );
+        assert!(
+            !cached_flag(&CACHE, Duration::ZERO, failing),
+            "после окна проба повторяется"
+        );
+        assert_eq!(FAILS.load(std::sync::atomic::Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn mux_shifts_shifted_video_by_measured_offset() {
+        let args: Vec<String> = mux_args(1.734)
+            .iter()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(args, vec!["-y", "-itsoffset", "1.734"]);
     }
 
     #[test]

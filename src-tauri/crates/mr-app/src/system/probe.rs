@@ -42,11 +42,25 @@ pub(crate) fn cleanup_stale() {
 
 #[cfg(not(target_os = "android"))]
 pub(super) fn run() -> Outcome {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static BUSY: AtomicBool = AtomicBool::new(false);
+    // Зависшая проба держит поток захвата: второй запуск открыл бы ещё один
+    // микрофонный поток поверх первого.
+    if BUSY.swap(true, Ordering::AcqRel) {
+        return Outcome::warn(
+            "Проверка микрофона уже идёт",
+            "Дождитесь окончания предыдущей проверки",
+        );
+    }
     // Открытие потока libpulse — блокирующий вызов без таймаута: уводим пробу
     // в поток, чтобы HTTP-запрос и UI не ждали зависший звуковой сервер.
+    // shortcut: при зависшем звуковом сервере поток и захват остаются до его
+    // ответа; второй параллельный захват при этом не открывается.
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(capture_probe());
+        let outcome = capture_probe();
+        BUSY.store(false, Ordering::Release);
+        let _ = tx.send(outcome);
     });
     match rx.recv_timeout(Duration::from_secs(12)) {
         Ok(outcome) => outcome,

@@ -6,6 +6,17 @@ use crate::recording::{start_recording_with_notify, stop_recording_with_notify, 
 
 pub(crate) const IPC_PORT: u16 = 48291;
 
+static IPC_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Без IPC не работают `--toggle` и второй клик: проверка настроек показывает факт, а не константу.
+pub(crate) fn mark_active() {
+    IPC_ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn is_active() -> bool {
+    IPC_ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Ответы, которыми отвечает только наш инстанс. Порт 48291 может занять
 /// значит нашего приложения на порту нет.
 const IPC_REPLIES: &[&str] = &["STOPPED", "STARTED", "OK", "UNKNOWN"];
@@ -49,12 +60,27 @@ fn result_reply(res: &serde_json::Value, ok: &str) -> String {
 pub(crate) type UiIpcCallback = Box<dyn Fn(&str) + Send + Sync>;
 static UI_IPC_CALLBACK: std::sync::OnceLock<Mutex<Option<UiIpcCallback>>> =
     std::sync::OnceLock::new();
+/// Окно ещё не открылось, но откроется: команду буферизуем, а не отвечаем отказом.
+static UI_EXPECTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static PENDING_UI_CMD: Mutex<Option<String>> = Mutex::new(None);
+
+#[cfg(feature = "tauri-ui")]
+pub(crate) fn expect_ui() {
+    UI_EXPECTED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
 
 #[cfg(feature = "tauri-ui")]
 pub(crate) fn set_ui_ipc_callback(cb: UiIpcCallback) {
     let slot = UI_IPC_CALLBACK.get_or_init(|| Mutex::new(None));
     if let Ok(mut guard) = slot.lock() {
         *guard = Some(cb);
+        let pending = PENDING_UI_CMD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let (Some(cmd), Some(cb)) = (pending, guard.as_ref()) {
+            cb(&cmd);
+        }
     }
 }
 
@@ -67,17 +93,20 @@ pub(crate) fn call_ui_ipc(cmd: &str) -> bool {
             }
         }
     }
+    if UI_EXPECTED.load(std::sync::atomic::Ordering::Relaxed) {
+        // Повторный клик в первые секунды старта: окно откроется и получит команду.
+        *PENDING_UI_CMD.lock().unwrap_or_else(|e| e.into_inner()) = Some(cmd.to_string());
+        return true;
+    }
     false
 }
 
-pub(crate) fn handle_ipc_client(
-    mut stream: TcpStream,
-    state: Arc<Mutex<RecordingState>>,
-    _port: u16,
-) {
+pub(crate) fn handle_ipc_client(mut stream: TcpStream, state: Arc<Mutex<RecordingState>>) {
     let mut buf = Vec::new();
     let mut byte = [0u8; 1];
-    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+    // Короткий таймаут: клиент, открывший соединение и молчащий, не должен
+    // задерживать команды управления записью.
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(500)));
     while stream.read(&mut byte).is_ok_and(|n| n == 1) {
         if byte[0] == b'\n' || buf.len() > 256 {
             break;
@@ -87,21 +116,16 @@ pub(crate) fn handle_ipc_client(
     let cmd = String::from_utf8_lossy(&buf).trim().to_uppercase();
     let resp: String = match cmd.as_str() {
         "TOGGLE" => {
-            let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-            if st.is_recording {
-                result_reply(&stop_recording_with_notify(&mut st), "STOPPED")
+            let res = crate::recording::toggle_recording_with_notify(&state);
+            let word = if state.lock().unwrap_or_else(|e| e.into_inner()).is_recording {
+                "STARTED"
             } else {
-                result_reply(&start_recording_with_notify(&mut st), "STARTED")
-            }
+                "STOPPED"
+            };
+            result_reply(&res, word)
         }
-        "START" => {
-            let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-            result_reply(&start_recording_with_notify(&mut st), "STARTED")
-        }
-        "STOP" => {
-            let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-            result_reply(&stop_recording_with_notify(&mut st), "STOPPED")
-        }
+        "START" => result_reply(&start_recording_with_notify(&state), "STARTED"),
+        "STOP" => result_reply(&stop_recording_with_notify(&state), "STOPPED"),
         "SHOW" | "HIDE" | "QUIT" => {
             if call_ui_ipc(&cmd) {
                 "OK".to_string()

@@ -80,6 +80,24 @@ fn wait_until<F: FnMut() -> bool>(limit: Duration, mut f: F) -> bool {
     false
 }
 
+/// SHA-256 модели итогов из `mr-models/models-manifest.json` — того же
+/// источника, по которому качает `.github/scripts/fetch_summary_model.sh`.
+fn manifest_summary_sha256() -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../mr-models/models-manifest.json");
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let manifest: Value = serde_json::from_str(&text).expect("models-manifest.json: JSON");
+    manifest["models"]
+        .as_array()
+        .and_then(|models| {
+            models
+                .iter()
+                .find(|model| model["kind"] == "summary")
+                .and_then(|model| model["files"][0]["sha256"].as_str())
+        })
+        .expect("в манифесте нет модели итогов")
+        .to_string()
+}
+
 fn vm_hwm_mb(pid: u32) -> Option<u64> {
     let text = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
     let line = text.lines().find(|l| l.starts_with("VmHWM:"))?;
@@ -191,9 +209,11 @@ fn summary_real_smoke() {
     let json_path = rec.join("real-sample.summary.json");
     let artifact: Value = serde_json::from_slice(&std::fs::read(&json_path).unwrap()).unwrap();
     assert_eq!(artifact["source"]["rev"], rev);
+    // Ожидаемый хеш берём из манифеста моделей, а не литералом: при плановом
+    // обновлении модели проверка не должна требовать правки теста (P1).
     assert_eq!(
         artifact["generator"]["model_sha256"],
-        "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597"
+        manifest_summary_sha256().as_str()
     );
     assert!(artifact["generator"]["prompt_version"]
         .as_str()

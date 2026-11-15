@@ -4,6 +4,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 #[cfg(debug_assertions)]
@@ -49,8 +50,12 @@ mod dev {
 }
 
 const MAX_BYTES: u64 = 2 * 1024 * 1024;
+/// Одна строка лога: тело `POST /api/log` иначе пишет мегабайты в один вызов.
+const MAX_LINE_BYTES: usize = 4 * 1024;
 
 static SINK: OnceLock<Mutex<Option<File>>> = OnceLock::new();
+static WRITTEN: AtomicU64 = AtomicU64::new(0);
+static OWNER: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn logs_dir() -> PathBuf {
     crate::config::app_data_dir().join("logs")
@@ -67,14 +72,35 @@ pub(crate) fn init() {
     }
     let dir = logs_dir();
     let _ = std::fs::create_dir_all(&dir);
-    rotate(&dir, MAX_BYTES);
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path())
-        .ok();
+    let file = open_append();
+    WRITTEN.store(file_size(&log_path()), Ordering::Relaxed);
     let _ = SINK.set(Mutex::new(file));
     dev::init_if_enabled();
+}
+
+fn open_append() -> Option<File> {
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // app.log содержит пути записей: на общей машине он только для владельца.
+        options.mode(0o600);
+    }
+    options.open(log_path()).ok()
+}
+
+fn file_size(path: &Path) -> u64 {
+    std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
+/// Ротация выполняется только процессом-владельцем лога: `--toggle` иначе
+/// переименовывает файл, который главный процесс держит открытым.
+pub(crate) fn claim_owner() {
+    OWNER.store(true, Ordering::Relaxed);
+    if WRITTEN.load(Ordering::Relaxed) > MAX_BYTES {
+        rotate_now();
+    }
 }
 
 /// Ротация только при старте: за сессию лог не превышает пары мегабайт.
@@ -96,13 +122,51 @@ fn rotate(dir: &Path, max_bytes: u64) {
 pub(crate) fn write(args: std::fmt::Arguments<'_>) {
     let text = format!("{args}");
     eprintln!("{text}");
+    if OWNER.load(Ordering::Relaxed) && WRITTEN.load(Ordering::Relaxed) >= MAX_BYTES {
+        rotate_now();
+    }
     let Some(sink) = SINK.get() else { return };
-    if let Ok(mut guard) = sink.lock() {
-        if let Some(file) = guard.as_mut() {
-            let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-            let _ = writeln!(file, "{stamp} {text}");
+    let mut text = limit_line(&text);
+    if !paths_allowed() {
+        text = crate::privacy::redact_text(&text);
+    }
+    // Poisoned мьютекс не должен навсегда выключать файловый лог: строки
+    // нужны именно при разборе сбоя.
+    let mut guard = sink.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(file) = guard.as_mut() {
+        let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let line = format!("{stamp} {text}\n");
+        if file.write_all(line.as_bytes()).is_ok() {
+            WRITTEN.fetch_add(line.len() as u64, Ordering::Relaxed);
         }
     }
+}
+
+/// P12: полный путь — только при явном `MR_LOG_PATHS=full`.
+fn paths_allowed() -> bool {
+    std::env::var("MR_LOG_PATHS").as_deref() == Ok("full")
+}
+
+fn limit_line(text: &str) -> String {
+    if text.len() <= MAX_LINE_BYTES {
+        return text.to_string();
+    }
+    let mut cut = MAX_LINE_BYTES;
+    while cut > 0 && !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let mut capped = text[..cut].to_string();
+    capped.push('…');
+    capped
+}
+
+fn rotate_now() {
+    let Some(sink) = SINK.get() else { return };
+    let mut guard = sink.lock().unwrap_or_else(|e| e.into_inner());
+    guard.take();
+    rotate(&logs_dir(), MAX_BYTES);
+    *guard = open_append();
+    WRITTEN.store(file_size(&log_path()), Ordering::Relaxed);
 }
 
 pub(crate) fn begin_run() -> String {
@@ -202,12 +266,7 @@ pub(crate) fn append_error(value: &serde_json::Value) {
 }
 
 fn fnv1a(text: &str) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
-    for byte in text.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
+    crate::privacy::fnv1a(text)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -267,27 +326,21 @@ pub(crate) fn speaker_token(name: &str) -> String {
 
 fn file_token_with(full: bool, path: &Path) -> String {
     if full {
-        return crate::privacy::redact_path(path);
+        return path.to_string_lossy().into_owned();
     }
-    let extension = path
-        .extension()
-        .map(|e| e.to_string_lossy().to_ascii_lowercase())
-        .unwrap_or_default();
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    let hash = fnv1a(&name);
-    if extension.is_empty() {
-        format!("recording-{hash:08x}")
-    } else {
-        format!("recording-{hash:08x}.{extension}")
+    if name.is_empty() {
+        return "recording".to_string();
     }
+    crate::privacy::path_token(&name)
 }
 
 /// P12: полный путь — только при явном `MR_LOG_PATHS=full`.
 pub(crate) fn file_token(path: &Path) -> String {
-    file_token_with(std::env::var("MR_LOG_PATHS").as_deref() == Ok("full"), path)
+    file_token_with(paths_allowed(), path)
 }
 
 #[macro_export]
@@ -358,5 +411,14 @@ mod tests {
             file_token_with(false, Path::new("/tmp/встреча команды.wav"))
         );
         assert!(file_token_with(true, Path::new("/tmp/recording.wav")).ends_with("recording.wav"));
+    }
+
+    #[test]
+    fn long_lines_are_capped() {
+        let line = "я".repeat(MAX_LINE_BYTES);
+        let capped = limit_line(&line);
+        assert!(capped.len() <= MAX_LINE_BYTES + 3, "{}", capped.len());
+        assert!(capped.ends_with('…'));
+        assert_eq!(limit_line("короткая строка"), "короткая строка");
     }
 }

@@ -199,10 +199,11 @@ pub(crate) fn flush() {
     let Some(state) = STATE.get() else {
         return;
     };
-    // Синхронный сброс: выход из процесса не должен обгонять writer.
+    // Синхронный сброс: выход из процесса не должен обгонять writer. Полная
+    // очередь — не повод молча терять хвост, поэтому ждём, пока writer возьмёт.
     let (ack, wait) = sync_channel(0);
-    if state.sender.try_send(Msg::FlushSync(ack)).is_ok() {
-        let _ = wait.recv_timeout(Duration::from_secs(1));
+    if state.sender.send(Msg::FlushSync(ack)).is_ok() {
+        let _ = wait.recv_timeout(Duration::from_secs(2));
     }
 }
 
@@ -211,10 +212,9 @@ pub(crate) fn shutdown() {
         return;
     };
     let _ = state.sender.send(Msg::Shutdown);
-    if let Ok(mut guard) = state.writer.lock() {
-        if let Some(handle) = guard.take() {
-            let _ = handle.join();
-        }
+    let mut guard = state.writer.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(handle) = guard.take() {
+        let _ = handle.join();
     }
 }
 

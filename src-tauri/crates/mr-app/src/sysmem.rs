@@ -1,6 +1,24 @@
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub(crate) fn available_bytes() -> Option<u64> {
-    parse_mem_available(&std::fs::read_to_string("/proc/meminfo").ok()?)
+    let host = parse_mem_available(&std::fs::read_to_string("/proc/meminfo").ok()?);
+    // Android и контейнеры живут в cgroup: /proc/meminfo показывает память
+    // хоста, и preflight пропускает файл, который потом убивает LMK.
+    match (host, cgroup_available()) {
+        (Some(host), Some(cgroup)) => Some(host.min(cgroup)),
+        (host, cgroup) => host.or(cgroup),
+    }
+}
+
+/// Свободно по лимиту cgroup v2 (`memory.max` − `memory.current`).
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn cgroup_available() -> Option<u64> {
+    let read = |name: &str| -> Option<u64> {
+        let text = std::fs::read_to_string(format!("/sys/fs/cgroup/{name}")).ok()?;
+        text.trim().parse::<u64>().ok()
+    };
+    let max = read("memory.max")?;
+    let current = read("memory.current")?;
+    Some(max.saturating_sub(current))
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -115,6 +133,14 @@ pub(crate) fn total_bytes() -> Option<u64> {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cgroup_limit_is_read_when_present() {
+        // На хосте без cgroup v2 проверка не падает: значения просто нет.
+        if let Some(bytes) = cgroup_available() {
+            assert!(bytes > 0, "лимит cgroup должен быть положительным");
+        }
+    }
 
     #[test]
     fn parses_mem_available_from_proc() {
