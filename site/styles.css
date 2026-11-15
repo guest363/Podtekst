@@ -97,6 +97,7 @@ h3 { font-size: 19px; line-height: 1.3; letter-spacing: -0.022em; }
 .nav a, .site-footer nav a { color: var(--muted); font-size: 14px; white-space: nowrap; }
 .nav a:hover, .site-footer nav a:hover { color: var(--blue); }
 .header-cta { margin-left: 4px; white-space: nowrap; }
+@media (min-width: 941px) { .header-cta { min-width: 193px; } }
 .button {
   display: inline-flex;
   align-items: center;

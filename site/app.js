@@ -133,6 +133,18 @@
       if (link) closeMenu();
     });
 
+    var desktopMenu = window.matchMedia("(min-width: 941px)");
+    var onDesktopChange = function (e) {
+      if (e.matches && menuToggle.getAttribute("aria-expanded") === "true") {
+        closeMenu();
+      }
+    };
+    if (desktopMenu.addEventListener) {
+      desktopMenu.addEventListener("change", onDesktopChange);
+    } else if (desktopMenu.addListener) {
+      desktopMenu.addListener(onDesktopChange);
+    }
+
     document.addEventListener("keydown", function (event) {
       if (menu.hidden) return;
 
