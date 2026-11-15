@@ -24,6 +24,8 @@ REQUIRED_PLATFORMS = set(PLATFORMS.values())
 NOTES_LIMIT = 16 * 1024
 UNSIGNED_DOC = "docs/UNSIGNED-INSTALL.md"
 COMPONENTS_PREFIX = "Компоненты:"
+# Первый выпуск, в котором версии компонентов входят в заметки релиза.
+COMPONENTS_SINCE = (0, 9, 0)
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -84,16 +86,24 @@ def check_versions(root, tag):
     return version
 
 
-def check_notes(root, tag, allow_legacy_notes=False):
+def release_version(version):
+    try:
+        return tuple(int(part) for part in version.split("."))
+    except ValueError:
+        return ()
+
+
+def check_notes(root, tag, version, allow_legacy_notes=False):
     path = root / ".github/release-notes" / f"{tag}.md"
     if not path.is_file():
         fail(f"нет описания релиза: {path.relative_to(root)}")
     text = read_text(path)
     if not text.strip():
         fail(f"пустое описание релиза: {path.relative_to(root)}")
-    if not allow_legacy_notes:
-        if UNSIGNED_DOC not in text:
-            fail(f"в {path.relative_to(root)} нет ссылки на {UNSIGNED_DOC}")
+    if not allow_legacy_notes and UNSIGNED_DOC not in text:
+        fail(f"в {path.relative_to(root)} нет ссылки на {UNSIGNED_DOC}")
+    # Старые заметки не переписываем: строка обязательна только с COMPONENTS_SINCE.
+    if release_version(version) >= COMPONENTS_SINCE:
         if not any(line.lstrip().startswith(COMPONENTS_PREFIX) for line in text.splitlines()):
             fail(
                 f"в {path.relative_to(root)} нет строки, начинающейся с «{COMPONENTS_PREFIX}»: "
@@ -247,13 +257,13 @@ def main():
     parser.add_argument(
         "--allow-legacy-notes",
         action="store_true",
-        help="не требовать ссылку на UNSIGNED-INSTALL.md и строку «Компоненты:» (только для dry run)",
+        help="не требовать ссылку на UNSIGNED-INSTALL.md (только для dry run)",
     )
     args = parser.parse_args()
 
     root = args.root.resolve()
     version = check_versions(root, args.tag)
-    notes = check_notes(root, args.tag, args.allow_legacy_notes)
+    notes = check_notes(root, args.tag, version, args.allow_legacy_notes)
     if args.check_only:
         print(f"Версии и заметки релиза согласованы: {args.tag}")
         return

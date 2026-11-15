@@ -81,9 +81,14 @@ const ffmpegBadge = $derived(
     : !ffmpeg.known
       ? statusBadge('info', 'Проверка…')
       : !ffmpeg.available
-        ? statusBadge('warn', 'Не установлен')
+        ? statusBadge('warn', ffmpeg.installed ? 'Нужна переустановка' : 'Не установлен')
         : ffmpeg.canUpdate
-          ? statusBadge('warn', `Обновление до ${ffmpeg.expectedVersion || 'версии сборки'}`)
+          ? statusBadge(
+              'warn',
+              ffmpeg.pairOk === false
+                ? 'Нужна переустановка'
+                : `Обновление до ${ffmpeg.expectedVersion || 'версии сборки'}`,
+            )
           : statusBadge('ok', 'Готов'),
 )
 
@@ -383,9 +388,11 @@ const onWindowKey = (e: KeyboardEvent): void => {
                   {#if ffmpeg.error && !ffmpeg.downloading}
                     <span class="rec-meta ffmpeg-error">
                       {ffmpeg.error}
-                      <a href={ffmpeg.manualUrl} target="_blank" rel="noreferrer">
-                        Страница загрузки
-                      </a>
+                      {#if ffmpeg.manualUrl}
+                        <a href={ffmpeg.manualUrl} target="_blank" rel="noreferrer">
+                          Страница загрузки
+                        </a>
+                      {/if}
                     </span>
                   {/if}
                   {#if ffmpeg.downloading}
@@ -405,17 +412,17 @@ const onWindowKey = (e: KeyboardEvent): void => {
                     <button
                       class="btn-primary btn-sm"
                       disabled={ffmpeg.downloading}
-                      onclick={() => void downloadFfmpeg()}
+                      onclick={() => void downloadFfmpeg(ffmpeg.installed)}
                     >
-                      Скачать
+                      {ffmpeg.installed ? 'Переустановить' : 'Скачать'}
                     </button>
                   {:else if ffmpeg.canUpdate}
                     <button
                       class="btn-primary btn-sm"
                       disabled={ffmpeg.downloading}
-                      onclick={() => void downloadFfmpeg(true)}
+                      onclick={() => void downloadFfmpeg(ffmpeg.pairOk === false)}
                     >
-                      Обновить
+                      {ffmpeg.pairOk === false ? 'Переустановить' : 'Обновить'}
                     </button>
                   {/if}
                 </div>

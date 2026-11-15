@@ -21,9 +21,15 @@ pub(super) fn download(
         uuid::Uuid::new_v4(),
         extension(&package.format)
     ));
-    let resp = ureq::get(&package.url)
+    // Медленный канал не должен ронять установку, пока данные идут, поэтому
+    // предел ставится на простой сокета, а не на весь архив.
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(15))
+        .timeout_read(Duration::from_secs(120))
+        .build();
+    let resp = agent
+        .get(&package.url)
         .set("User-Agent", "MeetingRecorder/0.1")
-        .timeout(Duration::from_secs(120))
         .call()
         .map_err(|e| format!("сеть: {e}"))?;
     let total: u64 = resp

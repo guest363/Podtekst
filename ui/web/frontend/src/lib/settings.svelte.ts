@@ -192,6 +192,7 @@ type FfmpegState = {
   ffprobeVersion: string
   source: string
   expectedVersion: string
+  installed: boolean
   canUpdate: boolean
   pairOk: boolean | null
 }
@@ -202,11 +203,12 @@ export const ffmpeg: FfmpegState = $state({
   downloading: false,
   pct: 0,
   error: null,
-  manualUrl: 'https://www.gyan.dev/ffmpeg/builds/',
+  manualUrl: '',
   version: '',
   ffprobeVersion: '',
   source: '',
   expectedVersion: '',
+  installed: false,
   canUpdate: false,
   pairOk: null,
 })
@@ -225,6 +227,7 @@ const applyFfmpegStatus = (f: Record<string, unknown> | undefined): void => {
   ffmpeg.ffprobeVersion = asText(f.ffprobe_version)
   ffmpeg.source = asText(f.source)
   ffmpeg.expectedVersion = asText(f.expected_version)
+  ffmpeg.installed = f.installed === true
   ffmpeg.canUpdate = f.can_update === true
   ffmpeg.pairOk = typeof f.pair_ok === 'boolean' ? f.pair_ok : null
 }

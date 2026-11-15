@@ -9,7 +9,7 @@ use mr_summarize::{classify, parse, preset, prompt, text, Detail, SummaryError, 
 use super::backend::{
     BackendError, BackendEvent, BackendInfo, CancelToken, GenerateRequest, Phase, SummaryBackend,
 };
-use super::config::{self, MODEL_TITLE, MODEL_TITLE_EN, RUNTIME_COMMIT};
+use super::config::{self, RUNTIME_COMMIT};
 use super::store::Paths;
 
 pub struct JobSpec {
@@ -338,9 +338,9 @@ pub fn run(
             backend: "sidecar".to_string(),
             model_id: config::model_id().to_string(),
             model_title: if output_language == text::Language::En {
-                MODEL_TITLE_EN.to_string()
+                config::model_title_en().to_string()
             } else {
-                MODEL_TITLE.to_string()
+                config::model_title().to_string()
             },
             model_sha256: spec.model_sha.clone(),
             quant: "Q4_K_M".to_string(),

@@ -151,6 +151,7 @@ mod tests {
             embedding_dim: None,
             license: String::new(),
             description: String::new(),
+            title_en: String::new(),
             kind: "asr".to_string(),
             tier: String::new(),
             ram_mb: 0,

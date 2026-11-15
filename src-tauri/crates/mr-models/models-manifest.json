@@ -204,6 +204,7 @@
       "kind": "summary",
       "tier": "",
       "title": "Qwen3-4B Instruct 2507 (итоги, Q4_K_M)",
+      "title_en": "Qwen3-4B Instruct 2507 (summary, Q4_K_M)",
       "version": "2507-q4km-1",
       "order": 7,
       "upstream": {

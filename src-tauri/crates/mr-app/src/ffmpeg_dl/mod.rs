@@ -13,7 +13,13 @@ use mr_audio::tools::{binary_arch, probe_at, ToolProbe};
 use serde::{Deserialize, Serialize};
 
 /// Страница ручной установки — подсказка в интерфейсе при неудаче автоскачивания.
-pub(crate) const MANUAL_URL: &str = "https://www.gyan.dev/ffmpeg/builds/";
+fn manual_url() -> &'static str {
+    match std::env::consts::OS {
+        "windows" => "https://www.gyan.dev/ffmpeg/builds/",
+        "macos" => "https://ffmpeg.martin-riedl.de/",
+        _ => "https://johnvansickle.com/ffmpeg/",
+    }
+}
 
 #[derive(Default)]
 struct Dl {
@@ -49,9 +55,9 @@ fn bin_name(tool: &str) -> String {
 pub(crate) fn status_json() -> serde_json::Value {
     let ffmpeg = mr_audio::tools::ffmpeg_version();
     let ffprobe = mr_audio::tools::ffprobe_version();
+    let bin = bin_dir();
     let packages = pins::current().ok();
     let expected = packages.as_deref().and_then(pins::expected_version);
-    let state = read_state(&bin_dir());
     let (downloading, pct, error) = {
         let guard = DL.lock().unwrap_or_else(|e| e.into_inner());
         match guard.as_ref() {
@@ -67,45 +73,58 @@ pub(crate) fn status_json() -> serde_json::Value {
             None => (false, 0, serde_json::Value::Null),
         }
     };
+    let installed = managed_files(&bin, packages.as_deref());
     serde_json::json!({
         "available": ffmpeg.is_some(),
         "downloading": downloading,
         "pct": pct.min(95),
         "error": error,
-        "manual_url": MANUAL_URL,
+        "manual_url": manual_url(),
         "version": ffmpeg.as_ref().and_then(|p| p.version.clone()),
         "version_raw": ffmpeg.as_ref().map(|p| p.raw.clone()),
         "ffprobe_version": ffprobe.as_ref().and_then(|p| p.version.clone()),
         "source": ffmpeg.as_ref().map(|p| p.source),
         "arch": ffmpeg.as_ref().and_then(|p| p.arch),
         "expected_version": expected,
-        "can_update": needs_update(state.as_ref(), ffmpeg.as_ref(), ffprobe.as_ref(), expected.as_deref()),
+        "installed": installed,
+        "can_update": needs_update(&bin, packages.as_deref(), ffmpeg.as_ref(), ffprobe.as_ref()),
         "pair_ok": pair_ok(ffmpeg.as_ref(), ffprobe.as_ref()),
     })
 }
 
-/// Установлен из `<bin>`, но пины сборки другие: UI предлагает «Обновить».
+fn managed_files(bin: &Path, packages: Option<&[pins::Package]>) -> bool {
+    packages.is_some_and(|packages| {
+        packages
+            .iter()
+            .flat_map(|p| &p.provides)
+            .any(|name| bin.join(bin_name(name)).is_file())
+    })
+}
+
+/// Копия приложения обязана работать: битый файл, неудачная проба или
+/// расхождение пары — всё повод переустановить, а не отчитываться «готов».
 fn needs_update(
-    state: Option<&Installed>,
+    bin: &Path,
+    packages: Option<&[pins::Package]>,
     ffmpeg: Option<&ToolProbe>,
     ffprobe: Option<&ToolProbe>,
-    expected: Option<&str>,
 ) -> bool {
-    let (Some(expected), Some(ffmpeg)) = (expected, ffmpeg) else {
+    let Some(packages) = packages else {
         return false;
     };
-    if ffmpeg.source != "app" {
+    let Some(expected) = pins::expected_version(packages) else {
+        return false;
+    };
+    if !managed_files(bin, Some(packages)) {
+        return false;
+    }
+    if matches!(ffmpeg, Some(probe) if probe.source != "app") {
         return false;
     }
     let arch = std::env::consts::ARCH;
-    match state {
-        Some(state) => state.version != expected || state.arch != arch || ffprobe.is_none(),
-        None => {
-            ffprobe.is_none()
-                || ffmpeg.version.as_deref() != Some(expected)
-                || ffmpeg.arch != Some(arch)
-        }
-    }
+    ffmpeg.and_then(|p| p.version.as_deref()) != Some(expected.as_str())
+        || ffmpeg.and_then(|p| p.arch) != Some(arch)
+        || !pair_ok(ffmpeg, ffprobe)
 }
 
 fn pair_ok(ffmpeg: Option<&ToolProbe>, ffprobe: Option<&ToolProbe>) -> bool {
@@ -193,17 +212,17 @@ fn download_and_install(force: bool) -> Option<String> {
     let mut state = read_state(&bin);
     let mut installed = false;
     for package in &packages {
-        if !force && package_current(package, &bin, state.as_ref()) {
+        if !force && package_current(package, &bin) {
             continue;
         }
         crate::note!("[FFMPEG] Ставлю {} из {}", package.version, package.url);
-        let files = match install_package(package, &bin) {
-            Ok(files) => files,
+        let (version, files) = match install_package(package, &bin) {
+            Ok(result) => result,
             Err(error) => return Some(format!("Источник {}: {error}", package.source)),
         };
         installed = true;
         let mut next = state.take().unwrap_or_default();
-        next.version = package.version.clone();
+        next.version = version;
         next.arch = std::env::consts::ARCH.to_string();
         next.source = package.source.clone();
         next.installed_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
@@ -222,19 +241,21 @@ fn download_and_install(force: bool) -> Option<String> {
     None
 }
 
-fn package_current(package: &pins::Package, bin: &Path, state: Option<&Installed>) -> bool {
+/// Готовность пакета определяется пробой, а не записью `state.json`:
+/// запись могла устареть, а файл — испортиться.
+fn package_current(package: &pins::Package, bin: &Path) -> bool {
     let arch = std::env::consts::ARCH;
-    state.is_some_and(|s| s.version == package.version && s.arch == arch)
-        && package
-            .provides
-            .iter()
-            .all(|name| bin.join(bin_name(name)).is_file())
+    package.provides.iter().all(|name| {
+        probe_at(&bin.join(bin_name(name))).is_some_and(|probe| {
+            probe.version.as_deref() == Some(package.version.as_str()) && probe.arch == Some(arch)
+        })
+    })
 }
 
 fn install_package(
     package: &pins::Package,
     bin: &Path,
-) -> Result<BTreeMap<String, String>, String> {
+) -> Result<(String, BTreeMap<String, String>), String> {
     let work = std::env::temp_dir().join(format!("mr-ffmpeg-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&work).map_err(|e| format!("временная папка: {e}"))?;
     let result = install_package_in(package, bin, &work);
@@ -246,7 +267,7 @@ fn install_package_in(
     package: &pins::Package,
     bin: &Path,
     work: &Path,
-) -> Result<BTreeMap<String, String>, String> {
+) -> Result<(String, BTreeMap<String, String>), String> {
     std::fs::create_dir_all(bin).map_err(|e| format!("bin: {e}"))?;
     let archive = install::download(package, work, &mut set_progress)?;
     install_archive(package, &archive, bin, work)
@@ -257,13 +278,14 @@ fn install_archive(
     archive: &Path,
     bin: &Path,
     work: &Path,
-) -> Result<BTreeMap<String, String>, String> {
+) -> Result<(String, BTreeMap<String, String>), String> {
     install::verify_archive(package, archive)?;
     let unpacked = work.join("unpacked");
     install::extract(package, archive, &unpacked)?;
 
     let mut staged = Staged::default();
     let mut hashes = BTreeMap::new();
+    let mut version: Option<String> = None;
     for name in &package.provides {
         let source =
             install::find_binary(&unpacked, name).ok_or_else(|| format!("в архиве нет {name}"))?;
@@ -282,8 +304,27 @@ fn install_archive(
                 std::env::consts::ARCH
             ));
         }
-        if probe_at(&new).is_none() {
-            return Err(format!("{name}: бинарник не запускается"));
+        let probe = probe_at(&new).ok_or_else(|| format!("{name}: бинарник не запускается"))?;
+        let actual = probe.version.as_deref().unwrap_or("");
+        if actual != package.version {
+            return Err(format!(
+                "апстрим обновился: ожидалось {}, получено {}; обновите пин",
+                package.version,
+                if actual.is_empty() {
+                    "не определена"
+                } else {
+                    actual
+                }
+            ));
+        }
+        if let Some(expected) = version.as_deref() {
+            if expected != actual {
+                return Err(format!(
+                    "{name}: версия {actual} расходится с {expected} в одном пакете"
+                ));
+            }
+        } else {
+            version = Some(actual.to_string());
         }
         hashes.insert(
             name.clone(),
@@ -293,7 +334,8 @@ fn install_archive(
     for (new, dest) in &staged.0 {
         std::fs::rename(new, dest).map_err(|e| format!("замена {}: {e}", dest.display()))?;
     }
-    Ok(hashes)
+    let version = version.ok_or_else(|| "в пакете нет бинарников".to_string())?;
+    Ok((version, hashes))
 }
 
 /// Неудачная проверка оставляет старый рабочий файл: `.new` удаляется на выходе,

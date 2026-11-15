@@ -47,8 +47,9 @@ pub fn check_space(root: &Path, total_bytes: u64) -> Result<()> {
     Ok(())
 }
 
-/// Убрать следы прерванной установки: недокачанный staging (`<id>.new`),
-/// временные файлы и вернуть на место каталог, унесённый в `<id>.old-<pid>`.
+/// Убрать следы прерванной установки: недокачанный staging (`<id>.new`) и
+/// вернуть на место каталог, унесённый в `<id>.old-<pid>`. Недокачанные
+/// `.part` в `<id>/.tmp` переживают перезапуск: докачка продолжается по Range.
 ///
 /// Вызывается один раз при первом обращении к статусу (UI спрашивает его сразу
 /// после старта) и перед каждой установкой: посреди работающей установки
@@ -71,8 +72,6 @@ pub fn recover_interrupted(root: &Path) -> Result<()> {
                 .and_then(|m| m.modified())
                 .unwrap_or(UNIX_EPOCH);
             olds.push((at, path));
-        } else {
-            let _ = fs::remove_dir_all(tmp_dir(&path));
         }
     }
     // Самый свежий каталог восстанавливаем первым: он и есть последняя версия.
@@ -123,7 +122,10 @@ pub fn download_or_update_model(
     check_space(&root, total)?;
     let staging = root.join(format!("{}{STAGING_SUFFIX}", spec.id));
     let _ = fs::remove_dir_all(&staging);
-    let tmp = tmp_dir(&staging);
+    fs::create_dir_all(&staging)?;
+    // `.tmp` живёт в рабочем каталоге модели, а не в staging: перезапуск
+    // удаляет staging, но обязан сохранить `.part` для докачки.
+    let tmp = tmp_dir(&root.join(&spec.id));
     fs::create_dir_all(&tmp)?;
     for file in &spec.files {
         fetch_file(&tmp, &staging, file, on_progress)?;
@@ -173,6 +175,11 @@ fn fetch_file(
     }
     let part = tmp.join(format!("{}.part", file.filename));
     let _lock = DownloadLock::acquire(tmp, &file.filename)?;
+    if part.is_file() && file_matches(&part, file.size_bytes, &file.sha256) {
+        let _ = fs::remove_file(&target);
+        fs::rename(&part, &target)?;
+        return Ok(());
+    }
     let mut last: Option<ModelsError> = None;
     for url in std::iter::once(&file.url_hf)
         .chain(file.mirrors.iter())
@@ -229,8 +236,6 @@ fn publish(root: &Path, staging: &Path, id: &str) -> Result<()> {
     }
     match fs::rename(staging, &target) {
         Ok(()) => {
-            // `.tmp` живёт только ради докачки: в рабочем каталоге он не нужен.
-            let _ = fs::remove_dir_all(target.join(".tmp"));
             let _ = fs::remove_dir_all(&old);
             Ok(())
         }
@@ -277,6 +282,7 @@ mod tests {
             embedding_dim: None,
             license: String::new(),
             description: String::new(),
+            title_en: String::new(),
             kind: "asr".to_string(),
             tier: String::new(),
             ram_mb: 0,
@@ -300,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn staging_is_removed_and_model_survives_crash_on_second_file() {
+    fn staging_is_removed_and_part_survives_crash_on_second_file() {
         let tmp = testdir::new("recover-new");
         let root = models_dir(&tmp);
         let model = root.join("m");
@@ -310,15 +316,89 @@ mod tests {
         let staging = root.join("m.new");
         fs::create_dir_all(staging.join(".tmp")).unwrap();
         fs::write(staging.join("a.onnx"), b"new").unwrap();
-        fs::write(staging.join(".tmp/a.onnx.part"), b"part").unwrap();
-        fs::write(staging.join(".tmp/b.onnx.lock"), b"").unwrap();
+        fs::write(model.join(".tmp/b.onnx.part"), b"part").unwrap();
         recover_interrupted(&root).unwrap();
         assert!(!staging.exists(), "недокачанный staging удалён");
         assert_eq!(fs::read(model.join("a.onnx")).unwrap(), b"old".to_vec());
         assert!(
-            !model.join(".tmp").exists(),
-            "временные файлы модели убраны"
+            model.join(".tmp/b.onnx.part").is_file(),
+            "недокачанный .part переживает перезапуск"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restart_resumes_part_by_range() {
+        use sha2::{Digest, Sha256};
+        use std::io::{Read, Write};
+
+        let tmp = testdir::new("resume");
+        let root = models_dir(&tmp);
+        let model = root.join("m");
+        let staging = root.join("m.new");
+        fs::create_dir_all(model.join(".tmp")).unwrap();
+        let body = b"0123456789abcdef".to_vec();
+        let prefix = 6;
+        fs::write(model.join(".tmp/a.onnx.part"), &body[..prefix]).unwrap();
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/a.onnx", listener.local_addr().unwrap());
+        let expected = body.clone();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().ok()?;
+            let mut head = [0u8; 4096];
+            let n = stream.read(&mut head).ok()?;
+            let request = String::from_utf8_lossy(&head[..n]).to_string();
+            let range = format!("range: bytes={prefix}-");
+            if !request
+                .lines()
+                .any(|line| line.eq_ignore_ascii_case(&range))
+            {
+                return None;
+            }
+            let rest = &expected[prefix..];
+            let response = format!(
+                "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\nConnection: close\r\n\r\n",
+                rest.len(),
+                prefix,
+                expected.len() - 1,
+                expected.len()
+            );
+            stream.write_all(response.as_bytes()).ok()?;
+            stream.write_all(rest).ok()?;
+            Some(request)
+        });
+
+        recover_interrupted(&root).unwrap();
+        assert!(
+            model.join(".tmp/a.onnx.part").is_file(),
+            "докачка сохранена"
+        );
+        fs::create_dir_all(&staging).unwrap();
+        let file = ModelFile {
+            filename: "a.onnx".to_string(),
+            url_hf: url,
+            mirrors: vec![],
+            size_bytes: body.len() as u64,
+            sha256: crate::hex::encode(Sha256::digest(&body)),
+            optional: false,
+        };
+        fetch_file(&model.join(".tmp"), &staging, &file, &|_| {}).expect("докачка");
+        assert_eq!(fs::read(staging.join("a.onnx")).unwrap(), body);
+        assert!(!model.join(".tmp/a.onnx.part").exists());
+        assert!(server.join().unwrap().is_some(), "запрос Range");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn failed_publish_keeps_previous_version() {
+        let tmp = testdir::new("publish-fail");
+        let root = models_dir(&tmp);
+        fs::create_dir_all(root.join("m")).unwrap();
+        fs::write(root.join("m/a.onnx"), b"old").unwrap();
+        // Без нового каталога rename невозможен — откат к старой версии.
+        assert!(publish(&root, &root.join("m.new"), "m").is_err());
+        assert_eq!(fs::read(root.join("m/a.onnx")).unwrap(), b"old".to_vec());
     }
 
     #[test]
@@ -350,17 +430,6 @@ mod tests {
         recover_interrupted(&root).unwrap();
         assert!(root.join("m").is_dir());
         assert!(!root.join("m.old-1").exists());
-    }
-
-    #[test]
-    fn failed_publish_keeps_previous_version() {
-        let tmp = testdir::new("publish-fail");
-        let root = models_dir(&tmp);
-        fs::create_dir_all(root.join("m")).unwrap();
-        fs::write(root.join("m/a.onnx"), b"old").unwrap();
-        // Staging отсутствует: rename невозможен, публикация откатывается.
-        assert!(publish(&root, &root.join("m.new"), "m").is_err());
-        assert_eq!(fs::read(root.join("m/a.onnx")).unwrap(), b"old".to_vec());
     }
 
     #[test]

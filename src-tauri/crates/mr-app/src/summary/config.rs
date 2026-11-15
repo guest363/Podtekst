@@ -8,13 +8,10 @@ use serde::{Deserialize, Serialize};
 use super::SummaryJobError;
 use crate::config::app_data_dir;
 
-pub const MIN_SYSTEM_RAM_MB: u64 = 12288;
 pub const RECOMMENDED_RAM_MB: u64 = 16384;
 pub const MAX_CHARS: usize = 180_000;
 pub const MAX_SECONDS: u64 = 7200;
 pub const WARN_CHARS: usize = 400;
-pub const MODEL_TITLE: &str = "Qwen3-4B Instruct 2507 (итоги, Q4_K_M)";
-pub const MODEL_TITLE_EN: &str = "Qwen3-4B Instruct 2507 (summary, Q4_K_M)";
 pub const RUNTIME_COMMIT: &str = "fd27b2034";
 
 /// Модель итогов из вшитого манифеста: имя файла, SHA-256 и пороги памяти
@@ -37,6 +34,23 @@ pub fn model_id() -> &'static str {
 
 pub fn model_file() -> &'static str {
     summary_file().filename.as_str()
+}
+
+pub fn model_title() -> &'static str {
+    &summary_model().title
+}
+
+pub fn model_title_en() -> &'static str {
+    let entry = summary_model();
+    if entry.title_en.is_empty() {
+        &entry.title
+    } else {
+        &entry.title_en
+    }
+}
+
+pub fn min_system_ram_mb() -> u64 {
+    summary_model().min_system_ram_mb
 }
 
 pub fn model_sha256() -> &'static str {
@@ -282,6 +296,10 @@ mod tests {
         assert_eq!(context_tokens(), 16384);
         assert_eq!(estimate_peak_mb(), 5530);
         assert_eq!(required_free_mb(), 6656);
+        assert_eq!(min_system_ram_mb(), 12288);
+        assert_eq!(model_title(), entry.title);
+        assert_eq!(model_title_en(), entry.title_en);
+        assert_eq!(min_system_ram_mb(), entry.min_system_ram_mb);
         assert!(entry.order > 0, "у модели есть порядок версии");
         assert!(!entry.upstream.revision.is_empty(), "ревизия закреплена");
     }

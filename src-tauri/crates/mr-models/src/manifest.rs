@@ -50,6 +50,9 @@ pub struct ModelEntry {
     pub license: String,
     #[serde(default)]
     pub description: String,
+    /// Английское название для англоязычного вывода; пусто — берётся `title`.
+    #[serde(default)]
+    pub title_en: String,
     /// `asr` для речевых моделей, `summary` для локальных итогов. Старый
     /// манифест без поля читается как `asr`.
     #[serde(default = "default_kind")]
@@ -116,13 +119,12 @@ pub fn manifest_updated_at() -> &'static str {
     &bundled().updated_at
 }
 
-/// Проверка манифеста на целостность: битый пин ломает установку у пользователя.
+/// Битый пин ломает установку у пользователя, поэтому манифест проверяется
+/// целиком до первого обращения к сети.
 pub fn validate(manifest: &ModelsManifest) -> std::result::Result<(), String> {
     let mut ids = std::collections::HashSet::new();
     for m in &manifest.models {
-        if m.id.is_empty() {
-            return Err("пустой id модели".to_string());
-        }
+        check_id(&m.id)?;
         if !ids.insert(m.id.as_str()) {
             return Err(format!("id модели повторяется: {}", m.id));
         }
@@ -161,6 +163,29 @@ pub fn validate(manifest: &ModelsManifest) -> std::result::Result<(), String> {
                 }
             }
         }
+    }
+    Ok(())
+}
+
+fn check_id(id: &str) -> std::result::Result<(), String> {
+    const RESERVED: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    let path = std::path::Path::new(id);
+    let stem = id.split('.').next().unwrap_or(id).to_ascii_uppercase();
+    let bad = id.is_empty()
+        || path.is_absolute()
+        || id.contains(['\\', ':', '/'])
+        || id.contains("..")
+        || id.ends_with(".new")
+        || id.contains(".old-")
+        || path
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+        || RESERVED.contains(&stem.as_str());
+    if bad {
+        return Err(format!("недопустимый id {id}"));
     }
     Ok(())
 }
@@ -219,6 +244,7 @@ mod tests {
             embedding_dim: None,
             license: String::new(),
             description: String::new(),
+            title_en: String::new(),
             kind: "asr".to_string(),
             tier: String::new(),
             ram_mb: 0,
@@ -316,6 +342,18 @@ mod tests {
             validate(&manifest(vec![floating])).is_err(),
             "не прибит к ревизии"
         );
+    }
+
+    #[test]
+    fn validator_rejects_path_like_ids() {
+        for id in ["../m", "a/b", "a\\b", "/m", "CON", "m.new", "x.old-1", ""] {
+            let mut broken = entry();
+            broken.id = id.to_string();
+            assert!(
+                validate(&manifest(vec![broken])).is_err(),
+                "id {id:?} должен быть отклонён"
+            );
+        }
     }
 
     #[test]

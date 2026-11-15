@@ -5,6 +5,7 @@
 """
 
 import argparse
+import datetime
 import json
 import re
 import sys
@@ -94,6 +95,14 @@ def check_models(manifest, errors):
     if not isinstance(models, list) or not models:
         errors.append("models-manifest.json: models[] пуст или отсутствует")
         return
+    updated = manifest.get("updated_at")
+    if not is_text(updated):
+        errors.append("models-manifest.json: updated_at пуст")
+    else:
+        try:
+            datetime.datetime.fromisoformat(updated.replace("Z", "+00:00"))
+        except ValueError:
+            errors.append(f"models-manifest.json: updated_at не ISO 8601: {updated!r}")
     ids = {}
     names = {}
     lower_names = {}
@@ -106,10 +115,16 @@ def check_models(manifest, errors):
         if not is_text(model_id):
             errors.append(f"{where}: не заполнен id")
             model_id = f"#{index}"
-        elif model_id in ids:
-            errors.append(f"{where}: id {model_id} повторяется, первый в models[{ids[model_id]}]")
         else:
-            ids[model_id] = index
+            problem = filename_problem(model_id)
+            if problem:
+                errors.append(f"{where}: id {model_id!r}: {problem}")
+            if model_id.endswith(".new") or ".old-" in model_id:
+                errors.append(f"{where}: id {model_id!r}: служебный суффикс каталога")
+            if model_id in ids:
+                errors.append(f"{where}: id {model_id} повторяется, первый в models[{ids[model_id]}]")
+            else:
+                ids[model_id] = index
         where = f"модель {model_id}"
 
         order = model.get("order")
@@ -194,6 +209,7 @@ def check_pins(pins, errors):
 
     targets = set()
     provides_by_target = {}
+    versions_by_target = {}
     for index, package in enumerate(packages):
         where = f"пин #{index + 1}"
         if not isinstance(package, dict):
@@ -223,10 +239,15 @@ def check_pins(pins, errors):
 
         sha = package.get("sha256")
         if sha is None:
-            if os_name != "linux":
-                errors.append(f"{where}: sha256=null допустим только для linux")
+            if package.get("source") != "johnvansickle":
+                errors.append(f"{where}: sha256=null допустим только для источника johnvansickle")
+            elif not is_text(package.get("version")):
+                errors.append(f"{where}: пакет без sha256 обязан иметь version")
         elif not is_sha256(sha):
             errors.append(f"{where}: sha256 должен быть 64 hex-символа или null")
+
+        if is_text(package.get("version")):
+            versions_by_target.setdefault(target, set()).add(package["version"])
 
         names = package.get("provides")
         if not isinstance(names, list) or not names:
@@ -240,6 +261,17 @@ def check_pins(pins, errors):
                 errors.append(f"{where}: provides дублирует {name} в рамках одного target")
             else:
                 seen.add(name)
+
+    for target, versions in versions_by_target.items():
+        if len(versions) > 1:
+            errors.append(
+                f"components-pins.json: {target}: у пакетов разные версии: "
+                + ", ".join(sorted(versions))
+            )
+    for target, names in provides_by_target.items():
+        missing = {"ffmpeg", "ffprobe"} - names
+        if missing:
+            errors.append(f"components-pins.json: {target}: нет {', '.join(sorted(missing))}")
 
     for os_name, arch in REQUIRED_TARGETS:
         if (os_name, arch) not in targets:
@@ -269,26 +301,31 @@ def self_test():
             "os": "linux",
             "arch": "x86_64",
             "version": "1.0",
-            "source": "gyan",
-            "provides": ["ffmpeg"],
-            "format": "zip",
-            "url": "https://example.com/a.zip",
-            "sha256": "c" * 63 + "d",
+            "source": "johnvansickle",
+            "provides": ["ffmpeg", "ffprobe"],
+            "format": "tar.xz",
+            "url": "https://example.com/a.tar.xz",
+            "sha256": None,
         }
         entry.update(patch)
         return entry
+
+    def hashed(**patch):
+        base = {"source": "gyan", "format": "zip", "url": "https://example.com/a.zip"}
+        base.update(patch)
+        return pin(**base) | {"sha256": "c" * 63 + "d"}
 
     def pins(*packages):
         return {"schema": 1, "packages": list(packages)}
 
     def models(*entries):
-        return {"models": list(entries)}
+        return {"updated_at": "2026-11-15T00:00:00", "models": list(entries)}
 
     full_pins = pins(
-        pin(os="windows", arch="x86_64"),
-        pin(os="macos", arch="aarch64"),
-        pin(sha256=None),
-        pin(arch="aarch64", sha256=None),
+        hashed(os="windows", arch="x86_64"),
+        hashed(os="macos", arch="aarch64", source="martin-riedl"),
+        pin(),
+        pin(arch="aarch64"),
     )
     bad_file = model(
         files=[
@@ -310,6 +347,10 @@ def self_test():
     cases = [
         ("манифест без upstream", models(model(upstream=None)), "нет upstream"),
         ("order 0", models(model(order=0)), "order"),
+        ("дата не ISO", models(model()) | {"updated_at": "15.11.2026"}, "ISO"),
+        ("id с путём", models(model(id="../m")), "id"),
+        ("id Windows", models(model(id="CON")), "Windows"),
+        ("id staging", models(model(id="m.new")), "суффикс"),
         ("путь в имени", models(model(files=[{**model()["files"][0], "filename": "a/b.onnx"}])), "разделитель"),
         ("зарезервированное имя", models(model(files=[{**model()["files"][0], "filename": "CON.txt"}])), "Windows"),
         ("placeholder sha", models(model(files=[{**model()["files"][0], "sha256": "0" * 64}])), "placeholder"),
@@ -328,12 +369,31 @@ def self_test():
             "main",
         ),
         ("коллизия регистра", models(bad_file), "регистра"),
-        ("пин с null sha не для linux", pins(full_pins["packages"][1] | {"sha256": None}), "только для linux"),
+        (
+            "null sha не для johnvansickle",
+            pins(full_pins["packages"][0] | {"sha256": None}),
+            "johnvansickle",
+        ),
+        (
+            "null sha без version",
+            pins(*full_pins["packages"][:2], pin(version="")),
+            "обязан иметь version",
+        ),
         ("нет покрытия linux/aarch64", pins(*full_pins["packages"][:3]), "linux/aarch64"),
         (
             "дубль provides",
             pins(full_pins["packages"][0] | {"provides": ["ffmpeg", "ffmpeg"]}),
             "дублирует",
+        ),
+        (
+            "нет ffprobe",
+            pins(*full_pins["packages"][:3], pin(arch="aarch64", provides=["ffmpeg"])),
+            "ffprobe",
+        ),
+        (
+            "разные версии target",
+            pins(*full_pins["packages"], pin(provides=["ffprobe"], version="2.0")),
+            "разные версии",
         ),
     ]
 

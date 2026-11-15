@@ -33,7 +33,7 @@ jobs:
       - name: Upstream versions
         run: |
           set -o pipefail
-          python3 scripts/components_monitor.py | tee monitor.md
+          python3 scripts/components_monitor.py --json-out monitor.json | tee monitor.md
       - name: Step summary
         run: cat monitor.md >> "$GITHUB_STEP_SUMMARY"
       - name: One issue with the drift
@@ -46,15 +46,30 @@ jobs:
             --json number,title --jq '.[] | "\(.number)\t\(.title)"' \
             | awk -F'\t' -v title="$TITLE" '$2 == title {print $1; exit}')"
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          if grep -q "обновлений — 0," monitor.md; then
+          summary="$(python3 -c \
+            'import json; s = json.load(open("monitor.json"))["summary"]; print(s["updates"], s["network_errors"])')"
+          read -r updates network_errors <<< "$summary"
+          if [ "$updates" -eq 0 ] && [ "$network_errors" -eq 0 ]; then
             if [ -n "$number" ]; then
               gh issue comment "$number" --body "Пины снова совпадают с апстримами: $run_url"
               gh issue close "$number"
             fi
             exit 0
           fi
+          if [ "$network_errors" -gt 0 ]; then
+            note="Проверка неполная: апстримы с ошибками сети — $network_errors. Issue оставлен открытым: $run_url"
+            if [ "$updates" -eq 0 ]; then
+              if [ -n "$number" ]; then
+                gh issue comment "$number" --body "$note"
+              fi
+              exit 0
+            fi
+          fi
           {
             printf 'Апстримы обогнали закреплённые версии. Обновите манифест моделей или пины ffmpeg.\n\n'
+            if [ "$network_errors" -gt 0 ]; then
+              printf '%s\n\n' "$note"
+            fi
             cat monitor.md
             printf '\nПрогон: %s\n' "$run_url"
           } > issue.md

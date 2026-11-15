@@ -10,81 +10,93 @@ fn probe(version: Option<&str>, source: &'static str, arch: Option<&'static str>
     }
 }
 
-fn state(version: &str, arch: &str) -> Installed {
-    Installed {
+fn package(version: &str, tools: &[&str]) -> pins::Package {
+    pins::Package {
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
         version: version.to_string(),
-        arch: arch.to_string(),
-        ..Installed::default()
+        source: "test".to_string(),
+        provides: tools.iter().map(|name| name.to_string()).collect(),
+        format: "zip".to_string(),
+        url: "https://example.invalid/a.zip".to_string(),
+        sha256: None,
     }
 }
 
-fn find_system_tool(names: &[&str]) -> Option<Vec<u8>> {
-    let paths = std::env::var_os("PATH")?;
-    for name in names {
-        for dir in std::env::split_paths(&paths) {
-            let path = dir.join(name);
-            let Ok(body) = std::fs::read(&path) else {
-                continue;
-            };
-            let runs = std::process::Command::new(&path)
-                .arg("-version")
-                .stdin(std::process::Stdio::null())
-                .output()
-                .map(|out| out.status.success() && !out.stdout.is_empty())
-                .unwrap_or(false);
-            if runs {
-                return Some(body);
-            }
-        }
-    }
-    None
+fn write_zip(path: &Path, name: &str, body: &[u8]) {
+    use zip::write::SimpleFileOptions;
+    let mut writer = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+    writer
+        .start_file(name, SimpleFileOptions::default().unix_permissions(0o755))
+        .unwrap();
+    writer.write_all(body).unwrap();
+    writer.finish().unwrap();
+}
+
+/// Настоящий ELF с нужной строкой версии: проверка пина запускает файл.
+#[cfg(unix)]
+fn fake_tool(dir: &Path, version: &str) -> Option<PathBuf> {
+    let source = dir.join("fake.c");
+    let body = format!(
+        "#include <stdio.h>\nint main(void){{puts(\"ffmpeg version {version} Copyright (c) test\");return 0;}}\n"
+    );
+    std::fs::write(&source, body).ok()?;
+    let binary = dir.join(bin_name("ffmpeg"));
+    let status = std::process::Command::new("cc")
+        .arg("-o")
+        .arg(&binary)
+        .arg(&source)
+        .status()
+        .ok()?;
+    status.success().then_some(binary)
 }
 
 #[test]
-fn can_update_follows_state_and_source() {
+fn can_update_follows_probes_and_pair() {
+    let dir = std::env::temp_dir().join(format!("mr-ffmpeg-can-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let packages = vec![package("9.0.2", &["ffmpeg", "ffprobe"])];
     let arch = std::env::consts::ARCH;
     let current = probe(Some("9.0.2"), "app", Some(arch));
     let other = probe(Some("7.1.1"), "app", Some(arch));
     let system = probe(Some("7.1.1"), "path", Some(arch));
 
     assert!(!needs_update(
-        None,
+        &dir,
+        Some(&packages),
         Some(&system),
-        Some(&system),
-        Some("9.0.2")
+        Some(&system)
     ));
+    assert!(!needs_update(&dir, Some(&packages), None, None));
+    std::fs::write(dir.join(bin_name("ffmpeg")), b"broken").unwrap();
+    assert!(
+        needs_update(&dir, Some(&packages), None, None),
+        "битый управляемый бинарник — повод переустановить"
+    );
+    assert!(needs_update(
+        &dir,
+        Some(&packages),
+        Some(&other),
+        Some(&other)
+    ));
+    assert!(needs_update(
+        &dir,
+        Some(&packages),
+        Some(&probe(Some("9.0.2"), "app", Some("aarch64"))),
+        Some(&current)
+    ));
+    assert!(
+        needs_update(&dir, Some(&packages), Some(&current), Some(&other)),
+        "пара ffmpeg/ffprobe расходится"
+    );
     assert!(!needs_update(
-        Some(&state("9.0.2", arch)),
+        &dir,
+        Some(&packages),
         Some(&current),
-        Some(&current),
-        Some("9.0.2")
+        Some(&current)
     ));
-    assert!(needs_update(
-        None,
-        Some(&other),
-        Some(&other),
-        Some("9.0.2")
-    ));
-    assert!(needs_update(
-        Some(&state("7.1.1", arch)),
-        Some(&current),
-        Some(&current),
-        Some("9.0.2")
-    ));
-    assert!(needs_update(
-        Some(&state("9.0.2", "aarch64")),
-        Some(&current),
-        Some(&current),
-        Some("9.0.2")
-    ));
-    assert!(needs_update(
-        Some(&state("9.0.2", arch)),
-        Some(&current),
-        None,
-        Some("9.0.2")
-    ));
-    assert!(!needs_update(None, None, None, Some("9.0.2")));
-    assert!(!needs_update(None, Some(&current), Some(&current), None));
+    assert!(!needs_update(&dir, None, Some(&current), Some(&current)));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -101,30 +113,27 @@ fn pair_ok_compares_major_minor() {
 }
 
 #[test]
-fn package_current_requires_state_and_files() {
+fn package_current_requires_working_probe() {
     let dir = std::env::temp_dir().join(format!("mr-ffmpeg-cur-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
-    let package = pins::Package {
-        os: std::env::consts::OS.to_string(),
-        arch: std::env::consts::ARCH.to_string(),
-        version: "9.0.2".to_string(),
-        source: "test".to_string(),
-        provides: vec!["ffmpeg".to_string(), "ffprobe".to_string()],
-        format: "zip".to_string(),
-        url: "https://example.invalid/a.zip".to_string(),
-        sha256: None,
-    };
-    let current = state("9.0.2", std::env::consts::ARCH);
-    assert!(!package_current(&package, &dir, Some(&current)));
-    std::fs::write(dir.join(bin_name("ffmpeg")), b"x").unwrap();
-    std::fs::write(dir.join(bin_name("ffprobe")), b"x").unwrap();
-    assert!(package_current(&package, &dir, Some(&current)));
-    assert!(!package_current(&package, &dir, None));
-    assert!(!package_current(
-        &package,
-        &dir,
-        Some(&state("7.1.1", std::env::consts::ARCH))
-    ));
+    let pinned = package("9.0.2", &["ffmpeg"]);
+    assert!(!package_current(&pinned, &dir), "файла нет");
+    std::fs::write(dir.join(bin_name("ffmpeg")), b"broken").unwrap();
+    assert!(!package_current(&pinned, &dir), "битый бинарник");
+    #[cfg(unix)]
+    {
+        let Some(fake) = fake_tool(&dir, "9.0.2") else {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        };
+        assert_eq!(fake, dir.join(bin_name("ffmpeg")));
+        assert!(package_current(&pinned, &dir));
+        assert!(!package_current(&package("9.0.3", &["ffmpeg"]), &dir));
+        assert!(!package_current(
+            &package("9.0.2", &["ffmpeg", "ffprobe"]),
+            &dir
+        ));
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -146,16 +155,8 @@ fn failed_checks_keep_the_working_binary() {
         writer.write_all(b"not a binary").unwrap();
         writer.finish().unwrap();
     }
-    let mut package = pins::Package {
-        os: std::env::consts::OS.to_string(),
-        arch: std::env::consts::ARCH.to_string(),
-        version: "9.0.2".to_string(),
-        source: "test".to_string(),
-        provides: vec!["ffmpeg".to_string()],
-        format: "zip".to_string(),
-        url: "https://example.invalid/a.zip".to_string(),
-        sha256: Some("0".repeat(64)),
-    };
+    let mut package = package("9.0.2", &["ffmpeg"]);
+    package.sha256 = Some("0".repeat(64));
     let error = install_archive(&package, &archive, &bin, &work).expect_err("sha256 не совпадает");
     assert!(error.contains("контрольная сумма"), "{error}");
     assert_eq!(std::fs::read(bin.join(bin_name("ffmpeg"))).unwrap(), b"old");
@@ -171,45 +172,45 @@ fn failed_checks_keep_the_working_binary() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 #[test]
-fn install_archive_publishes_running_binary() {
-    // Нужен ELF, который печатает версию в stdout по `-version`.
-    let Some(body) = find_system_tool(&["make", "unzip", "sqlite3"]) else {
-        return;
-    };
+fn install_archive_publishes_pinned_version_and_replaces_broken() {
     let dir = std::env::temp_dir().join(format!("mr-ffmpeg-ok-{}", uuid::Uuid::new_v4()));
     let bin = dir.join("bin");
     let work = dir.join("work");
     std::fs::create_dir_all(&bin).unwrap();
     std::fs::create_dir_all(&work).unwrap();
-    let archive = dir.join("a.zip");
-    {
-        use zip::write::SimpleFileOptions;
-        let mut writer = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
-        writer
-            .start_file(
-                "ffmpeg",
-                SimpleFileOptions::default().unix_permissions(0o755),
-            )
-            .unwrap();
-        writer.write_all(&body).unwrap();
-        writer.finish().unwrap();
-    }
-    let package = pins::Package {
-        os: std::env::consts::OS.to_string(),
-        arch: std::env::consts::ARCH.to_string(),
-        version: "9.0.2".to_string(),
-        source: "test".to_string(),
-        provides: vec!["ffmpeg".to_string()],
-        format: "zip".to_string(),
-        url: "https://example.invalid/a.zip".to_string(),
-        sha256: Some(mr_models::sha256_of_file(&archive).unwrap()),
+    let Some(fake) = fake_tool(&dir, "9.0.2") else {
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
     };
-    let hashes = install_archive(&package, &archive, &bin, &work).expect("установка");
-    assert!(bin.join(bin_name("ffmpeg")).is_file());
+    let archive = dir.join("a.zip");
+    write_zip(&archive, "ffmpeg", &std::fs::read(&fake).unwrap());
+    let mut package = package("9.0.2", &["ffmpeg"]);
+    package.sha256 = Some(mr_models::sha256_of_file(&archive).unwrap());
+
+    let (version, hashes) = install_archive(&package, &archive, &bin, &work).expect("установка");
+    assert_eq!(version, "9.0.2", "версия из пробы, а не из пина");
     assert_eq!(hashes.len(), 1);
+    assert!(bin.join(bin_name("ffmpeg")).is_file());
     assert!(!bin.join(format!("{}.new", bin_name("ffmpeg"))).exists());
+
+    let mut newer = package.clone();
+    newer.version = "9.0.3".to_string();
+    let error = install_archive(&newer, &archive, &bin, &work).expect_err("пин не совпал");
+    assert!(error.contains("апстрим обновился"), "{error}");
+    assert!(
+        bin.join(bin_name("ffmpeg")).is_file(),
+        "рабочий бинарник не тронут"
+    );
+
+    std::fs::write(bin.join(bin_name("ffmpeg")), b"broken").unwrap();
+    assert!(!package_current(&package, &bin));
+    install_archive(&package, &archive, &bin, &work).expect("переустановка");
+    assert_ne!(
+        std::fs::read(bin.join(bin_name("ffmpeg"))).unwrap(),
+        b"broken"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -228,6 +229,7 @@ fn status_has_contract_keys() {
         "source",
         "arch",
         "expected_version",
+        "installed",
         "can_update",
         "pair_ok",
     ] {

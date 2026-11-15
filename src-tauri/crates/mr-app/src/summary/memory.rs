@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::config::{self, MIN_SYSTEM_RAM_MB};
+use super::config;
 
 #[derive(Debug, Clone, Copy)]
 pub struct GuardInfo {
@@ -50,7 +50,7 @@ pub fn precheck(sidecar_loaded: bool) -> Result<GuardInfo, MemoryError> {
     let total_mb = crate::sysmem::total_bytes().map(|b| b / (1024 * 1024));
     let available_mb = crate::sysmem::available_bytes().map(|b| b / (1024 * 1024));
     if let Some(total) = total_mb {
-        if total < MIN_SYSTEM_RAM_MB {
+        if total < config::min_system_ram_mb() {
             return Err(MemoryError::LowSystem { total_mb: total });
         }
     }

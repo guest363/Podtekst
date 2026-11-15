@@ -93,6 +93,16 @@ mod tests {
                     .any(|p| p.provides.iter().any(|n| n == "ffmpeg")),
                 "{os}/{arch}: нет ffmpeg"
             );
+            assert!(
+                packages
+                    .iter()
+                    .any(|p| p.provides.iter().any(|n| n == "ffprobe")),
+                "{os}/{arch}: нет ffprobe"
+            );
+            assert!(
+                expected_version(&packages).is_some(),
+                "{os}/{arch}: у пакетов разные версии"
+            );
         }
     }
 

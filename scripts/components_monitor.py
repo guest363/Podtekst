@@ -223,6 +223,7 @@ def main():
     parser = argparse.ArgumentParser(description="Сверить пины компонентов с апстримами")
     parser.add_argument("--offline", action="store_true", help="не обращаться к сети")
     parser.add_argument("--json", action="store_true", help="машинный вывод вместо Markdown")
+    parser.add_argument("--json-out", type=Path, help="записать машинный отчёт в файл")
     args = parser.parse_args()
 
     manifest = load(MANIFEST, required=True)
@@ -239,20 +240,18 @@ def main():
         pin_rows(pins, args.offline, rows, pin_cache)
 
     summary = summarize(rows)
+    report = {
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "offline": args.offline,
+        "pins_present": pins is not None,
+        "summary": summary,
+        "rows": rows,
+    }
+    encoded = json.dumps(report, ensure_ascii=False, indent=2)
+    if args.json_out:
+        args.json_out.write_text(encoded + "\n", encoding="utf-8")
     if args.json:
-        print(
-            json.dumps(
-                {
-                    "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                    "offline": args.offline,
-                    "pins_present": pins is not None,
-                    "summary": summary,
-                    "rows": rows,
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
+        print(encoded)
     else:
         print_markdown(rows, summary, args.offline)
     return 0
