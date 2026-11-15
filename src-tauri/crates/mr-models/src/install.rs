@@ -20,14 +20,38 @@ const SPACE_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
 /// качают набор в один staging и публикуют его по очереди.
 static INSTALL_SLOT: Mutex<()> = Mutex::new(());
 
-fn begin_install() -> Result<std::sync::MutexGuard<'static, ()>> {
-    match INSTALL_SLOT.try_lock() {
-        Ok(guard) => Ok(guard),
-        Err(std::sync::TryLockError::Poisoned(poisoned)) => Ok(poisoned.into_inner()),
-        Err(std::sync::TryLockError::WouldBlock) => {
-            Err(ModelsError::Other("установка модели уже идёт".to_string()))
-        }
+/// Межпроцессный замок установки на файле: ОС снимает его сама при падении,
+/// поэтому второй экземпляр приложения не должен «восстанавливать» чужой staging.
+pub(crate) struct InstallLock {
+    _file: fs::File,
+}
+
+fn lock_install(root: &Path) -> Option<InstallLock> {
+    fs::create_dir_all(root).ok()?;
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(root.join(".install.lock"))
+        .ok()?;
+    match file.try_lock() {
+        Ok(()) => Some(InstallLock { _file: file }),
+        Err(_) => None,
     }
+}
+
+fn begin_install(root: &Path) -> Result<(std::sync::MutexGuard<'static, ()>, InstallLock)> {
+    let slot = match INSTALL_SLOT.try_lock() {
+        Ok(guard) => guard,
+        Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(std::sync::TryLockError::WouldBlock) => {
+            return Err(ModelsError::Other("установка модели уже идёт".to_string()));
+        }
+    };
+    let lock = lock_install(root).ok_or_else(|| {
+        ModelsError::Other("установка модели уже идёт в другом экземпляре приложения".to_string())
+    })?;
+    Ok((slot, lock))
 }
 
 /// Скачивать набор нужно с запасом на второй экземпляр: старый каталог живёт
@@ -121,11 +145,19 @@ fn remove_stale_parts(model_dir: &Path) {
 
 pub(crate) fn ensure_recovered(root: &Path) {
     static DONE: OnceLock<()> = OnceLock::new();
-    DONE.get_or_init(|| {
-        if INSTALL_SLOT.try_lock().is_ok() {
-            let _ = recover_interrupted(root);
-        }
-    });
+    if DONE.get().is_some() {
+        return;
+    }
+    // Чужой процесс ставит модель: восстановление уничтожило бы его staging.
+    // Флаг «выполнено» ставим только после реальной работы.
+    let Some(_lock) = lock_install(root) else {
+        return;
+    };
+    if INSTALL_SLOT.try_lock().is_err() {
+        return;
+    }
+    let _ = recover_interrupted(root);
+    let _ = DONE.set(());
 }
 
 pub fn download_or_update_model(
@@ -141,7 +173,7 @@ pub fn download_or_update_model(
         .ok_or_else(|| ModelsError::NotFound(model_id.to_string()))?;
     // Путь строим из id манифеста: даже при коллизии входа инвариант не зависит от порядка.
     let root = models_dir(app_data);
-    let _install = begin_install()?;
+    let _install = begin_install(&root)?;
     recover_interrupted(&root)?;
     let total: u64 = spec.files.iter().map(|f| f.size_bytes).sum();
     check_space(&root, total)?;

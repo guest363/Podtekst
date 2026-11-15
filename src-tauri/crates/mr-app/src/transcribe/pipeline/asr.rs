@@ -10,7 +10,7 @@ use super::super::diag::{
 use super::super::diarize;
 use super::super::models::ModelSet;
 use super::super::{TranscribeOptions, Utterance, WordConf};
-use super::{quiet_blank_penalty, SEGMENT_PAD_SEC};
+use super::quiet_blank_penalty;
 
 pub(super) fn run(
     channel_grouped: &HashMap<usize, Vec<(f64, f64)>>,
@@ -32,8 +32,8 @@ pub(super) fn run(
         let samples = &channel_samples[ch];
         let mut utts = vec![];
         for (s, e) in channel_grouped[ch].iter() {
-            let a = (s - SEGMENT_PAD_SEC).max(0.0);
-            let b = (e + SEGMENT_PAD_SEC).min(samples.len() as f64 / 16000.0);
+            let a = *s;
+            let b = e.min(samples.len() as f64 / 16000.0);
             if b <= a {
                 log::debug!(
                     target: "asr",
@@ -75,10 +75,10 @@ pub(super) fn run(
                 raw_chunk
             };
             let rms = (chunk.iter().map(|x| x * x).sum::<f32>() / chunk.len().max(1) as f32).sqrt();
-            // Длительность — до padding-а, иначе короткая реплика у границы
-            // 4 секунд теряет штраф из-за добавленных 0.5 с.
+            // Штраф — по RMS сырого сегмента: после нормализации до пика 0.9
+            // любая речь даёт 0.09–0.6, и ветка «тихая короткая речь» недостижима.
             let blank_penalty = if use_gigaam {
-                quiet_blank_penalty(*e - *s, rms)
+                quiet_blank_penalty(*e - *s, rms_raw)
             } else {
                 0.0
             };

@@ -100,7 +100,8 @@ fn jaccard(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
     }
 }
 
-pub(super) fn cap(sections: &mut [Vec<Scored>], specs: &[ParsedSection], detail: Detail) {
+pub(super) fn cap(sections: &mut [Vec<Scored>], specs: &[ParsedSection], detail: Detail) -> usize {
+    let before: usize = sections.iter().map(Vec::len).sum();
     let max = detail.max_items();
     if let Some(brief) = specs.iter().position(|s| s.id == "brief") {
         // Модель любит 10+ пунктов «Кратко»; оставляем только главное,
@@ -202,4 +203,5 @@ pub(super) fn cap(sections: &mut [Vec<Scored>], specs: &[ParsedSection], detail:
             keep
         });
     }
+    before - sections.iter().map(Vec::len).sum::<usize>()
 }

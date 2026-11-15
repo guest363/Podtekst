@@ -76,7 +76,8 @@ pub fn start_stream(
         StreamKind::Microphone => "microphone",
         StreamKind::System => "system-loopback",
     };
-    eprintln!("[WASAPI] {kind_name}: {endpoint_id} -> {}", path.display());
+    // P12: путь записи — пользовательские данные, в stderr его не печатаем.
+    eprintln!("[WASAPI] {kind_name}: устройство выбрано");
     CaptureStream::spawn(path.to_path_buf(), move |path, level, stop| {
         let path = path.to_path_buf();
         if let Err(e) = run_capture(kind, &endpoint_id, &path, level, stop, rate) {

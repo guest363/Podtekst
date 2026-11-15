@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use super::features;
 use super::session::OrtSession;
 use crate::hotwords::{normalize_term, parse_hotwords};
 
@@ -248,12 +249,22 @@ pub fn decode_ctc_greedy_timed(
     vocab: &[String],
     blank: usize,
 ) -> (CtcHypothesis, Vec<FrameSpan>) {
+    let rows: Vec<Vec<f32>> = logprobs.iter().map(|row| to_log_row(row)).collect();
+    decode_ctc_greedy_rows(&rows, vocab, blank)
+}
+
+/// Жадный декодер по уже посчитанным лог-строкам: beam-ветка не должна
+/// считать log-softmax по всем кадрам второй раз.
+fn decode_ctc_greedy_rows(
+    rows: &[Vec<f32>],
+    vocab: &[String],
+    blank: usize,
+) -> (CtcHypothesis, Vec<FrameSpan>) {
     let mut ids = Vec::new();
     let mut probs = Vec::new();
     let mut id_frames = Vec::new();
     let mut prev: i64 = -1;
-    for (frame, row) in logprobs.iter().enumerate() {
-        let lp = to_log_row(row);
+    for (frame, lp) in rows.iter().enumerate() {
         let (mut best, mut bl) = (0usize, f32::NEG_INFINITY);
         for (i, &x) in lp.iter().enumerate() {
             if x > bl {
@@ -333,6 +344,7 @@ pub fn decode_ctc_beam_timed(
 ) -> (CtcHypothesis, Vec<FrameSpan>) {
     let bw = beam_width.max(1);
     let mut beams: Vec<(Vec<i64>, f32, f32)> = vec![(Vec::new(), 0.0, f32::NEG_INFINITY)];
+    let mut log_rows: Vec<Vec<f32>> = Vec::with_capacity(logprobs.len());
     for row in logprobs {
         let lp = to_log_row(row);
         let mut order: Vec<usize> = (0..lp.len()).collect();
@@ -380,6 +392,7 @@ pub fn decode_ctc_beam_timed(
         v.sort_by(|a, b| log_add(b.1 .0, b.1 .1).total_cmp(&log_add(a.1 .0, a.1 .1)));
         v.truncate(bw);
         beams = v.into_iter().map(|(p, (a, b))| (p, a, b)).collect();
+        log_rows.push(lp);
     }
     let mut best_prefix: Vec<i64> = Vec::new();
     let mut best_score = f32::NEG_INFINITY;
@@ -395,7 +408,7 @@ pub fn decode_ctc_beam_timed(
             best_prefix = prefix.clone();
         }
     }
-    let (greedy, greedy_spans) = decode_ctc_greedy_timed(logprobs, vocab, blank);
+    let (greedy, greedy_spans) = decode_ctc_greedy_rows(&log_rows, vocab, blank);
     let beam_texts: Vec<String> = {
         let w = render_words(&best_prefix, &vec![1.0; best_prefix.len()], vocab, blank);
         w.into_iter().map(|x| x.text).collect()
@@ -759,9 +772,10 @@ impl GigaCTC {
                 Vec::new(),
             ));
         }
+        features::ensure_mel_width(mel, features::GIGAAM_MEL_BANDS)?;
         let tf = mel.len();
-        let mut flat = Vec::with_capacity(64 * tf);
-        for c in 0..64 {
+        let mut flat = Vec::with_capacity(features::GIGAAM_MEL_BANDS * tf);
+        for c in 0..features::GIGAAM_MEL_BANDS {
             for row in mel.iter() {
                 flat.push(row[c]);
             }

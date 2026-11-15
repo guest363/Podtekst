@@ -103,7 +103,8 @@ pub(super) fn pick_asr_engine(
                 .to_string(),
         );
     }
-    match engine {
+    let engine = engine.trim().to_ascii_lowercase();
+    match engine.as_str() {
         "whisper" => has_whisper
             .then_some(AsrEngine::Whisper)
             .ok_or_else(|| AsrEngine::Whisper.missing_error()),
@@ -121,12 +122,15 @@ pub(super) fn pick_asr_engine(
                 } else {
                     AsrEngine::Whisper
                 })
+            } else if has_whisper {
+                Ok(AsrEngine::Whisper)
             } else {
-                Ok(if has_whisper {
-                    AsrEngine::Whisper
-                } else {
-                    AsrEngine::Gigaam
-                })
+                // GigaAM — русская модель: молча распознавать ею английское
+                // аудио значит выдать мусор без единой ошибки в UI.
+                Err(
+                    "Для нерусского языка нужна модель Whisper: «Настройки» → «Модели ИИ»."
+                        .to_string(),
+                )
             }
         }
         other => Err(format!(
@@ -166,10 +170,6 @@ mod tests {
                 "language = {language}"
             );
         }
-        assert_eq!(
-            pick_asr_engine("auto", "en", true, false),
-            Ok(AsrEngine::Gigaam)
-        );
     }
 
     #[test]
@@ -184,6 +184,24 @@ mod tests {
         assert_eq!(
             pick_asr_engine("auto", "ru", false, true),
             Ok(AsrEngine::Whisper)
+        );
+    }
+
+    #[test]
+    fn auto_without_whisper_refuses_non_russian_instead_of_gigaam() {
+        let error = pick_asr_engine("auto", "en", true, false).unwrap_err();
+        assert!(error.contains("Whisper"), "{error}");
+    }
+
+    #[test]
+    fn engine_name_is_case_insensitive() {
+        assert_eq!(
+            pick_asr_engine(" Whisper ", "en", true, true),
+            Ok(AsrEngine::Whisper)
+        );
+        assert_eq!(
+            pick_asr_engine("GIGAAM", "ru", true, true),
+            Ok(AsrEngine::Gigaam)
         );
     }
 

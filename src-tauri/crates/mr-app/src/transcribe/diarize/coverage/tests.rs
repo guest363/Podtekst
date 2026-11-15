@@ -137,6 +137,24 @@ fn splits_quarter_coverage_preserving_word_timestamps_and_text() {
     assert_eq!(units[1].utterance, 1);
 }
 #[test]
+fn overlapping_windows_with_different_labels_do_not_double_count() {
+    let units = vec![
+        unit(0, 0.0, 1.8, 0),
+        unit(0, 0.9, 2.7, 0),
+        unit(0, 1.8, 3.6, 1),
+        unit(0, 2.7, 4.5, 1),
+    ];
+    let labels = HashMap::from([(0, 0), (1, 0), (2, 1), (3, 1)]);
+    let durations = label_durations(&units, &labels, SpeechSupport::default());
+    let total: f64 = durations.values().sum();
+    assert!(
+        (total - 4.5).abs() < 1e-6,
+        "перекрытия разных меток считаются один раз: {durations:?}"
+    );
+    assert!(durations[&(0, 0)] > 0.0 && durations[&(0, 1)] > 0.0);
+}
+
+#[test]
 fn duplicate_windows_do_not_inflate_minority_coverage() {
     let u = super::super::tests::utt(0.0, 8.0, "", 0, "one two three four");
     let mut utterances = vec![u];

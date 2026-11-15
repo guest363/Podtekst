@@ -190,13 +190,23 @@ pub(super) fn label_durations(
     labels: &HashMap<usize, usize>,
     support: SpeechSupport<'_>,
 ) -> HashMap<(usize, usize), f64> {
+    // Окна одного юнита перекрываются на ~50%: время разрезаем по `timeline`,
+    // иначе общий кусок засчитывается обеим меткам и доминанта выбирается по сумме.
+    let mut utterances: Vec<usize> = units
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| labels.contains_key(index))
+        .map(|(_, unit)| unit.utterance)
+        .collect();
+    utterances.sort_unstable();
+    utterances.dedup();
     let mut intervals: HashMap<(usize, usize), Vec<(f64, f64)>> = HashMap::new();
-    for (index, unit) in units.iter().enumerate() {
-        if let Some(&label) = labels.get(&index) {
+    for utterance in utterances {
+        for (start, end, label) in timeline(units, labels, utterance) {
             intervals
-                .entry((unit.utterance, label))
+                .entry((utterance, label))
                 .or_default()
-                .push((unit.start, unit.end));
+                .push((start, end));
         }
     }
     intervals

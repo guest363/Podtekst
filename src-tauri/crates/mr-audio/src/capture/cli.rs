@@ -21,7 +21,7 @@ pub fn recorder_binary() -> Option<&'static str> {
         .find(|bin| Command::new(bin).arg("--version").output().is_ok())
 }
 
-fn spawn_recorder(device: &str, raw: &Path, rate: u32) -> Result<Child> {
+fn spawn_recorder(device: &str, raw: &Path, rate: u32, log: &Path) -> Result<Child> {
     if let Some(parent) = raw.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -55,17 +55,57 @@ fn spawn_recorder(device: &str, raw: &Path, rate: u32) -> Result<Child> {
         ])
         .stdout(f);
     }
-    cmd.stdin(Stdio::null()).stderr(Stdio::null());
+    // stderr в файл, а не в null: причина смерти рекордера нужна в ошибке,
+    // но пайп без чтения заблокировал бы процесс на заполнении буфера.
+    let log_file = std::fs::File::create(log)?;
+    cmd.stdin(Stdio::null()).stderr(Stdio::from(log_file));
     cmd.spawn()
         .map_err(|e| AudioError::Record(format!("не стартовал захват {device}: {e}")))
 }
 
+/// Последние байты stderr внешнего рекордера для сообщения об ошибке.
+fn recorder_tail(log: &Path) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(log) else {
+        return String::new();
+    };
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    if file.seek(SeekFrom::Start(len.saturating_sub(400))).is_err() {
+        return String::new();
+    }
+    let mut tail = String::new();
+    let _ = file.take(400).read_to_string(&mut tail);
+    tail.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Умер ли рекордер сам (без нашей команды остановки).
+fn died_early(recorder: &mut RecorderGuard) -> Option<std::process::ExitStatus> {
+    let child = recorder.0.as_mut()?;
+    child.try_wait().ok().flatten()
+}
+
 pub fn start(device: &str, path: &Path, rate: u32) -> Result<CaptureStream> {
     let raw = path.with_extension("s16");
+    let log = path.with_extension("s16.stderr");
     let _ = std::fs::remove_file(&raw);
-    let mut recorder = RecorderGuard(Some(spawn_recorder(device, &raw, rate)?));
+    let mut recorder = RecorderGuard(Some(spawn_recorder(device, &raw, rate, &log)?));
+
+    // Рекордер может умереть сразу (нет устройства, занято, нет прав). Без этой
+    // проверки старт «успешен», а дорожка остаётся пустой без единой ошибки.
+    for _ in 0..15 {
+        if let Some(status) = died_early(&mut recorder) {
+            let reason = recorder_tail(&log);
+            let _ = std::fs::remove_file(&raw);
+            let _ = std::fs::remove_file(&log);
+            return Err(AudioError::Record(format!(
+                "захват {device} завершился сразу ({status}): {reason}"
+            )));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 
     let raw_for_thread = raw.clone();
+    let log_for_thread = log.clone();
     let path = path.to_path_buf();
     let stream = CaptureStream::spawn(path, move |path, level, stop| {
         let mut writer = match RawWriter::create(path) {
@@ -80,6 +120,17 @@ pub fn start(device: &str, path: &Path, rate: u32) -> Result<CaptureStream> {
         // Дескриптор держим открытым: переоткрытие — это 10 системных вызовов в секунду.
         let mut tail: Option<(std::fs::File, u64)> = None;
         while !stop.load(Ordering::Relaxed) {
+            if let Some(status) = died_early(&mut recorder) {
+                let reason = recorder_tail(&log_for_thread);
+                log::error!(
+                    target: "audio",
+                    status = status.to_string(),
+                    reason = reason;
+                    "ev=audio.capture.exited"
+                );
+                eprintln!("Захват звука прекратился ({status}): {reason}");
+                break;
+            }
             read_new(&raw_for_thread, &mut tail, &mut writer, level);
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
@@ -87,6 +138,7 @@ pub fn start(device: &str, path: &Path, rate: u32) -> Result<CaptureStream> {
         read_new(&raw_for_thread, &mut tail, &mut writer, level);
         let _ = writer.flush();
         let _ = std::fs::remove_file(&raw_for_thread);
+        let _ = std::fs::remove_file(&log_for_thread);
     });
     if stream.is_err() {
         let _ = std::fs::remove_file(&raw);
@@ -139,8 +191,11 @@ fn read_new(
     if buf.is_empty() {
         return;
     }
-    *offset += buf.len() as u64;
-    let samples = s16le_to_f32(&buf);
+    // Непарный байт — половина сэмпла от ещё дописываемого файла: без сдвига
+    // на чётную границу весь остаток дорожки читается мусором.
+    let usable = buf.len() - buf.len() % 2;
+    *offset += usable as u64;
+    let samples = s16le_to_f32(&buf[..usable]);
     if samples.is_empty() {
         return;
     }
@@ -183,4 +238,51 @@ pub fn pactl_default_monitor() -> Option<String> {
     }
     let mon = format!("{sink}.monitor");
     pactl_sources().into_iter().find(|s| s == &mon)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "mr-cli-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn odd_trailing_byte_does_not_shift_the_stream() {
+        let dir = tmp_dir("odd-byte");
+        let raw = dir.join("mic.s16");
+        let out = dir.join("mic.f32");
+        // Один полный сэмпл 0x1000 и половина следующего.
+        std::fs::write(&raw, [0x00u8, 0x10, 0x20]).unwrap();
+
+        let mut writer = RawWriter::create(&out).unwrap();
+        let level = LevelMeter::new();
+        let mut tail = None;
+        read_new(&raw, &mut tail, &mut writer, &level);
+        writer.flush().unwrap();
+
+        // Дописываем вторую половину: сэмпл должен собраться как 0x3020.
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new().append(true).open(&raw).unwrap();
+        file.write_all(&[0x30]).unwrap();
+        drop(file);
+        read_new(&raw, &mut tail, &mut writer, &level);
+        writer.flush().unwrap();
+
+        let samples = crate::capture::read_raw_f32(&out).unwrap();
+        assert_eq!(samples.len(), 2, "{samples:?}");
+        assert!((samples[0] - 4096.0 / 32768.0).abs() < 1e-6, "{samples:?}");
+        assert!((samples[1] - 12320.0 / 32768.0).abs() < 1e-6, "{samples:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

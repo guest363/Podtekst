@@ -229,7 +229,15 @@ fn import_zip(
         let buf = read_entry_limited(&mut f, &mut consumed, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES)?;
         match kind {
             EntryKind::Json(tag) => {
-                let val: Option<Value> = serde_json::from_slice(&buf).ok();
+                let parsed = serde_json::from_slice::<Value>(&buf);
+                // Битый people.json/voiceprints.json в архиве нельзя молча
+                // считать пустым: импорт терял бы данные без предупреждения.
+                if parsed.is_err() && !buf.iter().all(u8::is_ascii_whitespace) {
+                    return Err(PacksError::Other(format!(
+                        "{tag} в архиве повреждён — пакет не импортирован"
+                    )));
+                }
+                let val = parsed.ok();
                 match tag {
                     "manifest.json" => manifest_val = val,
                     "people.json" => people_val = val,
@@ -299,6 +307,14 @@ fn import_json(
     merge_into_default: bool,
     embedding_space: &str,
 ) -> Result<super::PackInfo> {
+    // Тот же предел, что у zip-импорта: читать файл целиком без границы нельзя.
+    let size = fs::metadata(source)?.len();
+    if size > MAX_TOTAL_BYTES {
+        return Err(PacksError::Other(format!(
+            "файл пакета больше {} МБ",
+            MAX_TOTAL_BYTES / (1024 * 1024)
+        )));
+    }
     let text = fs::read_to_string(source)?;
     let raw: Value = serde_json::from_str(&text)?;
     let people_val = raw.get("people").cloned().unwrap_or_else(|| json!([]));
@@ -585,6 +601,16 @@ mod tests {
         std::fs::write(dir.join("people.json"), "не json").unwrap();
         let out = app.join("bad.voicepack.json");
         assert!(export_pack(&app, "default", &out, false).is_err());
+    }
+
+    #[test]
+    fn corrupted_people_json_in_archive_blocks_import() {
+        let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (_g, app) = tmp_app("import-corrupt-people");
+        let src = app.join("bad.voicepack.zip");
+        write_zip(&src, &[("people.json", b"{ broken")]);
+        let error = import_pack(&app, &src, false).unwrap_err();
+        assert!(error.to_string().contains("повреждён"), "{error}");
     }
 
     #[test]

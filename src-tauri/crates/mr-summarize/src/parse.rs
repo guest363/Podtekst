@@ -371,9 +371,9 @@ fn parse_flat(output: &str, preset: &Preset) -> Result<ParsedSummary, SummaryErr
             decisions.unwrap_or(default_index)
         } else if task_label {
             task.unwrap_or(default_index)
-        } else if cues::decision_cue(&normalized) {
+        } else if cues::decision_cue(&text) {
             decisions.unwrap_or(default_index)
-        } else if cues::question_line(&normalized) {
+        } else if cues::question_line(&text) {
             questions.unwrap_or(default_index)
         } else if !cues::task_rejected(&normalized)
             && (cues::task_cue(&normalized) || looks_like_task(&normalized))

@@ -388,7 +388,7 @@ pub fn generate(input: &GenerateInput, recording: bool) -> Result<StartOutcome, 
         return Err(ApiError::new(
             500,
             "internal",
-            "Внутренняя ошибка итогов. Повторите и лог.",
+            "Внутренняя ошибка итогов. Повторите и посмотрите лог.",
         ));
     }
     arm_timeout(reservation.disarm());

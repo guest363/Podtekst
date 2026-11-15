@@ -93,7 +93,7 @@ fn take_profile(dir: &Path, name: &str) -> Option<PackProfile> {
     let space = value
         .get("embedding_space")
         .and_then(|s| s.as_str())
-        .unwrap_or("eres2netv2-192d")
+        .unwrap_or_default()
         .to_string();
     let profiles = value
         .get("profiles")
@@ -205,7 +205,9 @@ pub fn move_person_pack(
     if let Some(source) = &source {
         let to_vp_file = to_dir.join("voiceprints.json");
         let mut to_profiles = vec![];
-        let mut to_space = "eres2netv2-192d".to_string();
+        // Пространство — только из файлов: неизвестное остаётся пустым (поле
+        // не пишется), иначе миграция сочтёт пакет чужим и сотрёт отпечатки.
+        let mut to_space = String::new();
         match fs::read_to_string(&to_vp_file) {
             Ok(text) => {
                 let v: Value = serde_json::from_str(&text)?;
@@ -218,6 +220,9 @@ pub fn move_person_pack(
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
+        }
+        if to_space.is_empty() {
+            to_space = source.space.clone();
         }
         to_profiles
             .retain(|p| !same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), name));
@@ -265,7 +270,7 @@ mod tests {
                     {"id": "p2", "embedding": [], "snippet_relpath": "../relative.txt"}
                 ]
             })],
-            "eres2netv2-192d",
+            "test-space-192d",
         );
         fs::write(
             app.join("packs").join(&p1.id).join("voiceprints.json"),
@@ -298,7 +303,7 @@ mod tests {
         add_person_to_pack(&app, &p1.id, json!({"name": "Инженер 3"})).unwrap();
         let vp = voiceprints_v3(
             vec![json!({"name": "Инженер 3", "prototypes": []})],
-            "eres2netv2-192d",
+            "test-space-192d",
         );
         fs::write(
             app.join("packs").join(&p1.id).join("voiceprints.json"),
@@ -336,6 +341,38 @@ mod tests {
 
         assert!(move_person_pack(&app, "Новый", &p1.id, &p2.id).is_err());
         assert_eq!(fs::read_to_string(&file).unwrap(), "{ broken");
+    }
+
+    #[test]
+    fn move_into_pack_without_voiceprints_keeps_profiles_and_invents_no_space() {
+        let (_g, app) = tmp_app("move-space");
+        let p1 = create_pack(&app, "Отдел 1", "").unwrap();
+        let p2 = create_pack(&app, "Отдел 2", "").unwrap();
+        add_person_to_pack(&app, &p1.id, json!({"name": "Инженер 4"})).unwrap();
+        let vp = json!({
+            "version": 3,
+            "profiles": [{
+                "name": "Инженер 4",
+                "prototypes": [{"id": "p1", "embedding": [0.1, 0.2]}]
+            }]
+        });
+        let source = app.join("packs").join(&p1.id).join("voiceprints.json");
+        fs::write(&source, serde_json::to_string(&vp).unwrap()).unwrap();
+
+        move_person_pack(&app, "Инженер 4", &p1.id, &p2.id).unwrap();
+
+        let target: Value = serde_json::from_str(
+            &fs::read_to_string(app.join("packs").join(&p2.id).join("voiceprints.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            target.get("embedding_space").is_none(),
+            "пространство нельзя выдумывать: {target}"
+        );
+        assert_eq!(target["profiles"].as_array().unwrap().len(), 1);
+
+        let left: Value = serde_json::from_str(&fs::read_to_string(&source).unwrap()).unwrap();
+        assert!(left["profiles"].as_array().unwrap().is_empty(), "{left}");
     }
 
     #[test]

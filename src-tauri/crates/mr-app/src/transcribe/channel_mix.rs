@@ -132,6 +132,18 @@ pub(crate) fn mixed_stereo(channels: &[Vec<f32>]) -> Option<usize> {
     mixed_stereo_with_stats(channels).0
 }
 
+/// Пороги отсечения независимой активности. Нефинитная корреляция обязана
+/// отсекать: сравнение с NaN всегда false, и гейт «проходит» молча.
+fn envelope_gate(corr: f64, containment: f64, jaccard: f64) -> bool {
+    // shortcut: 0.70/0.85/0.75 — стартовые огибающие пороги отсечения независимой активности.
+    corr.is_finite()
+        && containment.is_finite()
+        && jaccard.is_finite()
+        && corr >= 0.70
+        && containment >= 0.85
+        && jaccard >= 0.75
+}
+
 pub(crate) fn mixed_stereo_with_stats(channels: &[Vec<f32>]) -> (Option<usize>, MixStats) {
     let mut stats = MixStats::default();
     if channels.len() != 2 {
@@ -161,12 +173,12 @@ pub(crate) fn mixed_stereo_with_stats(channels: &[Vec<f32>]) -> (Option<usize>, 
     if min_active < active0.len() / 20 || min_active * 5 < max_active * 4 {
         return (None, stats);
     }
-    stats.containment = overlap as f64 / min_active as f64;
+    stats.containment = overlap as f64 / min_active.max(1) as f64;
     let union =
         active0.iter().filter(|&&a| a).count() + active1.iter().filter(|&&b| b).count() - overlap;
     stats.jaccard = overlap as f64 / union.max(1) as f64;
     // shortcut: 0.70/0.85/0.75 — стартовые огибающие пороги отсечения независимой активности.
-    if stats.corr < 0.70 || stats.containment < 0.85 || stats.jaccard < 0.75 {
+    if !envelope_gate(stats.corr, stats.containment, stats.jaccard) {
         return (None, stats);
     }
     let probe = len.min(BLEED_PROBE_SEC * 16000);
@@ -184,7 +196,7 @@ pub(crate) fn mixed_stereo_with_stats(channels: &[Vec<f32>]) -> (Option<usize>, 
     let (sample_corr, lag) = best_lag_sample_correlation(&channels[0][..len], &channels[1][..len]);
     stats.sample_corr = sample_corr;
     stats.lag = lag;
-    if sample_corr < DUP_SAMPLE_CORR {
+    if !sample_corr.is_finite() || sample_corr < DUP_SAMPLE_CORR {
         return (None, stats);
     }
     stats.chosen = Some(if stats.th1 > stats.th0 { 1 } else { 0 });
@@ -397,6 +409,28 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    #[test]
+    fn nan_correlation_fails_duplicate_gate() {
+        assert!(!envelope_gate(f64::NAN, 1.0, 1.0));
+        assert!(!envelope_gate(0.9, f64::NAN, 1.0));
+        assert!(!envelope_gate(0.9, 0.9, f64::NAN));
+        assert!(envelope_gate(0.9, 0.9, 0.9));
+    }
+
+    #[test]
+    fn non_finite_samples_never_collapse_stereo_to_one_channel() {
+        let len = 16_000 * 4;
+        let spans = [(0.0, 4.0)];
+        let mut channel = chirp_bursts(len, &spans, 0.3);
+        channel[5_000] = f32::NAN;
+        let other = chirp_bursts(len, &spans, 0.3);
+        let (chosen, stats) = mixed_stereo_with_stats(&[channel, other]);
+        assert_eq!(
+            chosen, None,
+            "NaN в огибающей отключает корреляционный гейт: {stats:?}"
+        );
     }
 
     #[test]

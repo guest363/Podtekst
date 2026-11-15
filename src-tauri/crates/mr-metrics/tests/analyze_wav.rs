@@ -121,6 +121,58 @@ fn clipping_marks_the_recording() {
 }
 
 #[test]
+fn worst_channel_sets_snr_not_the_cleanest_one() {
+    let rate = 16_000;
+    let total = 4 * rate;
+    let path_clean = temp_wav();
+    let path_noisy = temp_wav();
+    let mut clean_left = vec![0.0_f32; total];
+    let mut noisy_right = vec![0.0_f32; total];
+    for index in 0..total {
+        let t = index as f32 / rate as f32;
+        let speech = (std::f32::consts::TAU * 200.0 * t).sin() * 0.4
+            + (std::f32::consts::TAU * 6_500.0 * t).sin() * 0.05;
+        let quiet = (std::f32::consts::TAU * 1_100.0 * t).sin() * 0.002;
+        clean_left[index] = if index < 2 * rate { speech } else { quiet };
+        // Правый канал: та же речь, но в паузах слышен широкополосный шум.
+        noisy_right[index] = if index < 2 * rate {
+            speech * 0.8
+        } else {
+            (std::f32::consts::TAU * 1_100.0 * t).sin() * 0.2
+        };
+    }
+    let turns = vec![
+        Turn {
+            start: 0.0,
+            end: 2.0,
+            speaker: "A".into(),
+            channel: Some(0),
+            text: "раз два три".into(),
+        },
+        Turn {
+            start: 0.0,
+            end: 2.0,
+            speaker: "B".into(),
+            channel: Some(1),
+            text: "четыре пять".into(),
+        },
+    ];
+    mr_audio::write_stereo_wav(&path_clean, &clean_left, &clean_left, 16_000).expect("wav");
+    mr_audio::write_stereo_wav(&path_noisy, &clean_left, &noisy_right, 16_000).expect("wav");
+    let clean = run(&turns, &path_clean).quality.snr_db.expect("snr");
+    let noisy = run(&turns, &path_noisy).quality.snr_db.expect("snr");
+
+    // reduce(min): шумный канал обязан ухудшить общий SNR. С reduce(max)
+    // результат остался бы на уровне чистого канала.
+    assert!(
+        noisy < clean - 6.0,
+        "snr clean={clean} noisy={noisy}: шумный канал спрятался за чистым"
+    );
+    let _ = std::fs::remove_file(&path_clean);
+    let _ = std::fs::remove_file(&path_noisy);
+}
+
+#[test]
 fn silent_second_channel_does_not_inflate_snr() {
     let path = temp_wav();
     let rate = 16_000;

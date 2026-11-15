@@ -8,11 +8,34 @@ fn models_dir() -> Option<PathBuf> {
     let d = std::env::var("MR_MODELS_DIR").unwrap_or_else(|_| "/tmp/opencode/models".to_string());
     let p = PathBuf::from(d);
     let require_real = std::env::var("REQUIRE_REAL").is_ok_and(|v| v == "1");
-    if require_real && !p.is_dir() {
-        panic!(
-            "REQUIRE_REAL=1, но каталог моделей не найден: {}",
-            p.display()
-        );
+    if require_real {
+        if !p.is_dir() {
+            panic!(
+                "REQUIRE_REAL=1, но каталог моделей не найден: {}",
+                p.display()
+            );
+        }
+        // Иначе весь живой набор молча зелёный: каждый тест видит свой SKIP.
+        let missing: Vec<&str> = [
+            "Silero VAD",
+            "PyAnnote segmentation",
+            "ERes2NetV2",
+            "GigaAM encoder",
+        ]
+        .into_iter()
+        .filter(|what| match *what {
+            "Silero VAD" => vad_model_file(&p).is_none(),
+            "PyAnnote segmentation" => segmentation_model_file(&p).is_none(),
+            "ERes2NetV2" => embedding_model_file(&p).is_none(),
+            _ => model_file(&p, "gigaam_enc_q.onnx").is_none(),
+        })
+        .collect();
+        if !missing.is_empty() {
+            panic!(
+                "REQUIRE_REAL=1, но в {} нет моделей: {missing:?}",
+                p.display()
+            );
+        }
     }
     p.is_dir().then_some(p)
 }
@@ -168,7 +191,11 @@ fn read_wav_mono16(path: &std::path::Path) -> Option<(Vec<f32>, u32)> {
 fn test_wav() -> Option<Vec<f32>> {
     let p =
         std::env::var("MR_TEST_WAV").unwrap_or_else(|_| "/tmp/opencode/mic_test.wav".to_string());
-    read_wav_mono16(std::path::Path::new(&p)).map(|(s, _)| s)
+    let wav = read_wav_mono16(std::path::Path::new(&p)).map(|(s, _)| s);
+    if wav.is_none() && std::env::var("REQUIRE_REAL").is_ok_and(|v| v == "1") {
+        panic!("REQUIRE_REAL=1, но нет тестового WAV: {p}");
+    }
+    wav
 }
 
 #[test]

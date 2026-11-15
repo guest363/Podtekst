@@ -623,6 +623,21 @@ pub fn whisper_mel(samples: &[f32]) -> Vec<Vec<f32>> {
     frames
 }
 
+/// Ширина мел-кадра GigaAM/NeMo — контракт экспортированной модели.
+pub const GIGAAM_MEL_BANDS: usize = 64;
+
+/// Проверка формы мел-спектрограммы перед укладкой в тензор: `row[c]` без
+/// проверки паникует на короткой строке из чужого/битого мел-кэша.
+pub fn ensure_mel_width(mel: &[Vec<f32>], width: usize) -> Result<(), String> {
+    match mel.iter().position(|row| row.len() < width) {
+        Some(index) => Err(format!(
+            "мел-кадр {index} короче {width} полос ({})",
+            mel[index].len()
+        )),
+        None => Ok(()),
+    }
+}
+
 pub fn nemo_mel(samples: &[f32]) -> Vec<Vec<f32>> {
     const NOISE_FLOOR: f32 = 0.002;
     const TARGET_PEAK: f32 = 0.9;
@@ -682,6 +697,16 @@ fn cmn(frames: &mut [Vec<f32>]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mel_width_guard_rejects_short_rows() {
+        let good = vec![vec![0.0f32; GIGAAM_MEL_BANDS]; 3];
+        assert!(ensure_mel_width(&good, GIGAAM_MEL_BANDS).is_ok());
+        let mut bad = good.clone();
+        bad[1].pop();
+        let error = ensure_mel_width(&bad, GIGAAM_MEL_BANDS).unwrap_err();
+        assert!(error.contains("1"), "{error}");
+    }
 
     #[test]
     fn mel_shape_and_finite() {

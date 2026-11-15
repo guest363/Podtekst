@@ -9,7 +9,7 @@ pub(super) struct Units {
     pub anchors: Vec<usize>,
 }
 
-fn normalize_unit_rms(samples: &mut [f32]) {
+pub(crate) fn normalize_unit_rms(samples: &mut [f32]) {
     let energy = samples.iter().map(|&x| x * x).sum::<f32>();
     let rms = (energy / samples.len() as f32).sqrt();
     if rms <= f32::EPSILON {
@@ -70,7 +70,20 @@ fn extract(
             "ev=diar.embed"
         );
     }
-    let embedding = result.ok().flatten()?;
+    let embedding = match result {
+        Ok(Some(embedding)) => embedding,
+        Ok(None) => return None,
+        Err(error) => {
+            log::warn!(
+                target: "diar",
+                unit = utterance,
+                anchor = anchor,
+                error = error.to_string();
+                "ev=diar.embed_error"
+            );
+            return None;
+        }
+    };
     Some(AcoustUnit {
         utterance,
         start,

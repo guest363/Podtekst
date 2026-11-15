@@ -21,6 +21,23 @@ pub(super) struct AudioStats {
     pub(super) inf: usize,
 }
 
+impl AudioStats {
+    /// Сводка по каналам: максимумы уровней и сумма счётчиков нефинитных сэмплов.
+    pub(super) fn combine(channels: impl IntoIterator<Item = Self>) -> Self {
+        channels
+            .into_iter()
+            .fold(Self::default(), |mut acc, stats| {
+                acc.rms = acc.rms.max(stats.rms);
+                acc.peak = acc.peak.max(stats.peak);
+                acc.clip_pct = acc.clip_pct.max(stats.clip_pct);
+                acc.silence_pct = acc.silence_pct.max(stats.silence_pct);
+                acc.nan += stats.nan;
+                acc.inf += stats.inf;
+                acc
+            })
+    }
+}
+
 pub(super) fn stage_begin(name: &'static str) {
     if !cfg!(debug_assertions) {
         return;

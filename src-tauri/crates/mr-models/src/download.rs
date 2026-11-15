@@ -146,18 +146,26 @@ pub(crate) fn download_with_resume(
     } else {
         0
     };
-    let mut resp = range_request(&agent, url, already)
-        .call()
-        .map_err(|e| ModelsError::Net(e.to_string()))?;
+    let mut resp = match range_request(&agent, url, already).call() {
+        Ok(resp) => resp,
+        // ureq отдаёт 4xx как Err(Status): без этой ветки полный/переросший
+        // `.part` упирался бы в 416 на каждой попытке и блокировал загрузку.
+        Err(ureq::Error::Status(416, _)) if already > 0 => {
+            already = 0;
+            let _ = std::fs::remove_file(dest_part);
+            range_request(&agent, url, 0)
+                .call()
+                .map_err(|e| ModelsError::Net(e.to_string()))?
+        }
+        Err(error) => return Err(ModelsError::Net(error.to_string())),
+    };
     let mut status = resp.status();
     // Сервер вернул не тот диапазон, который просили: дописывать его нельзя,
     // иначе в `.part` окажется кусок с чужого смещения — начинаем файл заново.
     let range_mismatch = status == 206
         && already > 0
         && resp.header("Content-Range").and_then(content_range_start) != Some(already);
-    // 416 = `.part` уже больше/равен размеру файла (крах после докачки).
-    // Без сброса повторная установка навсегда упиралась бы в этот Range.
-    if range_mismatch || (status == 416 && already > 0) {
+    if range_mismatch {
         already = 0;
         let _ = std::fs::remove_file(dest_part);
         resp = range_request(&agent, url, 0)

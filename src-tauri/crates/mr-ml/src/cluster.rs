@@ -37,8 +37,9 @@ impl DistanceMatrix {
 
 const CANNOT_LINK_DISTANCE: f64 = 10.0;
 /// Минимальный абсолютный разрыв между высотами слияний, при котором
-/// автоматический выбор k считается уверенным. shortcut: 0.04; проверено на
-/// VoxConverse и AMI через tools/diar_eval, см. docs/testing/SPEC.md.
+/// автоматический выбор k считается уверенным. shortcut: 0.04 — стартовое
+/// значение; замера именно по разрыву в репозитории нет, нужен прогон
+/// tools/diar_eval на размеченном наборе.
 const MIN_AUTO_K_GAP: f64 = 0.04;
 
 pub fn agglomerative(

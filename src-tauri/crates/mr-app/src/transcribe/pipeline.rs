@@ -24,7 +24,6 @@ mod vad;
 
 const MAX_SEGMENT_SEC: f32 = 12.0;
 const SEGMENT_GAP_SEC: f32 = 0.4;
-const SEGMENT_PAD_SEC: f64 = 0.0;
 
 pub(super) fn quiet_blank_penalty(duration_sec: f64, rms: f32) -> f32 {
     if duration_sec <= 4.0 && (0.0015..0.015).contains(&rms) {
@@ -146,17 +145,7 @@ fn transcribe_file_inner(
         );
     }
     if cfg!(debug_assertions) {
-        let aggregate = channel_stats
-            .iter()
-            .fold(AudioStats::default(), |mut acc, stats| {
-                acc.rms = acc.rms.max(stats.rms);
-                acc.peak = acc.peak.max(stats.peak);
-                acc.clip_pct = acc.clip_pct.max(stats.clip_pct);
-                acc.silence_pct = acc.silence_pct.max(stats.silence_pct);
-                acc.nan += stats.nan;
-                acc.inf += stats.inf;
-                acc
-            });
+        let aggregate = AudioStats::combine(channel_stats.iter().copied());
         log::info!(
             target: "run",
             bytes = std::fs::metadata(audio_path).map(|m| m.len()).unwrap_or(0),
@@ -384,6 +373,7 @@ fn transcribe_file_inner(
     let hotwords_applied = sanitize_hotwords(&opts.hotwords);
     let speakers_info_json: Vec<serde_json::Value> =
         speakers_info.iter().map(report::speaker_to_json).collect();
+    let diarized = merged.iter().any(|utterance| utterance.diarized);
     let meta = Meta {
         audio: audio_path
             .file_name()
@@ -396,8 +386,8 @@ fn transcribe_file_inner(
         speakers: speakers.clone(),
         speakers_info: speakers_info_json,
         hotwords_applied: hotwords_applied.clone(),
-        confidence: Some(
-            serde_json::json!({"engine": "ctc", "threshold": DEFAULT_CONFIDENCE_THRESHOLD}),
+        confidence: ctc_used_any.then(
+            || serde_json::json!({"engine": "ctc", "threshold": DEFAULT_CONFIDENCE_THRESHOLD}),
         ),
     };
     let doc = TranscriptDoc {
@@ -407,7 +397,7 @@ fn transcribe_file_inner(
             segments: merged.len(),
             words,
             speech_sec: (speech_sec * 10.0).round() / 10.0,
-            diarized: true,
+            diarized,
         },
         utterances: merged,
     };
@@ -416,25 +406,11 @@ fn transcribe_file_inner(
     let md_path = out_dir.join(format!("{stem}.md"));
     let txt_path = out_dir.join(format!("{stem}.txt"));
     let json_path = out_dir.join(format!("{stem}.transcript.json"));
-    crate::fsutil::write_atomic(
-        &md_path,
-        report::build_markdown(&meta_value, &doc.utterances).as_bytes(),
-    )
-    .map_err(|e| e.to_string())?;
-    crate::fsutil::write_atomic(&txt_path, report::build_text(&doc.utterances).as_bytes())
-        .map_err(|e| e.to_string())?;
+    // JSON — источник истины: пишем его первым, иначе при сбое на нём
+    // остаются новые .md/.txt поверх старого JSON и трио расходится.
+    write_transcript_doc(&json_path, &doc)?;
     if cfg!(debug_assertions) {
-        let input_stats = channel_stats
-            .iter()
-            .fold(AudioStats::default(), |mut acc, stats| {
-                acc.rms = acc.rms.max(stats.rms);
-                acc.peak = acc.peak.max(stats.peak);
-                acc.clip_pct = acc.clip_pct.max(stats.clip_pct);
-                acc.silence_pct = acc.silence_pct.max(stats.silence_pct);
-                acc.nan += stats.nan;
-                acc.inf += stats.inf;
-                acc
-            });
+        let input_stats = AudioStats::combine(channel_stats.iter().copied());
         write_run_manifest(
             audio_path,
             opts,
@@ -444,7 +420,13 @@ fn transcribe_file_inner(
             &engine_name,
         );
     }
-    write_transcript_doc(&json_path, &doc)?;
+    crate::fsutil::write_atomic(
+        &md_path,
+        report::build_markdown(&meta_value, &doc.utterances).as_bytes(),
+    )
+    .map_err(|e| e.to_string())?;
+    crate::fsutil::write_atomic(&txt_path, report::build_text(&doc.utterances).as_bytes())
+        .map_err(|e| e.to_string())?;
     report::record_stats(duration_sec);
     Ok(TranscribeReport {
         md_path,
@@ -484,5 +466,18 @@ mod tests {
         assert_eq!(quiet_blank_penalty(10.0, 0.011), 0.0);
         assert_eq!(quiet_blank_penalty(2.6, 0.0003), 0.0);
         assert_eq!(quiet_blank_penalty(2.6, 0.2), 0.0);
+    }
+
+    #[test]
+    fn blank_penalty_uses_raw_rms_not_normalized_peak() {
+        fn rms(samples: &[f32]) -> f32 {
+            (samples.iter().map(|x| x * x).sum::<f32>() / samples.len() as f32).sqrt()
+        }
+        // Тихая речь (−40 dBFS): после нормировки до пика 0.9 RMS стал бы 0.63,
+        // и штраф пропал бы ровно в том сценарии, ради которого он вводился.
+        let raw = vec![0.01f32; 16_000 * 3];
+        let normalized: Vec<f32> = raw.iter().map(|x| x * 90.0).collect();
+        assert_eq!(quiet_blank_penalty(3.0, rms(&raw)), 2.0);
+        assert_eq!(quiet_blank_penalty(3.0, rms(&normalized)), 0.0);
     }
 }

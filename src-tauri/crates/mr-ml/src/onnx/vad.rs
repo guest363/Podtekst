@@ -202,7 +202,9 @@ pub fn vad_segments_from_probs(
                     let speech_end = i.saturating_sub(silence_run).saturating_add(1);
                     let a = s.saturating_sub(pad_windows);
                     let b = (speech_end + pad_windows).min(probs.len());
-                    if (b.saturating_sub(a) as f32) * win_sec >= min_speech_sec {
+                    // Длину речи меряем без padding: с ним фильтр не срабатывал
+                    // никогда (паддинг 2×0.25 с больше любого min_speech_sec).
+                    if (speech_end.saturating_sub(s) as f32) * win_sec >= min_speech_sec {
                         raw_segs.push((a as f32 * win_sec, b as f32 * win_sec));
                     }
                     start = None;
@@ -218,7 +220,7 @@ pub fn vad_segments_from_probs(
     if let Some(s) = start {
         let a = s.saturating_sub(pad_windows);
         let b = probs.len();
-        if (b.saturating_sub(a) as f32) * win_sec >= min_speech_sec {
+        if (b.saturating_sub(s) as f32) * win_sec >= min_speech_sec {
             raw_segs.push((a as f32 * win_sec, b as f32 * win_sec));
         }
     }
@@ -268,6 +270,23 @@ mod tests {
         let segs = vad_segments_from_probs(&probs, 0.30, 0.15, 0.12, 0.30, 0.25);
         assert_eq!(segs.len(), 1);
         assert!(segs[0].1 - segs[0].0 > 1.8);
+    }
+
+    #[test]
+    fn minimum_speech_filters_padding_out() {
+        // Один речевой кадр (32 мс) короче min_speech 0.12 с: паддинг не должен
+        // превращать его в «сегмент речи».
+        let mut probs = vec![0.0f32; 15];
+        probs.push(0.9);
+        probs.extend(vec![0.0; 15]);
+        let segs = vad_segments_from_probs(&probs, 0.30, 0.15, 0.12, 0.30, 0.25);
+        assert!(segs.is_empty(), "{segs:?}");
+
+        let mut longer = vec![0.0f32; 15];
+        longer.extend(vec![0.9; 6]);
+        longer.extend(vec![0.0; 15]);
+        let segs = vad_segments_from_probs(&longer, 0.30, 0.15, 0.12, 0.30, 0.25);
+        assert_eq!(segs.len(), 1, "{segs:?}");
     }
 
     #[test]

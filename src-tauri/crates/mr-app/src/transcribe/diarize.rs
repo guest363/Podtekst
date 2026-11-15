@@ -1,4 +1,4 @@
-mod acoustic_units;
+pub(super) mod acoustic_units;
 mod acoustic_windows;
 mod constraint_links;
 mod coverage;
@@ -144,20 +144,14 @@ pub(crate) fn merge_quiet_short_with_evidence(
         };
         let head = super::echo::segment_profile(evidence, a.0 as f64, a.1 as f64);
         let tail = super::echo::segment_profile(evidence, b.0 as f64, b.1 as f64);
-        let echo_like = |_profile: super::echo::SegmentProfile, a: (f32, f32)| {
-            let sys_level = system_rms(a.0, a.1);
-            let mic_level = rms(a.0, a.1);
+        // Уровень системы против микрофона: тихий микрофон при громкой системе — это эхо.
+        let level_echo = |span: (f32, f32)| {
+            let sys_level = system_rms(span.0, span.1);
+            let mic_level = rms(span.0, span.1);
             sys_level > 0.005 && mic_level <= evidence.gain * sys_level * 1.5
         };
-        if echo_like(head, a) || echo_like(tail, b) {
+        if level_echo(a) || level_echo(b) || (b.0 > a.1 && level_echo((a.1, b.0))) {
             return true;
-        }
-        if b.0 > a.1 {
-            let sys_level = system_rms(a.1, b.0);
-            let mic_level = rms(a.1, b.0);
-            if sys_level > 0.005 && mic_level <= evidence.gain * sys_level * 1.5 {
-                return true;
-            }
         }
         head.echo_only >= ECHO_MERGE_BLOCK
             || tail.echo_only >= ECHO_MERGE_BLOCK
@@ -229,7 +223,9 @@ pub(super) fn pick_samples(utterances: &[Utterance], max_samples: usize) -> Vec<
         .map(|(_, u)| {
             let dur = (u.end - u.start).max(0.5);
             let start = (u.start * 100.0).round() / 100.0;
-            let sample_dur = (dur.min(6.0) * 10.0).round() / 10.0;
+            // floor, а не round: окно сэмпла не заходит за конец реплики —
+            // иначе в эталон голоса попадает до 50 мс речи следующего спикера.
+            let sample_dur = ((dur.min(6.0) * 10.0).floor() / 10.0).max(0.1);
             let text = u.text.trim();
             let preview = if text.chars().count() > 98 {
                 format!("{}…", text.chars().take(95).collect::<String>())
@@ -437,7 +433,7 @@ const CROSS_TURN_ACTIVE_SIM: f64 = 0.5;
 
 /// Кластер, набравший меньше чистой речи, слишком короток для надёжного
 /// центроида: имя профиля на него не вешаем.
-const MIN_NAMED_CLEAN_SEC: f64 = 2.0;
+pub(super) const MIN_NAMED_CLEAN_SEC: f64 = 2.0;
 
 /// Калибровка на коротких репликах, перепроверить на размеченном наборе.
 const SHORT_REPLY_SEC: f64 = 1.2;
@@ -449,7 +445,7 @@ const SHORT_REPLY_NEIGHBOR_SLACK: f64 = 0.02;
 
 /// Нижняя граница непрерывной локальной речи для эмбеддинга: на более коротком
 /// куске ERes2NetV2 не набирает стабильный вектор голоса.
-const MIN_LOCAL_EMBED_SEC: f64 = 0.8;
+pub(super) const MIN_LOCAL_EMBED_SEC: f64 = 0.8;
 
 /// Окно поиска смены голоса должно содержать хотя бы столько чистой локальной
 /// речи: иначе эмбеддинг окна — это голос из динамиков, а не собеседника.
@@ -504,7 +500,9 @@ fn merge_tiny_clusters(
         let Some((&small, _)) = totals
             .iter()
             .filter(|(l, &t)| t < min_sec && !protected.contains(l) && !well_separated(**l))
-            .min_by(|a, b| a.1.total_cmp(b.1))
+            // Тай-брейк по номеру кластера: порядок обхода `HashMap` в процессе
+            // случаен, и без него результат зависел бы от запуска.
+            .min_by(|a, b| a.1.total_cmp(b.1).then_with(|| a.0.cmp(b.0)))
         else {
             return;
         };
@@ -527,7 +525,7 @@ fn merge_tiny_clusters(
             protected.insert(small);
             continue;
         }
-        let mut best = (0usize, -2.0f64);
+        let mut best = (usize::MAX, -2.0f64);
         for &l in totals.keys() {
             if l == small
                 || constraints.iter().any(|&(a, b)| {
@@ -537,7 +535,7 @@ fn merge_tiny_clusters(
                 continue;
             }
             let sim = mr_ml::cosine_similarity(&cs, &centroid(l));
-            if sim > best.1 {
+            if sim > best.1 || (sim == best.1 && l < best.0) {
                 best = (l, sim);
             }
         }
@@ -669,40 +667,25 @@ fn switch_penalty(gap: f64) -> f64 {
     BASE * (-gap.max(0.0) / 0.8).exp()
 }
 
-/// Короткие реплики не должны утаскивать узнанный профиль к «среднему» голосу.
-#[cfg(test)]
-fn profile_anchors(
-    centroids: &HashMap<usize, Vec<f64>>,
-    profiles: &[SpeakerProfile],
-) -> HashMap<usize, Vec<f64>> {
-    if profiles.is_empty() {
-        return HashMap::new();
+/// Единственная карточка канала, когда разметить голоса нечем: все реплики
+/// получают одно имя, и статистика считается по факту.
+fn fallback_info(name: &str, channel: Option<i32>, utterances: &[Utterance]) -> SpeakerInfo {
+    SpeakerInfo {
+        id: "channel_x".to_string(),
+        name: name.to_string(),
+        channel,
+        matched: false,
+        matched_name: None,
+        matched_pack_id: None,
+        matched_pack_name: None,
+        similarity: 0.0,
+        silhouette: 0.0,
+        candidates: vec![],
+        embedding: None,
+        samples: vec![],
+        utterances_count: utterances.len(),
+        total_speech_sec: utterances.iter().map(|u| (u.end - u.start).max(0.0)).sum(),
     }
-    let mut pairs: Vec<(f64, usize, usize)> = centroids
-        .iter()
-        .flat_map(|(&label, centroid)| {
-            profiles.iter().enumerate().map(move |(index, profile)| {
-                (
-                    mr_ml::cosine_similarity(centroid, &profile.embedding),
-                    label,
-                    index,
-                )
-            })
-        })
-        .collect();
-    pairs.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let mut labels = HashSet::new();
-    let mut used = HashSet::new();
-    let mut anchors = HashMap::new();
-    for (similarity, label, index) in pairs {
-        if similarity < 0.65 || labels.contains(&label) || used.contains(&index) {
-            continue;
-        }
-        labels.insert(label);
-        used.insert(index);
-        anchors.insert(label, profiles[index].embedding.clone());
-    }
-    anchors
 }
 
 fn empty_match() -> ClusterMatch {
@@ -894,7 +877,12 @@ struct AcoustUnit {
 
 /// Участок окна без «только эхо», обрезанный по границам окна: `None` — кадров
 /// локальной речи нет или их слишком мало для честного эмбеддинга.
-fn local_region(ev: &EchoEvidence, start: f64, end: f64, min_sec: f64) -> Option<(f64, f64)> {
+pub(super) fn local_region(
+    ev: &EchoEvidence,
+    start: f64,
+    end: f64,
+    min_sec: f64,
+) -> Option<(f64, f64)> {
     let (run_start, run_end) = echo::longest_local_run(ev, start, end)?;
     let run_start = run_start.max(start);
     let run_end = run_end.min(end);
@@ -932,7 +920,8 @@ fn log_cluster_summary(
     labels: &[usize],
     cannot_link: usize,
 ) {
-    if !cfg!(debug_assertions) || vecs.is_empty() || labels.is_empty() {
+    if !log::log_enabled!(target: "diar", log::Level::Info) || vecs.is_empty() || labels.is_empty()
+    {
         return;
     }
     let mut ids: Vec<usize> = labels.to_vec();
@@ -1053,22 +1042,7 @@ pub(crate) fn diarize_channel(
             u.diarized = true;
         }
         return (
-            vec![SpeakerInfo {
-                id: "channel_x".to_string(),
-                name: default_name.to_string(),
-                channel: channel_idx,
-                matched: false,
-                matched_name: None,
-                matched_pack_id: None,
-                matched_pack_name: None,
-                similarity: 0.0,
-                silhouette: 0.0,
-                candidates: vec![],
-                embedding: None,
-                samples: vec![],
-                utterances_count: utterances.len(),
-                total_speech_sec: utterances.iter().map(|u| (u.end - u.start).max(0.0)).sum(),
-            }],
+            vec![fallback_info(default_name, channel_idx, utterances)],
             Vec::new(),
         );
     }
@@ -1339,33 +1313,35 @@ pub(crate) fn diarize_channel(
         if unit_label.contains_key(&index) {
             continue;
         }
-        let mut best = (f64::NEG_INFINITY, 0usize);
-        let mut second = (f64::NEG_INFINITY, 0usize);
-        for (&label, centroid) in unit_centroids.iter() {
-            let score = cosine_similarity(&unit.embedding, centroid);
-            if score > best.0 {
-                second = best;
-                best = (score, label);
-            } else if score > second.0 {
-                second = (score, label);
-            }
-        }
+        let scored = |skip: Option<usize>| {
+            unit_centroids
+                .iter()
+                .filter(|(&label, _)| Some(label) != skip)
+                .map(|(&label, centroid)| (label, cosine_similarity(&unit.embedding, centroid)))
+                // Тай-брейк по номеру кластера: обход `HashMap` случаен.
+                .max_by(|a, b| a.1.total_cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+        };
+        let Some((best_label, best_score)) = scored(None) else {
+            continue;
+        };
+        let second_score = scored(Some(best_label))
+            .map(|(_, score)| score)
+            .unwrap_or(f64::NEG_INFINITY);
         let threshold = short_join_threshold(unit.dur);
         log::debug!(
             target: "diar",
             ch = ch,
             i = index,
-            top1_id = best.1 as i64,
-            top1_sim = best.0,
-            top2_id = second.1 as i64,
-            top2_sim = if second.0.is_finite() { second.0 } else { 0.0 },
-            margin = if second.0.is_finite() { best.0 - second.0 } else { best.0 },
+            top1_id = best_label as i64,
+            top1_sim = best_score,
+            top2_sim = if second_score.is_finite() { second_score } else { 0.0 },
+            margin = if second_score.is_finite() { best_score - second_score } else { best_score },
             threshold = threshold,
-            matched = best.0 >= threshold;
+            matched = best_score >= threshold;
             "ev=diar.assign"
         );
-        if best.0 >= threshold {
-            unit_label.insert(index, best.1);
+        if best_score >= threshold {
+            unit_label.insert(index, best_label);
             if experiment.centroids == Centroids::Online {
                 unit_centroids = recompute_units(&unit_label);
             }
@@ -1439,22 +1415,7 @@ pub(crate) fn diarize_channel(
             u.diarized = true;
         }
         return (
-            vec![SpeakerInfo {
-                id: "channel_x".to_string(),
-                name: default_name.to_string(),
-                channel: channel_idx,
-                matched: false,
-                matched_name: None,
-                matched_pack_id: None,
-                matched_pack_name: None,
-                similarity: 0.0,
-                silhouette: 0.0,
-                candidates: vec![],
-                embedding: None,
-                samples: vec![],
-                utterances_count: utterances.len(),
-                total_speech_sec: utterances.iter().map(|u| (u.end - u.start).max(0.0)).sum(),
-            }],
+            vec![fallback_info(default_name, channel_idx, utterances)],
             Vec::new(),
         );
     }
@@ -2893,8 +2854,15 @@ pub(crate) fn split_long_by_speaker_change(
                         .map(|seg| seg.exclude_overlap(&mut chunk, lo))
                         .unwrap_or(chunk.len());
                     if clean_len >= (sr * 0.4) as usize {
-                        if let Ok(Some(e)) = ext.embed(&chunk[..clean_len]) {
-                            wins.push((t, e));
+                        match ext.embed(&chunk[..clean_len]) {
+                            Ok(Some(e)) => wins.push((t, e)),
+                            Ok(None) => {}
+                            Err(error) => log::warn!(
+                                target: "diar",
+                                i = index,
+                                error = error.to_string();
+                                "ev=diar.embed_error"
+                            ),
                         }
                     }
                 }
@@ -3098,9 +3066,9 @@ mod tests {
         cannot_link_units, constraint_retry_needed, dedupe_cross_channel, eligible_clusters,
         fill_labels_by_time, group_segments, local_region, merge_quiet_short,
         merge_quiet_short_with_evidence, merge_tiny_clusters, merge_utterances,
-        move_boundary_words, profile_anchors, read_profiles_file, reassign_short_replies,
-        reconcile_channels, refresh_speaker_stats, short_join_threshold, speaker_change_cuts,
-        split_at_pauses, split_by_word_pauses, split_utterance_by_bounds, split_window_region,
+        move_boundary_words, read_profiles_file, reassign_short_replies, reconcile_channels,
+        refresh_speaker_stats, short_join_threshold, speaker_change_cuts, split_at_pauses,
+        split_by_word_pauses, split_utterance_by_bounds, split_window_region,
         split_words_by_bounds, switch_penalty, text_similarity, words_match, AcoustUnit,
         SpeakerInfo, Utterance, MIN_LOCAL_EMBED_SEC,
     };
@@ -3283,8 +3251,8 @@ mod tests {
 
     #[test]
     fn text_similarity_folds_yo_and_detects_containment() {
-        let echo = "А чё, я ей всё написал, чё ещё там надо? Да.";
-        let original = "Мне нужно будет там для КП данные подготовить. Это Альфа, да? А что я ей все написал, че еще там надо? Да. Окей. Хмм.";
+        let echo = "Всё ещё альфа бета гамма дельта?";
+        let original = "Сегодня всё еще альфа бета гамма дельта и дальше.";
         assert!(text_similarity(echo, original) >= 0.85);
     }
 
@@ -3844,6 +3812,17 @@ mod tests {
     }
 
     #[test]
+    fn sample_window_stays_inside_utterance() {
+        let utterance = utt(10.0, 13.96, "A", 0, "чистая обособленная реплика");
+        let samples = super::pick_samples(&[utterance], 1);
+        assert!(samples[0].start >= 10.0, "{samples:?}");
+        assert!(
+            samples[0].end <= 13.96,
+            "окно сэмпла вышло за реплику: {samples:?}"
+        );
+    }
+
+    #[test]
     fn fill_unit_labels_by_time_uses_nearest_unit() {
         let units = vec![
             super::AcoustUnit {
@@ -4124,42 +4103,6 @@ mod tests {
         merge_tiny_clusters(&vecs, &mut labels, &weights, 1, &[], &[]);
         assert_eq!(labels[3], 1);
         assert_eq!(labels[4], 1);
-    }
-
-    #[test]
-    fn recognized_profile_anchors_only_its_cluster() {
-        let centroids =
-            std::collections::HashMap::from([(0usize, vec![0.9, 0.1]), (1, vec![0.2, 0.9])]);
-        let profiles = vec![mr_ml::SpeakerProfile {
-            name: "A".to_string(),
-            pack_id: String::new(),
-            pack_name: String::new(),
-            embedding: vec![1.0, 0.0],
-            samples_count: 1,
-            updated_at: String::new(),
-            prototypes: vec![],
-        }];
-        let anchors = profile_anchors(&centroids, &profiles);
-        assert_eq!(anchors.len(), 1);
-        assert_eq!(anchors[&0], vec![1.0, 0.0]);
-    }
-
-    #[test]
-    fn profile_is_anchored_to_one_cluster_only() {
-        let centroids =
-            std::collections::HashMap::from([(0usize, vec![1.0, 0.0]), (1, vec![0.99, 0.01])]);
-        let profiles = vec![mr_ml::SpeakerProfile {
-            name: "A".to_string(),
-            pack_id: String::new(),
-            pack_name: String::new(),
-            embedding: vec![1.0, 0.0],
-            samples_count: 1,
-            updated_at: String::new(),
-            prototypes: vec![],
-        }];
-        let anchors = profile_anchors(&centroids, &profiles);
-        assert_eq!(anchors.len(), 1);
-        assert!(anchors.contains_key(&0));
     }
 
     #[test]
@@ -4507,8 +4450,8 @@ mod tests {
 
     #[test]
     fn text_similarity_detects_containment_on_bleed() {
-        let echo = "ну че на сегодня с проектом полностью сделано прямо развалилось";
-        let original = "что на сегодня проект полностью сделано прямо развалилось вот давай смотреть в одиннадцать по трафику ничего не прилетело надо изучить";
+        let echo = "альфа бета гамма дельта эпсилон дзета";
+        let original = "альфа бета гамма дельты эпсилон дзета эта тета йота каппа лямбда";
         assert!(text_similarity(echo, original) >= 0.85);
     }
 

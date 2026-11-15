@@ -83,7 +83,12 @@ fn patterns() -> &'static [Regex] {
             r"\b(by|before|on|until|till)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
             r"\b(сегодня|завтра|послезавтра|на этой неделе|на следующей неделе|к концу (недели|месяца|квартала|года)|в конце (недели|месяца)|через\s+\d+\s+(день|дня|дней|неделю|недели|недель|месяц|месяца|месяцев))\b",
             r"\b(today|tomorrow|tonight|this week|next week|next month|next quarter|by the end of (the )?(week|month|quarter|year)|in\s+\d+\s+(day|days|week|weeks|month|months))\b",
-            r"\b\d{1,2}[./-]\d{1,2}([./-]\d{2,4})?\b",
+            // Только дата: «1.5»/«2.5» — десятичные числа и версии, а не срок.
+            // Полная дата — с годом; без года день должен быть > 12 (иначе
+            // не отличить от дроби) или стоять после предлога срока.
+            r"\b(0?[1-9]|[12]\d|3[01])[./-](0?[1-9]|1[0-2])[./-](\d{2}|\d{4})\b",
+            r"\b(1[3-9]|[23]\d)[./-](0?[1-9]|1[0-2])\b",
+            r"\b(до|к|ко|на)\s+(0[1-9]|[12]\d|3[01])[./-](0?[1-9]|1[0-2])\b",
             r"\b\d{1,2}\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\b",
             r"\b\d{1,2}(st|nd|rd|th)?\s+(of\s+)?(january|february|march|april|may|june|july|august|september|october|november|december)\b",
             r"\b(январь|февраль|март|апрель|май|июнь|июль|август|сентябрь|октябрь|ноябрь|декабрь)\s+\d{4}\b",
@@ -196,6 +201,23 @@ mod tests {
         assert_eq!(
             phrases,
             ["до среды", "завтра", "к концу недели", "14.11.2026"]
+        );
+    }
+
+    #[test]
+    fn decimal_numbers_and_versions_are_not_deadlines() {
+        for text in [
+            "Обновлю до версии 1.5.",
+            "Сократим до 2.5 млн.",
+            "Проверю на 0.5 с.",
+        ] {
+            assert!(find_in_text(text).is_none(), "{text}");
+        }
+        assert_eq!(
+            find_in_text("Отправлю 14.11.2026.")
+                .map(|found| found.phrase)
+                .as_deref(),
+            Some("14.11.2026")
         );
     }
 

@@ -193,7 +193,9 @@ pub fn analyze(
                     speaker.energy_dbfs = p.energy_dbfs;
                     speaker.energy_iqr_db = p.energy_iqr_db;
                     speaker.pause_share = p.pause_share;
-                    if p.voiced_sec > 0.0 {
+                    // Гласные считаются только по кириллице: для другого языка
+                    // ноль — это «нет данных», а не нулевая артикуляция.
+                    if p.voiced_sec > 0.0 && speaker.vowels > 0 {
                         speaker.articulation_rate = Some(speaker.vowels as f64 / p.voiced_sec);
                     }
                 }
