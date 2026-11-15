@@ -121,6 +121,42 @@ fn clipping_marks_the_recording() {
 }
 
 #[test]
+fn silent_second_channel_does_not_inflate_snr() {
+    let path = temp_wav();
+    let rate = 16_000;
+    let total = 3 * rate;
+    let mut left = vec![0.0_f32; total];
+    for (index, sample) in left.iter_mut().enumerate() {
+        let t = index as f32 / rate as f32;
+        *sample = if index < 2 * rate {
+            (std::f32::consts::TAU * 200.0 * t).sin() * 0.4
+                + (std::f32::consts::TAU * 6_500.0 * t).sin() * 0.05
+        } else {
+            (std::f32::consts::TAU * 1_100.0 * t).sin() * 0.002
+        };
+    }
+    mr_audio::write_stereo_wav(&path, &left, &vec![0.0_f32; total], 16_000).expect("wav");
+    let turns = vec![Turn {
+        start: 0.0,
+        end: 2.0,
+        speaker: "A".into(),
+        channel: Some(0),
+        text: "раз два три".into(),
+    }];
+    let metrics = run(&turns, &path);
+
+    let snr = metrics.quality.snr_db.expect("snr");
+    assert!(snr <= 60.0, "snr={snr}");
+    assert!(metrics.quality.channel_balance_db.is_none());
+    assert!(metrics
+        .warnings
+        .iter()
+        .all(|warning| warning != "channel_balance"));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
 fn metrics_are_byte_identical_on_repeat() {
     let (path, turns) = fixture();
     let first = serde_json::to_vec(&run(&turns, &path)).expect("json");

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use super::{
     median, percentile, vowels, Monologue, Navigation, Span, SpeakerMetrics, Totals, Turn,
@@ -29,6 +29,7 @@ struct Acc {
     vowels: usize,
     fillers: usize,
     latencies: Vec<f64>,
+    channels: BTreeMap<usize, usize>,
     made: usize,
     successful: usize,
     suffered: usize,
@@ -44,6 +45,7 @@ pub fn compute(turns: &[Turn], duration_sec: f64, names: &HashMap<String, String
         .iter()
         .map(|turn| turn.end)
         .fold(duration_sec.max(0.0), f64::max);
+    let (overlap_sec, overlap_by_speaker) = overlap_stats(&sorted);
 
     let mut acc: HashMap<&str, Acc> = HashMap::new();
     let mut intervals: HashMap<&str, Vec<(f64, f64)>> = HashMap::new();
@@ -57,6 +59,9 @@ pub fn compute(turns: &[Turn], duration_sec: f64, names: &HashMap<String, String
             .count();
         entry.vowels += vowels(&turn.text);
         entry.fillers += count_fillers(&turn.text);
+        if let Some(channel) = turn.channel {
+            *entry.channels.entry(channel).or_default() += 1;
+        }
         intervals
             .entry(turn.speaker.as_str())
             .or_default()
@@ -184,6 +189,11 @@ pub fn compute(turns: &[Turn], duration_sec: f64, names: &HashMap<String, String
             SpeakerMetrics {
                 id: id.to_string(),
                 name: names.get(id).cloned().unwrap_or_else(|| id.to_string()),
+                channel: entry
+                    .channels
+                    .iter()
+                    .max_by_key(|(_, count)| *count)
+                    .map(|(channel, _)| *channel),
                 speech_sec,
                 share: if sum_speech > 0.0 {
                     speech_sec / sum_speech
@@ -203,6 +213,7 @@ pub fn compute(turns: &[Turn], duration_sec: f64, names: &HashMap<String, String
                 interruptions_made: entry.made,
                 interruptions_successful: entry.successful,
                 interruptions_suffered: entry.suffered,
+                overlap_sec: overlap_by_speaker.get(id).copied().unwrap_or(0.0),
                 response_latency_ms_median: median(&entry.latencies),
                 response_latency_n: entry.latencies.len(),
                 wpm: (speech_sec > 0.0).then(|| entry.words as f64 / speech_sec * 60.0),
@@ -212,11 +223,16 @@ pub fn compute(turns: &[Turn], duration_sec: f64, names: &HashMap<String, String
         .collect();
 
     let turn_durations: Vec<f64> = sorted.iter().map(|t| t.end - t.start).collect();
+    let monologue_secs: Vec<f64> = runs.iter().map(|run| run.2 - run.1).collect();
     let switches = sorted
         .windows(2)
         .filter(|pair| pair[0].speaker != pair[1].speaker)
         .count();
     let dead_air_sec: f64 = pauses.iter().map(|pause| pause.end - pause.start).sum();
+    let dead_air_max_sec = pauses
+        .iter()
+        .map(|pause| pause.end - pause.start)
+        .reduce(f64::max);
     let global_latencies: Vec<f64> = acc
         .values()
         .flat_map(|entry| entry.latencies.iter().copied())
@@ -225,6 +241,8 @@ pub fn compute(turns: &[Turn], duration_sec: f64, names: &HashMap<String, String
         turns: sorted.len(),
         turn_sec_median: median(&turn_durations),
         turn_sec_p90: percentile(&turn_durations, 0.9),
+        monologue_sec_median: median(&monologue_secs),
+        monologue_sec_p90: percentile(&monologue_secs, 0.9),
         monologues_over_30s: runs
             .iter()
             .filter(|run| run.2 - run.1 >= MONOLOGUE_LONG_SEC)
@@ -233,13 +251,20 @@ pub fn compute(turns: &[Turn], duration_sec: f64, names: &HashMap<String, String
         interruptions_successful: acc.values().map(|entry| entry.successful).sum(),
         response_latency_ms_median: median(&global_latencies),
         switches_per_min: (speech_sec > 0.0).then(|| switches as f64 / (speech_sec / 60.0)),
+        overlap_sec,
+        overlap_share: (speech_sec > 0.0).then(|| overlap_sec / speech_sec),
+        dead_air_n: pauses.len(),
         dead_air_sec,
+        dead_air_max_sec,
         dead_air_share: (duration_sec > 0.0).then(|| dead_air_sec / duration_sec),
         density: (duration_sec > 0.0).then(|| speech_sec / duration_sec),
     };
 
     let mut warnings = Vec::new();
-    if sorted.iter().all(|t| t.channel.is_none()) {
+    let mut channels: Vec<usize> = sorted.iter().filter_map(|turn| turn.channel).collect();
+    channels.sort_unstable();
+    channels.dedup();
+    if channels.len() < 2 {
         warnings.push("mono_no_overlap".to_string());
     }
     if sorted.len() < 10 {
@@ -254,6 +279,52 @@ pub fn compute(turns: &[Turn], duration_sec: f64, names: &HashMap<String, String
         duration_sec,
         warnings,
     }
+}
+
+fn overlap_stats(turns: &[&Turn]) -> (f64, HashMap<String, f64>) {
+    let mut events: Vec<(f64, i8, &str)> = Vec::with_capacity(turns.len() * 2);
+    for turn in turns {
+        events.push((turn.start, 1, turn.speaker.as_str()));
+        events.push((turn.end, -1, turn.speaker.as_str()));
+    }
+    events.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+
+    let mut active: HashMap<&str, usize> = HashMap::new();
+    let mut per_speaker: HashMap<&str, f64> = HashMap::new();
+    let mut distinct = 0usize;
+    let mut total = 0.0;
+    let mut last = events.first().map(|event| event.0).unwrap_or(0.0);
+    for (time, kind, speaker) in events {
+        let dt = (time - last).max(0.0);
+        if dt > 0.0 && distinct >= 2 {
+            total += dt;
+            for (name, count) in &active {
+                if *count > 0 {
+                    *per_speaker.entry(name).or_default() += dt;
+                }
+            }
+        }
+        let count = active.entry(speaker).or_default();
+        if kind > 0 {
+            if *count == 0 {
+                distinct += 1;
+            }
+            *count += 1;
+        } else if *count > 0 {
+            *count -= 1;
+            if *count == 0 {
+                distinct -= 1;
+            }
+        }
+        last = time;
+    }
+    (
+        total,
+        per_speaker
+            .into_iter()
+            .map(|(name, seconds)| (name.to_string(), seconds))
+            .collect(),
+    )
 }
 
 fn count_fillers(text: &str) -> usize {
@@ -356,6 +427,8 @@ mod tests {
         let pause = result.navigation.first_long_pause.unwrap();
         assert!((pause.start - 3.0).abs() < 1e-9);
         assert!((pause.end - 9.0).abs() < 1e-9);
+        assert_eq!(result.totals.dead_air_n, 1);
+        assert!((result.totals.dead_air_max_sec.unwrap() - 6.0).abs() < 1e-9);
     }
 
     #[test]
@@ -392,5 +465,21 @@ mod tests {
         let result = compute(&[first, second], 8.0, &names());
         assert!(result.navigation.first_interruption.is_some());
         assert_eq!(result.speakers[1].interruptions_made, 1);
+        assert!((result.totals.overlap_sec - 1.0).abs() < 1e-9);
+        assert!((result.totals.overlap_share.unwrap() - 0.125).abs() < 1e-9);
+    }
+
+    #[test]
+    fn single_channel_warns_about_missing_overlap() {
+        let mut first = turn(0.0, 5.0, "A");
+        first.channel = Some(0);
+        let mut second = turn(4.0, 8.0, "B");
+        second.channel = Some(0);
+        let result = compute(&[first, second], 8.0, &names());
+        assert!(result
+            .warnings
+            .iter()
+            .any(|warning| warning == "mono_no_overlap"));
+        assert!(result.totals.overlap_sec > 0.0);
     }
 }

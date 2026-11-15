@@ -27,59 +27,78 @@ pub fn analyze(
     let usable = channels.min(spec.channels as usize).max(1);
     drop(reader);
 
-    let intervals = speech_intervals(turns);
-    let mut clipping = 0usize;
-    let mut sample_count = 0usize;
-    let mut speech_db: Vec<f64> = Vec::new();
-    let mut silence_db: Vec<f64> = Vec::new();
-    let mut channel_db: Vec<Vec<f64>> = vec![Vec::new(); usable];
-    let mut spectrum = vec![0.0_f64; FFT_SIZE / 2 + 1];
-    let mut spectrum_frames = 0usize;
+    let channels_known = turns.iter().any(|turn| turn.channel.is_some());
+    let intervals: Vec<Vec<(f64, f64)>> = (0..usable)
+        .map(|channel| {
+            let selected = if channels_known { Some(channel) } else { None };
+            speech_intervals(turns, selected)
+        })
+        .collect();
+    let mut clipping = vec![0usize; usable];
+    let mut sample_count = vec![0usize; usable];
+    let mut speech_db: Vec<Vec<f64>> = vec![Vec::new(); usable];
+    let mut silence_db: Vec<Vec<f64>> = vec![Vec::new(); usable];
+    let mut spectra: Vec<Vec<f64>> = vec![vec![0.0_f64; FFT_SIZE / 2 + 1]; usable];
+    let mut spectrum_frames = vec![0usize; usable];
 
     let mut start = 0.0;
     while start < total_sec {
         let end = (start + CHUNK_SEC).min(total_sec);
-        for (channel, bucket) in channel_db.iter_mut().enumerate() {
+        for channel in 0..usable {
             let Ok(samples) = decode_wav_range_16k(path, start, end, Some(channel)) else {
                 continue;
             };
             for (index, db) in frame_db(&samples).into_iter().enumerate() {
                 let center = start + (index * HOP + FRAME / 2) as f64 / SAMPLE_RATE;
-                if in_speech(&intervals, center) {
-                    speech_db.push(db);
-                    bucket.push(db);
+                if in_speech(&intervals[channel], center) {
+                    speech_db[channel].push(db);
                 } else {
-                    silence_db.push(db);
+                    silence_db[channel].push(db);
                 }
             }
-            if channel == 0 {
-                clipping += samples.iter().filter(|x| x.abs() >= 0.999).count();
-                sample_count += samples.len();
-                spectrum_frames += collect_spectrum(
-                    &samples,
-                    start,
-                    &intervals,
-                    &mut spectrum,
-                    BANDWIDTH_FRAMES - spectrum_frames,
-                );
-            }
+            clipping[channel] += samples.iter().filter(|x| x.abs() >= 0.999).count();
+            sample_count[channel] += samples.len();
+            let limit = BANDWIDTH_FRAMES.saturating_sub(spectrum_frames[channel]);
+            spectrum_frames[channel] += collect_spectrum(
+                &samples,
+                start,
+                &intervals[channel],
+                &mut spectra[channel],
+                limit,
+            );
         }
         start = end;
     }
 
-    let snr_db = match (percentile(&speech_db, 0.9), percentile(&silence_db, 0.1)) {
-        (Some(speech), Some(noise)) if silence_db.len() >= 5 => Some(speech - noise),
-        _ => None,
-    };
-    let clipping_ratio = (sample_count > 0).then(|| clipping as f64 / sample_count as f64);
-    let bandwidth_hz = spectrum
-        .iter()
-        .any(|power| *power > 0.0)
-        .then(|| band_edge(&spectrum));
-    let channel_balance_db = if usable >= 2 {
+    let mut snr_values = Vec::new();
+    for channel in 0..usable {
+        if speech_db[channel].len() < 25 || silence_db[channel].len() < 5 {
+            continue;
+        }
+        let Some(speech) = percentile(&speech_db[channel], 0.9) else {
+            continue;
+        };
+        let Some(noise) = percentile(&silence_db[channel], 0.1) else {
+            continue;
+        };
+        // Цифровая тишина не даёт опорного шума; предел измеримого -90 dBFS.
+        let noise = noise.max(-90.0);
+        snr_values.push((speech - noise).clamp(0.0, 60.0));
+    }
+    let snr_db = snr_values.into_iter().reduce(f64::min);
+    let clipping_ratio = (0..usable)
+        .filter(|channel| sample_count[*channel] > 0)
+        .map(|channel| clipping[channel] as f64 / sample_count[channel] as f64)
+        .reduce(f64::max);
+    let bandwidth_hz = (0..usable)
+        .filter(|channel| spectra[*channel].iter().any(|power| *power > 0.0))
+        .map(|channel| band_edge(&spectra[channel]))
+        .reduce(f64::min);
+    let channel_balance_db = if usable >= 2 && speech_db[0].len() >= 25 && speech_db[1].len() >= 25
+    {
         match (
-            percentile(&channel_db[0], 0.5),
-            percentile(&channel_db[1], 0.5),
+            percentile(&speech_db[0], 0.5),
+            percentile(&speech_db[1], 0.5),
         ) {
             (Some(first), Some(second)) => Some(first - second),
             _ => None,
@@ -95,7 +114,7 @@ pub fn analyze(
     if clipping_ratio.is_some_and(|v| v > 0.001) {
         warnings.push("clipping".to_string());
     }
-    if bandwidth_hz.is_some_and(|v| v < 4_000.0) {
+    if bandwidth_hz.is_some_and(|v| v < 6_400.0) {
         warnings.push("narrow_band".to_string());
     }
     if channel_balance_db.is_some_and(|v| v.abs() > 12.0) {
@@ -146,10 +165,11 @@ fn db_of(samples: &[f32]) -> f64 {
     20.0 * (mean.sqrt().max(1e-9)).log10() as f64
 }
 
-fn speech_intervals(turns: &[Turn]) -> Vec<(f64, f64)> {
+fn speech_intervals(turns: &[Turn], channel: Option<usize>) -> Vec<(f64, f64)> {
     let mut sorted: Vec<(f64, f64)> = turns
         .iter()
         .filter(|t| t.end > t.start)
+        .filter(|t| channel.is_none_or(|expected| t.channel == Some(expected)))
         .map(|t| (t.start, t.end))
         .collect();
     sorted.sort_by(|a, b| a.0.total_cmp(&b.0));

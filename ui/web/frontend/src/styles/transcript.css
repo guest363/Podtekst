@@ -1086,7 +1086,7 @@ body:has(.transcript-page) {
   border-color: var(--accent-blue);
 }
 
-@media (min-width: 721px) and (max-width: 1200px) {
+@media (min-width: 721px) and (max-width: 1400px) {
   .transcript-grid.sidebar-open {
     grid-template-columns: 260px minmax(0, 1fr) 0px;
   }

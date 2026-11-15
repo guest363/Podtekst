@@ -11,7 +11,9 @@ import { copyText, toast, toastConfirm } from '../lib/toast.svelte.ts'
 import {
   emptyHint,
   engine,
+  ensureTranscriptMetrics,
   openTranscriptFile,
+  reloadTranscriptMetrics,
   startTranscription,
   transcript,
 } from '../lib/transcript.svelte.ts'
@@ -25,7 +27,7 @@ import TranscriptDoc from './transcript-doc.svelte'
 const initialSpeakersDrawer =
   typeof window !== 'undefined' && window.matchMedia('(max-width: 720px)').matches
 const initialPanelDrawer =
-  typeof window !== 'undefined' && window.matchMedia('(max-width: 1200px)').matches
+  typeof window !== 'undefined' && window.matchMedia('(max-width: 1400px)').matches
 
 let speakersOpen = $state(
   typeof localStorage !== 'undefined'
@@ -45,8 +47,11 @@ let summaryOpen = $state(
 let metricsOpen = $state(false)
 let metricsBtn = $state<HTMLButtonElement | null>(null)
 let metricsPanelEl = $state<HTMLElement | null>(null)
+let summaryBtn = $state<HTMLButtonElement | null>(null)
+let summaryPanelEl = $state<HTMLElement | null>(null)
 let narrow = $state(false)
 let panelDrawer = $state(false)
+let drawerOpen = $derived(panelDrawer && (metricsOpen || summaryOpen))
 
 $effect(() => {
   const query = window.matchMedia('(max-width: 720px)')
@@ -59,7 +64,7 @@ $effect(() => {
 })
 
 $effect(() => {
-  const query = window.matchMedia('(max-width: 1200px)')
+  const query = window.matchMedia('(max-width: 1400px)')
   const sync = (): void => {
     panelDrawer = query.matches
   }
@@ -74,6 +79,23 @@ $effect(() => {
       const scrollable = metricsPanelEl?.querySelector<HTMLElement>('.metrics-panel')
       ;(scrollable ?? metricsPanelEl)?.focus()
     })
+  }
+})
+
+$effect(() => {
+  if (summaryOpen && panelDrawer) {
+    void tick().then(() => summaryPanelEl?.focus())
+  }
+})
+
+$effect(() => {
+  if (
+    metricsOpen &&
+    !transcript.metrics &&
+    !transcript.metricsLoading &&
+    !transcript.metricsError
+  ) {
+    ensureTranscriptMetrics()
   }
 })
 
@@ -111,10 +133,16 @@ const toggleSummaryPanel = (): void => {
   }
 }
 
+const closeSummaryPanel = (): void => {
+  summaryOpen = false
+  void tick().then(() => summaryBtn?.focus())
+}
+
 const toggleMetricsPanel = (): void => {
   metricsOpen = !metricsOpen
   if (metricsOpen) {
     summaryOpen = false
+    ensureTranscriptMetrics()
   }
 }
 
@@ -284,8 +312,8 @@ const goBack = (): void => {
 
 const onWindowKey = (e: KeyboardEvent): void => {
   if (!ui.transcriptOpen) return
-  if (e.key === 'Tab' && panelDrawer && metricsOpen) {
-    const root = metricsPanelEl
+  if (e.key === 'Tab' && panelDrawer) {
+    const root = metricsOpen ? metricsPanelEl : summaryOpen ? summaryPanelEl : null
     if (root) {
       const nodes = root.querySelectorAll<HTMLElement>(
         'button, [href], input, select, textarea, summary, audio[controls], [contenteditable="true"], [tabindex]:not([tabindex="-1"])',
@@ -304,8 +332,8 @@ const onWindowKey = (e: KeyboardEvent): void => {
           first.focus()
         }
       }
+      return
     }
-    return
   }
   if (e.key === 'Escape') {
     if (metricsOpen) {
@@ -313,7 +341,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
       e.preventDefault()
       e.stopPropagation()
     } else if (panelDrawer && summaryOpen) {
-      summaryOpen = false
+      closeSummaryPanel()
       e.stopPropagation()
     } else if (narrow && speakersOpen) {
       speakersOpen = false
@@ -328,7 +356,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
 <svelte:window onkeydown={onWindowKey} />
 
 <div class="page transcript-page">
-  <header class="transcript-page-header" inert={panelDrawer && metricsOpen}>
+  <header class="transcript-page-header" inert={drawerOpen}>
     <div class="transcript-header-top">
       <h1 class="transcript-page-title" title={ui.currentTranscriptPath}>
         {baseName(ui.currentTranscriptPath)}
@@ -390,6 +418,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
             aria-expanded={summaryOpen}
             aria-controls="summary-panel"
             title={summaryOpen ? 'Скрыть панель итогов' : 'Показать итоги встречи'}
+            bind:this={summaryBtn}
             onclick={toggleSummaryPanel}
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -610,7 +639,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
         <div
           class="speakers-drawer-overlay summary-drawer-overlay"
           role="presentation"
-          onclick={() => (summaryOpen = false)}
+          onclick={closeSummaryPanel}
         ></div>
       {/if}
       {#if panelDrawer && metricsOpen && metricsAvailable}
@@ -625,7 +654,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
       <div
         id="speakers-panel"
         class="transcript-speakers-wrap {speakersOpen ? 'open' : ''}"
-        inert={!speakersOpen || (panelDrawer && metricsOpen)}
+        inert={!speakersOpen || drawerOpen}
       >
         <div class="speakers-drawer-top">
           <span class="card-title">Спикеры{#if transcript.speakers.length > 0}&nbsp;· {transcript.speakers.length}{/if}</span>
@@ -651,7 +680,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
         file={ui.currentTranscriptPath}
         speakers={transcript.speakers}
         currentTime={playbackTime}
-        inert={panelDrawer && metricsOpen}
+        inert={drawerOpen}
         meta={transcriptMeta}
         onseek={seekTo}
       />
@@ -661,14 +690,19 @@ const onWindowKey = (e: KeyboardEvent): void => {
           id="summary-panel"
           class="transcript-summary-wrap {summaryOpen ? 'open drawer-open' : ''}"
           inert={!summaryOpen}
+          role={panelDrawer && summaryOpen ? 'dialog' : 'region'}
+          aria-modal={panelDrawer && summaryOpen ? 'true' : undefined}
+          aria-labelledby="summary-drawer-title"
+          tabindex="-1"
+          bind:this={summaryPanelEl}
         >
           <div class="summary-drawer-top">
-            <span class="card-title">Итоги встречи</span>
+            <span id="summary-drawer-title" class="card-title">Итоги встречи</span>
             <button
               class="btn-close-page"
               aria-label="Скрыть панель итогов"
               title="Скрыть панель итогов"
-              onclick={() => (summaryOpen = false)}
+              onclick={closeSummaryPanel}
             >
               ✕
             </button>
@@ -707,6 +741,8 @@ const onWindowKey = (e: KeyboardEvent): void => {
             loading={transcript.metricsLoading}
             error={transcript.metricsError}
             onseek={seekTo}
+            onretry={ensureTranscriptMetrics}
+            onreload={reloadTranscriptMetrics}
           />
         </div>
       {/if}

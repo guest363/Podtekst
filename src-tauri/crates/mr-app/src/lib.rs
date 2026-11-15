@@ -908,13 +908,13 @@ mod live_api_tests {
             "meta": {
                 "audio": saved_name,
                 "speakers_info": [
-                    {"id": "A", "name": "Я", "matched_name": "Я"},
-                    {"id": "B", "name": "Собеседник", "matched_name": null}
+                    {"id": "spk-A", "name": "Спикер A", "matched_name": "Я"},
+                    {"id": "spk-B", "name": "Собеседник", "matched_name": null}
                 ]
             },
             "utterances": [
-                {"start": 0.0, "end": 0.5, "speaker": "A", "channel": 0, "text": "раз два"},
-                {"start": 0.6, "end": 1.0, "speaker": "B", "channel": 1, "text": "да"}
+                {"start": 0.0, "end": 0.5, "speaker": "Спикер A", "channel": 0, "text": "раз два"},
+                {"start": 0.6, "end": 1.0, "speaker": "Собеседник", "channel": 1, "text": "да"}
             ]
         });
         std::fs::write(
@@ -938,11 +938,18 @@ mod live_api_tests {
             .cloned()
             .unwrap_or_default();
         assert_eq!(speakers.len(), 2, "нет метрик по спикерам: {v}");
+        assert!(
+            speakers.iter().any(|speaker| speaker["name"] == "Я"),
+            "имя спикера не разрешилось: {v}"
+        );
         let share: f64 = speakers
             .iter()
             .filter_map(|s| s.get("share").and_then(|x| x.as_f64()))
             .sum();
         assert!((share - 1.0).abs() < 0.01, "доли не сходятся: {share}");
+
+        let (st, v) = json(http(port, "DELETE", "/api/metrics/baseline", &[], &[]));
+        assert_eq!(st, 200, "сброс базовой линии не сработал: {v}");
 
         let (st, v) = json(http(port, "GET", "/api/recordings", &[], &[]));
         assert_eq!(st, 200);

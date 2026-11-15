@@ -1,7 +1,7 @@
 //! Личная базовая линия метрик: только локально, файл 0600.
 //! Сравнение с собой, не с командой и не с чужой популяцией.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::app_data_dir;
 use crate::fsutil::write_atomic_private;
 
+const BASELINE_VERSION: u32 = 2;
 const MIN_MEETINGS: usize = 5;
 const MIN_SPEECH_SEC: f64 = 120.0;
 const KEEP_SAMPLES: usize = 20;
@@ -19,6 +20,8 @@ static LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Store {
+    #[serde(default)]
+    version: u32,
     #[serde(default)]
     people: BTreeMap<String, Person>,
 }
@@ -37,38 +40,71 @@ struct Sample {
     v: f64,
 }
 
-pub(crate) fn apply(metrics: &mut Metrics, source: &str) {
+pub(crate) fn apply(
+    metrics: &mut Metrics,
+    source: &str,
+    persons: &HashMap<String, String>,
+    record: bool,
+) {
     let _guard = LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let path = app_data_dir().join("metrics-baseline.json");
     let Some(mut store) = load(&path) else {
         return;
     };
+    let energy_valid = !metrics
+        .quality
+        .clipping_ratio
+        .is_some_and(|value| value > 0.001);
     let mut changed = false;
 
     for speaker in &mut metrics.speakers {
         let name = speaker.name.trim();
-        if !is_person(name) || name == speaker.id || speaker.speech_sec < MIN_SPEECH_SEC {
+        if !is_person(name) || speaker.speech_sec < MIN_SPEECH_SEC {
             continue;
         }
-        let person = store.people.entry(name.to_string()).or_default();
-        let f0 = speaker
-            .f0_median_hz
-            .and_then(|value| update(&mut person.f0, source, value));
-        let energy = speaker
-            .energy_dbfs
-            .and_then(|value| update(&mut person.energy, source, value));
-        if speaker.f0_median_hz.is_some() || speaker.energy_dbfs.is_some() {
-            changed = true;
+        let key = persons
+            .get(name)
+            .map(String::as_str)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(name);
+        let channel = speaker
+            .channel
+            .map(|channel| channel.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        let person = store.people.entry(format!("{key}#{channel}")).or_default();
+        let f0_previous = previous(&person.f0, source);
+        let energy_previous = previous(&person.energy, source);
+        let f0 = (f0_previous.len() >= MIN_MEETINGS)
+            .then(|| median(&f0_previous))
+            .flatten();
+        let energy = (energy_previous.len() >= MIN_MEETINGS)
+            .then(|| median(&energy_previous))
+            .flatten();
+        let n_meetings = f0_previous.len().max(energy_previous.len());
+
+        if record {
+            if let Some(value) = speaker.f0_median_hz {
+                changed |= record_sample(&mut person.f0, source, value);
+            }
+            if energy_valid {
+                if let Some(value) = speaker.energy_dbfs {
+                    changed |= record_sample(&mut person.energy, source, value);
+                }
+            }
         }
-        let n_meetings = person.f0.len().max(person.energy.len()).saturating_sub(1);
+
         let semitones = |hz: f64| 12.0 * (hz / 27.5).log2();
         let f0_delta = match (speaker.f0_median_hz, f0) {
             (Some(current), Some(median)) => Some(semitones(current) - semitones(median)),
             _ => None,
         };
-        let energy_delta = match (speaker.energy_dbfs, energy) {
-            (Some(current), Some(median)) => Some(current - median),
-            _ => None,
+        let energy_delta = if energy_valid {
+            match (speaker.energy_dbfs, energy) {
+                (Some(current), Some(median)) => Some(current - median),
+                _ => None,
+            }
+        } else {
+            None
         };
         speaker.baseline = Some(Baseline {
             available: f0_delta.is_some() || energy_delta.is_some(),
@@ -79,6 +115,7 @@ pub(crate) fn apply(metrics: &mut Metrics, source: &str) {
     }
 
     if changed {
+        store.version = BASELINE_VERSION;
         if let Ok(text) = serde_json::to_vec(&store) {
             if let Err(error) = write_atomic_private(&path, &text) {
                 log::warn!(target: "metrics", "ev=baseline.save error={error}");
@@ -87,20 +124,35 @@ pub(crate) fn apply(metrics: &mut Metrics, source: &str) {
     }
 }
 
+pub(crate) fn reset() -> std::io::Result<()> {
+    let _guard = LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    match std::fs::remove_file(app_data_dir().join("metrics-baseline.json")) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 fn is_person(name: &str) -> bool {
     const PLACEHOLDERS: [&str; 5] = ["Собеседник", "Участник", "Гость", "Спикер", "SPEAKER_"];
     !name.is_empty() && !PLACEHOLDERS.iter().any(|prefix| name.starts_with(prefix))
 }
 
-fn update(samples: &mut Vec<Sample>, source: &str, value: f64) -> Option<f64> {
-    let previous: Vec<f64> = samples
+fn previous(samples: &[Sample], source: &str) -> Vec<f64> {
+    samples
         .iter()
         .filter(|sample| sample.src != source)
         .map(|sample| sample.v)
-        .collect();
-    let baseline = (previous.len() >= MIN_MEETINGS)
-        .then(|| median(&previous))
-        .flatten();
+        .collect()
+}
+
+fn record_sample(samples: &mut Vec<Sample>, source: &str, value: f64) -> bool {
+    if samples
+        .iter()
+        .any(|sample| sample.src == source && sample.v == value)
+    {
+        return false;
+    }
     samples.retain(|sample| sample.src != source);
     samples.push(Sample {
         src: source.to_string(),
@@ -109,7 +161,7 @@ fn update(samples: &mut Vec<Sample>, source: &str, value: f64) -> Option<f64> {
     if samples.len() > KEEP_SAMPLES {
         samples.remove(0);
     }
-    baseline
+    true
 }
 
 fn median(values: &[f64]) -> Option<f64> {
@@ -128,14 +180,21 @@ fn median(values: &[f64]) -> Option<f64> {
 
 fn load(path: &Path) -> Option<Store> {
     match std::fs::read(path) {
-        Ok(bytes) => match serde_json::from_slice(&bytes) {
-            Ok(store) => Some(store),
+        Ok(bytes) => match serde_json::from_slice::<Store>(&bytes) {
+            Ok(store) if store.version == BASELINE_VERSION => Some(store),
+            Ok(_) => Some(Store {
+                version: BASELINE_VERSION,
+                people: BTreeMap::new(),
+            }),
             Err(error) => {
                 log::warn!(target: "metrics", "ev=baseline.load error={error}");
                 None
             }
         },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(Store::default()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(Store {
+            version: BASELINE_VERSION,
+            people: BTreeMap::new(),
+        }),
         Err(error) => {
             log::warn!(target: "metrics", "ev=baseline.load error={error}");
             None
@@ -148,10 +207,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn update_keeps_single_sample_per_source() {
+    fn record_keeps_single_sample_per_source() {
         let mut samples = Vec::new();
-        update(&mut samples, "a", 10.0);
-        update(&mut samples, "a", 12.0);
+        record_sample(&mut samples, "a", 10.0);
+        record_sample(&mut samples, "a", 12.0);
         assert_eq!(samples.len(), 1);
         assert_eq!(samples[0].v, 12.0);
     }
@@ -175,8 +234,19 @@ mod tests {
     fn baseline_needs_five_previous_meetings() {
         let mut samples = Vec::new();
         for index in 0..5 {
-            assert!(update(&mut samples, &format!("m{index}"), 100.0).is_none());
+            record_sample(&mut samples, &format!("m{index}"), 100.0);
         }
-        assert!(update(&mut samples, "m5", 100.0).is_some());
+        assert_eq!(previous(&samples, "m5").len(), 5);
+        assert_eq!(median(&previous(&samples, "m5")), Some(100.0));
+    }
+
+    #[test]
+    fn baseline_excludes_current_recording() {
+        let mut samples = Vec::new();
+        for index in 0..5 {
+            record_sample(&mut samples, &format!("m{index}"), 100.0);
+        }
+        record_sample(&mut samples, "m5", 200.0);
+        assert_eq!(median(&previous(&samples, "m5")), Some(100.0));
     }
 }

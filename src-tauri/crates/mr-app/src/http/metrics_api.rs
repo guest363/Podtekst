@@ -1,5 +1,5 @@
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
@@ -14,6 +14,7 @@ use crate::config::save_dir;
 struct Doc {
     #[serde(default)]
     meta: Meta,
+    #[serde(default)]
     utterances: Vec<UtteranceJson>,
 }
 
@@ -33,6 +34,8 @@ struct SpeakerJson {
     name: String,
     #[serde(default)]
     matched_name: Option<String>,
+    #[serde(default)]
+    matched_pack_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -96,43 +99,8 @@ pub(super) fn serve_metrics(request: tiny_http::Request, query: &str) {
         );
         return;
     };
-    let key = cache_key(&transcript);
-    if let Some(hit) = cache()
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .get(&key)
-        .cloned()
-    {
-        respond(request, hit);
-        return;
-    }
 
-    let turns: Vec<mr_metrics::Turn> = doc
-        .utterances
-        .iter()
-        .map(|item| mr_metrics::Turn {
-            start: item.start,
-            end: item.end,
-            speaker: item.speaker.clone(),
-            channel: item.channel.and_then(|value| usize::try_from(value).ok()),
-            text: item.text.clone(),
-        })
-        .collect();
-    let names: HashMap<String, String> = doc
-        .meta
-        .speakers_info
-        .iter()
-        .filter(|speaker| !speaker.id.is_empty())
-        .map(|speaker| {
-            let display = speaker
-                .matched_name
-                .as_deref()
-                .filter(|name| !name.trim().is_empty())
-                .unwrap_or(&speaker.name);
-            (speaker.id.clone(), display.to_string())
-        })
-        .collect();
-
+    let (names, persons) = identities(&doc);
     let audio_path = if doc.meta.audio.is_empty() {
         Some(media.clone())
     } else {
@@ -154,10 +122,32 @@ pub(super) fn serve_metrics(request: tiny_http::Request, query: &str) {
         .map_or((None, 0, 0.0), |(path, channels, duration)| {
             (Some(path), channels, duration)
         });
+    let source = transcript.display().to_string();
+    let record = query_param(query, "record").as_deref() == Some("1");
+    let key = cache_key(&transcript, audio.as_deref());
+    if let Some(hit) = cache_get(&key) {
+        let mut metrics = hit;
+        crate::metrics::apply(&mut metrics, &source, &persons, record);
+        respond(request, metrics);
+        return;
+    }
+
+    let turns: Vec<mr_metrics::Turn> = doc
+        .utterances
+        .iter()
+        .map(|item| mr_metrics::Turn {
+            start: item.start,
+            end: item.end,
+            speaker: item.speaker.clone(),
+            channel: item.channel.and_then(|value| usize::try_from(value).ok()),
+            text: item.text.clone(),
+        })
+        .collect();
 
     let started = std::time::Instant::now();
     let mut metrics = mr_metrics::analyze(&turns, duration_sec, audio.as_deref(), channels, &names);
-    crate::metrics::apply(&mut metrics, &stem);
+    cache_put(key, metrics.clone());
+    crate::metrics::apply(&mut metrics, &source, &persons, record);
     log::debug!(
         target: "metrics",
         file = crate::logging::file_token(&media),
@@ -167,22 +157,50 @@ pub(super) fn serve_metrics(request: tiny_http::Request, query: &str) {
         "ev=metrics.compute"
     );
 
-    cache()
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .insert(key.clone(), metrics.clone());
-    let mut order = order().lock().unwrap_or_else(|error| error.into_inner());
-    order.push_back(key);
-    while order.len() > 8 {
-        if let Some(old) = order.pop_front() {
-            cache()
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .remove(&old);
+    respond(request, metrics);
+}
+
+pub(super) fn serve_reset_baseline(request: tiny_http::Request) {
+    match crate::metrics::reset() {
+        Ok(()) => json_response(request, serde_json::json!({"ok": true}), 200),
+        Err(error) => {
+            log::warn!(target: "metrics", "ev=baseline.reset error={error}");
+            json_response(
+                request,
+                serde_json::json!({"error": "Не удалось сбросить базовую линию"}),
+                500,
+            );
         }
     }
+}
 
-    respond(request, metrics);
+fn identities(doc: &Doc) -> (HashMap<String, String>, HashMap<String, String>) {
+    let mut names = HashMap::new();
+    let mut persons = HashMap::new();
+    for speaker in &doc.meta.speakers_info {
+        let display = speaker
+            .matched_name
+            .as_deref()
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or(&speaker.name)
+            .to_string();
+        let person = speaker
+            .matched_pack_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&display)
+            .to_string();
+        for alias in [&speaker.id, &speaker.name, &display] {
+            if alias.is_empty() {
+                continue;
+            }
+            names
+                .entry(alias.clone())
+                .or_insert_with(|| display.clone());
+            persons.insert(alias.clone(), person.clone());
+        }
+    }
+    (names, persons)
 }
 
 fn respond(request: tiny_http::Request, metrics: Metrics) {
@@ -196,7 +214,17 @@ fn respond(request: tiny_http::Request, metrics: Metrics) {
     }
 }
 
-fn cache_key(path: &PathBuf) -> String {
+fn cache_key(path: &Path, audio: Option<&Path>) -> String {
+    let mut key = file_key(path);
+    key.push('|');
+    match audio {
+        Some(audio) => key.push_str(&file_key(audio)),
+        None => key.push_str("noaudio"),
+    }
+    key
+}
+
+fn file_key(path: &Path) -> String {
     let meta = std::fs::metadata(path).ok();
     let len = meta.as_ref().map(|m| m.len()).unwrap_or(0);
     let mtime = meta
@@ -207,6 +235,42 @@ fn cache_key(path: &PathBuf) -> String {
     format!("{}|{len}|{mtime}", path.display())
 }
 
+fn cache_get(key: &str) -> Option<Metrics> {
+    let hit = cache()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(key)
+        .cloned();
+    if hit.is_some() {
+        let mut order = order().lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(position) = order.iter().position(|item| item == key) {
+            order.remove(position);
+        }
+        order.push_back(key.to_string());
+    }
+    hit
+}
+
+fn cache_put(key: String, metrics: Metrics) {
+    cache()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert(key.clone(), metrics);
+    let mut order = order().lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(position) = order.iter().position(|item| item == &key) {
+        order.remove(position);
+    }
+    order.push_back(key);
+    while order.len() > 8 {
+        if let Some(old) = order.pop_front() {
+            cache()
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .remove(&old);
+        }
+    }
+}
+
 fn cache() -> &'static Mutex<HashMap<String, Metrics>> {
     static CACHE: OnceLock<Mutex<HashMap<String, Metrics>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -215,4 +279,30 @@ fn cache() -> &'static Mutex<HashMap<String, Metrics>> {
 fn order() -> &'static Mutex<VecDeque<String>> {
     static ORDER: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
     ORDER.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identities_resolve_display_names_and_pack() {
+        let doc = Doc {
+            meta: Meta {
+                audio: String::new(),
+                speakers_info: vec![SpeakerJson {
+                    id: "spk-A".to_string(),
+                    name: "Спикер A".to_string(),
+                    matched_name: Some("Я".to_string()),
+                    matched_pack_id: Some("pack-1".to_string()),
+                }],
+            },
+            utterances: Vec::new(),
+        };
+        let (names, persons) = identities(&doc);
+        assert_eq!(names.get("Спикер A"), Some(&"Я".to_string()));
+        assert_eq!(names.get("spk-A"), Some(&"Я".to_string()));
+        assert_eq!(persons.get("Спикер A"), Some(&"pack-1".to_string()));
+        assert_eq!(persons.get("Я"), Some(&"pack-1".to_string()));
+    }
 }

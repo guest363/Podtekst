@@ -1,6 +1,8 @@
 <script lang="ts">
 import type { SpeechMetrics } from '../lib/api'
-import { fmtClock, speakerColor } from '../lib/api'
+import { fmtClock, resetMetricsBaseline, speakerColor } from '../lib/api'
+import { errText } from '../lib/guards.ts'
+import { toast, toastConfirm } from '../lib/toast.svelte.ts'
 import InfoTip from './info-tip.svelte'
 
 type Props = {
@@ -8,8 +10,10 @@ type Props = {
   loading: boolean
   error: string
   onseek?: (sec: number) => void
+  onretry?: () => void
+  onreload?: () => void
 }
-let { metrics, loading, error, onseek }: Props = $props()
+let { metrics, loading, error, onseek, onretry, onreload }: Props = $props()
 
 const pluralTurns = (n: number): string => {
   const rem10 = n % 10
@@ -32,8 +36,9 @@ const pluralWords = (n: number): string => {
 const fmtSpan = (sec: number | null): string => {
   if (sec === null) return 'нет'
   if (sec < 60) return `${sec.toFixed(1).replace('.', ',')} с`
-  const minutes = Math.floor(sec / 60)
-  const seconds = Math.round(sec % 60)
+  const total = Math.round(sec)
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
   return `${minutes} мин ${seconds} с`
 }
 
@@ -48,6 +53,12 @@ const signedNumber = (value: number): string =>
   `${value > 0 ? '+' : ''}${value.toFixed(1).replace('.', ',')}`
 
 const pct = (value: number): string => `${Math.round(value)} %`
+
+const clippingText = (ratio: number): string => {
+  const value = ratio * 100
+  if (value < 0.1) return '<0,1 %'
+  return `${value.toFixed(1).replace('.', ',')} %`
+}
 
 const good = $derived(metrics?.quality.grade === 'good')
 const speakers = $derived(metrics?.speakers ?? [])
@@ -77,10 +88,9 @@ const qualityReason = $derived.by(() => {
   if (prosodyUnavailable) return 'не удалось выделить голос'
   return 'качество ниже порога'
 })
-const prosodyReason = $derived(`Темп и высота голоса недоступны: ${qualityReason}.`)
+const prosodyReason = $derived(`Высота голоса и громкость недоступны: ${qualityReason}.`)
 
 const wpm = $derived.by(() => {
-  if (!prosodyUsable) return null
   let words = 0
   let speech = 0
   for (const speaker of speakers) {
@@ -158,10 +168,12 @@ const participants = $derived.by(() =>
       if (group.maxMonologue !== null) {
         line.push(`монолог ${fmtSpan(group.maxMonologue)}`)
       }
-      if (prosodyUsable && group.speech > 0) {
-        line.push(
-          `${Math.round((group.words / group.speech) * 60)} ${pluralWords(Math.round((group.words / group.speech) * 60))} в минуту`,
-        )
+      if (group.speech > 0) {
+        const groupWpm = Math.round((group.words / group.speech) * 60)
+        line.push(`${groupWpm} ${pluralWords(groupWpm)} в минуту`)
+      }
+      if (group.interruptions > 0) {
+        line.push(`перехваты: ${group.interruptions}`)
       }
       return {
         key: group.name,
@@ -192,19 +204,52 @@ const rhythmRows = $derived.by((): Row[] => {
     const monologue = metrics.navigation.longest_monologue
     rows.push({
       key: 'monologue',
-      label: 'Самый длинный монолог',
-      value: `${fmtSpan(monologue.end - monologue.start)} · с ${fmtClock(monologue.start)}`,
+      label: `Самый длинный монолог · ${monologue.speaker}`,
+      value: `${fmtSpan(monologue.end - monologue.start)} · начало ${fmtClock(monologue.start)}`,
       tip: 'Непрерывная речь одного участника. Пауза до 1,5 секунды её не прерывает.',
       seek: monologue.start,
     })
   }
+  if (metrics.totals.monologue_sec_median !== null && metrics.totals.monologue_sec_p90 !== null) {
+    rows.push({
+      key: 'monologues',
+      label: 'Типичный монолог',
+      value: `медиана ${fmtSpan(metrics.totals.monologue_sec_median)} · p90 ${fmtSpan(metrics.totals.monologue_sec_p90)}`,
+      tip: 'Медиана и 90-й перцентиль длительности непрерывных монологов.',
+    })
+  }
   rows.push({
     key: 'interruptions',
-    label: 'Перебивания',
+    label: 'Перехваты',
     value: monoOnly
-      ? 'недоступно в моно'
-      : `${metrics.totals.interruptions}, из них ${metrics.totals.interruptions_successful} удались`,
-    tip: 'Один начал говорить, пока другой не закончил. Если первый сразу замолкал, перебивание удалось.',
+      ? 'недоступно: запись одним каналом'
+      : `${metrics.totals.interruptions}, из них ${metrics.totals.interruptions_successful} с быстрым ответом`,
+    tip: 'Один начал говорить, пока другой не закончил. Быстрый ответ: предыдущий замолчал в течение 1 секунды. Считается только при раздельной записи микрофона и системного звука.',
+  })
+  if (metrics.navigation.first_interruption && !monoOnly) {
+    rows.push({
+      key: 'firstInterruption',
+      label: 'Первый перехват',
+      value: `в ${fmtClock(metrics.navigation.first_interruption.start)}`,
+      tip: 'Перейти к первому месту, где участники заговорили одновременно.',
+      seek: metrics.navigation.first_interruption.start,
+    })
+  }
+  if (metrics.totals.switches_per_min !== null) {
+    rows.push({
+      key: 'switches',
+      label: 'Смены говорящего',
+      value: `${metrics.totals.switches_per_min.toFixed(1).replace('.', ',')} в минуту речи`,
+      tip: 'Сколько раз менялся говорящий на минуту речи.',
+    })
+  }
+  rows.push({
+    key: 'overlap',
+    label: 'Одновременная речь',
+    value: monoOnly
+      ? 'недоступно: запись одним каналом'
+      : `${fmtSpan(metrics.totals.overlap_sec)} · ${pct((metrics.totals.overlap_share ?? 0) * 100)} речи`,
+    tip: 'Сколько времени участники говорили одновременно. Доли участия выше считаются по речи каждого и могут пересекаться.',
   })
   if (metrics.totals.response_latency_ms_median !== null) {
     rows.push({
@@ -218,13 +263,24 @@ const rhythmRows = $derived.by((): Row[] => {
     key: 'deadAir',
     label: 'Долгие паузы',
     value:
-      metrics.navigation.pauses_over_5s.length === 0
+      metrics.totals.dead_air_n === 0
         ? 'нет'
-        : `${metrics.navigation.pauses_over_5s.length}, всего ${fmtSpan(metrics.totals.dead_air_sec)}`,
+        : `${metrics.totals.dead_air_n}, всего ${fmtSpan(metrics.totals.dead_air_sec)}${
+            metrics.totals.dead_air_max_sec === null
+              ? ''
+              : `, максимум ${fmtSpan(metrics.totals.dead_air_max_sec)}`
+          }${
+            metrics.totals.dead_air_share === null
+              ? ''
+              : ` · ${pct(metrics.totals.dead_air_share * 100)} записи`
+          }`,
+    tip: 'Паузы от 5 секунд: сколько их, сколько времени они заняли и самая длинная.',
+    seek: metrics.navigation.first_long_pause?.start,
   })
   return rows
 })
 
+const hasBaseline = $derived(speakers.some((speaker) => speaker.baseline !== null))
 const baselineRows = $derived.by(() => {
   if (!prosodyUsable) return []
   const visible = new Set(participants.map((person) => person.name.trim().toLowerCase()))
@@ -268,7 +324,7 @@ const qualityRows = $derived.by((): Row[] => {
     rows.push({
       key: 'clip',
       label: 'Перегрузка микрофона',
-      value: quality.clipping_ratio > 0.001 ? pct(quality.clipping_ratio * 100) : 'нет',
+      value: quality.clipping_ratio > 0.001 ? clippingText(quality.clipping_ratio) : 'нет',
     })
   }
   if (quality.channel_balance_db !== null) {
@@ -286,7 +342,7 @@ const qualityWarnings = $derived(
     .filter((code) => ['low_snr', 'clipping', 'narrow_band', 'channel_balance'].includes(code))
     .map((code) => {
       if (code === 'low_snr')
-        return 'Запись тихая или шумная: темп и высота голоса могут быть неточными.'
+        return 'Запись тихая или шумная: высота голоса и громкость не показываются.'
       if (code === 'clipping')
         return 'Громкие места звучат с искажением: микрофон не выдерживает громкость.'
       if (code === 'narrow_band')
@@ -297,14 +353,34 @@ const qualityWarnings = $derived(
 
 const gradeText = $derived(
   good
-    ? 'темпу и высоте голоса можно доверять'
+    ? 'высоте голоса и громкости можно доверять'
     : clippingOnly
       ? 'есть перегрузка микрофона, значения могут быть неточными'
-      : `темп и высота голоса недоступны: ${qualityReason}`,
+      : `высота голоса и громкость недоступны (${qualityReason})`,
 )
 
 let glossaryOpen = $state(false)
 let qualityOpen = $state(false)
+let resetting = $state(false)
+
+const doResetBaseline = async (): Promise<void> => {
+  resetting = true
+  try {
+    await resetMetricsBaseline()
+    toast('Базовая линия сброшена')
+    onreload?.()
+  } catch (e) {
+    toast(`Не удалось сбросить базовую линию: ${errText(e)}`, 'error')
+  } finally {
+    resetting = false
+  }
+}
+
+const resetBaseline = (): void => {
+  toastConfirm('Сбросить личную базовую линию?', 'Сбросить', () => {
+    void doResetBaseline()
+  })
+}
 
 const statusText = $derived(
   loading
@@ -324,14 +400,18 @@ const glossary: Array<[string, string]> = [
   ['Типичная реплика', 'Половина реплик короче, половина длиннее.'],
   ['Монолог', 'Непрерывная речь одного участника. Пауза до 1,5 секунды её не прерывает.'],
   [
-    'Перебивание',
-    'Один начал говорить, пока другой не закончил. Если первый сразу замолкал, перебивание удалось.',
+    'Перехват',
+    'Один начал говорить, пока другой не закончил. Быстрый ответ: предыдущий замолчал в течение 1 секунды. Считается только при раздельной записи микрофона и системного звука.',
+  ],
+  [
+    'Одновременная речь',
+    'Время, когда разные участники говорили внахлёст. Доли участия считаются по речи каждого и могут пересекаться.',
   ],
   [
     'Пауза перед репликой',
     'Сколько времени проходит от конца одной реплики до начала реплики другого участника.',
   ],
-  ['Долгие паузы', 'Паузы от 5 секунд: сколько их и сколько времени они заняли.'],
+  ['Долгие паузы', 'Паузы от 5 секунд: сколько их, сколько времени они заняли и какая самая длинная.'],
   ['Темп речи', 'Сколько слов участники говорят за минуту речи. Паузы между репликами не входят.'],
   ['Паузы внутри реплик', 'Какая часть времени внутри реплик приходится на молчание.'],
   ['Высота голоса', 'Сравнение с обычной высотой участника. В полутонах.'],
@@ -340,13 +420,16 @@ const glossary: Array<[string, string]> = [
   ['Диапазон частот', 'До какой частоты запись сохраняет звук. В килогерцах.'],
   [
     'Перегрузка микрофона',
-    'Доля звука с искажением. Так бывает, когда микрофон не выдерживает громкость.',
+    'Доля звука с искажением. Так бывает при слишком громком звуке.',
   ],
   [
     'Разница громкости микрофона и системного звука',
     'На сколько децибел они различаются. Большая разница мешает слушать запись.',
   ],
-  ['Базовая линия', 'Обычный уровень участника по прошлым встречам. Нужно минимум 5 встреч.'],
+  [
+    'Базовая линия',
+    'Обычный уровень участника по прошлым встречам с тем же каналом. Нужно минимум 5 встреч; смена устройства может сбивать значения.',
+  ],
 ]
 </script>
 
@@ -379,13 +462,20 @@ const glossary: Array<[string, string]> = [
     <p class="metrics-loading">Считаем метрики встречи.</p>
   {:else if !metrics}
     <p class="metrics-empty">
-      {error ? 'Не удалось посчитать метрики. Откройте запись заново.' : 'Для этой записи метрики недоступны.'}
+      {error ? 'Не удалось посчитать метрики. Попробуйте открыть запись заново.' : 'Для этой записи метрики недоступны.'}
     </p>
+    {#if error && onretry}
+      <button type="button" class="btn-secondary btn-sm" onclick={onretry}>Повторить</button>
+    {/if}
   {:else}
     <div class="metrics-stats">
       <div class="metrics-stat">
         <span class="metrics-stat-value">{fmtClock(metrics.speech_sec)}</span>
-        <span class="metrics-stat-label">длительность речи</span>
+        <span class="metrics-stat-label">
+          длительность речи{metrics.totals.density === null
+            ? ''
+            : ` · ${Math.round(metrics.totals.density * 100)} % записи`}
+        </span>
       </div>
       <div class="metrics-stat">
         <span class="metrics-stat-value">{metrics.totals.turns}</span>
@@ -408,9 +498,11 @@ const glossary: Array<[string, string]> = [
     </div>
 
     <p class="metrics-quality-line" class:is-bad={!good}>
-      Качество записи<InfoTip text="От качества записи зависит, можно ли доверять темпу и высоте голоса." />:
+      Качество записи:
+      <InfoTip text="От качества записи зависит, можно ли доверять высоте голоса и громкости." />
       {gradeText}
     </p>
+    <p class="metrics-muted">Метрики считаются на этом устройстве, аудио никуда не отправляется.</p>
 
 
     {#if speakers.length > 0}
@@ -449,7 +541,7 @@ const glossary: Array<[string, string]> = [
     <div class="metrics-section">
       <h3 class="metrics-heading">
         Отклонение от обычного уровня
-        <InfoTip text="Обычный уровень участника по прошлым встречам. Нужно минимум 5 встреч. Полутон - шаг высоты голоса, децибел - единица громкости." />
+        <InfoTip text="Обычный уровень участника по прошлым встречам с тем же каналом (микрофон или системный звук). Нужно минимум 5 встреч. Смена устройства может сбивать значения. Полутон - шаг высоты голоса, децибел - единица громкости." />
       </h3>
       {#if !prosodyUsable}
         <p class="metrics-muted">{prosodyReason}</p>
@@ -465,13 +557,13 @@ const glossary: Array<[string, string]> = [
               <span class="metrics-baseline-name" title={person.name}>{person.name}</span>
               <span
                 class="metrics-baseline-value"
-                title={person.available ? '' : `Нужно 5 встреч, сейчас ${person.meetings}.`}
+                title={person.available ? '' : `Нужно 5 прошлых встреч, сейчас ${person.meetings}.`}
               >
                 {person.available && person.f0 !== null ? signedNumber(person.f0) : 'нет'}
               </span>
               <span
                 class="metrics-baseline-value"
-                title={person.available ? '' : `Нужно 5 встреч, сейчас ${person.meetings}.`}
+                title={person.available ? '' : `Нужно 5 прошлых встреч, сейчас ${person.meetings}.`}
               >
                 {person.available && person.energy !== null ? signedNumber(person.energy) : 'нет'}
               </span>
@@ -480,6 +572,19 @@ const glossary: Array<[string, string]> = [
         </div>
       {:else}
         <p class="metrics-muted">Сравнение появится после 5 встреч с этим участником.</p>
+      {/if}
+      {#if hasBaseline}
+        <button
+          type="button"
+          class="metrics-reset"
+          disabled={resetting}
+          onclick={resetBaseline}
+        >
+          Сбросить базовую линию
+        </button>
+      {/if}
+      {#if hasBaseline}
+        <p class="metrics-muted">Профиль хранится только на этом устройстве.</p>
       {/if}
     </div>
 
@@ -519,7 +624,7 @@ const glossary: Array<[string, string]> = [
       {#if noAudio}
         <p class="metrics-muted">
           Звук этой записи не подходит для анализа. Например, так бывает с импортированным
-          файлом. Участие и ритм рассчитаны по расшифровке. Темп и высота голоса недоступны.
+          файлом. Участие и ритм рассчитаны по расшифровке; высота голоса и громкость недоступны.
         </p>
       {/if}
     </div>
@@ -570,12 +675,13 @@ const glossary: Array<[string, string]> = [
   .metrics-panel {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 14px;
     flex: 1;
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding-right: 2px;
+    scrollbar-gutter: stable;
+    padding-right: 10px;
     font-size: 12.5px;
     color: var(--text-primary);
   }
@@ -596,8 +702,8 @@ const glossary: Array<[string, string]> = [
   .metrics-stats {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px 16px;
-    padding-bottom: 0;
+    gap: 12px 16px;
+    padding-bottom: 2px;
   }
 
   .metrics-stat {
@@ -621,9 +727,10 @@ const glossary: Array<[string, string]> = [
   }
 
   .metrics-quality-line {
-    margin: -6px 0 0;
+    margin: 0;
     font-size: 11.5px;
     font-weight: 600;
+    line-height: 1.45;
     color: var(--text-primary);
   }
 
@@ -634,8 +741,8 @@ const glossary: Array<[string, string]> = [
   .metrics-section {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding-top: 8px;
+    gap: 9px;
+    padding-top: 14px;
     border-top: 1px solid var(--border-soft);
   }
 
@@ -650,13 +757,13 @@ const glossary: Array<[string, string]> = [
   .metrics-participants {
     display: flex;
     flex-direction: column;
-    gap: 9px;
+    gap: 14px;
   }
 
   .participant {
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 4px;
     min-width: 0;
   }
 
@@ -708,14 +815,14 @@ const glossary: Array<[string, string]> = [
 
   .participant-meta {
     font-size: 11.5px;
-    line-height: 1.4;
+    line-height: 1.5;
     color: var(--text-muted);
   }
 
   .metrics-item {
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: 3px;
     min-width: 0;
   }
 
@@ -723,8 +830,9 @@ const glossary: Array<[string, string]> = [
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    gap: 10px;
+    gap: 12px;
     min-width: 0;
+    line-height: 1.45;
   }
 
   .metrics-label {
@@ -765,6 +873,27 @@ const glossary: Array<[string, string]> = [
     font-size: 11.5px;
     line-height: 1.5;
     color: var(--text-muted);
+  }
+
+  .metrics-reset {
+    align-self: flex-start;
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    font-size: 11.5px;
+    color: var(--accent-blue);
+    cursor: pointer;
+  }
+
+  .metrics-reset:hover {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .metrics-reset:disabled {
+    color: var(--text-faint);
+    cursor: default;
   }
 
   .metrics-baseline {
@@ -848,8 +977,8 @@ const glossary: Array<[string, string]> = [
   }
 
   .metrics-glossary {
-    margin-top: -2px;
-    padding-top: 8px;
+    margin-top: 0;
+    padding-top: 14px;
     border-top: 1px solid var(--border-soft);
     font-size: 11.5px;
     color: var(--text-muted);
@@ -912,7 +1041,7 @@ const glossary: Array<[string, string]> = [
     line-height: 1.45;
   }
 
-  @media (max-width: 1200px) {
+  @media (max-width: 1400px) {
     .metrics-glossary-toggle {
       min-height: 44px;
     }

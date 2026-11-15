@@ -457,6 +457,7 @@ export type MetricsQuality = {
 export type SpeakerMetrics = {
   id: string
   name: string
+  channel: number | null
   speech_sec: number
   share: number
   turns: number
@@ -471,6 +472,7 @@ export type SpeakerMetrics = {
   interruptions_made: number
   interruptions_successful: number
   interruptions_suffered: number
+  overlap_sec: number
   response_latency_ms_median: number | null
   response_latency_n: number
   wpm: number | null
@@ -501,12 +503,18 @@ export type MetricsTotals = {
   turns: number
   turn_sec_median: number | null
   turn_sec_p90: number | null
+  monologue_sec_median: number | null
+  monologue_sec_p90: number | null
   monologues_over_30s: number
   interruptions: number
   interruptions_successful: number
   response_latency_ms_median: number | null
   switches_per_min: number | null
+  overlap_sec: number
+  overlap_share: number | null
+  dead_air_n: number
   dead_air_sec: number
+  dead_air_max_sec: number | null
   dead_air_share: number | null
   density: number | null
 }
@@ -569,7 +577,7 @@ const httpStatusError = (status: number, detail: string): HttpStatusError =>
 export const isHttpStatus = (error: unknown, status: number): boolean =>
   error instanceof Error && 'status' in error && error.status === status
 
-// Метрики считаются по аудио: часовая запись — секунды, поэтому потолок выше обычного.
+// Метрики считаются по аудио: часовая запись - секунды, поэтому потолок выше обычного.
 const METRICS_TIMEOUT_MS = 120_000
 
 export const fetchTranscriptMetrics = async (
@@ -584,7 +592,7 @@ export const fetchTranscriptMetrics = async (
   const abort = (): void => controller.abort()
   signal?.addEventListener('abort', abort)
   try {
-    const res = await fetch(`/api/transcript/metrics?file=${encPath(path)}`, {
+    const res = await fetch(`/api/transcript/metrics?file=${encPath(path)}&record=1`, {
       signal: controller.signal,
     })
     if (!res.ok) {
@@ -595,6 +603,14 @@ export const fetchTranscriptMetrics = async (
   } finally {
     clearTimeout(timer)
     signal?.removeEventListener('abort', abort)
+  }
+}
+
+export const resetMetricsBaseline = async (): Promise<void> => {
+  const res = await fetch('/api/metrics/baseline', { method: 'DELETE' })
+  if (!res.ok) {
+    const detail = await readJsonSafe<{ error?: string }>(res).catch(() => null)
+    throw httpStatusError(res.status, detail?.error || `HTTP ${res.status}`)
   }
 }
 
