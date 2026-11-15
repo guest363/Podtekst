@@ -127,8 +127,6 @@ const toggleRecord = async (): Promise<void> => {
         toast(d.error || 'Не удалось начать запись', 'error')
       }
     } else {
-      if (timerInterval) clearInterval(timerInterval)
-
       const r = await fetch('/api/record/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -220,10 +218,20 @@ const onWindowHotkey = (e: KeyboardEvent): void => {
 
 onMount(() => {
   screenSupported = isScreenCaptureSupported()
-  const statusTimer = setInterval(pollLevels, 400)
-  void pollLevels()
+  // Рекурсивный setTimeout вместо setInterval: при ответе дольше 400 мс
+  // опросы наслаивались, а в скрытом окне хватало одного тика в 2 с.
+  let statusTimer: ReturnType<typeof setTimeout> | null = null
+  let stopped = false
+  const tick = async (): Promise<void> => {
+    if (stopped) return
+    await pollLevels()
+    if (stopped) return
+    statusTimer = setTimeout(() => void tick(), document.hidden ? 2000 : 400)
+  }
+  void tick()
   return () => {
-    clearInterval(statusTimer)
+    stopped = true
+    if (statusTimer) clearTimeout(statusTimer)
     if (timerInterval) clearInterval(timerInterval)
   }
 })

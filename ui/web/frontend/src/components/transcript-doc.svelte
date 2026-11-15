@@ -3,6 +3,7 @@ import { tick } from 'svelte'
 import type { SpeakerInfo, Utterance } from '../lib/api'
 import { fmtClockShort, speakerColor, speakerTint } from '../lib/api'
 import { errText } from '../lib/guards.ts'
+import { escapeHtml, inline } from '../lib/markdown.ts'
 import { addHotword } from '../lib/settings.svelte.ts'
 import { toast } from '../lib/toast.svelte.ts'
 import { editTranscript } from '../lib/transcript.svelte.ts'
@@ -66,16 +67,20 @@ const fitIntoView = (
   return { x, y }
 }
 let menuSpeaker = $derived(speakerMenu ? utterances[speakerMenu.index]?.speaker || 'Спикер' : '')
+let pendingEdit = $state(-1)
 let activeIndex = $derived.by(() => {
-  if (currentTime <= 0 || !utterances.length) return -1
+  // Плеер отдаёт время до 60 раз в секунду: без квантования пересчёт
+  // активной реплики идёт на каждом кадре даже без смены реплики.
+  const t = Math.round(currentTime * 4) / 4
+  if (t <= 0 || !utterances.length) return -1
   // При одновременной речи и перекрытиях каналов выбираем реплику,
-  // начавшуюся позже всех (наибольший start <= currentTime).
+  // начавшуюся позже всех (наибольший start <= t).
   let bestIdx = -1
   let bestStart = -1
   for (let i = 0; i < utterances.length; i++) {
     const u = utterances[i]
     const end = u.end ?? utterances[i + 1]?.start ?? Number.POSITIVE_INFINITY
-    if (currentTime >= u.start && currentTime <= end) {
+    if (t >= u.start && t <= end) {
       if (u.start >= bestStart) {
         bestStart = u.start
         bestIdx = i
@@ -88,7 +93,7 @@ let activeIndex = $derived.by(() => {
   for (let i = utterances.length - 1; i >= 0; i--) {
     const u = utterances[i]
     const end = u.end ?? u.start
-    if (currentTime >= end && currentTime - end <= 1.5) {
+    if (t >= end && t - end <= 1.5) {
       return i
     }
   }
@@ -119,17 +124,31 @@ const applyChange = async (change: {
   saving = true
   try {
     await editTranscript(file, change)
+    // Редактор закрываем до обработки отложенного клика: иначе blur
+    // увидит прежний editingIndex и сохранит ту же реплику второй раз.
+    editingIndex = -1
     return true
   } catch (e) {
     toast(`Не удалось сохранить правку: ${errText(e)}`, 'error')
     return false
   } finally {
     saving = false
+    // Клик по другой реплике приходит вместе с blur-сохранением предыдущей:
+    // запомненный индекс открываем сразу после ответа сервера.
+    if (pendingEdit >= 0) {
+      const index = pendingEdit
+      pendingEdit = -1
+      void startEdit(index)
+    }
   }
 }
 
 const startEdit = async (index: number, point?: { x: number; y: number }): Promise<void> => {
-  if (saving || index < 0 || index >= utterances.length) return
+  if (index < 0 || index >= utterances.length) return
+  if (saving) {
+    pendingEdit = index
+    return
+  }
   if (editingIndex >= 0 && editingIndex !== index && !(await saveText(editingIndex, false))) return
   speakerMenu = null
   editingIndex = index
@@ -299,13 +318,6 @@ const onMenuKey = (e: KeyboardEvent): void => {
   }
 }
 
-const escapeHtml = (s: string): string => {
-  return String(s).replace(
-    /[&<>"']/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c,
-  )
-}
-
 const wordsHtml = (u: Utterance): string => {
   const ws = u.words
   const plain = (u.text || '').split(/\s+/).filter(Boolean)
@@ -320,16 +332,6 @@ const wordsHtml = (u: Utterance): string => {
       return `<span class="${cls}" data-w="${escapeHtml(w.w)}" title="${escapeHtml(title)}">${escapeHtml(w.w)}</span>`
     })
     .join(' ')
-}
-
-const inlineMd = (s: string): string => {
-  return escapeHtml(s)
-    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(
-      /\[([^\]]+)\]\((https?:[^)]+)\)/g,
-      '<a href="$2" target="_blank" rel="noopener">$1</a>',
-    )
 }
 
 type Block = {
@@ -405,7 +407,7 @@ let blocks = $derived.by((): (Block | Raw)[] => {
         kind: 'utt',
         time: `[${m[1]}]`,
         speaker: m[2],
-        html: inlineMd(m[3]),
+        html: inline(m[3]),
         search: `${m[1]} ${m[2]} ${m[3]}`.toLowerCase(),
         sec,
         index: -1,
@@ -582,14 +584,14 @@ let hitCount = $derived(
       {:else if b.kind === 'ul'}
         <ul>
           {#each b.items ?? [] as item, j (j)}
-            <li>{@html inlineMd(item)}</li>
+            <li>{@html inline(item)}</li>
           {/each}
         </ul>
       {:else if b.kind === 'p'}
         {#if b.items?.[0] === 'meta'}
-          <p class="md-meta">{@html inlineMd(b.text ?? '')}</p>
+          <p class="md-meta">{@html inline(b.text ?? '')}</p>
         {:else}
-          <p>{@html inlineMd(b.text ?? '')}</p>
+          <p>{@html inline(b.text ?? '')}</p>
         {/if}
       {/if}
     {/each}

@@ -11,7 +11,8 @@ import SettingsModal from './components/settings-modal.svelte'
 import Toasts from './components/toasts.svelte'
 import TranscriptPage from './components/transcript-page.svelte'
 import UpdateModal from './components/update-modal.svelte'
-import { isCoreModel, isMobile, remainingMb } from './lib/api'
+import { isAndroid, isCoreModel, isMobile, remainingMb } from './lib/api'
+import { readLocal } from './lib/guards.ts'
 import { loadPeople } from './lib/people.svelte.ts'
 import { loadQueue, queueState } from './lib/queue.svelte.ts'
 import { loadRecordings, recordings } from './lib/recordings.svelte.ts'
@@ -22,7 +23,6 @@ import {
   loadSummaryFeature,
   loadVoicePacks,
   settings,
-  statusBadge,
 } from './lib/settings.svelte.ts'
 import { loadSupportInfo } from './lib/support.svelte.ts'
 import { loadSystem, runChecks, system } from './lib/system.svelte.ts'
@@ -33,6 +33,7 @@ import {
   openTranscriptFile,
   syncEngineFromStatus,
 } from './lib/transcript.svelte.ts'
+import type { SettingsTab } from './lib/ui.svelte.ts'
 import { emit, initRouting, on, openTranscript, selectTab, ui } from './lib/ui.svelte.ts'
 import { checkUpdate, dismissUpdate, openUpdateModal, update } from './lib/update.svelte.ts'
 
@@ -62,6 +63,21 @@ const openDiagnostics = (): void => {
     }
   }
   emit('open-settings', 'system')
+}
+
+// Слушатель диплинков живёт на уровне приложения: страница настроек
+// монтируется только на своей вкладке, и событие уходило в пустоту.
+const openSettings = (value?: unknown): void => {
+  const target = String(value ?? 'record')
+  if (target === 'people' || target === 'dict') {
+    selectTab(target)
+    return
+  }
+  const known: SettingsTab[] = ['record', 'voices', 'models', 'summary', 'system']
+  const tab = known.find((t) => t === target) ?? 'record'
+  ui.settingsTab =
+    tab === 'summary' && (settings.summaryFeature !== true || isAndroid) ? 'record' : tab
+  selectTab('settings')
 }
 
 $effect(() => {
@@ -127,7 +143,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
 
 onMount(() => {
   initRouting()
-  if (typeof window !== 'undefined' && !localStorage.getItem('mr_intro_seen')) {
+  if (typeof window !== 'undefined' && !readLocal('mr_intro_seen')) {
     introStep = 1
     introOpen = true
   }
@@ -140,6 +156,7 @@ onMount(() => {
   on('transcript-reload', () => {
     if (ui.currentTranscriptPath) void openTranscriptFile(ui.currentTranscriptPath)
   })
+  on('open-settings', openSettings)
   void Promise.allSettled([
     loadPeople(),
     loadRecordings(),

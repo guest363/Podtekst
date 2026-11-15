@@ -171,9 +171,6 @@ body:has(.transcript-page) {
   flex-wrap: wrap;
 }
 
-.mobile-speakers-btn {
-  display: none;
-}
 .btn-text-short {
   display: none;
 }
@@ -1176,12 +1173,6 @@ body:has(.transcript-page) {
   .transcript-page-title {
     font-size: 16px;
   }
-  .mobile-speakers-btn {
-    display: inline-flex;
-    font-size: 12px;
-    padding: 6px 11px;
-    font-weight: 700;
-  }
   .btn-transcribe-header {
     padding: 6px 11px;
     font-size: 12px;
@@ -1317,7 +1308,6 @@ body:has(.transcript-page) {
     overflow: visible !important;
   }
   .transcript-page-header,
-  .transcript-header-sub,
   .btn-close-page,
   .transcript-progress,
   .transcript-speakers-wrap,
@@ -1397,7 +1387,8 @@ body:has(.transcript-page) {
 }
 
 .transcript-metrics-wrap:focus {
-  outline: none;
+  outline: 2px solid var(--accent-blue);
+  outline-offset: -2px;
 }
 
 @media (prefers-reduced-motion: reduce) {

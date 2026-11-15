@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { SpeechMetrics } from '../lib/api'
-import { fmtClock, resetMetricsBaseline, speakerColor } from '../lib/api'
+import { fmtClock, pluralUtterances, resetMetricsBaseline, speakerColor } from '../lib/api'
 import { errText } from '../lib/guards.ts'
 import { toast, toastConfirm } from '../lib/toast.svelte.ts'
 import InfoTip from './info-tip.svelte'
@@ -14,15 +14,6 @@ type Props = {
   onreload?: () => void
 }
 let { metrics, loading, error, onseek, onretry, onreload }: Props = $props()
-
-const pluralTurns = (n: number): string => {
-  const rem10 = n % 10
-  const rem100 = n % 100
-  if (rem100 >= 11 && rem100 <= 19) return 'реплик'
-  if (rem10 === 1) return 'реплика'
-  if (rem10 >= 2 && rem10 <= 4) return 'реплики'
-  return 'реплик'
-}
 
 const pluralWords = (n: number): string => {
   const rem10 = n % 10
@@ -164,7 +155,7 @@ const participants = $derived.by(() =>
   grouped
     .filter((group) => group.share >= 0.005)
     .map((group) => {
-      const line: string[] = [`${group.turns} ${pluralTurns(group.turns)}`]
+      const line: string[] = [`${group.turns} ${pluralUtterances(group.turns)}`]
       if (group.maxMonologue !== null) {
         line.push(`монолог ${fmtSpan(group.maxMonologue)}`)
       }
@@ -464,6 +455,9 @@ const glossary: Array<[string, string]> = [
     <p class="metrics-empty">
       {error ? 'Не удалось посчитать метрики. Попробуйте открыть запись заново.' : 'Для этой записи метрики недоступны.'}
     </p>
+    {#if error}
+      <p class="metrics-empty-sub">{error}</p>
+    {/if}
     {#if error && onretry}
       <button type="button" class="btn-secondary btn-sm" onclick={onretry}>Повторить</button>
     {/if}
@@ -479,7 +473,7 @@ const glossary: Array<[string, string]> = [
       </div>
       <div class="metrics-stat">
         <span class="metrics-stat-value">{metrics.totals.turns}</span>
-        <span class="metrics-stat-label">{pluralTurns(metrics.totals.turns)}</span>
+        <span class="metrics-stat-label">{pluralUtterances(metrics.totals.turns)}</span>
       </div>
       <div class="metrics-stat">
         <span class="metrics-stat-value">{wpm ?? 'нет'}</span>
@@ -697,6 +691,13 @@ const glossary: Array<[string, string]> = [
     font-size: 12.5px;
     line-height: 1.5;
     color: var(--text-muted);
+  }
+
+  .metrics-empty-sub {
+    margin: 4px 0 8px;
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--text-faint);
   }
 
   .metrics-stats {

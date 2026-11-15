@@ -1,6 +1,6 @@
 import type { ModelInfo, Voicepack } from './api'
 import { isMobile, readJsonSafe } from './api'
-import { errText } from './guards.ts'
+import { errText, readLocal } from './guards.ts'
 import { loadPeople } from './people.svelte.ts'
 import { toast, toastConfirm } from './toast.svelte.ts'
 
@@ -12,7 +12,9 @@ type StatusResponse = {
   ffmpeg?: Record<string, unknown>
 }
 
-type SummarySettingsResponse = {
+// Проба доступности итогов до открытия вкладки: имя не должно совпадать
+// с `SummarySettingsResponse` из `api.ts` (там полные настройки).
+type SummaryFeatureProbe = {
   ok?: boolean
   code?: string
   capabilities?: { summary_supported?: boolean }
@@ -52,7 +54,7 @@ type SettingsState = {
 // 0 — автоопределение диаризации; 2..6 — фиксированное число спикеров.
 const storedSpeakers = (): number => {
   if (typeof localStorage === 'undefined') return 0
-  const n = Number(localStorage.getItem('mr_speakers'))
+  const n = Number(readLocal('mr_speakers'))
   return Number.isInteger(n) && n >= 2 && n <= 6 ? n : 0
 }
 
@@ -85,7 +87,7 @@ export const loadSummaryFeature = async (): Promise<void> => {
     /* статус недоступен — проверим сам маршрут итогов */
   }
   try {
-    const d = await readJsonSafe<SummarySettingsResponse>(await fetch('/api/summary/settings'))
+    const d = await readJsonSafe<SummaryFeatureProbe>(await fetch('/api/summary/settings'))
     if (d?.ok === false) {
       settings.summaryFeature = !(d.code === 'summary_disabled' || d.code === 'summary_unsupported')
       return
@@ -105,6 +107,7 @@ export const loadAutoTranscribe = async (): Promise<void> => {
 }
 
 export const setAutoTranscribe = async (enabled: boolean): Promise<void> => {
+  const previous = settings.autoTranscribe
   settings.autoTranscribe = enabled
   try {
     const d = await readJsonSafe<OkResponse>(
@@ -114,8 +117,12 @@ export const setAutoTranscribe = async (enabled: boolean): Promise<void> => {
         body: JSON.stringify({ enabled }),
       }),
     )
-    if (!d.ok) toast(d.error || 'Не удалось сохранить авто-расшифровку', 'error')
+    if (!d.ok) {
+      settings.autoTranscribe = previous
+      toast(d.error || 'Не удалось сохранить авто-расшифровку', 'error')
+    }
   } catch {
+    settings.autoTranscribe = previous
     toast('Не удалось сохранить авто-расшифровку', 'error')
   }
 }
@@ -151,8 +158,9 @@ export const loadRecordMode = async (): Promise<void> => {
     // Старый конфиг мог сохранить mix, когда системного канала ещё не было.
     // Один раз переключаем на split; ручной выбор пользователя не трогаем.
     if (settings.systemAudio && d.explicit !== true && settings.recordMode === 'mix') {
-      await setRecordMode('split')
-      toast('Включили 2 канала: теперь слышны собеседники. Вернуть можно в настройках')
+      if (await setRecordMode('split')) {
+        toast('Включили 2 канала: теперь слышны собеседники. Вернуть можно в настройках')
+      }
     }
   } catch {}
   // Без второго канала split недоступен: бэкенд пишет моно.
@@ -163,16 +171,27 @@ export const hasSystemAudio = (): boolean => {
   return settings.systemAudio && !isMobile
 }
 
-export const setRecordMode = async (mode: 'split' | 'mix'): Promise<void> => {
+export const setRecordMode = async (mode: 'split' | 'mix'): Promise<boolean> => {
+  const previous = settings.recordMode
   settings.recordMode = mode
   try {
-    await fetch('/api/record/mode', {
+    const r = await fetch('/api/record/mode', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode }),
     })
-  } catch {
-    toast('Не удалось сохранить режим записи', 'error')
+    const d = await readJsonSafe<OkResponse & RecordModeResponse>(r)
+    if (!r.ok || d.ok === false) {
+      settings.recordMode = previous
+      toast(d.error || 'Не удалось сохранить режим записи', 'error')
+      return false
+    }
+    if (d.mode === 'mix' || d.mode === 'split') settings.recordMode = d.mode
+    return true
+  } catch (e) {
+    settings.recordMode = previous
+    toast(`Не удалось сохранить режим записи: ${errText(e)}`, 'error')
+    return false
   }
 }
 
@@ -278,22 +297,20 @@ export const loadVoicePacks = async (): Promise<void> => {
   try {
     const r = await fetch('/api/voicepacks')
     const d = await readJsonSafe<VoicepacksResponse>(r)
-    settings.packs = d.ok && d.packs ? d.packs : []
-  } catch {
-    settings.packs = []
-  }
+    // Ошибку чтения не превращаем в «пакетов нет»: список остаётся прежним.
+    if (d.ok && d.packs) settings.packs = d.packs
+  } catch {}
 }
 
 export const loadModels = async (): Promise<void> => {
   try {
     const r = await fetch('/api/models')
     const d = await readJsonSafe<ModelsResponse>(r)
-    settings.models = d.ok && d.models ? d.models : []
-    settings.manifestUpdatedAt =
-      typeof d.manifest_updated_at === 'string' ? d.manifest_updated_at : ''
-  } catch {
-    settings.models = []
-  }
+    if (d.ok && d.models) settings.models = d.models
+    if (typeof d.manifest_updated_at === 'string') {
+      settings.manifestUpdatedAt = d.manifest_updated_at
+    }
+  } catch {}
 }
 
 export const loadHotwords = async (): Promise<void> => {
@@ -356,13 +373,23 @@ export const addHotword = async (term: string): Promise<boolean> => {
 }
 
 export const togglePack = async (p: Voicepack): Promise<void> => {
-  await fetch('/api/voicepacks/toggle', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pack_id: p.id, enabled: !p.enabled }),
-  })
-  await loadVoicePacks()
-  await loadPeople()
+  try {
+    const d = await readJsonSafe<OkResponse>(
+      await fetch('/api/voicepacks/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pack_id: p.id, enabled: !p.enabled }),
+      }),
+    )
+    if (!d.ok) {
+      toast(d.error || 'Не удалось переключить пакет', 'error')
+      return
+    }
+    await loadVoicePacks()
+    await loadPeople()
+  } catch (e) {
+    toast(`Не удалось переключить пакет: ${errText(e)}`, 'error')
+  }
 }
 
 export const deletePack = (p: Voicepack): void => {

@@ -1,7 +1,7 @@
 # Подтекст (Podtekst) - AGENTS.md
 
 Нативное кроссплатформенное приложение для записи встреч и локальной ИИ-расшифровки
-(Linux PipeWire/PulseAudio - живой захват; macOS - CoreAudio: микрофон и BlackHole для системного звука; Windows - WASAPI: микрофон и loopback системного звука).
+(Linux PipeWire/PulseAudio - живой захват; macOS - CoreAudio: микрофон и ScreenCaptureKit для системного звука (BlackHole - запасной вариант); Windows - WASAPI: микрофон и loopback системного звука).
 Микрофон и система обрабатываются раздельно, в том числе при выводе на колонки. Акустическое эхо подавляется VAD-гейтом и дедупликацией; только цифровые дубли сокращаются до одного исходного канала.
 Стек: **Rust + Tauri v2 + ONNX Runtime** (zero-dependency бинарник ~20-30 МБ).
 Модели: **GigaAM-v3 e2e RNNT int8** (русский, SOTA) + **Whisper-turbo** (30+ языков) +
@@ -30,8 +30,8 @@
 # Разработка
 cargo test --workspace --manifest-path src-tauri/Cargo.toml   # Все unit + мат. тесты
 cargo test -p mr-ml --features onnx --test onnx_real -- --nocapture  # Живой инференс (нужны модели + WAV, иначе skip)
-cargo clippy --workspace --all-targets --manifest-path src-tauri/Cargo.toml  # Ноль предупреждений - обязательно
-cargo clippy -p mr-app --features tauri-ui --all-targets --manifest-path src-tauri/Cargo.toml  # Нативное окно/трей (таури_shell.rs компилируется только так)
+cargo clippy --workspace --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings  # Ноль предупреждений - обязательно
+cargo clippy -p mr-app --features tauri-ui --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings  # Нативное окно/трей (tauri_shell.rs компилируется только так)
 cargo build --release -p mr-app --manifest-path src-tauri/Cargo.toml
 cd ui/web/frontend && yarn lint && yarn check && yarn build  # Фронт: Biome + типы + прод-сборка в ui/web/static
 ```
@@ -73,11 +73,13 @@ cd ui/web/frontend && yarn lint && yarn check && yarn build  # Фронт: Biome
 - **[P3] Изоляция UI от ядра.** HTTP REST API (`mr-app`) - единственный мост между Web UI и ядром.
   Никаких ML-импортов в HTTP-слое, никакой файловой логики в математике.
 - **[P4] Статические ассеты вне кода.** Web UI - только `ui/web/static/` (сборка Svelte);
-  исходники - `ui/web/frontend/src/` (Svelte 5 + TS + CSS Cascade Layers); CSS и JS не встраиваются в код Rust.
-  Имена сборки детерминированы (`css/app.css`, `js/app.js`, без хешей) - их знает манифест
-  вшитых ассетов в `mr-app/src/main.rs` (`static_body`), при добавлении файлов дописать туда же.
+  исходники - `ui/web/frontend/src/` (Svelte 5 + TS + CSS Cascade Layers).
+  Имена сборки детерминированы (`css/app.css`, `js/app.js`, без хешей) - их знает
+  `static_body` в `mr-app/src/http/mod.rs`: он отдаёт файлы из `ui/web/static` по расширению,
+  а `css/app.css` и `js/app.js` дополнительно вшиты `include_bytes!` как аварийный fallback
+  на случай отсутствующего каталога. Новые файлы статики регистрируются там же.
 - **[P5] Кроссплатформенность без исключений.** Пути - `PathBuf`; захват аудио - через `mr-audio`
-  (WASAPI Loopback / CoreAudio Tap / PipeWire); специфика операционных систем - за `#[cfg(target_os)]`.
+  (WASAPI Loopback / CoreAudio + ScreenCaptureKit / PipeWire); специфика операционных систем - за `#[cfg(target_os)]`.
 - **[P6] Минимум внешних процессов.** Основной путь - нативные библиотеки (libpulse через dlopen, symphonia). Исключения: `ffprobe`/`ffmpeg` (длительность медиа и контейнеры без демуксера symphonia), `pactl`/`pw-record`/`parec` (если libpulse отсутствует), `gsettings` (горячие клавиши GNOME), открытие браузера и папок.
 - **[P7] Корректное завершение.** IPC-сервер и HTTP останавливаются вместе с процессом; запись финализирует WAV-заголовки.
 - **[P8] Модули до 300-400 строк.** Роутер HTTP (`http/mod.rs`) и конвейер (`transcribe/mod.rs`) - координаторы, чьи ветки разнесены в соседние файлы; сами решения держим компактными.

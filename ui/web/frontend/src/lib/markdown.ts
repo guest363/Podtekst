@@ -1,13 +1,14 @@
 import type { InlineSegment } from './api'
 
-const escapeHtml = (s: string): string => {
+/** Единственный барьер против XSS в `{@html}`: сначала экранируем, потом разметка. */
+export const escapeHtml = (s: string): string => {
   return s.replace(
     /[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c,
   )
 }
 
-const inline = (s: string): string => {
+export const inline = (s: string): string => {
   return escapeHtml(s)
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/`([^`]+)`/g, '<code>$1</code>')

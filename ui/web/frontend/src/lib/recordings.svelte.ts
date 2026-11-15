@@ -10,10 +10,12 @@ type DeleteResponse = OkResponse & { kept?: boolean }
 
 type RecordingsState = {
   items: RecordingItem[]
+  error: string
 }
 
 export const recordings: RecordingsState = $state({
   items: [],
+  error: '',
 })
 
 export const loadRecordings = async (): Promise<void> => {
@@ -21,8 +23,10 @@ export const loadRecordings = async (): Promise<void> => {
     const r = await fetch('/api/recordings')
     const d = await readJsonSafe<RecordingsResponse>(r)
     recordings.items = d.recordings || []
-  } catch {
-    recordings.items = []
+    recordings.error = ''
+  } catch (e) {
+    // Сетевой сбой не должен выглядеть как «записей нет»: файлы на диске целы.
+    recordings.error = errText(e)
   }
 }
 

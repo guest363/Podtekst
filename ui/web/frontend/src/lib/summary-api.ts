@@ -1,4 +1,4 @@
-import { readJsonSafe } from './api'
+import { fetchWithTimeout, readJsonSafe } from './api'
 
 export class SummaryApiError extends Error {
   code: string
@@ -37,7 +37,7 @@ export const apiJson = async <T>(path: string, init?: RequestInit): Promise<T> =
   const dev = await devMock()
   mockMode = Boolean(dev)
   if (dev) return (await dev.request(path, init)) as T // SAFETY: dev-стенд повторяет контракт /api/summary*
-  const r = await fetch(path, init)
+  const r = await fetchWithTimeout(path, init)
   let d: { ok?: boolean; code?: string; error?: string }
   try {
     d = await readJsonSafe(r)

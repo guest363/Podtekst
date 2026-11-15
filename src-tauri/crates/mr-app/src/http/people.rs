@@ -17,10 +17,18 @@ use crate::voiceprints::{
 /// Сериализует read-modify-write `voiceprints.json`: иначе два параллельных
 /// сохранения голоса теряют одно из изменений.
 static VOICEPRINTS_LOCK: Mutex<()> = Mutex::new(());
+/// То же для списков участников (`people.json`, `external_people.json`):
+/// `write_atomic` гарантирует целостность файла, но не слияние, поэтому
+/// «прочитать → изменить → записать» из двух вкладок теряло добавленного гостя.
+static PEOPLE_LOCK: Mutex<()> = Mutex::new(());
 static PROTO_SEQ: AtomicUsize = AtomicUsize::new(0);
 
 fn lock_voiceprints() -> std::sync::MutexGuard<'static, ()> {
     VOICEPRINTS_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+pub(super) fn lock_people() -> std::sync::MutexGuard<'static, ()> {
+    PEOPLE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 fn external_people_path() -> PathBuf {
@@ -237,6 +245,7 @@ pub(super) fn update_people(
     target_pack_id: Option<&str>,
     from_pack_id: Option<&str>,
 ) -> bool {
+    let _people = lock_people();
     let mut moved = false;
     if let Some(target_id) = target_pack_id.filter(|s| !s.trim().is_empty()) {
         let from_pack = from_pack_id
@@ -316,7 +325,13 @@ pub(super) fn update_people(
 
 /// Убирает человека из пакетов, списка гостей и удаляет отпечатки голоса,
 /// чтобы автосинхронизация не восстанавливала удалённого участника.
-pub(super) fn remove_person(name: &str) -> bool {
+/// `pack_id: Some(id)` — только выбранный пакет: имя уникально внутри пакета,
+/// и одноимённый участник в другом пакете это другой человек.
+pub(super) fn remove_person(name: &str, pack_id: Option<&str>) -> bool {
+    let _people = lock_people();
+    if let Some(pack_id) = pack_id.map(str::trim).filter(|s| !s.is_empty()) {
+        return remove_person_from_one_pack(name, pack_id);
+    }
     let mut found = false;
     for file in people_json_files() {
         let Some(list) = read_people_list(&file) else {
@@ -346,6 +361,18 @@ pub(super) fn remove_person(name: &str) -> bool {
     }
     let vp_found = delete_voiceprint_internal(name, None);
     found || vp_found
+}
+
+fn remove_person_from_one_pack(name: &str, pack_id: &str) -> bool {
+    let removed = match packs::remove_person_from_pack(&app_data_dir(), pack_id, name) {
+        Ok(removed) => removed,
+        Err(error) => {
+            log::warn!(target: "json", error = error.to_string(); "ev=people.remove_pack");
+            return false;
+        }
+    };
+    let vp_found = delete_voiceprint_files(name, vec![pack_voiceprint_file(pack_id)]);
+    removed || vp_found
 }
 
 /// Профиль пригоден для текущего embedding-пространства: есть центроид или
@@ -475,6 +502,7 @@ pub(super) fn resolve_target_pack(name: &str, preferred_pack_id: Option<&str>) -
 }
 
 pub(super) fn ensure_person_in_pack(name: &str, role: Option<&str>, pack_id: &str) {
+    let _people = lock_people();
     let clean = name.trim();
     if clean.is_empty() {
         return;
@@ -872,10 +900,12 @@ pub(super) fn handle_voiceprint_save(request: tiny_http::Request, body: serde_js
     let mut state = None;
     if !audio_file.is_empty() {
         // Правим расшифровки только внутри папки записей (запись в произвольную
-        // директорию через чужое имя файла недопустима).
-        if inside_save_dir(Path::new(&audio_file)) {
+        // директорию через чужое имя файла недопустима). Относительное имя
+        // сначала разрешаем от `save_dir`, иначе файл не найдётся.
+        let audio_path = super::media::resolve_media_path(&audio_file);
+        if inside_save_dir(&audio_path) {
             state = rename_speaker_in_files(
-                Path::new(&audio_file),
+                &audio_path,
                 &name,
                 if old_name.is_empty() {
                     None
@@ -1240,12 +1270,28 @@ fn voiceprint_files() -> Vec<std::path::PathBuf> {
 }
 
 pub(super) fn delete_voiceprint_internal(name: &str, audio_file: Option<&str>) -> bool {
+    let found = delete_voiceprint_files(name, voiceprint_files());
+    if found {
+        if let Some(af) = audio_file.filter(|s| !s.is_empty()) {
+            clear_matched_in_transcript(Path::new(af), name.trim());
+        }
+    }
+    found
+}
+
+fn pack_voiceprint_file(pack_id: &str) -> std::path::PathBuf {
+    packs::packs_root_dir(&app_data_dir())
+        .join(pack_id)
+        .join("voiceprints.json")
+}
+
+fn delete_voiceprint_files(name: &str, files: Vec<std::path::PathBuf>) -> bool {
     let clean = name.trim();
     if clean.is_empty() {
         return false;
     }
     let mut found = false;
-    for vp_file in voiceprint_files() {
+    for vp_file in files {
         let _guard = lock_voiceprints();
         let Ok(t) = std::fs::read_to_string(&vp_file) else {
             continue;
@@ -1285,11 +1331,6 @@ pub(super) fn delete_voiceprint_internal(name: &str, audio_file: Option<&str>) -
                     remove_snippet(parent, &sn);
                 }
             }
-        }
-    }
-    if found {
-        if let Some(af) = audio_file.filter(|s| !s.is_empty()) {
-            clear_matched_in_transcript(Path::new(af), clean);
         }
     }
     found
@@ -1962,7 +2003,7 @@ mod tests {
             person_name
         )));
 
-        let ok = remove_person(person_name);
+        let ok = remove_person(person_name, None);
         assert!(ok);
 
         let vps_after = load_all_voiceprints();
@@ -1974,6 +2015,50 @@ mod tests {
         let p_file = dir.join("packs/default/people.json");
         let text = std::fs::read_to_string(&p_file).unwrap_or_default();
         assert!(!text.contains(person_name));
+
+        if let Some(p) = prev {
+            std::env::set_var("MEETING_RECORDER_DATA_DIR", p);
+        } else {
+            std::env::remove_var("MEETING_RECORDER_DATA_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_person_in_one_pack_keeps_same_name_in_other_pack() {
+        let _guard = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!(
+            "mr-people-scoped-remove-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let prev = std::env::var("MEETING_RECORDER_DATA_DIR").ok();
+        std::env::set_var("MEETING_RECORDER_DATA_DIR", &dir);
+
+        let first = packs::create_pack(&app_data_dir(), "Пакет 1", "")
+            .expect("первый пакет создан")
+            .id;
+        let second = packs::create_pack(&app_data_dir(), "Пакет 2", "")
+            .expect("второй пакет создан")
+            .id;
+        let person_name = "Одноимённый участник";
+        ensure_person_in_pack(person_name, Some("Участник"), &first);
+        ensure_person_in_pack(person_name, Some("Участник"), &second);
+
+        assert!(remove_person(person_name, Some(&first)));
+
+        let root = packs::packs_root_dir(&app_data_dir());
+        let first_people =
+            read_people_list(&root.join(&first).join("people.json")).unwrap_or_default();
+        let second_people =
+            read_people_list(&root.join(&second).join("people.json")).unwrap_or_default();
+        assert_eq!(first_people.len(), 0, "{first_people:?}");
+        assert_eq!(second_people.len(), 1, "{second_people:?}");
 
         if let Some(p) = prev {
             std::env::set_var("MEETING_RECORDER_DATA_DIR", p);

@@ -27,7 +27,11 @@ const isExactMatch = $derived.by(() => {
   return settings.hotwords.some((x) => x.toLowerCase() === q || x.toLowerCase() === norm)
 })
 
+// Сохранение идёт по всему списку: двойной Enter давал два POST подряд.
+let saving = $state(false)
+
 const addTerm = async (): Promise<void> => {
+  if (saving) return
   let t = termInput.trim()
   if (!t) return
 
@@ -44,8 +48,14 @@ const addTerm = async (): Promise<void> => {
     toast('Словарь полон: 500 из 500. Удалите лишнее.', 'error')
     return
   }
-  termInput = ''
-  await saveHotwords([t, ...settings.hotwords], settings.ctcEnabled)
+  saving = true
+  try {
+    // Поле чистим только после подтверждения: иначе набранный термин
+    // исчезает при ошибке сети или валидации.
+    if (await saveHotwords([t, ...settings.hotwords], settings.ctcEnabled)) termInput = ''
+  } finally {
+    saving = false
+  }
 }
 
 const removeTerm = async (t: string): Promise<void> => {

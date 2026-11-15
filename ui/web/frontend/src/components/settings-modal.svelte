@@ -21,7 +21,7 @@ import {
 import type { DevicesInfo } from '../lib/system.svelte.ts'
 import { openTarget, runChecks, system } from '../lib/system.svelte.ts'
 import { downloadModel, engine, ensureStream } from '../lib/transcript.svelte.ts'
-import { on, selectTab, ui } from '../lib/ui.svelte.ts'
+import { selectTab, ui } from '../lib/ui.svelte.ts'
 import { checkUpdate, update } from '../lib/update.svelte.ts'
 import SummarySettingsTab from './summary-settings-tab.svelte'
 import SystemSettingsTab from './system-settings-tab.svelte'
@@ -31,8 +31,8 @@ type Props = {
 }
 let { inline = false }: Props = $props()
 
-let tab = $state<'record' | 'voices' | 'models' | 'summary' | 'system'>('record')
 let packFileInput: HTMLInputElement | null = $state(null)
+const tab = $derived(ui.settingsTab)
 
 const defaultName = (devices: DevicesInfo | undefined, id?: string | null): string => {
   if (!id) return ''
@@ -92,30 +92,6 @@ const ffmpegBadge = $derived(
           : statusBadge('ok', 'Готов'),
 )
 
-const openModelsTab = async (): Promise<void> => {
-  tab = 'models'
-}
-
-on('models-changed', () => void loadModels())
-on('open-settings', (value) => {
-  if (value === 'people') {
-    selectTab('people')
-    return
-  }
-  if (value === 'dict') {
-    selectTab('dict')
-    return
-  }
-  if (value === 'record' || value === 'voices' || value === 'models' || value === 'system') {
-    tab = value
-  }
-  if (value === 'summary' && settings.summaryFeature === true && !isAndroid) {
-    tab = 'summary'
-  }
-  ui.settingsOpen = true
-})
-// Компонент живёт всё время приложения: одно чтение статуса на старте,
-// дальше состояние обновляет опрос после нажатия «Скачать».
 void loadFfmpeg()
 
 const onWindowKey = (e: KeyboardEvent): void => {
@@ -152,7 +128,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
       class="settings-tab {tab === 'record' ? 'active' : ''}"
       role="tab"
       aria-selected={tab === 'record'}
-      onclick={() => (tab = 'record')}
+      onclick={() => (ui.settingsTab = 'record')}
     >
       Запись и звук
     </button>
@@ -160,7 +136,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
       class="settings-tab {tab === 'voices' ? 'active' : ''}"
       role="tab"
       aria-selected={tab === 'voices'}
-      onclick={() => (tab = 'voices')}
+      onclick={() => (ui.settingsTab = 'voices')}
     >
       Голосовые пакеты
     </button>
@@ -168,7 +144,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
       class="settings-tab {tab === 'models' ? 'active' : ''}"
       role="tab"
       aria-selected={tab === 'models'}
-      onclick={() => (tab = 'models')}
+      onclick={() => (ui.settingsTab = 'models')}
     >
       Компоненты
     </button>
@@ -177,7 +153,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
         class="settings-tab {tab === 'summary' ? 'active' : ''}"
         role="tab"
         aria-selected={tab === 'summary'}
-        onclick={() => (tab = 'summary')}
+        onclick={() => (ui.settingsTab = 'summary')}
       >
         Итоги
       </button>
@@ -186,7 +162,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
       class="settings-tab {tab === 'system' ? 'active' : ''}"
       role="tab"
       aria-selected={tab === 'system'}
-      onclick={() => (tab = 'system')}
+      onclick={() => (ui.settingsTab = 'system')}
     >
       Система и логи
     </button>
@@ -491,7 +467,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
           {#if summaryModels.length > 0 && settings.summaryFeature === true && !isAndroid}
             <div class="help-text">
               Модель итогов — в разделе
-              <button class="link-btn" onclick={() => (tab = 'summary')}>«Итоги»</button>.
+              <button class="link-btn" onclick={() => (ui.settingsTab = 'summary')}>«Итоги»</button>.
             </div>
           {/if}
           <div class="row-start">

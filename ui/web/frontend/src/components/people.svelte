@@ -180,12 +180,12 @@ const fmtVoiceDate = (iso: unknown): string => {
   }
 }
 
-const removePerson = async (name: string): Promise<void> => {
+const removePerson = async (name: string, packId: string): Promise<void> => {
   try {
     const r = await fetch('/api/people/remove', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, pack_id: packId || 'default' }),
     })
     const d = await readJsonSafe<OkResponse>(r)
     if (!d.ok) {
@@ -444,12 +444,16 @@ const removePerson = async (name: string): Promise<void> => {
     />
   </div>
   <div class="people-chips">
-    {#if filtered.length === 0}
+    {#if peopleState.error}
+      <div class="empty-note" role="status">
+        Не удалось обновить список участников: {peopleState.error}
+      </div>
+    {:else if filtered.length === 0}
       <div class="empty-note">
         {peopleState.list.length ? 'Ничего не найдено' : 'Участников пока нет. Добавьте первого кнопкой выше.'}
       </div>
     {:else}
-      {#each filtered as p (p.name)}
+      {#each filtered as p (`${p.pack_id || 'default'}:${p.name}`)}
         <div
           class="chip {p.is_external ? 'external' : ''} {hasVoiceprint(p.name) ? 'has-voiceprint' : ''}"
           title={p.role ? `${p.name} - ${p.role}` : p.name}
@@ -484,7 +488,11 @@ const removePerson = async (name: string): Promise<void> => {
               title="Убрать из участников"
               aria-label={`Убрать участника ${p.name}`}
               onclick={() =>
-                toastConfirm(`Убрать «${p.name}» из участников?`, 'Убрать', () => void removePerson(p.name))}
+                toastConfirm(
+                  `Убрать «${p.name}» из пакета «${p.pack_name || 'Основной профиль'}»?`,
+                  'Убрать',
+                  () => void removePerson(p.name, p.pack_id || 'default'),
+                )}
             >
               ×
             </button>

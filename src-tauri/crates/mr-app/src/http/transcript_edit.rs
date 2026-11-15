@@ -41,6 +41,7 @@ fn edit_transcript(body: &Value) -> Result<Value, (u16, String)> {
         .as_array()
         .map(|items| items.len())
         .unwrap_or(0);
+    guard_rev(&data, body)?;
     apply_edit(&mut data, body).map_err(|e| (400, e))?;
     log::info!(
         target: "json",
@@ -96,6 +97,30 @@ fn edit_transcript(body: &Value) -> Result<Value, (u16, String)> {
         "markdown": markdown,
         "rev": rev,
     }))
+}
+
+/// Правка приходит вместе с `rev`, который видел пользователь: если файл уже
+/// изменился, реплика по индексу относится к другой записи и текст уйдёт не туда.
+fn guard_rev(data: &Value, body: &Value) -> Result<(), (u16, String)> {
+    let Some(expected) = body
+        .get("rev")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(());
+    };
+    let current =
+        serde_json::from_value::<Vec<mr_summarize::Utterance>>(data["utterances"].clone())
+            .ok()
+            .map(|items| mr_summarize::artifact::source_rev(&items));
+    if current.as_deref() != Some(expected) {
+        log::info!("ev=json.edit.stale_rev");
+        return Err((
+            409,
+            "Расшифровка изменилась. Откройте запись заново.".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn transcript_paths(body: &Value) -> Result<(PathBuf, PathBuf, PathBuf), (u16, String)> {
@@ -332,8 +357,16 @@ fn apply_edit(data: &mut Value, body: &Value) -> Result<(), String> {
             }
         }
     }
-    data["stats"]["segments"] = json!(utterances.len());
-    data["stats"]["words"] = json!(words);
+    // Null/отсутствие — как у meta: IndexMut у Value авто-создаёт объект только
+    // для Null, а число/строка в stats у чужого файла роняли поток запроса.
+    if data.get("stats").is_none_or(Value::is_null) {
+        data["stats"] = json!({});
+    }
+    let stats = data["stats"]
+        .as_object_mut()
+        .ok_or_else(|| "Некорректная статистика в расшифровке".to_string())?;
+    stats.insert("segments".to_string(), json!(utterances.len()));
+    stats.insert("words".to_string(), json!(words));
     Ok(())
 }
 
@@ -441,5 +474,50 @@ mod tests {
         assert_eq!(data["utterances"][0]["text"], "раз два три");
         assert_eq!(data["utterances"][0]["words"], json!([]));
         assert_eq!(data["utterances"][0]["ctc_used"], json!(false));
+    }
+
+    #[test]
+    fn stale_rev_rejects_edit() {
+        let data = json!({
+            "meta": {"speakers": ["Спикер"], "speakers_info": []},
+            "stats": {},
+            "utterances": [
+                {"start": 0.0, "end": 1.0, "speaker": "Спикер", "text": "раз"}
+            ]
+        });
+        // Без rev правка разрешена: клиент не обязан знать ревизию.
+        assert!(guard_rev(&data, &json!({"index": 0, "text": "два"})).is_ok());
+
+        let utterances: Vec<mr_summarize::Utterance> =
+            serde_json::from_value(data["utterances"].clone()).expect("реплики");
+        let rev = mr_summarize::artifact::source_rev(&utterances);
+        assert!(guard_rev(&data, &json!({"index": 0, "text": "два", "rev": rev})).is_ok());
+
+        let stale = guard_rev(
+            &data,
+            &json!({"index": 0, "text": "два", "rev": "чужая-ревизия"}),
+        )
+        .expect_err("устаревший rev должен отклоняться");
+        assert_eq!(stale.0, 409);
+    }
+
+    #[test]
+    fn broken_stats_returns_error_instead_of_panic() {
+        let mut data = json!({
+            "meta": {"speakers": ["Спикер"], "speakers_info": []},
+            "stats": 7,
+            "utterances": [
+                {"start": 0.0, "end": 1.0, "speaker": "Спикер", "text": "раз"}
+            ]
+        });
+        assert_eq!(
+            apply_edit(&mut data, &json!({"index": 0, "text": "два"})),
+            Err("Некорректная статистика в расшифровке".to_string())
+        );
+
+        data["stats"] = serde_json::Value::Null;
+        apply_edit(&mut data, &json!({"index": 0, "text": "два"})).expect("Null создаёт объект");
+        assert_eq!(data["stats"]["segments"], 1);
+        assert_eq!(data["stats"]["words"], 1);
     }
 }

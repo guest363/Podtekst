@@ -130,9 +130,19 @@ case "$ARCHIVE" in
         "$PY" - "$ARCHIVE" "$TMP/extract" <<'PY'
 import sys
 import zipfile
+from pathlib import PurePosixPath
 
+root = sys.argv[2]
 with zipfile.ZipFile(sys.argv[1]) as archive:
-    archive.extractall(sys.argv[2])
+    # zip-slip и симлинки: распаковываем только обычные файлы внутри root.
+    for info in archive.infolist():
+        target = PurePosixPath(root, info.filename)
+        if PurePosixPath(info.filename).is_absolute() or ".." in PurePosixPath(info.filename).parts:
+            raise SystemExit(f"недопустимый путь в архиве: {info.filename}")
+        mode = info.external_attr >> 16
+        if mode and (mode & 0o170000) == 0o120000:
+            raise SystemExit(f"симлинк в архиве: {info.filename}")
+        archive.extract(info, root)
 PY
         ;;
     *.tar.gz|*.tgz)
@@ -158,7 +168,13 @@ for dirpath, _dirnames, filenames in os.walk(root):
     exit 1
 }
 
-rm -rf "$DEST"
+rm -rf "${DEST:?}"
+case "$DEST" in
+    /|"$HOME"|"$HOME/")
+        echo "Отказ: DEST=$DEST указывает на корень или домашний каталог" >&2
+        exit 1
+        ;;
+esac
 mkdir -p "$DEST"
 
 echo "→ Оставляю только runtime-файлы"

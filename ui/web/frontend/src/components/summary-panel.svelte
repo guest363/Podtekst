@@ -182,7 +182,8 @@ const onWindowKey = (e: KeyboardEvent): void => {
     e.preventDefault()
     e.stopPropagation()
     toggleSummary()
-    toggleBtn?.focus()
+    // Кнопка «Открыть» появляется только после перерисовки свёрнутой панели.
+    void tick().then(() => toggleBtn?.focus())
   }
 }
 </script>

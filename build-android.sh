@@ -55,6 +55,9 @@ fi
 # принудительный перезапуск build-скрипта гарантирует его генерацию.
 touch "$SCRIPT_DIR/src-tauri/crates/mr-app/build.rs"
 cd "$SCRIPT_DIR"
+# Гейт воспроизводимости: молча пересчитанный Cargo.lock даёт артефакт,
+# не соответствующий ни одному коммиту.
+cargo metadata --locked --format-version 1 > /dev/null
 # Нативный tauri-cli: gradle-таска rustBuild ре-инвокует CLI по записанному в
 # .tauri/cli.json пути — yarn-dlx для этого нестабилен (временные пути).
 # Один раз: cargo install tauri-cli --version ^2.12 --locked
@@ -67,7 +70,6 @@ fi
     --config src-tauri/crates/mr-app/tauri.conf.json \
     --features tauri-ui \
     --apk --target aarch64 "${MODE[@]}"
-
 APK="$(find "$SCRIPT_DIR/src-tauri/crates/mr-app/gen/android/app/build/outputs" -name '*.apk' -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -n 1 | cut -d' ' -f2-)"
 if [ -n "$APK" ]; then
     # Все сборки проекта складываются в одну папку dist/ в корне репозитория.

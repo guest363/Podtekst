@@ -252,7 +252,7 @@ const saveVoiceprint = async (
       } else {
         toast(`Спикер «${oldName}» переименован в «${finalName}». Участник сохранён.`)
       }
-      if (Array.isArray(d.utterances)) applyTranscriptState(d)
+      if (Array.isArray(d.utterances)) applyTranscriptState(d, ui.currentTranscriptPath)
       else emit('transcript-reload')
       emit('voiceprints-changed')
       await loadPeople()
@@ -282,7 +282,7 @@ const unmatchSpeaker = async (speakerName: string): Promise<void> => {
     const d = await readJsonSafe<TranscriptData & { ok?: boolean; error?: string }>(r)
     if (d.ok) {
       toast(`Опознание спикера «${speakerName}» снято в этой записи`)
-      if (Array.isArray(d.utterances)) applyTranscriptState(d)
+      if (Array.isArray(d.utterances)) applyTranscriptState(d, ui.currentTranscriptPath)
       else emit('transcript-reload')
     } else {
       toast(`Не удалось снять опознание: ${d.error || 'ошибка'}`, 'error')
@@ -333,6 +333,14 @@ const detachSample = async (s: {
 
 let inputValues = $state<Record<string, string>>({})
 let cardPack = $state<Record<string, string>>({})
+
+// Набранное имя не должно переезжать на другую запись: ключ карточки —
+// имя спикера, и в новой встрече он совпадает.
+$effect(() => {
+  void ui.currentTranscriptPath
+  inputValues = {}
+  cardPack = {}
+})
 
 const getCardValue = (key: string, fallback: string): string => {
   return inputValues[key] ?? fallback

@@ -555,11 +555,16 @@ export const fetchWithTimeout = async (
   ms = 15000,
 ): Promise<Response> => {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), ms)
+  const timer = setTimeout(() => controller.abort(new DOMException('timeout', 'TimeoutError')), ms)
+  // Внешний signal не затираем: иначе отменить запрос извне нельзя.
+  const external = init.signal
+  const abort = (): void => controller.abort()
+  external?.addEventListener('abort', abort, { once: true })
   try {
     return await fetch(url, { ...init, signal: controller.signal })
   } finally {
     clearTimeout(timer)
+    external?.removeEventListener('abort', abort)
   }
 }
 
@@ -798,4 +803,12 @@ export const pluralSpeakers = (n: number): string => {
   if (mod10 === 1 && mod100 !== 11) return 'спикер'
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'спикера'
   return 'спикеров'
+}
+
+export const pluralUtterances = (n: number): string => {
+  const mod10 = n % 10
+  const mod100 = n % 100
+  if (mod10 === 1 && mod100 !== 11) return 'реплика'
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'реплики'
+  return 'реплик'
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-import { onMount } from 'svelte'
+import { onMount, tick } from 'svelte'
 import type { OkResponse, RecordingItem } from '../lib/api'
 import {
   displayRecTitle,
@@ -32,6 +32,7 @@ let search = $state('')
 let renaming = $state('')
 let renameValue = $state('')
 let savingName = $state(false)
+let renameInput = $state<HTMLInputElement | null>(null)
 let deleteTarget = $state<RecordingItem | null>(null)
 let deleting = $state(false)
 
@@ -48,12 +49,17 @@ const toggleRecPlay = (rec: RecordingItem): void => {
   }
 }
 
-const now = new Date()
-const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+const startOfToday = (): Date => {
+  const now = new Date()
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate())
+}
 
+// Приложение живёт сутками: «сегодня» пересчитываем, иначе вкладка «Сегодня»
+// после полуночи показывает вчерашний день.
+let today = $state(startOfToday())
 let mainFilter = $state<'today' | 'week' | 'all' | 'range'>('week')
-let mainRangeStart = $state<Date | null>(today)
-let mainRangeEnd = $state<Date | null>(today)
+let mainRangeStart = $state<Date | null>(startOfToday())
+let mainRangeEnd = $state<Date | null>(startOfToday())
 let mainRangeLabel = $state('')
 let mainPickerOpen = $state(false)
 
@@ -209,12 +215,21 @@ const hasRecsOnDate = (d: Date): boolean => {
 }
 
 onMount(() => {
-  on('recordings-changed', () => void loadRecordings())
+  const offRecordings = on('recordings-changed', () => void loadRecordings())
   const onFocus = () => void loadRecordings()
+  const refreshToday = (): void => {
+    const fresh = startOfToday()
+    if (fresh.getTime() !== today.getTime()) today = fresh
+  }
   window.addEventListener('focus', onFocus)
+  document.addEventListener('visibilitychange', refreshToday)
+  const dayTimer = setInterval(refreshToday, 60_000)
   void loadRecordings()
   return () => {
+    offRecordings()
     window.removeEventListener('focus', onFocus)
+    document.removeEventListener('visibilitychange', refreshToday)
+    clearInterval(dayTimer)
   }
 })
 
@@ -251,6 +266,11 @@ const onDrop = (e: DragEvent): void => {
 const startRename = (rec: RecordingItem): void => {
   renaming = rec.path
   renameValue = rec.name.replace(/\.[^.]+$/, '')
+  // Поле появляется после перерисовки: иначе фокус остаётся на кнопке.
+  void tick().then(() => {
+    renameInput?.focus()
+    renameInput?.select()
+  })
 }
 
 const cancelRename = (): void => {
@@ -271,11 +291,16 @@ const saveRename = async (rec: RecordingItem): Promise<void> => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: rec.path, name }),
     })
-    const d = await readJsonSafe<OkResponse>(r)
+    const d = await readJsonSafe<OkResponse & { path?: string; name?: string }>(r)
     if (d.ok) {
       toast('Запись переименована')
       cancelRename()
       await loadRecordings()
+      // Нижняя панель держит копию записи: иначе имя и /audio/<старое имя>.
+      if (activeRec?.path === rec.path) {
+        activeRec = d.path ? (recordings.items.find((item) => item.path === d.path) ?? null) : null
+        if (!activeRec) isPlaying = false
+      }
     } else {
       toast(d.error || 'Не удалось переименовать запись', 'error')
     }
@@ -304,6 +329,7 @@ const saveRename = async (rec: RecordingItem): Promise<void> => {
                         class="input-field rename-input"
                         aria-label="Новое имя записи"
                         autocomplete="off"
+                        bind:this={renameInput}
                         bind:value={renameValue}
                         onkeydown={(e) => {
                             if (e.key === "Enter") void saveRename(rec);
@@ -497,15 +523,14 @@ const saveRename = async (rec: RecordingItem): Promise<void> => {
             >
             <div
                 class="rec-segmented"
-                role="tablist"
+                role="group"
                 aria-label="Фильтр по дате"
             >
                 <button
                     type="button"
                     class="rec-seg-btn {mainFilter === 'today' ? 'active' : ''}"
                     onclick={() => setMainPreset("today")}
-                    role="tab"
-                    aria-selected={mainFilter === "today"}
+                    aria-pressed={mainFilter === "today"}
                 >
                     <span>Сегодня</span>
                     {#if countToday > 0}<span class="rec-seg-count"
@@ -516,8 +541,7 @@ const saveRename = async (rec: RecordingItem): Promise<void> => {
                     type="button"
                     class="rec-seg-btn {mainFilter === 'week' ? 'active' : ''}"
                     onclick={() => setMainPreset("week")}
-                    role="tab"
-                    aria-selected={mainFilter === "week"}
+                    aria-pressed={mainFilter === "week"}
                 >
                     <span>7 дней</span>
                     {#if countWeek > 0}<span class="rec-seg-count"
@@ -528,8 +552,7 @@ const saveRename = async (rec: RecordingItem): Promise<void> => {
                     type="button"
                     class="rec-seg-btn {mainFilter === 'all' ? 'active' : ''}"
                     onclick={() => setMainPreset("all")}
-                    role="tab"
-                    aria-selected={mainFilter === "all"}
+                    aria-pressed={mainFilter === "all"}
                 >
                     <span>Все</span>
                     <span class="rec-seg-count">{items.length}</span>
@@ -642,6 +665,12 @@ const saveRename = async (rec: RecordingItem): Promise<void> => {
         </div>
     </div>
     <div class="recordings-list" id="recordingsList">
+        {#if recordings.error}
+            <div class="empty-note" role="status">
+                Не удалось обновить список: {recordings.error}
+                <span class="empty-sub">Показаны последние загруженные записи.</span>
+            </div>
+        {/if}
         {#if items.length === 0}
             <div class="empty-note">
                 Записей пока нет

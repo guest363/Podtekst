@@ -138,6 +138,7 @@ export const generateSummary = async (
     confirmSensitive?: boolean
     replace?: boolean
     allowDowngrade?: boolean
+    detail?: SummaryDetail
   } = {},
 ): Promise<void> => {
   const file = summaryState.file
@@ -220,7 +221,7 @@ export const generateSummary = async (
       body: JSON.stringify({
         file,
         preset_id: presetId,
-        detail: detail(),
+        detail: opts.detail ?? detail(),
         source_rev: summaryState.sourceRev,
         // Новее-мажор заменяется только вместе с force.
         force: opts.force === true || opts.allowDowngrade === true,
@@ -265,7 +266,7 @@ export const cancelSummary = async (): Promise<void> => {
   }
 }
 
-export const retrySummary = async (): Promise<void> => {
+export const retrySummary = async (opts: { detail?: SummaryDetail } = {}): Promise<void> => {
   if (summaryState.error?.code === 'schema_unsupported') {
     await rebuildInOldFormat()
     return
@@ -293,6 +294,7 @@ export const retrySummary = async (): Promise<void> => {
   void generateSummary(id, {
     force: true,
     replace: true,
+    detail: opts.detail,
     confirmSensitive: preset?.sensitive === true,
   })
 }

@@ -1,6 +1,5 @@
 <script lang="ts">
 import { tick } from 'svelte'
-import { errText } from '../lib/guards.ts'
 import {
   cancelSensitive,
   cancelSummary,
@@ -8,12 +7,10 @@ import {
   rebuildInOldFormat,
   retryLoad,
   retrySummary,
-  saveSummarySettings,
   showPreviousResult,
   summaryState,
 } from '../lib/summary.svelte.ts'
 import { summaryElapsed } from '../lib/summary-ui.ts'
-import { toast } from '../lib/toast.svelte.ts'
 import { closeTranscript, emit } from '../lib/ui.svelte.ts'
 
 let confirmHead = $state<HTMLElement | null>(null)
@@ -67,12 +64,9 @@ const openSettings = (): void => {
 }
 
 const retryShort = async (): Promise<void> => {
-  try {
-    await saveSummarySettings({ detail: 'short' })
-    retrySummary()
-  } catch (e) {
-    toast(`Не удалось сохранить подробность: ${errText(e)}`, 'error')
-  }
+  // «Попробовать „Кратко“» — разовый перезапуск: сохранённую настройку объёма
+  // не меняем, иначе все следующие итоги собираются кратко.
+  await retrySummary({ detail: 'short' })
 }
 </script>
 
@@ -138,7 +132,7 @@ const retryShort = async (): Promise<void> => {
       {:else if summaryState.error.scope === 'load'}
         <button class="btn-primary btn-sm" onclick={retryLoad}>Повторить</button>
       {:else}
-        <button class="btn-primary btn-sm" onclick={retrySummary}>Повторить</button>
+        <button class="btn-primary btn-sm" onclick={() => void retrySummary()}>Повторить</button>
       {/if}
       {#if shortRetry}
         <button class="btn-secondary btn-sm" onclick={() => void retryShort()}>

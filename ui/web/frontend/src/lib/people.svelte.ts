@@ -20,6 +20,7 @@ type PeopleState = {
   query: string
   voiceDetail: VoiceDetail | null
   voiceDetailName: string
+  error: string
 }
 
 export const peopleState: PeopleState = $state({
@@ -31,6 +32,7 @@ export const peopleState: PeopleState = $state({
   query: '',
   voiceDetail: null,
   voiceDetailName: '',
+  error: '',
 })
 
 export const loadPeople = async (): Promise<void> => {
@@ -42,7 +44,10 @@ export const loadPeople = async (): Promise<void> => {
     if (Array.isArray(d.packs)) {
       peopleState.packs = d.packs
     }
-  } catch {}
+    peopleState.error = ''
+  } catch (e) {
+    peopleState.error = errText(e)
+  }
   // Сколько эмбеддингов у каждого: тот же /api/voiceprints, без нового контракта.
   try {
     const r = await fetch('/api/voiceprints')
@@ -81,11 +86,11 @@ export const loadVoiceDetail = async (name: string): Promise<boolean> => {
   peopleState.voiceDetail = null
   peopleState.voiceDetailName = name
   try {
-    const d = await readJsonSafe<VoiceDetailResponse>(
-      await fetch(`/api/voiceprints/detail?name=${encodeURIComponent(name)}`),
-    )
+    const r = await fetch(`/api/voiceprints/detail?name=${encodeURIComponent(name)}`)
+    const d = await readJsonSafe<VoiceDetailResponse>(r)
     if (!d.ok) {
-      toast(d.error || 'Не удалось загрузить голоса', 'error')
+      // 404 — штатное состояние «голосов больше нет» после удаления образцов.
+      if (r.status !== 404) toast(d.error || 'Не удалось загрузить голоса', 'error')
       return false
     }
     peopleState.voiceDetail = {
@@ -121,7 +126,9 @@ export const deleteVoice = async (name: string): Promise<boolean> => {
     }
     toast(`Голос «${clean}» удалён из базы`)
     await loadPeople()
-    await loadVoiceDetail(clean)
+    // Перезапрашивать детали незачем: голосов у имени больше нет.
+    peopleState.voiceDetail = null
+    peopleState.voiceDetailName = ''
     return true
   } catch (e) {
     toast(`Не удалось удалить голос: ${errText(e)}`, 'error')
@@ -176,29 +183,6 @@ export const addPerson = async (name: string, role: string, packId?: string): Pr
     return true
   } catch (e) {
     toast(`Не удалось добавить участника: ${errText(e)}`, 'error')
-    return false
-  }
-}
-
-export const movePerson = async (name: string, toPackId: string): Promise<boolean> => {
-  const cleanName = name.trim()
-  if (!cleanName || !toPackId) return false
-  try {
-    const r = await fetch('/api/people/move', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: cleanName, to_pack_id: toPackId }),
-    })
-    const d = await readJsonSafe<OkResponse>(r)
-    if (!d.ok) {
-      toast(d.error || 'Не удалось переместить участника', 'error')
-      return false
-    }
-    toast(`Участник «${cleanName}» перемещён`)
-    await loadPeople()
-    return true
-  } catch (e) {
-    toast(`Не удалось переместить участника: ${errText(e)}`, 'error')
     return false
   }
 }

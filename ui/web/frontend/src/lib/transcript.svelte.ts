@@ -167,6 +167,10 @@ export const openTranscriptFile = async (rawPath: string): Promise<void> => {
       signal: openAbort.signal,
     })
     if (seq !== openSeq) return
+    if (!r.ok) {
+      const e = await readJsonSafe<{ error?: string }>(r).catch(() => null)
+      throw new Error(e?.error || `HTTP ${r.status}`)
+    }
     d = await readJsonSafe<TranscriptData>(r)
   } catch (e) {
     if (seq !== openSeq || isAbortError(e)) return
@@ -185,7 +189,9 @@ export const openTranscriptFile = async (rawPath: string): Promise<void> => {
 
 // Сервер возвращает новое состояние расшифровки: применяем его сразу, без
 // повторного GET, иначе текст в UI отстаёт на лишний запрос.
-export const applyTranscriptState = (d: TranscriptData): void => {
+// `rawPath` обязателен: поздний ответ правки не должен подменить другую запись.
+export const applyTranscriptState = (d: TranscriptData, rawPath: string): void => {
+  if (rawPath !== ui.currentTranscriptPath) return
   if (Array.isArray(d.utterances)) transcript.utterances = d.utterances
   if (Array.isArray(d.speakers_info)) transcript.speakers = d.speakers_info
   if (typeof d.markdown === 'string') transcript.markdown = d.markdown
@@ -202,11 +208,17 @@ export const editTranscript = async (
   const r = await fetch('/api/transcript/edit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ file: rawPath, ...change }),
+    body: JSON.stringify({ file: rawPath, rev: transcript.rev, ...change }),
   })
   const d = await readJsonSafe<TranscriptEditResponse>(r)
+  if (r.status === 409) {
+    // Правка относилась к прежней версии файла: показываем актуальный текст,
+    // иначе следующая правка по индексу уйдёт не в ту реплику.
+    if (rawPath === ui.currentTranscriptPath) await openTranscriptFile(rawPath)
+    throw new Error(d.error || 'Расшифровка изменилась')
+  }
   if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`)
-  applyTranscriptState(d)
+  applyTranscriptState(d, rawPath)
 }
 
 export const emptyHint = (): string => {
@@ -476,9 +488,17 @@ export const downloadModel = async (m: ModelInfo): Promise<boolean> => {
     let stall = 0
     const lastPct = () => engine.downloading[m.id] ?? -1
     let prevPct = lastPct()
-    const timer = setInterval(async () => {
+    const settle = (ok: boolean): void => {
+      delete engine.downloading[m.id]
+      delete downloadOutcome[m.id]
+      emit('models-changed')
+      resolve(ok)
+    }
+    // Последовательный опрос вместо setInterval: при ответе дольше тика
+    // интервалы наслаивались и счётчик «зависания» врал.
+    const tick = async (): Promise<void> => {
       if (lastPct() === -1) {
-        clearInterval(timer)
+        // Прогресс снят: итог пришёл событием model-done.
         const ok = downloadOutcome[m.id] === true
         delete downloadOutcome[m.id]
         resolve(ok)
@@ -487,26 +507,23 @@ export const downloadModel = async (m: ModelInfo): Promise<boolean> => {
       if (lastPct() !== prevPct) {
         prevPct = lastPct()
         stall = 0
-      } else if (++stall > 30) {
-        clearInterval(timer)
-        delete engine.downloading[m.id]
-        delete downloadOutcome[m.id]
-        emit('models-changed')
-        resolve(false)
+      } else if (++stall > 80) {
+        // ~2 минуты без движения: загрузку считаем потерянной и не запускаем
+        // следующую модель поверх живой.
+        settle(false)
         return
       }
       try {
         const d = await readJsonSafe<ModelsResponse>(await fetch('/api/models'))
         const cur = (d.models || []).find((x) => x.id === m.id)
         if (cur?.is_installed && !cur.has_update && !cur.needs_reinstall) {
-          clearInterval(timer)
-          delete engine.downloading[m.id]
-          delete downloadOutcome[m.id]
-          emit('models-changed')
-          resolve(true)
+          settle(true)
+          return
         }
       } catch {}
-    }, 1500)
+      setTimeout(() => void tick(), 1500)
+    }
+    setTimeout(() => void tick(), 1500)
   })
 }
 

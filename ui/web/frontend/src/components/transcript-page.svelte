@@ -1,6 +1,14 @@
 <script lang="ts">
 import { tick } from 'svelte'
-import { baseName, fmtClock, fmtClockShort, isAndroid, isMobile, pluralSpeakers } from '../lib/api'
+import {
+  baseName,
+  fmtClock,
+  fmtClockShort,
+  isAndroid,
+  isMobile,
+  pluralSpeakers,
+  pluralUtterances,
+} from '../lib/api'
 import { exportDocx, printTranscript } from '../lib/export.ts'
 import { peopleState } from '../lib/people.svelte.ts'
 import { isQueued } from '../lib/queue.svelte.ts'
@@ -184,15 +192,6 @@ let hasUnmatchedSpeakers = $derived(
 let allSpeakersMatched = $derived(
   Boolean(transcript.speakers?.length && transcript.speakers.every((s) => s.matched)),
 )
-const pluralUtterances = (n: number): string => {
-  const rem10 = n % 10
-  const rem100 = n % 100
-  if (rem100 >= 11 && rem100 <= 19) return 'реплик'
-  if (rem10 === 1) return 'реплика'
-  if (rem10 >= 2 && rem10 <= 4) return 'реплики'
-  return 'реплик'
-}
-
 const getTranscriptMeta = (): {
   title: string
   source: string

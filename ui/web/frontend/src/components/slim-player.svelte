@@ -1,5 +1,6 @@
 <script lang="ts">
 import { fmtClock } from '../lib/api'
+import { toast } from '../lib/toast.svelte.ts'
 
 type Props = {
   src: string
@@ -30,6 +31,11 @@ let dur = $derived(mediaDur || durationSec || 0)
 
 export const togglePlay = (): void => {
   toggle()
+}
+
+const onMediaError = (): void => {
+  playing = false
+  toast(`Не удалось воспроизвести «${fileName}»: файл недоступен или повреждён`, 'error')
 }
 
 $effect(() => {
@@ -97,14 +103,14 @@ const seek = (e: MouseEvent): void => {
     <video bind:this={media} {src} id={mediaId || undefined} preload="auto" hidden
       aria-label={`Слушать ${fileName}`}
       onplay={() => (playing = true)} onpause={() => (playing = false)}
-      onseeked={syncTime} ontimeupdate={syncTime}
+      onseeked={syncTime} ontimeupdate={syncTime} onerror={onMediaError}
       ondurationchange={() => media && Number.isFinite(media.duration) && (mediaDur = media.duration || 0)}
       onloadedmetadata={() => media && Number.isFinite(media.duration) && (mediaDur = media.duration || 0)}></video>
   {:else}
     <audio bind:this={media} {src} id={mediaId || undefined} preload="auto" hidden
       aria-label={`Слушать ${fileName}`}
       onplay={() => (playing = true)} onpause={() => (playing = false)}
-      onseeked={syncTime} ontimeupdate={syncTime}
+      onseeked={syncTime} ontimeupdate={syncTime} onerror={onMediaError}
       ondurationchange={() => media && Number.isFinite(media.duration) && (mediaDur = media.duration || 0)}
       onloadedmetadata={() => media && Number.isFinite(media.duration) && (mediaDur = media.duration || 0)}></audio>
   {/if}

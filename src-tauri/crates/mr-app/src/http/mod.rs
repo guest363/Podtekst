@@ -1018,6 +1018,14 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) -> b
                         .unwrap_or("")
                         .trim()
                         .to_string();
+                    // Одноимённые участники в разных пакетах — разные люди, поэтому
+                    // без pack_id удаление идёт по всем пакетам (старый контракт).
+                    let pack_id = body
+                        .get("pack_id")
+                        .and_then(|x| x.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string);
                     if name.is_empty() {
                         json_response(
                             request,
@@ -1025,7 +1033,7 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) -> b
                             400,
                         );
                     } else {
-                        let ok = remove_person(&name);
+                        let ok = remove_person(&name, pack_id.as_deref());
                         json_response(
                             request,
                             json!({"ok": ok, "error": if ok { "" } else { "Участник не найден" } }),

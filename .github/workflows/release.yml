@@ -6,10 +6,6 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
-      dry_run:
-        description: "Собрать и проверить без публикации"
-        type: boolean
-        default: true
       full_matrix:
         description: "Полная живая матрица (10/30/60/120, 4/8 cores, EN/injection/legal/psychology)"
         type: boolean
@@ -38,7 +34,7 @@ jobs:
       tag: ${{ steps.meta.outputs.tag }}
       version: ${{ steps.meta.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Resolve tag
         id: meta
         shell: bash
@@ -76,11 +72,11 @@ jobs:
     needs: meta
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           toolchain: "1.99"
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: src-tauri
       - name: Build release headless
@@ -111,16 +107,16 @@ jobs:
       run:
         working-directory: src-tauri
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install Linux WebKit deps
         if: matrix.os == 'ubuntu-24.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf gstreamer1.0-plugins-good gstreamer1.0-alsa
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           toolchain: "1.99" # закреплён rust-toolchain.toml; MSRV по lock-файлу — 1.92 (ort)
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
       - name: Build frontend (Svelte)
@@ -133,11 +129,13 @@ jobs:
         run: ../.github/scripts/fetch_summary_runtime.sh --target ${{ matrix.target_key }}
       - name: Rust unit tests (host)
         run: cargo test --workspace --locked
+      - name: Check Cargo.lock is up to date
+        run: cargo metadata --locked --format-version 1 > /dev/null
       # projectPath: нестандартная раскладка — tauri.conf.json лежит в
       # crates/mr-app, а не в <корень>/src-tauri.
       - name: Build Tauri bundle
         id: tauri
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           MACOSX_DEPLOYMENT_TARGET: "13.4"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -164,7 +162,7 @@ jobs:
           fi
           ls -la bundle-pkg/
       - name: Upload bundles as workflow artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: tauri-bundles-${{ matrix.os }}
           if-no-files-found: error
@@ -176,17 +174,17 @@ jobs:
     needs: meta
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Setup Java 21
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6
         with:
           distribution: "temurin"
           java-version: "21"
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           toolchain: "1.99"
           targets: aarch64-linux-android
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
       - name: Decode Android release keystore
@@ -196,6 +194,10 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          # Публикация по тегу требует release-подписи: debug-ключ
+          # (`androiddebugkey`) публично известен, и такой APK может
+          # подменить любой желающий.
+          REQUIRE_SIGNING: ${{ github.event_name == 'push' }}
         run: |
           if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
             path="$RUNNER_TEMP/podtekst-release.jks"
@@ -207,8 +209,11 @@ jobs:
               echo "ANDROID_KEY_PASSWORD=$KEY_PASSWORD"
             } >> "$GITHUB_ENV"
             echo "Android: release keystore подключён"
+          elif [ "$REQUIRE_SIGNING" = "true" ]; then
+            echo "::error::Android: для релиза по тегу нужен release keystore (ANDROID_KEYSTORE_*), сборка остановлена"
+            exit 1
           else
-            echo "::warning::Android: release keystore не задан, release APK будет подписан debug-ключом"
+            echo "::warning::Android: release keystore не задан, APK будет подписан debug-ключом (только ручной запуск)"
           fi
       - name: Setup Android NDK
         shell: bash
@@ -235,6 +240,9 @@ jobs:
         run: |
           corepack enable
           cd "$GITHUB_WORKSPACE/ui/web/frontend" && yarn install --immutable && yarn build
+      - name: Check Cargo.lock is up to date
+        shell: bash
+        run: cargo metadata --locked --format-version 1 > /dev/null
       - name: Build Android APK
         shell: bash
         run: |
@@ -262,7 +270,7 @@ jobs:
           cp "$apk" bundle-pkg/Podtekst-android-arm64.apk
           ls -la bundle-pkg/
       - name: Upload Android APK as workflow artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: tauri-bundles-android
           if-no-files-found: error
@@ -282,11 +290,11 @@ jobs:
       MR_TEST_TRANSCRIPT: ${{ github.workspace }}/src-tauri/crates/mr-summarize/tests/fixtures/scrum-ru.json
       SUMMARY_REQUIRE_REAL: "1"
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           toolchain: "1.99"
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: src-tauri
       - name: Fetch pinned llama.cpp runtime
@@ -454,7 +462,7 @@ jobs:
           PY
       - name: Upload real-model evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: summary-real-evidence
           if-no-files-found: warn
@@ -476,11 +484,11 @@ jobs:
       MR_TEST_FIXTURES: ${{ github.workspace }}/src-tauri/crates/mr-summarize/tests/fixtures
       SUMMARY_REQUIRE_REAL: "1"
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           toolchain: "1.99"
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: src-tauri
       - name: Fetch pinned llama.cpp runtime
@@ -509,7 +517,7 @@ jobs:
             | tee verification/summary-real-matrix-full.log
       - name: Upload full-matrix evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: summary-real-matrix-full
           if-no-files-found: warn
@@ -521,12 +529,12 @@ jobs:
     needs: [meta, build-tauri]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install Linux runtime deps
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: tauri-bundles-ubuntu-24.04
           path: pkg
@@ -583,7 +591,7 @@ jobs:
           }, ensure_ascii=False))
           PY
       - name: Upload Linux bundle size
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: bundle-size-linux
           if-no-files-found: error
@@ -611,8 +619,8 @@ jobs:
     needs: [meta, build-tauri]
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: tauri-bundles-macos-26
           path: pkg
@@ -673,8 +681,8 @@ jobs:
     needs: [meta, build-tauri]
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: tauri-bundles-windows-latest
           path: pkg
@@ -753,13 +761,13 @@ jobs:
     needs: [meta, build-android]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Setup Java 21
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6
         with:
           distribution: "temurin"
           java-version: "21"
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: tauri-bundles-android
           path: pkg
@@ -768,7 +776,7 @@ jobs:
         env:
           VERSION: ${{ needs.meta.outputs.version }}
           TAG: ${{ needs.meta.outputs.tag }}
-          REQUIRE_RELEASE_SIGNING: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+          REQUIRE_RELEASE_SIGNING: ${{ github.event_name == 'push' }}
         run: |
           set -eu
           sdk="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
@@ -879,7 +887,7 @@ jobs:
           print(f"→ {out}: {size} bytes, sha256={digest}, versionCode={version_code}")
           PY
       - name: Upload APK evidence
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: apk-evidence
           if-no-files-found: error
@@ -890,12 +898,15 @@ jobs:
     needs: [meta, build-tauri, build-android]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
+          # Только продуктовые пакеты: логи и evidence остаются артефактами
+          # прогона, иначе набор ассетов релиза зависит от тайминга джоб.
+          pattern: "tauri-bundles-*"
           path: dist
           merge-multiple: true
       - name: Install cryptography
@@ -916,7 +927,7 @@ jobs:
             --artifacts dist \
             "${extra[@]}"
           ls -la dist
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-dist
           if-no-files-found: error
@@ -929,15 +940,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: release-dist
           path: dist
       - name: Release notes present
         run: test -s ".github/release-notes/${{ needs.meta.outputs.tag }}.md"
       - name: Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
         with:
           name: Подтекст ${{ needs.meta.outputs.tag }}
           tag_name: ${{ needs.meta.outputs.tag }}
@@ -954,8 +965,8 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
       - name: Install cryptography
