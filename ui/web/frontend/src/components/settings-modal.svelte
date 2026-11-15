@@ -364,8 +364,8 @@ const onWindowKey = (e: KeyboardEvent): void => {
                 <div class="rec-info">
                   <span class="rec-name">ffmpeg</span>
                   <span class="rec-meta">
-                    Запись экрана и видео (MP4, MKV, MOV, WEBM), экспорт MP3. Для записи звука и
-                    расшифровки не нужен.
+                    Нужен для записи экрана, импорта видео (MP4, MKV, MOV, WEBM) и экспорта MP3.
+                    Для записи звука и расшифровки не нужен.
                   </span>
                   {#if ffmpeg.available}
                     <div class="system-facts">
@@ -380,7 +380,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
                       {#if ffmpeg.pairOk !== null}
                         <span class="system-key">ffmpeg и ffprobe</span>
                         <span class="system-val">
-                          {ffmpeg.pairOk ? 'совпадают' : 'не совпадают'}
+                          {ffmpeg.pairOk ? 'версии совпадают' : 'версии не совпадают'}
                         </span>
                       {/if}
                     </div>
@@ -485,7 +485,8 @@ const onWindowKey = (e: KeyboardEvent): void => {
           <div class="help-text">
             Версии этой сборки.{#if manifestDate}
               Манифест моделей от {manifestDate}.{/if}
-            Новые версии моделей приходят с обновлением приложения, ffmpeg ставится по кнопке.
+            Новые версии моделей приходят с обновлением приложения, ffmpeg
+            устанавливается по кнопке.
           </div>
           {#if summaryModels.length > 0 && settings.summaryFeature === true && !isAndroid}
             <div class="help-text">

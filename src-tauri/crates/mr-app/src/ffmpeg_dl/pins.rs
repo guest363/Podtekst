@@ -42,7 +42,7 @@ pub(super) fn current() -> Result<Vec<Package>, String> {
 pub(super) fn for_target(os: &str, arch: &str) -> Result<Vec<Package>, String> {
     if (os, arch) == ("macos", "x86_64") {
         return Err(
-            "Сборка для Intel Mac не поддерживается: ffmpeg ставится только на Apple Silicon."
+            "Сборка для Mac с процессором Intel не поддерживается: ffmpeg устанавливается только на Apple Silicon."
                 .to_string(),
         );
     }
@@ -53,7 +53,7 @@ pub(super) fn for_target(os: &str, arch: &str) -> Result<Vec<Package>, String> {
         .collect();
     if packages.is_empty() {
         return Err(format!(
-            "Автоскачивание ffmpeg не настроено для {os}/{arch}: поставьте ffmpeg в PATH."
+            "Автоскачивание ffmpeg не настроено для {os}/{arch}: добавьте ffmpeg в PATH."
         ));
     }
     Ok(packages)

@@ -80,7 +80,7 @@ pub(super) fn verify_archive(package: &Package, archive: &Path) -> Result<(), St
         None => {
             // Пин JVS не публикует sha256: размер отсекает обрезанную загрузку.
             if size <= LINUX_MIN_BYTES {
-                return Err(format!("архив подозрительно мал: {size} байт"));
+                return Err(format!("архив слишком мал: {size} байт"));
             }
         }
     }

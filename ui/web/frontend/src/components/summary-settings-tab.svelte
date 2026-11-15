@@ -432,7 +432,7 @@ const onPresetFocusOut = (e: FocusEvent): void => {
           {:else if model?.needs_reinstall}
             <span class="summary-state warn">Нужна переустановка</span>
           {:else if model?.has_update}
-            <span class="summary-state warn">Обновление</span>
+            <span class="summary-state warn">Есть обновление</span>
           {:else if model?.is_installed}
             <span class="summary-state ok">Скачана</span>
           {:else}

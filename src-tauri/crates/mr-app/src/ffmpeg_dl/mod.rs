@@ -158,7 +158,7 @@ pub(crate) fn start_download(force: bool, recording: bool, screen: bool) -> Resu
     std::thread::Builder::new()
         .name("ffmpeg-dl".into())
         .spawn(move || download_worker(force))
-        .map_err(|e| format!("Не удалось запустить поток скачивания: {e}"))?;
+        .map_err(|e| format!("Не удалось запустить установку ffmpeg: {e}"))?;
     Ok(())
 }
 

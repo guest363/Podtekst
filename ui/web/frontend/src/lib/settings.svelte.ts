@@ -252,11 +252,11 @@ export const downloadFfmpeg = async (force = false): Promise<void> => {
     })
     const d = await readJsonSafe<OkResponse>(r)
     if (!d.ok) {
-      toast(d.error || 'Не удалось запустить установку ffmpeg. Повторите позже', 'error')
+      toast(d.error || 'Не удалось запустить установку ffmpeg. Попробуйте позже', 'error')
       return
     }
   } catch {
-    toast('Не удалось запустить установку ffmpeg. Проверьте соединение и повторите', 'error')
+    toast('Не удалось запустить установку ffmpeg. Проверьте соединение и попробуйте снова', 'error')
     return
   }
   ffmpeg.downloading = true
