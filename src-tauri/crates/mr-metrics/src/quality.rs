@@ -90,10 +90,12 @@ pub fn analyze(
         .filter(|channel| sample_count[*channel] > 0)
         .map(|channel| clipping[channel] as f64 / sample_count[channel] as f64)
         .reduce(f64::max);
+    // Полоса - лучший активный канал: узкий системный звук не должен скрывать
+    // просодию микрофона. SNR - худший, чтобы шум не прятался за чистым каналом.
     let bandwidth_hz = (0..usable)
         .filter(|channel| spectra[*channel].iter().any(|power| *power > 0.0))
         .map(|channel| band_edge(&spectra[channel]))
-        .reduce(f64::min);
+        .reduce(f64::max);
     let channel_balance_db = if usable >= 2 && speech_db[0].len() >= 25 && speech_db[1].len() >= 25
     {
         match (
