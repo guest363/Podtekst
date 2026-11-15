@@ -299,6 +299,9 @@ const gradeText = $derived(
       : `темп и высота голоса недоступны: ${qualityReason}`,
 )
 
+let glossaryOpen = $state(false)
+let qualityOpen = $state(false)
+
 const statusText = $derived(
   loading
     ? 'Считаем метрики встречи'
@@ -478,14 +481,29 @@ const glossary: Array<[string, string]> = [
 
     <div class="metrics-section">
       {#if qualityRows.length > 0}
-        <details class="metrics-quality-details">
-          <summary>Технические показатели</summary>
-          <div class="metrics-quality-list">
-            {#each qualityRows as item (item.key)}
-              {@render row(item)}
-            {/each}
-          </div>
-        </details>
+        <div class="metrics-quality-details">
+          <button
+            type="button"
+            class="metrics-glossary-toggle"
+            aria-expanded={qualityOpen}
+            aria-controls="metrics-quality-list"
+            onclick={() => (qualityOpen = !qualityOpen)}
+          >
+            <span>Технические показатели</span>
+            <span class="metrics-glossary-chevron {qualityOpen ? 'open' : ''}" aria-hidden="true">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </span>
+          </button>
+          {#if qualityOpen}
+            <div class="metrics-quality-list" id="metrics-quality-list">
+              {#each qualityRows as item (item.key)}
+                {@render row(item)}
+              {/each}
+            </div>
+          {/if}
+        </div>
       {/if}
       {#if qualityWarnings.length > 0}
         <ul class="metrics-warnings" role="list">
@@ -502,17 +520,32 @@ const glossary: Array<[string, string]> = [
       {/if}
     </div>
 
-    <details class="metrics-glossary">
-      <summary>Все определения</summary>
-      <dl>
-        {#each glossary as [term, definition] (term)}
-          <div>
-            <dt>{term}</dt>
-            <dd>{definition}</dd>
-          </div>
-        {/each}
-      </dl>
-    </details>
+    <div class="metrics-glossary">
+      <button
+        type="button"
+        class="metrics-glossary-toggle"
+        aria-expanded={glossaryOpen}
+        aria-controls="metrics-glossary"
+        onclick={() => (glossaryOpen = !glossaryOpen)}
+      >
+        <span>Все определения</span>
+        <span class="metrics-glossary-chevron {glossaryOpen ? 'open' : ''}" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </span>
+      </button>
+      {#if glossaryOpen}
+        <dl id="metrics-glossary">
+          {#each glossary as [term, definition] (term)}
+            <div>
+              <dt>{term}</dt>
+              <dd>{definition}</dd>
+            </div>
+          {/each}
+        </dl>
+      {/if}
+    </div>
 
   {/if}
 </section>
@@ -775,18 +808,6 @@ const glossary: Array<[string, string]> = [
     color: var(--text-muted);
   }
 
-  .metrics-quality-details summary {
-    cursor: pointer;
-    font-weight: 700;
-    color: var(--text-primary);
-  }
-
-  .metrics-quality-details summary:focus-visible {
-    outline: 2px solid var(--accent-blue);
-    outline-offset: 2px;
-    border-radius: 3px;
-  }
-
   .metrics-quality-list {
     display: flex;
     flex-direction: column;
@@ -824,20 +845,50 @@ const glossary: Array<[string, string]> = [
 
   .metrics-glossary {
     margin-top: -2px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-soft);
     font-size: 11.5px;
     color: var(--text-muted);
   }
 
-  .metrics-glossary summary {
-    cursor: pointer;
+  .metrics-glossary-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: fit-content;
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    font-size: 12px;
     font-weight: 700;
     color: var(--text-primary);
+    cursor: pointer;
   }
 
-  .metrics-glossary summary:focus-visible {
+  .metrics-glossary-toggle:hover {
+    color: var(--accent-blue);
+  }
+
+  .metrics-glossary-toggle:focus-visible {
     outline: 2px solid var(--accent-blue);
     outline-offset: 2px;
     border-radius: 3px;
+  }
+
+  .metrics-glossary-chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 12px;
+    height: 12px;
+    color: var(--text-faint);
+    transition: transform 160ms var(--ease-spring);
+    flex-shrink: 0;
+  }
+
+  .metrics-glossary-chevron.open {
+    transform: rotate(180deg);
   }
 
   .metrics-glossary dl {
@@ -858,6 +909,10 @@ const glossary: Array<[string, string]> = [
   }
 
   @media (max-width: 1200px) {
+    .metrics-glossary-toggle {
+      min-height: 44px;
+    }
+
     .metrics-value-button {
       min-height: 44px;
       padding: 10px 8px;
