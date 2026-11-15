@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use super::backend::{
     BackendError, BackendEvent, BackendInfo, CancelToken, GenerateRequest, Phase, SummaryBackend,
 };
-use super::config::{CONTEXT_TOKENS, MODEL_ID};
+use super::config;
 use super::runtime_locator::RuntimeInfo;
 use helpers::{
     api_key_path, build_args, hide_window, map_ureq, new_token, prepend_lib_path, reserve_port,
@@ -90,7 +90,7 @@ fn props_ok(port: u16, token: &str, model_path: &Path, n_ctx: u32) -> bool {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
         return false;
     };
-    value.get("model_alias").and_then(|v| v.as_str()) == Some(MODEL_ID)
+    value.get("model_alias").and_then(|v| v.as_str()) == Some(config::model_id())
         && value.get("total_slots").and_then(|v| v.as_u64()) == Some(1)
         && value
             .pointer("/default_generation_settings/n_ctx")
@@ -309,7 +309,7 @@ impl SidecarBackend {
             (state.port, state.token.clone())
         };
         let body = serde_json::json!({
-            "model": MODEL_ID,
+            "model": config::model_id(),
             "messages": [
                 {"role": "system", "content": req.system},
                 {"role": "user", "content": req.prompt},
@@ -414,8 +414,8 @@ impl SummaryBackend for SidecarBackend {
             runtime: format!("llama.cpp/{}{suffix}", self.runtime.version),
             version: self.runtime.version.clone(),
             commit: self.runtime.commit.clone(),
-            model_id: MODEL_ID.to_string(),
-            n_ctx: CONTEXT_TOKENS,
+            model_id: config::model_id().to_string(),
+            n_ctx: config::context_tokens(),
             threads: self.threads,
         })
     }

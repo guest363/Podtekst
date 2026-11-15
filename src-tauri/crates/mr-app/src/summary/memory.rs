@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::config::{MIN_SYSTEM_RAM_MB, REQUIRED_FREE_MB};
+use super::config::{self, MIN_SYSTEM_RAM_MB};
 
 #[derive(Debug, Clone, Copy)]
 pub struct GuardInfo {
@@ -56,7 +56,7 @@ pub fn precheck(sidecar_loaded: bool) -> Result<GuardInfo, MemoryError> {
     }
     if !sidecar_loaded {
         if let Some(available) = available_mb {
-            if available < REQUIRED_FREE_MB {
+            if available < config::required_free_mb() {
                 return Err(MemoryError::LowFree {
                     available_mb: available,
                 });
@@ -130,7 +130,7 @@ fn peak_mb_impl(_pid: u32) -> Option<u64> {
 #[cfg(not(target_os = "android"))]
 pub fn check_peak(pid: u32) -> Result<(), MemoryError> {
     match peak_mb(pid) {
-        Some(peak) if peak > REQUIRED_FREE_MB => Err(MemoryError::Peak { peak_mb: peak }),
+        Some(peak) if peak > config::required_free_mb() => Err(MemoryError::Peak { peak_mb: peak }),
         _ => Ok(()),
     }
 }

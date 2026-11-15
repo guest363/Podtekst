@@ -81,3 +81,6 @@ ui/web/frontend/.yarn/install-state.gz
 
 # Android APK (артефакт сборки, в git не нужен)
 *.apk
+
+# Локальные отчёты скриптов проверки компонентов
+runs/

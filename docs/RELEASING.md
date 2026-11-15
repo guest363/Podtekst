@@ -54,6 +54,14 @@ git status --short
 - [ ] в `git ls-files` нет личных данных, логов, APK и моделей;
 - [ ] `THIRD_PARTY_LICENSES.md` обновлён;
 - [ ] `CHANGELOG.md` содержит секцию версии;
+- [ ] `./scripts/components.sh lint` проходит без ошибок;
+- [ ] `./scripts/components.sh verify-ffmpeg` подтверждает пин текущей платформы;
+- [ ] `./scripts/components.sh monitor` прогнан: расхождений с апстримом нет
+      или они осознанно отложены;
+- [ ] отчёт `./scripts/components.sh report` из `runs/components/` приложен к PR
+      подготовки версии;
+- [ ] в `.github/release-notes/` есть строка «Компоненты»: версии моделей и
+      ffmpeg, вошедшие в сборку;
 - [ ] в `.github/release-notes/` лежит описание для тега версии со ссылкой
       на `docs/UNSIGNED-INSTALL.md`;
 - [ ] лендинг обновлён: `softwareVersion` и тексты с версией в `site/index.html`

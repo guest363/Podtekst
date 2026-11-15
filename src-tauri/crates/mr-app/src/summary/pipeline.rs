@@ -9,7 +9,7 @@ use mr_summarize::{classify, parse, preset, prompt, text, Detail, SummaryError, 
 use super::backend::{
     BackendError, BackendEvent, BackendInfo, CancelToken, GenerateRequest, Phase, SummaryBackend,
 };
-use super::config::{CONTEXT_TOKENS, MODEL_ID, MODEL_TITLE, MODEL_TITLE_EN, RUNTIME_COMMIT};
+use super::config::{self, MODEL_TITLE, MODEL_TITLE_EN, RUNTIME_COMMIT};
 use super::store::Paths;
 
 pub struct JobSpec {
@@ -41,7 +41,7 @@ fn estimate_single_pass(chars: usize, max_tokens: u32) -> bool {
     let prompt_tokens = chars as f64 / 2.5 + 600.0;
     chars <= 12_000
         && prompt_tokens <= 6_000.0
-        && prompt_tokens as u32 + max_tokens + 256 <= CONTEXT_TOKENS
+        && prompt_tokens as u32 + max_tokens + 256 <= config::context_tokens()
 }
 
 pub fn run(
@@ -336,7 +336,7 @@ pub fn run(
                 RUNTIME_COMMIT.to_string()
             },
             backend: "sidecar".to_string(),
-            model_id: MODEL_ID.to_string(),
+            model_id: config::model_id().to_string(),
             model_title: if output_language == text::Language::En {
                 MODEL_TITLE_EN.to_string()
             } else {
@@ -344,7 +344,7 @@ pub fn run(
             },
             model_sha256: spec.model_sha.clone(),
             quant: "Q4_K_M".to_string(),
-            context: CONTEXT_TOKENS,
+            context: config::context_tokens(),
             threads: info.threads,
             temperature: 0.2,
             top_p: 0.9,
@@ -612,7 +612,7 @@ fn request(
         top_p: 0.9,
         repeat_penalty: 1.05,
         seed: 42,
-        n_ctx: CONTEXT_TOKENS,
+        n_ctx: config::context_tokens(),
         threads: info.threads,
         stop: vec!["<|im_end|>".to_string(), "<|endoftext|>".to_string()],
     }
@@ -680,7 +680,7 @@ mod tests {
             confirmed_sensitive: false,
             allow_downgrade: false,
             force: false,
-            model_sha: super::super::config::MODEL_SHA256.to_string(),
+            model_sha: config::model_sha256().to_string(),
         };
         let mut backend = super::super::fake::FakeBackend::new("flat_once");
         let cancel = CancelToken::new();
@@ -740,7 +740,7 @@ mod tests {
             confirmed_sensitive: false,
             allow_downgrade: false,
             force: false,
-            model_sha: super::super::config::MODEL_SHA256.to_string(),
+            model_sha: config::model_sha256().to_string(),
         };
         let mut backend = super::super::fake::FakeBackend::new("ok");
         let cancel = CancelToken::new();
@@ -781,7 +781,7 @@ mod tests {
             confirmed_sensitive: false,
             allow_downgrade: false,
             force: false,
-            model_sha: super::super::config::MODEL_SHA256.to_string(),
+            model_sha: config::model_sha256().to_string(),
         };
         let mut backend = super::super::fake::FakeBackend::new("ok");
         let cancel = CancelToken::new();
@@ -860,7 +860,7 @@ mod tests {
             confirmed_sensitive: false,
             allow_downgrade: false,
             force: false,
-            model_sha: super::super::config::MODEL_SHA256.to_string(),
+            model_sha: config::model_sha256().to_string(),
         };
         let mut backend = super::super::fake::FakeBackend::new("nonce_echo");
         let cancel = CancelToken::new();
@@ -918,7 +918,7 @@ mod tests {
             confirmed_sensitive: false,
             allow_downgrade: false,
             force: false,
-            model_sha: super::super::config::MODEL_SHA256.to_string(),
+            model_sha: config::model_sha256().to_string(),
         };
         let mut backend = super::super::fake::FakeBackend::new("map_injection");
         let cancel = CancelToken::new();
@@ -972,7 +972,7 @@ mod tests {
             confirmed_sensitive: false,
             allow_downgrade: false,
             force: false,
-            model_sha: super::super::config::MODEL_SHA256.to_string(),
+            model_sha: config::model_sha256().to_string(),
         };
         let mut backend = super::super::fake::FakeBackend::new("model_load");
         let cancel = CancelToken::new();

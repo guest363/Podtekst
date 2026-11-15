@@ -23,6 +23,7 @@ PLATFORMS = {
 REQUIRED_PLATFORMS = set(PLATFORMS.values())
 NOTES_LIMIT = 16 * 1024
 UNSIGNED_DOC = "docs/UNSIGNED-INSTALL.md"
+COMPONENTS_PREFIX = "Компоненты:"
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -90,8 +91,14 @@ def check_notes(root, tag, allow_legacy_notes=False):
     text = read_text(path)
     if not text.strip():
         fail(f"пустое описание релиза: {path.relative_to(root)}")
-    if not allow_legacy_notes and UNSIGNED_DOC not in text:
-        fail(f"в {path.relative_to(root)} нет ссылки на {UNSIGNED_DOC}")
+    if not allow_legacy_notes:
+        if UNSIGNED_DOC not in text:
+            fail(f"в {path.relative_to(root)} нет ссылки на {UNSIGNED_DOC}")
+        if not any(line.lstrip().startswith(COMPONENTS_PREFIX) for line in text.splitlines()):
+            fail(
+                f"в {path.relative_to(root)} нет строки, начинающейся с «{COMPONENTS_PREFIX}»: "
+                "перечислите версии моделей и ffmpeg этой сборки"
+            )
     return text
 
 
@@ -240,7 +247,7 @@ def main():
     parser.add_argument(
         "--allow-legacy-notes",
         action="store_true",
-        help="не требовать ссылку на UNSIGNED-INSTALL.md (только для dry run)",
+        help="не требовать ссылку на UNSIGNED-INSTALL.md и строку «Компоненты:» (только для dry run)",
     )
     args = parser.parse_args()
 

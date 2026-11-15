@@ -429,6 +429,8 @@ const onPresetFocusOut = (e: FocusEvent): void => {
           </div>
           {#if modelPct !== null}
             <span class="summary-state info">Скачивание {modelPct}%</span>
+          {:else if model?.has_update}
+            <span class="summary-state warn">Обновление</span>
           {:else if model?.is_installed}
             <span class="summary-state ok">Скачана</span>
           {:else}
@@ -460,10 +462,12 @@ const onPresetFocusOut = (e: FocusEvent): void => {
 
         {#if modelPct === null}
           <div class="summary-model-foot">
-            {#if !model?.is_installed}
+            {#if !model?.is_installed || model?.needs_reinstall}
               <button class="btn-primary btn-sm" disabled={!model} onclick={() => void download()}>
                 Скачать
               </button>
+            {:else if model?.has_update}
+              <button class="btn-primary btn-sm" onclick={() => void download()}>Обновить</button>
             {/if}
             {#if model?.license_url}
               <a class="summary-link" href={model.license_url} target="_blank" rel="noreferrer">

@@ -365,6 +365,25 @@ fn hotwords_from_body(body: &serde_json::Value) -> Vec<String> {
     }
 }
 
+/// Установка подменяет файлы моделей: работа, которая их читает, должна быть
+/// завершена, иначе расшифровка увидит набор из двух версий.
+fn install_blocker() -> Option<(&'static str, &'static str)> {
+    #[cfg(feature = "onnx")]
+    if crate::transcribe::has_pending_work() {
+        return Some((
+            "busy_transcription",
+            "Идёт расшифровка. Дождитесь окончания и повторите.",
+        ));
+    }
+    if crate::summary::is_active() {
+        return Some((
+            "busy_summary",
+            "Идут итоги. Дождитесь окончания и повторите.",
+        ));
+    }
+    None
+}
+
 pub(super) fn handle_models_update(request: tiny_http::Request, body: serde_json::Value) {
     let model_id = body
         .get("model_id")
@@ -381,28 +400,47 @@ pub(super) fn handle_models_update(request: tiny_http::Request, body: serde_json
         return;
     }
     let manifest = mr_models::load_bundled_manifest();
-    let entry = manifest.models.iter().find(|m| m.id == model_id);
-    let kind = entry.map(|m| m.kind.as_str()).unwrap_or("asr").to_string();
+    let Some(entry) = manifest.models.iter().find(|m| m.id == model_id) else {
+        json_response(
+            request,
+            json!({"ok": false, "error": "Модель не найдена в манифесте", "error_code": "unknown_model"}),
+            400,
+        );
+        return;
+    };
+    let kind = entry.kind.clone();
+    if let Some((code, message)) = install_blocker() {
+        json_response(
+            request,
+            json!({"ok": false, "error": message, "error_code": code, "retryable": true}),
+            409,
+        );
+        return;
+    }
+    let total: u64 = entry.files.iter().map(|f| f.size_bytes).sum();
+    let models_root = mr_models::models_dir(&app_data_dir());
+    if let Err(mr_models::ModelsError::NoSpace {
+        need_bytes,
+        free_bytes,
+    }) = mr_models::check_space(&models_root, total)
+    {
+        json_response(
+            request,
+            json!({
+                "ok": false,
+                "code": "disk_low",
+                "error": "Не хватает места на диске. Освободите место и повторите.",
+                "need_bytes": need_bytes,
+                "free_bytes": free_bytes,
+            }),
+            422,
+        );
+        return;
+    }
+    // Windows не даёт заменить загруженный .gguf: гасим sidecar до публикации.
+    // Ровно для модели итогов — ASR-модели sidecar не читает.
     if kind == "summary" {
-        let need = entry
-            .map(|m| m.files.iter().map(|f| f.size_bytes).sum::<u64>())
-            .unwrap_or(0);
-        let dir = mr_models::models_dir(&app_data_dir());
-        if fs2::available_space(&dir)
-            .ok()
-            .is_some_and(|free| free < need.saturating_add(512 * 1024 * 1024))
-        {
-            json_response(
-                request,
-                json!({
-                    "ok": false,
-                    "code": "disk_low",
-                    "error": "Не хватает места на диске. Освободите место и повторите.",
-                }),
-                422,
-            );
-            return;
-        }
+        crate::summary::shutdown();
     }
     let reply_id = model_id.clone();
     // Стартовое событие (и флаг «модель качается») — синхронно до ответа:

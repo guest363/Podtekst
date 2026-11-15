@@ -53,11 +53,38 @@ const systemModels = $derived(
   (system.snapshot?.models?.items || []).filter((m) => m.kind !== 'summary'),
 )
 const allInstalled = $derived(
-  Boolean(systemModels.length && systemModels.every((m) => m.is_installed)),
+  Boolean(
+    systemModels.length &&
+      systemModels.every((m) => m.is_installed && !m.has_update && !m.needs_reinstall),
+  ),
 )
 const modelsBadgeKind = $derived(allInstalled ? 'ok' : coreReady ? 'ok' : 'warn')
 const modelsBadgeLabel = $derived(
   allInstalled ? 'Все готовы' : coreReady ? 'Базовые готовы' : 'Не всё',
+)
+// Манифест несёт дату ISO вида 2026-11-15T00:00:00; в интерфейсе нужен только день.
+const manifestDate = $derived(
+  settings.manifestUpdatedAt
+    ? settings.manifestUpdatedAt.slice(0, 10).split('-').reverse().join('.')
+    : '',
+)
+const ffmpegSourceText = $derived(
+  ffmpeg.source === 'app'
+    ? 'управляется приложением'
+    : ffmpeg.source === 'path'
+      ? 'системный'
+      : 'не определён',
+)
+const ffmpegBadge = $derived(
+  ffmpeg.downloading
+    ? statusBadge('info', `Скачивание ${ffmpeg.pct}%`)
+    : !ffmpeg.known
+      ? statusBadge('info', 'Проверка…')
+      : !ffmpeg.available
+        ? statusBadge('warn', 'Не установлен')
+        : ffmpeg.canUpdate
+          ? statusBadge('warn', `Обновление до ${ffmpeg.expectedVersion || 'версии сборки'}`)
+          : statusBadge('ok', 'Готов'),
 )
 
 const openModelsTab = async (): Promise<void> => {
@@ -138,7 +165,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
       aria-selected={tab === 'models'}
       onclick={() => (tab = 'models')}
     >
-      Модели ИИ
+      Компоненты
     </button>
     {#if settings.summaryFeature === true && !isAndroid}
       <button
@@ -327,26 +354,38 @@ const onWindowKey = (e: KeyboardEvent): void => {
             Нейросети работают полностью офлайн на вашем процессоре. Для первой расшифровки достаточно Silero VAD и GigaAM.
           </div>
           <div class="recordings-list" id="modelsListSettings">
-            {#if !isMobile && ffmpeg.known && (!ffmpeg.available || ffmpeg.downloading || ffmpeg.error)}
+            {#if !isMobile}
               <div class="rec-item">
                 <div class="rec-info">
-                  <span class="rec-name">ffmpeg (обработка видео)</span>
+                  <span class="rec-name">ffmpeg</span>
                   <span class="rec-meta">
-                    Нужен для записи экрана, импорта видео (MP4, MKV, MOV, WEBM) и экспорта MP3.
-                    Для записи звука и расшифровки не требуется.
+                    Запись экрана и видео (MP4, MKV, MOV, WEBM), экспорт MP3. Для записи звука и
+                    расшифровки не нужен.
                   </span>
-                  {#if ffmpeg.error}
-                    <span class="rec-meta">
-                      Автоскачивание не удалось ({ffmpeg.error}). Вручную:
-                      {#if settings.platform === 'windows'}
-                        <a href={ffmpeg.manualUrl} target="_blank" rel="noreferrer">gyan.dev/ffmpeg/builds</a>
-                        — положите ffmpeg.exe и ffprobe.exe в
-                        %APPDATA%\MeetingRecorder\bin или в PATH.
-                      {:else if settings.platform === 'darwin'}
-                        brew install ffmpeg
-                      {:else}
-                        sudo apt install ffmpeg (или dnf/pacman/zypper)
+                  {#if ffmpeg.available}
+                    <div class="system-facts">
+                      <span class="system-key">Версия</span>
+                      <span class="system-val">
+                        {ffmpeg.version || 'не определена'}{ffmpeg.ffprobeVersion
+                          ? ` · ffprobe ${ffmpeg.ffprobeVersion}`
+                          : ''}
+                      </span>
+                      <span class="system-key">Источник</span>
+                      <span class="system-val">{ffmpegSourceText}</span>
+                      {#if ffmpeg.pairOk !== null}
+                        <span class="system-key">ffmpeg и ffprobe</span>
+                        <span class="system-val">
+                          {ffmpeg.pairOk ? 'совпадают' : 'не совпадают'}
+                        </span>
                       {/if}
+                    </div>
+                  {/if}
+                  {#if ffmpeg.error && !ffmpeg.downloading}
+                    <span class="rec-meta ffmpeg-error">
+                      {ffmpeg.error}
+                      <a href={ffmpeg.manualUrl} target="_blank" rel="noreferrer">
+                        Страница загрузки
+                      </a>
                     </span>
                   {/if}
                   {#if ffmpeg.downloading}
@@ -354,23 +393,31 @@ const onWindowKey = (e: KeyboardEvent): void => {
                       class="vu-track progress-track"
                       role="progressbar"
                       aria-valuenow={ffmpeg.pct}
-                      aria-label="Прогресс скачивания ffmpeg"
+                      aria-label="Прогресс установки ffmpeg"
                     >
                       <div class="vu-bar" style={`width: ${ffmpeg.pct}%`}></div>
                     </div>
                   {/if}
                 </div>
                 <div class="rec-actions">
-                  {@html ffmpeg.downloading
-                    ? statusBadge('info', `Скачивание ${ffmpeg.pct}%`)
-                    : statusBadge('warn', 'Не установлен')}
-                  <button
-                    class="btn-secondary btn-sm"
-                    disabled={ffmpeg.downloading}
-                    onclick={() => void downloadFfmpeg()}
-                  >
-                    Скачать
-                  </button>
+                  {@html ffmpegBadge}
+                  {#if ffmpeg.known && !ffmpeg.available}
+                    <button
+                      class="btn-primary btn-sm"
+                      disabled={ffmpeg.downloading}
+                      onclick={() => void downloadFfmpeg()}
+                    >
+                      Скачать
+                    </button>
+                  {:else if ffmpeg.canUpdate}
+                    <button
+                      class="btn-primary btn-sm"
+                      disabled={ffmpeg.downloading}
+                      onclick={() => void downloadFfmpeg(true)}
+                    >
+                      Обновить
+                    </button>
+                  {/if}
                 </div>
               </div>
             {/if}
@@ -383,9 +430,11 @@ const onWindowKey = (e: KeyboardEvent): void => {
                 {@const badge = pct !== undefined
                   ? statusBadge('info', `Скачивание ${pct}%`)
                   : m.is_installed
-                    ? m.has_update
-                      ? statusBadge('warn', `Обновление до v${m.version}`)
-                      : statusBadge('ok', `Скачана v${m.installed_version ?? m.version}`)
+                    ? m.needs_reinstall
+                      ? statusBadge('warn', 'Нужна переустановка')
+                      : m.has_update
+                        ? statusBadge('warn', `Обновление до v${m.version}`)
+                        : statusBadge('ok', `Скачана v${m.installed_version ?? m.version}`)
                     : statusBadge('info', `${sizeMb} МБ`)}
                 <div class="rec-item">
                   <div class="rec-info">
@@ -407,19 +456,29 @@ const onWindowKey = (e: KeyboardEvent): void => {
                       >
                         Скачать
                       </button>
-                    {:else if m.has_update}
+                    {:else if m.has_update || m.needs_reinstall}
                       <button
                         class="btn-primary btn-sm"
                         disabled={pct !== undefined}
                         onclick={() => void downloadModel(m)}
                       >
-                        Обновить
+                        {m.has_update ? 'Обновить' : 'Переустановить'}
                       </button>
                     {/if}
                   </div>
                 </div>
               {/each}
             {/if}
+          </div>
+          {#if isAndroid}
+            <div class="help-text">
+              На Android ffmpeg не используется: запись экрана и импорт видео там недоступны.
+            </div>
+          {/if}
+          <div class="help-text">
+            Версии этой сборки.{#if manifestDate}
+              Манифест моделей от {manifestDate}.{/if}
+            Новые версии моделей приходят с обновлением приложения, ffmpeg ставится по кнопке.
           </div>
           {#if summaryModels.length > 0 && settings.summaryFeature === true && !isAndroid}
             <div class="help-text">
@@ -571,6 +630,12 @@ const onWindowKey = (e: KeyboardEvent): void => {
   }
   .link-meta-btn:hover {
     color: #1a4299;
+  }
+  .ffmpeg-error {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    color: var(--accent-rec);
   }
   .audio-diag-block {
     border-top: 1px solid var(--border-soft);

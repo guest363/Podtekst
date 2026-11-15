@@ -1,0 +1,67 @@
+name: components
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: components
+  cancel-in-progress: false
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Compile scripts
+        run: python3 -m py_compile scripts/components_lint.py scripts/components_monitor.py
+      - name: Lint manifest and pins (offline, no network)
+        run: python3 scripts/components_lint.py
+
+  monitor:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Upstream versions
+        run: |
+          set -o pipefail
+          python3 scripts/components_monitor.py | tee monitor.md
+      - name: Step summary
+        run: cat monitor.md >> "$GITHUB_STEP_SUMMARY"
+      - name: One issue with the drift
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: "Компоненты: пины отстают от апстримов"
+        run: |
+          set -euo pipefail
+          number="$(gh issue list --label dependencies --state open --limit 100 \
+            --json number,title --jq '.[] | "\(.number)\t\(.title)"' \
+            | awk -F'\t' -v title="$TITLE" '$2 == title {print $1; exit}')"
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          if grep -q "обновлений — 0," monitor.md; then
+            if [ -n "$number" ]; then
+              gh issue comment "$number" --body "Пины снова совпадают с апстримами: $run_url"
+              gh issue close "$number"
+            fi
+            exit 0
+          fi
+          {
+            printf 'Апстримы обогнали закреплённые версии. Обновите манифест моделей или пины ffmpeg.\n\n'
+            cat monitor.md
+            printf '\nПрогон: %s\n' "$run_url"
+          } > issue.md
+          if [ -z "$number" ]; then
+            gh label create dependencies --description "Зависимости и их версии" --color FBCA04 \
+              >/dev/null 2>&1 || true
+            gh issue create --title "$TITLE" --label dependencies --body-file issue.md
+          else
+            gh issue edit "$number" --body-file issue.md
+          fi
