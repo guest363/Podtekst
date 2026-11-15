@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Подтекст - расшифровка аудио в текст без облака</title>
-  <meta name="description" content="Бесплатная локальная расшифровка аудио и встреч в текст. Спикеры, таймкоды, GigaAM-v3 и Whisper на вашем компьютере. Без облака и подписки.">
+  <meta name="description" content="Бесплатная локальная расшифровка аудио и встреч в текст. Спикеры, таймкоды, метрики речи, GigaAM-v3 и Whisper на вашем компьютере. Без облака и подписки.">
   <link rel="canonical" href="https://guest363.github.io/Podtekst/">
   <meta name="theme-color" content="#f7f7f4">
   <meta name="robots" content="index, follow">
@@ -12,7 +12,7 @@
   <meta property="og:site_name" content="Подтекст">
   <meta property="og:locale" content="ru_RU">
   <meta property="og:title" content="Подтекст - расшифровка аудио в текст без облака">
-  <meta property="og:description" content="Запись встреч, спикеры и готовый протокол на вашем компьютере. Бесплатно, без подписки и отправки аудио на сервер.">
+  <meta property="og:description" content="Запись встреч, спикеры, метрики речи и готовый протокол на вашем компьютере. Бесплатно, без подписки и отправки аудио на сервер.">
   <meta property="og:url" content="https://guest363.github.io/Podtekst/">
   <meta property="og:image" content="https://guest363.github.io/Podtekst/assets/og-image.png">
   <meta property="og:image:width" content="1200">
@@ -58,7 +58,7 @@
         "url": "https://guest363.github.io/Podtekst/",
         "image": "https://guest363.github.io/Podtekst/assets/og-image.png",
         "screenshot": "https://guest363.github.io/Podtekst/assets/screenshots/transcript.webp",
-        "softwareVersion": "0.7.3",
+        "softwareVersion": "0.8.0",
         "license": "https://opensource.org/licenses/MIT",
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "RUB" },
         "publisher": { "@id": "https://guest363.github.io/Podtekst/#organization" }
@@ -123,7 +123,7 @@
       </a>
       <nav class="nav" aria-label="Основная навигация">
         <a href="#how">Как это работает</a>
-        <a href="#roadmap">Roadmap</a>
+        <a href="#roadmap">Возможности</a>
         <a href="#privacy">Приватность</a>
         <a href="#faq">Вопросы</a>
         <a href="https://github.com/guest363/Podtekst" rel="noopener">GitHub</a>
@@ -137,7 +137,7 @@
   <div class="mobile-menu" id="mobile-menu" role="dialog" aria-modal="true" aria-label="Меню" hidden>
     <nav aria-label="Мобильная навигация">
       <a href="#how">Как это работает</a>
-      <a href="#roadmap">Roadmap</a>
+      <a href="#roadmap">Возможности</a>
       <a href="#privacy">Приватность</a>
       <a href="#faq">Вопросы</a>
       <a href="support/">Поддержать проект</a>
@@ -152,7 +152,7 @@
         <div class="hero-copy">
           <p class="eyebrow"><span class="record-dot" aria-hidden="true"></span>Локальная расшифровка встреч</p>
           <h1 id="hero-title">Расшифровка аудио в текст. <span>Без облака.</span></h1>
-          <p class="lead">Записывайте встречи или загружайте готовые файлы. Подтекст распознаёт речь на вашем компьютере, разделяет спикеров и сохраняет протокол с таймкодами.</p>
+          <p class="lead">Записывайте встречи или загружайте готовые файлы. Подтекст распознаёт речь на вашем компьютере, разделяет спикеров, считает метрики речи и сохраняет протокол с таймкодами.</p>
           <div class="actions">
             <a class="button button-primary" href="https://github.com/guest363/Podtekst/releases/latest" rel="noopener" data-download>Скачать бесплатно</a>
             <a class="text-link" href="https://github.com/guest363/Podtekst" rel="noopener">Исходный код на GitHub <span aria-hidden="true">↗</span></a>
@@ -218,7 +218,7 @@
         <ol class="steps">
           <li><span>01</span><h3>Запишите или выберите файл</h3><p>Микрофон и звук звонка сохраняются раздельно. Можно перетащить готовый аудиофайл или видео.</p></li>
           <li><span>02</span><h3>Запустите расшифровку</h3><p>GigaAM-v3 распознаёт русский язык, Whisper Turbo понимает более 30 языков. Приложение разделяет реплики по спикерам, узнаёт знакомые голоса и учитывает словарь терминов.</p></li>
-          <li><span>03</span><h3>Проверьте и соберите итоги</h3><p>Найдите фразу по таймкоду, исправьте текст и уточните спикеров. Встроенная модель Qwen составит краткий итог с решениями и задачами. Для экспорта доступны Markdown, DOCX и JSON.</p></li>
+          <li><span>03</span><h3>Проверьте, соберите итоги и метрики</h3><p>Найдите фразу по таймкоду, исправьте текст и уточните спикеров. Встроенная модель Qwen составит краткий итог с решениями и задачами, а панель метрик покажет долю речи, монологи и паузы. Для экспорта доступны Markdown, DOCX и JSON.</p></li>
         </ol>
         <figure class="product-shot transcript-shot">
           <img src="assets/screenshots/transcript.webp" alt="Настоящий экран расшифровки Подтекст: таймкоды, спикеры, панель локальных итогов встречи и экспорт" width="2160" height="1428" loading="lazy">
@@ -231,38 +231,39 @@
       <div class="container">
         <div class="section-heading roadmap-heading">
           <div>
-            <p class="eyebrow">Roadmap</p>
-            <h2 id="roadmap-title">Что дальше</h2>
+            <p class="eyebrow">Возможности</p>
+            <h2 id="roadmap-title">Что уже работает и что дальше</h2>
           </div>
           <div class="roadmap-intro">
-            <p class="lead">Подтекст уже записывает и расшифровывает встречи локально. Дальше хотим помочь быстрее находить важное в готовом тексте. Ниже только текущие приоритеты, без обещаний дат релизов.</p>
+            <p class="lead">В версии 0.8.0 появились локальные метрики речи. Ниже: что уже доступно и какие приоритеты остаются. Без обещаний дат релизов.</p>
             <a class="text-link" href="https://github.com/guest363/Podtekst/blob/main/ROADMAP.md" rel="noopener">Полная дорожная карта <span aria-hidden="true">↗</span></a>
           </div>
         </div>
         <ol class="roadmap-track">
-          <li class="roadmap-item">
-            <p class="roadmap-stage"><span class="roadmap-index" aria-hidden="true">01</span>Следующее</p>
-            <h3>Актуальные компоненты</h3>
-            <p>Подтекст сообщит, когда выйдет новая версия модели распознавания или ffmpeg. Так можно вовремя обновлять компоненты, не следя за каждым проектом вручную. Загрузка и установка по-прежнему будут начинаться только по вашей команде.</p>
-          </li>
           <li class="roadmap-item roadmap-feature">
-            <p class="roadmap-stage"><span class="roadmap-index" aria-hidden="true">02</span>В разработке</p>
-            <h3>Локальные итоги встреч</h3>
-            <p>Базовая версия уже работает в приложении на модели Qwen3-4B Instruct. Программа формирует краткий итог, ключевые решения и задачи с таймкодами без отправки звука или текста в облако.</p>
-            <ul class="roadmap-summary" aria-label="Структура итога встречи">
-              <li>О чём шла речь</li>
-              <li>Какие решения приняты</li>
-              <li>Кто и что должен сделать</li>
-              <li>Что осталось неясным</li>
+            <p class="roadmap-stage"><span class="roadmap-index" aria-hidden="true">01</span>Уже в 0.8.0</p>
+            <h3>Метрики речи</h3>
+            <p>Доля речи и перехваты по участникам, одновременная речь, длина монологов, темп и паузы. Быстрый переход к самому длинному монологу, первой длинной паузе и первому перехвату.</p>
+            <ul class="roadmap-summary" aria-label="Что показывают метрики речи">
+              <li>Кто сколько говорил</li>
+              <li>Где монолог затянулся</li>
+              <li>Где речь шла одновременно</li>
+              <li>Насколько хороша запись</li>
             </ul>
-            <p class="roadmap-detail">В версии 0.7.0 появились семь готовых шаблонов и правка текста реплик. Следующий шаг: пользовательские шаблоны, методики SPIN, STAR, SOAP и ответы на вопросы по содержанию встречи.</p>
+            <p class="roadmap-detail">Метрики считаются на устройстве, аудио никуда не отправляется. Рейтингов и оценки личности нет. <a class="text-link" href="https://github.com/guest363/Podtekst/releases/tag/v0.8.0" rel="noopener">Что нового в 0.8.0 <span aria-hidden="true">↗</span></a></p>
           </li>
           <li class="roadmap-item">
-            <p class="roadmap-stage"><span class="roadmap-index" aria-hidden="true">03</span>Параллельно</p>
-            <h3>Новые способы работы с записью</h3>
+            <p class="roadmap-stage"><span class="roadmap-index" aria-hidden="true">02</span>Следующее</p>
+            <h3>Актуальные компоненты</h3>
+            <p>Подтекст сообщит, когда выйдет новая версия модели распознавания или ffmpeg. Обновление останется по вашей команде.</p>
+          </li>
+          <li class="roadmap-item">
+            <p class="roadmap-stage"><span class="roadmap-index" aria-hidden="true">03</span>В разработке</p>
+            <h3>Итоги и работа с записью</h3>
             <ul class="roadmap-extra">
-              <li><strong>Субтитры</strong><span>Готовые файлы SRT и VTT для плееров, видеоредакторов и платформ будут создаваться из таймкодов реплик.</span></li>
-              <li><strong>Метрики речи</strong><span>Доля речи и перехваты по участникам, одновременная речь, длина монологов, темп и паузы, быстрый переход к самому длинному монологу или мёртвому воздуху.</span></li>
+              <li><strong>Пользовательские итоги</strong><span>Семь шаблонов уже работают. Дальше: свои шаблоны, методики SPIN, STAR, SOAP и ответы на вопросы по содержанию встречи.</span></li>
+              <li><strong>Субтитры</strong><span>Файлы SRT и VTT из таймкодов реплик для плееров, видеоредакторов и платформ.</span></li>
+              <li><strong>Метки на таймлайне</strong><span>Монологи, паузы и перехваты на шкале записи, чтобы переходить к ним одним кликом.</span></li>
             </ul>
           </li>
         </ol>
