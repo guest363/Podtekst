@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>Подтекст - расшифровка аудио в текст без облака</title>
-  <meta name="description" content="Бесплатная локальная расшифровка аудио и встреч в текст. Спикеры, таймкоды, метрики речи, GigaAM-v3 и Whisper на вашем компьютере. Без облака и подписки.">
+  <title>Подтекст — расшифровка аудио в текст без облака</title>
+  <meta name="description" content="Бесплатная локальная расшифровка аудио в текст: спикеры, таймкоды, метрики речи и итоги встреч. GigaAM-v3 и Whisper на вашем компьютере, без облака.">
   <link rel="canonical" href="https://guest363.github.io/Podtekst/">
   <meta name="theme-color" content="#f7f7f4">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Подтекст">
   <meta property="og:locale" content="ru_RU">
-  <meta property="og:title" content="Подтекст - расшифровка аудио в текст без облака">
+  <meta property="og:title" content="Подтекст — расшифровка аудио в текст без облака">
   <meta property="og:description" content="Запись встреч, спикеры, метрики речи и готовый протокол на вашем компьютере. Бесплатно, без подписки и отправки аудио на сервер.">
   <meta property="og:url" content="https://guest363.github.io/Podtekst/">
   <meta property="og:image" content="https://guest363.github.io/Podtekst/assets/og-image.png">
@@ -19,7 +19,7 @@
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="Подтекст: локальная расшифровка аудио и настоящий интерфейс приложения">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Подтекст - расшифровка аудио в текст без облака">
+  <meta name="twitter:title" content="Подтекст — расшифровка аудио в текст без облака">
   <meta name="twitter:description" content="Локальная запись и расшифровка встреч. Открытый код, без подписки и телеметрии.">
   <meta name="twitter:image" content="https://guest363.github.io/Podtekst/assets/og-image.png">
   <meta name="twitter:image:alt" content="Подтекст: локальная расшифровка аудио и настоящий интерфейс приложения">
@@ -81,7 +81,7 @@
             "name": "Нужна ли мощная видеокарта?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Нет. Распознавание работает на процессоре, итоги на Qwen при желании ускоряются видеокартой. Для GigaAM-v3 нужно от 1,5 ГБ оперативной памяти, для Whisper: от 4 ГБ свободной памяти. Для локальных итогов на Qwen3-4B рекомендуется от 6,5 ГБ свободной памяти. Базовые модели занимают около 300 МБ на диске, модель итогов: 2,33 ГБ."
+              "text": "Нет. Распознавание работает на процессоре, итоги на Qwen при желании ускоряются видеокартой. Для GigaAM-v3 нужно от 1,5 ГБ оперативной памяти, для Whisper: от 4 ГБ свободной памяти. Для локальных итогов на Qwen3-4B рекомендуется от 6,5 ГБ свободной памяти. Базовый комплект моделей занимает около 530 МБ на диске, модель итогов: 2,33 ГБ."
             }
           },
           {
@@ -123,13 +123,13 @@
         <span>Подтекст</span>
       </a>
       <nav class="nav" aria-label="Основная навигация">
+        <a href="#privacy">Приватность</a>
         <a href="#how">Как это работает</a>
         <a href="#roadmap">Возможности</a>
-        <a href="#privacy">Приватность</a>
         <a href="#faq">Вопросы</a>
         <a href="https://github.com/guest363/Podtekst" rel="noopener">GitHub</a>
       </nav>
-      <a class="button button-primary button-small header-cta" href="https://github.com/guest363/Podtekst/releases/latest" rel="noopener">Скачать</a>
+      <a class="button button-primary button-small header-cta" href="https://github.com/guest363/Podtekst/releases/latest" rel="noopener" data-download>Скачать</a>
       <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="mobile-menu" aria-label="Открыть меню">
         <span></span><span></span>
       </button>
@@ -164,7 +164,7 @@
             <li>Без телеметрии</li>
             <li>Открытый код MIT</li>
           </ul>
-          <p class="hero-note">Windows 10/11 · macOS 13.4+ · Linux · Android</p>
+          <p class="hero-note">Windows 10/11 · macOS 13.4+ · Linux · Android (экспериментально)</p>
         </div>
         <figure class="product-shot">
           <img src="assets/screenshots/recording.webp" alt="Настоящий экран Подтекст: запись микрофона и системного звука, список аудиозаписей" width="2160" height="1200" fetchpriority="high">
@@ -214,7 +214,7 @@
         <div class="section-heading">
           <div>
             <p class="eyebrow">От звука к протоколу</p>
-            <h2 id="how-title">Три шага - всё в одном окне</h2>
+            <h2 id="how-title">Три шага — всё в одном окне</h2>
           </div>
           <p class="lead">Можно записать звонок с раздельными каналами или взять готовый файл. После распознавания текст легко проверить и забрать в свою систему.</p>
         </div>
@@ -224,8 +224,11 @@
           <li><span>03</span><h3>Проверьте, соберите итоги и метрики</h3><p>Найдите фразу по таймкоду, исправьте текст и уточните спикеров. Встроенная модель Qwen составит краткий итог с решениями и задачами, а панель метрик покажет долю речи, монологи и паузы. Для экспорта доступны Markdown, TXT, DOCX, PDF и JSON.</p></li>
         </ol>
         <figure class="product-shot transcript-shot">
-          <video src="assets/demo-transcript.mp4" poster="assets/screenshots/transcript.webp" autoplay muted loop playsinline preload="none" width="1440" height="952" aria-label="Живое демо экрана расшифровки: таймкоды, спикеры, панель метрик речи и переход к перехвату" data-demo-video></video>
-          <figcaption>Живое демо: расшифровка, панель метрик речи и переход к перехвату в настоящем интерфейсе · демонстрационные данные</figcaption>
+          <video src="assets/demo-transcript.mp4" poster="assets/screenshots/demo-poster.webp" muted loop playsinline preload="none" width="1440" height="952" aria-label="Демо экрана расшифровки: записи, спикеры, панель метрик речи и переход к перехвату" data-demo-video></video>
+          <figcaption>
+            <button class="demo-toggle" type="button" data-demo-toggle aria-pressed="false">Поставить на паузу</button>
+            <span>Демо: расшифровка, панель метрик речи и переход к перехвату в настоящем интерфейсе · демонстрационные данные</span>
+          </figcaption>
         </figure>
       </div>
     </section>
@@ -257,16 +260,19 @@
           </li>
           <li class="roadmap-item">
             <p class="roadmap-stage"><span class="roadmap-index" aria-hidden="true">02</span>Следующее</p>
-            <h3>Актуальные компоненты</h3>
-            <p>Подтекст сообщит, когда выйдет новая версия модели распознавания или ffmpeg. Обновление останется по вашей команде.</p>
-          </li>
-          <li class="roadmap-item">
-            <p class="roadmap-stage"><span class="roadmap-index" aria-hidden="true">03</span>В разработке</p>
-            <h3>Итоги и работа с записью</h3>
+            <h3>Субтитры и таймлайн</h3>
             <ul class="roadmap-extra">
-              <li><strong>Пользовательские итоги</strong><span>Семь шаблонов уже работают. Дальше: свои шаблоны, методики SPIN, STAR, SOAP и ответы на вопросы по содержанию встречи.</span></li>
               <li><strong>Субтитры</strong><span>Файлы SRT и VTT из таймкодов реплик для плееров, видеоредакторов и платформ.</span></li>
               <li><strong>Метки на таймлайне</strong><span>Монологи, паузы и перехваты на шкале записи, чтобы переходить к ним одним кликом.</span></li>
+            </ul>
+          </li>
+          <li class="roadmap-item">
+            <p class="roadmap-stage"><span class="roadmap-index" aria-hidden="true">03</span>Позже</p>
+            <h3>Итоги под ваши методики</h3>
+            <ul class="roadmap-extra">
+              <li><strong>Свои шаблоны</strong><span>Семь шаблонов уже работают. Дальше: пользовательские шаблоны и методики SPIN, STAR, SOAP.</span></li>
+              <li><strong>Ответы по содержанию</strong><span>Вопросы к расшифровке встречи — с цитатами и таймкодами.</span></li>
+              <li><strong>Подсказки о версиях</strong><span>Сообщение о новых версиях моделей и ffmpeg; обновление остаётся по вашей кнопке.</span></li>
             </ul>
           </li>
         </ol>
@@ -288,7 +294,7 @@
           </details>
           <details>
             <summary>Нужна ли мощная видеокарта?</summary>
-            <p>Нет. Распознавание работает на процессоре, итоги на Qwen при желании ускоряются видеокартой. Для GigaAM-v3 нужно от 1,5&nbsp;ГБ оперативной памяти, для Whisper: от 4&nbsp;ГБ свободной памяти. Для локальных итогов на Qwen3-4B рекомендуется от 6,5&nbsp;ГБ свободной памяти. Базовые модели занимают около 300&nbsp;МБ на диске, модель итогов: 2,33&nbsp;ГБ.</p>
+            <p>Нет. Распознавание работает на процессоре, итоги на Qwen при желании ускоряются видеокартой. Для GigaAM-v3 нужно от 1,5&nbsp;ГБ оперативной памяти, для Whisper: от 4&nbsp;ГБ свободной памяти. Для локальных итогов на Qwen3-4B рекомендуется от 6,5&nbsp;ГБ свободной памяти. Базовый комплект моделей занимает около 530&nbsp;МБ на диске, модель итогов: 2,33&nbsp;ГБ.</p>
           </details>
           <details>
             <summary>Можно расшифровать готовый аудиофайл?</summary>
@@ -310,7 +316,7 @@
       <div class="container support-cta-inner">
         <div>
           <p class="eyebrow">Независимая разработка</p>
-          <h2 id="support-title">Пользуетесь - помогите проекту расти</h2>
+          <h2 id="support-title">Пользуетесь — помогите проекту расти</h2>
           <p>Подтекст бесплатен для всех. Можно поддержать автора чаевыми, звездой на GitHub или отчётом об ошибке.</p>
         </div>
         <a class="button button-secondary" href="support/">Поддержать проект</a>

@@ -69,20 +69,50 @@
   }
 
   var demo = document.querySelector("[data-demo-video]");
-  if (demo && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    demo.removeAttribute("autoplay");
-    demo.pause();
-  } else if (demo) {
-    var demoWatch = new IntersectionObserver(function (entries) {
-      for (var i = 0; i < entries.length; i += 1) {
-        if (entries[i].isIntersecting) {
-          demo.play().catch(function () {});
-        } else {
-          demo.pause();
+  var demoToggle = document.querySelector("[data-demo-toggle]");
+  var demoUserPaused = false;
+  if (demo) {
+    var demoMotionOk = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var demoPlay = function () { demo.play().catch(function () {}); };
+    var demoPause = function () { demo.pause(); };
+    if (demoMotionOk && "IntersectionObserver" in window) {
+      var demoWatch = new IntersectionObserver(function (entries) {
+        for (var i = 0; i < entries.length; i += 1) {
+          if (entries[i].isIntersecting) {
+            if (!demoUserPaused) demoPlay();
+          } else {
+            demoPause();
+          }
         }
-      }
-    });
-    demoWatch.observe(demo);
+      });
+      demoWatch.observe(demo);
+      document.addEventListener("visibilitychange", function () {
+        if (document.hidden) {
+          demoPause();
+        } else if (!demoUserPaused) {
+          demoPlay();
+        }
+      });
+    } else if (demoMotionOk) {
+      demoPlay();
+    } else {
+      demoToggle.hidden = true;
+    }
+    if (demoToggle) {
+      demoToggle.addEventListener("click", function () {
+        if (demo.paused) {
+          demoUserPaused = false;
+          demoPlay();
+          demoToggle.setAttribute("aria-pressed", "false");
+          demoToggle.textContent = "Поставить на паузу";
+        } else {
+          demoUserPaused = true;
+          demoPause();
+          demoToggle.setAttribute("aria-pressed", "true");
+          demoToggle.textContent = "Продолжить демо";
+        }
+      });
+    }
   }
 
   if (menuToggle) {

@@ -31,8 +31,10 @@ Workflow `.github/workflows/pages.yml` публикует содержимое `
 - `site/favicon.ico` - растровые иконки 16-128 px; собирается без кадра 256 px.
 - `site/assets/icon.svg`, `site/assets/icon.png` - векторный фавикон и apple-touch-icon.
 - `site/assets/screenshots/` - реальные экраны приложения в WebP.
-- `site/assets/demo-transcript.mp4` - живое демо реального UI (скринкаст CDP:
-  открытие записи, панель метрик, переход к перехвату), постер = transcript.webp.
+- `site/assets/demo-transcript.mp4` - демо реального UI (скринкаст CDP:
+  записи -> расшифровка -> панель метрик -> переход к перехвату, титры
+  внутри кадра), постер = demo-poster.webp.
+- `site/assets/screenshots/demo-poster.webp` - первый кадр демо-видео.
 - `site/assets/og-image.png` - соцпревью 1200 x 630.
 - `site/robots.txt`, `site/sitemap.xml` - индексация.
 
@@ -48,11 +50,12 @@ Workflow `.github/workflows/pages.yml` публикует содержимое `
 документации. Для съёмки через Chrome DevTools Protocol можно переиспользовать
 `ChromeRunner` и `CdpClient` из `docs/generate_screenshots.py`.
 
-После изменения интерфейса обновите оба WebP, демо-MP4 и их `alt`, `width`,
-`height`. Первый экран предзагружается; скриншоты загружаются лениво,
-демо-MP4 скачивается при загрузке страницы (autoplay в разметке), но играет
-только в видимой области (IntersectionObserver) и не запускается
-при `prefers-reduced-motion`. Шаблон
+После изменения интерфейса обновите оба WebP, демо-MP4, постер и их `alt`,
+`width`, `height`. Демо снимается из той же сессии, что и WebP, чтобы данные
+в списке совпадали. Видео без `autoplay` в разметке: JS запускает его только
+в видимой области (IntersectionObserver) и без `prefers-reduced-motion`;
+кнопка паузы у figcaption обязательна (WCAG 2.2.2). Первый экран
+предзагружается, скриншоты загружаются лениво. Шаблон
 `docs/og-template.html` использует тот же экран расшифровки; из него снимается
 `site/assets/og-image.png`.
 

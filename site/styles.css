@@ -23,6 +23,7 @@ html { scroll-behavior: smooth; scroll-padding-top: 16px; -webkit-text-size-adju
 body {
   margin: 0;
   overflow-x: clip;
+  overflow-wrap: break-word;
   background: var(--paper);
   color: var(--ink);
   font-family: var(--sans);
@@ -164,7 +165,11 @@ h3 { font-size: 19px; line-height: 1.3; letter-spacing: -0.022em; }
 .hero-note { margin-top: 14px; color: var(--faint); font-size: 12.5px; line-height: 1.65; }
 .product-shot { min-width: 0; }
 .product-shot img, .product-shot video { width: 100%; height: auto; border: 1px solid #d8dde4; border-radius: var(--radius); background: #fff; box-shadow: var(--shadow); }
-.product-shot figcaption { margin-top: 12px; color: var(--faint); font-size: 12px; line-height: 1.5; text-align: right; }
+.product-shot figcaption { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; margin-top: 12px; color: var(--faint); font-size: 12px; line-height: 1.5; text-align: right; }
+.product-shot figcaption span { margin-left: auto; }
+.demo-toggle { padding: 8px 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 650; }
+.demo-toggle:hover { border-color: var(--ink); color: var(--ink); }
+html:not(.js) .demo-toggle { display: none; }
 .split-layout { display: grid; grid-template-columns: 0.78fr 1.22fr; gap: 80px; align-items: start; }
 .section-intro .lead { margin-top: 22px; }
 .section-intro .text-link { margin-top: 24px; }
@@ -194,7 +199,7 @@ h3 { font-size: 19px; line-height: 1.3; letter-spacing: -0.022em; }
 .roadmap-intro .text-link { margin-top: 18px; }
 .roadmap-track { position: relative; display: grid; grid-template-columns: minmax(0, 0.86fr) minmax(0, 1.42fr) minmax(0, 0.86fr); gap: 48px; padding-top: 48px; list-style: none; }
 .roadmap-track::before { content: ""; position: absolute; top: 11px; right: 0; left: 0; border-top: 1px dashed #bfc7d1; }
-.roadmap-track::after { content: ""; position: absolute; top: 11px; left: 0; width: 32%; border-top: 1px solid var(--blue); }
+.roadmap-track::after { content: ""; position: absolute; top: 11px; left: 0; width: calc((100% - 96px) * 0.86 / 3.14 + 55.5px); border-top: 1px solid var(--blue); }
 .roadmap-item { position: relative; min-width: 0; }
 .roadmap-item::before { content: ""; position: absolute; top: -43px; left: 0; width: 11px; height: 11px; border: 2px solid var(--blue); border-radius: 50%; background: var(--surface); }
 .roadmap-item::after { content: ""; position: absolute; top: -37px; left: 5px; height: 37px; border-left: 1px solid #cfdbef; }
@@ -273,6 +278,7 @@ h3 { font-size: 19px; line-height: 1.3; letter-spacing: -0.022em; }
   .split-layout, .faq-grid { gap: 56px; }
   .section-heading { gap: 40px; }
   .roadmap-track { gap: 32px; }
+  .roadmap-track::after { width: calc((100% - 64px) * 0.86 / 3.14 + 39.5px); }
 }
 
 @media (max-width: 860px) {
@@ -301,6 +307,8 @@ h3 { font-size: 19px; line-height: 1.3; letter-spacing: -0.022em; }
   .support-cta-inner { align-items: flex-start; flex-direction: column; gap: 28px; }
   .page-content { padding: 56px 0 80px; }
   .narrow { width: min(100% - 48px, 720px); }
+  .footer-grid { flex-direction: column; gap: 28px; }
+  .site-footer nav { justify-content: flex-start; }
 }
 
 @media (max-width: 620px) {
@@ -322,6 +330,7 @@ h3 { font-size: 19px; line-height: 1.3; letter-spacing: -0.022em; }
   .hero-note { font-size: 12px; }
   .product-shot figcaption { font-size: 12px; text-align: left; }
   .product-shot img, .product-shot video { border-radius: 8px; }
+  .transcript-shot video { aspect-ratio: 4 / 5; object-fit: cover; }
   .privacy-lists { grid-template-columns: 1fr; gap: 30px; }
   .data-flow { align-items: flex-start; flex-direction: column; gap: 7px; }
   .data-flow span[aria-hidden="true"] { padding-left: 12px; transform: rotate(90deg); }
