@@ -1,20 +1,11 @@
 (function () {
   "use strict";
 
-  var header = document.querySelector(".site-header");
   var menu = document.getElementById("mobile-menu");
   var menuToggle = document.querySelector(".menu-toggle");
+  var menuBackground = document.querySelectorAll(".site-header, main, .site-footer");
   var lastFocused = null;
   var closeTimer = 0;
-
-  function onScroll() {
-    if (header) {
-      header.classList.toggle("is-scrolled", window.scrollY > 8);
-    }
-  }
-
-  window.addEventListener("scroll", onScroll, { passive: true });
-  onScroll();
 
   function detectOS() {
     var ua = navigator.userAgent || "";
@@ -41,6 +32,12 @@
     }
   }
 
+  function setBackgroundInert(value) {
+    for (var i = 0; i < menuBackground.length; i += 1) {
+      menuBackground[i].inert = value;
+    }
+  }
+
   function openMenu() {
     if (!menu || !menuToggle) return;
     window.clearTimeout(closeTimer);
@@ -51,12 +48,14 @@
     menuToggle.setAttribute("aria-expanded", "true");
     menuToggle.setAttribute("aria-label", "Закрыть меню");
     document.body.classList.add("menu-open");
+    setBackgroundInert(true);
     var firstLink = menu.querySelector("a");
     if (firstLink) firstLink.focus();
   }
 
   function closeMenu() {
     if (!menu || !menuToggle) return;
+    setBackgroundInert(false);
     menu.classList.remove("is-open");
     menuToggle.setAttribute("aria-expanded", "false");
     menuToggle.setAttribute("aria-label", "Открыть меню");

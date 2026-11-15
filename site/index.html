@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
   <title>Подтекст - расшифровка аудио в текст без облака</title>
   <meta name="description" content="Бесплатная локальная расшифровка аудио и встреч в текст. Спикеры, таймкоды, метрики речи, GigaAM-v3 и Whisper на вашем компьютере. Без облака и подписки.">
   <link rel="canonical" href="https://guest363.github.io/Podtekst/">
   <meta name="theme-color" content="#f7f7f4">
-  <meta name="robots" content="index, follow">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Подтекст">
   <meta property="og:locale" content="ru_RU">
@@ -22,6 +22,7 @@
   <meta name="twitter:title" content="Подтекст - расшифровка аудио в текст без облака">
   <meta name="twitter:description" content="Локальная запись и расшифровка встреч. Открытый код, без подписки и телеметрии.">
   <meta name="twitter:image" content="https://guest363.github.io/Podtekst/assets/og-image.png">
+  <meta name="twitter:image:alt" content="Подтекст: локальная расшифровка аудио и настоящий интерфейс приложения">
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
   <link rel="icon" href="favicon.ico" sizes="any">
   <link rel="apple-touch-icon" href="assets/icon.png">
@@ -53,7 +54,7 @@
         "@id": "https://guest363.github.io/Podtekst/#app",
         "name": "Подтекст",
         "applicationCategory": "MultimediaApplication",
-        "operatingSystem": "Linux, Windows 10, Windows 11, macOS 13.4+",
+        "operatingSystem": "Linux, Windows 10, Windows 11, macOS 13.4+, Android (экспериментальная)",
         "description": "Локальная запись встреч и расшифровка речи на русском и других языках.",
         "url": "https://guest363.github.io/Podtekst/",
         "image": "https://guest363.github.io/Podtekst/assets/og-image.png",
@@ -80,7 +81,7 @@
             "name": "Нужна ли мощная видеокарта?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Нет. Модели работают на процессоре. Для GigaAM-v3 нужно от 1,5 ГБ оперативной памяти, для Whisper: от 4 ГБ свободной памяти. Для локальных итогов на Qwen3-4B рекомендуется от 6,5 ГБ свободной памяти. Базовые модели занимают около 300 МБ на диске, модель итогов: 2,33 ГБ."
+              "text": "Нет. Распознавание работает на процессоре, итоги на Qwen при желании ускоряются видеокартой. Для GigaAM-v3 нужно от 1,5 ГБ оперативной памяти, для Whisper: от 4 ГБ свободной памяти. Для локальных итогов на Qwen3-4B рекомендуется от 6,5 ГБ свободной памяти. Базовые модели занимают около 300 МБ на диске, модель итогов: 2,33 ГБ."
             }
           },
           {
@@ -96,7 +97,7 @@
             "name": "Какие операционные системы поддерживаются?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Windows 10 и 11, Linux и macOS 13.4+ на Apple Silicon; macOS-версия на этапе тестирования. Android-версия экспериментальная: запись только с микрофона, без системного звука и видео."
+              "text": "Windows 10 и 11, Linux и macOS 13.4+ на Apple Silicon. Android-версия экспериментальная: запись только с микрофона, без системного звука и видео."
             }
           },
           {
@@ -176,7 +177,7 @@
         <div class="section-intro">
           <p class="eyebrow">Приватность по архитектуре</p>
           <h2 id="privacy-title">Записи остаются вашими</h2>
-          <p class="lead">Не «надёжное облако», а отсутствие облака для записей и текста. Обработка идёт на вашем процессоре.</p>
+          <p class="lead">Не «надёжное облако», а отсутствие облака для записей и текста. Обработка идёт на вашем компьютере.</p>
           <a class="text-link" href="https://github.com/guest363/Podtekst/blob/main/PRIVACY.md" rel="noopener">Политика конфиденциальности <span aria-hidden="true">↗</span></a>
         </div>
         <div class="privacy-details">
@@ -197,6 +198,7 @@
               <h3>Сеть нужна только для</h3>
               <ul class="plain-list">
                 <li>Загрузки открытых моделей по вашей команде</li>
+                <li>Скачивания ffmpeg и GPU-пакета по вашей команде</li>
                 <li>Проверки новой версии на GitHub</li>
               </ul>
               <p class="small-note">В этих запросах нет аудио, расшифровок и идентификаторов пользователя. Обновление устанавливается только по кнопке. После загрузки моделей запись, распознавание и экспорт работают без интернета.</p>
@@ -206,7 +208,7 @@
       </div>
     </section>
 
-    <section class="section how" id="how" aria-labelledby="how-title">
+    <section class="section" id="how" aria-labelledby="how-title">
       <div class="container">
         <div class="section-heading">
           <div>
@@ -216,9 +218,9 @@
           <p class="lead">Можно записать звонок с раздельными каналами или взять готовый файл. После распознавания текст легко проверить и забрать в свою систему.</p>
         </div>
         <ol class="steps">
-          <li><span>01</span><h3>Запишите или выберите файл</h3><p>Микрофон и звук звонка сохраняются раздельно. Можно перетащить готовый аудиофайл или видео.</p></li>
-          <li><span>02</span><h3>Запустите расшифровку</h3><p>GigaAM-v3 распознаёт русский язык, Whisper Turbo понимает более 30 языков. Приложение разделяет реплики по спикерам, узнаёт знакомые голоса и учитывает словарь терминов.</p></li>
-          <li><span>03</span><h3>Проверьте, соберите итоги и метрики</h3><p>Найдите фразу по таймкоду, исправьте текст и уточните спикеров. Встроенная модель Qwen составит краткий итог с решениями и задачами, а панель метрик покажет долю речи, монологи и паузы. Для экспорта доступны Markdown, DOCX и JSON.</p></li>
+          <li><span>01</span><h3>Запишите или выберите файл</h3><p>Микрофон и звук звонка сохраняются раздельно. Запись стартует из окна, трея или глобальной клавиши; вместе со звуком пишется и экран — видео и звук в одном MP4. Готовые файлы добавляются перетаскиванием и расшифровываются по очереди.</p></li>
+          <li><span>02</span><h3>Запустите расшифровку</h3><p>GigaAM-v3 распознаёт русский язык, Whisper Turbo понимает более 30 языков. Приложение разделяет реплики по спикерам, узнаёт знакомые голоса и учитывает словарь до 500 терминов, оценивая уверенность каждого слова.</p></li>
+          <li><span>03</span><h3>Проверьте, соберите итоги и метрики</h3><p>Найдите фразу по таймкоду, исправьте текст и уточните спикеров. Встроенная модель Qwen составит краткий итог с решениями и задачами, а панель метрик покажет долю речи, монологи и паузы. Для экспорта доступны Markdown, TXT, DOCX, PDF и JSON.</p></li>
         </ol>
         <figure class="product-shot transcript-shot">
           <img src="assets/screenshots/transcript.webp" alt="Настоящий экран расшифровки Подтекст: таймкоды, спикеры, панель локальных итогов встречи и экспорт" width="2160" height="1428" loading="lazy">
@@ -229,7 +231,7 @@
 
     <section class="section roadmap" id="roadmap" aria-labelledby="roadmap-title">
       <div class="container">
-        <div class="section-heading roadmap-heading">
+        <div class="section-heading">
           <div>
             <p class="eyebrow">Возможности</p>
             <h2 id="roadmap-title">Что уже работает и что дальше</h2>
@@ -243,14 +245,14 @@
           <li class="roadmap-item roadmap-feature">
             <p class="roadmap-stage"><span class="roadmap-index" aria-hidden="true">01</span>Уже в 0.8.0</p>
             <h3>Метрики речи</h3>
-            <p>Доля речи и перехваты по участникам, одновременная речь, длина монологов, темп и паузы. Быстрый переход к самому длинному монологу, первой длинной паузе и первому перехвату.</p>
+            <p>Доля речи и перехваты по участникам — перехваты для записей с раздельными каналами, одновременная речь, длина монологов, темп и паузы. Быстрый переход к самому длинному монологу, первой длинной паузе и первому перехвату.</p>
             <ul class="roadmap-summary" aria-label="Что показывают метрики речи">
               <li>Кто сколько говорил</li>
               <li>Где монолог затянулся</li>
               <li>Где речь шла одновременно</li>
               <li>Насколько хороша запись</li>
             </ul>
-            <p class="roadmap-detail">Метрики считаются на устройстве, аудио никуда не отправляется. Рейтингов и оценки личности нет. <a class="text-link" href="https://github.com/guest363/Podtekst/releases/tag/v0.8.0" rel="noopener">Что нового в 0.8.0 <span aria-hidden="true">↗</span></a></p>
+            <p class="roadmap-detail">Метрики считаются на устройстве, аудио никуда не отправляется. Рейтингов и оценки личности нет; личная базовая линия показывает отклонения высоты голоса и громкости от прошлых встреч. <a class="text-link" href="https://github.com/guest363/Podtekst/releases/tag/v0.8.0" rel="noopener">Что нового в 0.8.0 <span aria-hidden="true">↗</span></a></p>
           </li>
           <li class="roadmap-item">
             <p class="roadmap-stage"><span class="roadmap-index" aria-hidden="true">02</span>Следующее</p>
@@ -270,7 +272,7 @@
       </div>
     </section>
 
-    <section class="section faq" id="faq" aria-labelledby="faq-title">
+    <section class="section" id="faq" aria-labelledby="faq-title">
       <div class="container faq-grid">
         <div class="section-intro">
           <p class="eyebrow">Вопросы и ответы</p>
@@ -285,7 +287,7 @@
           </details>
           <details>
             <summary>Нужна ли мощная видеокарта?</summary>
-            <p>Нет. Модели работают на процессоре. Для GigaAM-v3 нужно от 1,5&nbsp;ГБ оперативной памяти, для Whisper: от 4&nbsp;ГБ свободной памяти. Для локальных итогов на Qwen3-4B рекомендуется от 6,5&nbsp;ГБ свободной памяти. Базовые модели занимают около 300&nbsp;МБ на диске, модель итогов: 2,33&nbsp;ГБ.</p>
+            <p>Нет. Распознавание работает на процессоре, итоги на Qwen при желании ускоряются видеокартой. Для GigaAM-v3 нужно от 1,5&nbsp;ГБ оперативной памяти, для Whisper: от 4&nbsp;ГБ свободной памяти. Для локальных итогов на Qwen3-4B рекомендуется от 6,5&nbsp;ГБ свободной памяти. Базовые модели занимают около 300&nbsp;МБ на диске, модель итогов: 2,33&nbsp;ГБ.</p>
           </details>
           <details>
             <summary>Можно расшифровать готовый аудиофайл?</summary>
@@ -293,7 +295,7 @@
           </details>
           <details>
             <summary>Какие операционные системы поддерживаются?</summary>
-            <p>Windows 10 и 11, Linux и macOS 13.4+ на Apple Silicon; macOS-версия на этапе тестирования. Android-версия экспериментальная: запись только с микрофона, без системного звука и видео.</p>
+            <p>Windows 10 и 11, Linux и macOS 13.4+ на Apple Silicon. Android-версия экспериментальная: запись только с микрофона, без системного звука и видео.</p>
           </details>
           <details>
             <summary>Можно использовать программу для конфиденциальных разговоров?</summary>
