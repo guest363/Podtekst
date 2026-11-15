@@ -13,6 +13,7 @@ body:has(.transcript-page) {
   flex-direction: column;
   gap: 16px;
   height: 100vh;
+  /* biome-ignore lint/suspicious/noDuplicateProperties: 100dvh - запасной вариант для WebView без dvh */
   height: 100dvh;
   min-height: 0;
 }
