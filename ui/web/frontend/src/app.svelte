@@ -999,7 +999,7 @@ onMount(() => {
       display: flex;
       align-items: stretch;
       gap: 20px;
-      max-width: 1400px;
+      max-width: 1500px;
       width: 100%;
       height: 100vh;
       height: 100dvh;

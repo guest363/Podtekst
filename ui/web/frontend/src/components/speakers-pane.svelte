@@ -1,6 +1,12 @@
 <script lang="ts">
 import { onDestroy, tick } from 'svelte'
-import type { SpeakerCandidate, SpeakerInfo, SpeakerSample, TranscriptData } from '../lib/api'
+import type {
+  SpeakerCandidate,
+  SpeakerInfo,
+  SpeakerSample,
+  SpeechMetrics,
+  TranscriptData,
+} from '../lib/api'
 import {
   baseName,
   encPath,
@@ -17,9 +23,10 @@ import { emit, ui } from '../lib/ui.svelte.ts'
 
 type Props = {
   speakers: SpeakerInfo[]
+  metrics?: SpeechMetrics | null
   onseek?: (sec: number) => void
 }
-let { speakers, onseek }: Props = $props()
+let { speakers, metrics = null, onseek }: Props = $props()
 
 type MergedSpeaker = Omit<SpeakerInfo, 'samples'> & { key: string; samples: SpeakerSample[] }
 
@@ -82,6 +89,37 @@ let mergedSpeakers = $derived.by((): MergedSpeaker[] => {
 
 let playingKey = $state('')
 let sampleAudio: HTMLAudioElement | null = null
+
+// Доли речи: у одного человека может быть несколько кластеров с одним именем
+// (микрофон и система), поэтому строки метрик складываются по имени.
+let shareByName = $derived.by((): Map<string, number> => {
+  const out = new Map<string, number>()
+  for (const m of metrics?.speakers ?? []) {
+    const key = m.name.trim().toLowerCase()
+    out.set(key, (out.get(key) ?? 0) + m.share)
+  }
+  return out
+})
+
+let shareById = $derived.by((): Map<string, number> => {
+  const out = new Map<string, number>()
+  for (const m of metrics?.speakers ?? []) {
+    if (m.id) out.set(m.id, m.share)
+  }
+  return out
+})
+
+const speechShare = (spk: MergedSpeaker, displayName: string): number | null => {
+  const byName = shareByName.get(displayName.trim().toLowerCase())
+  if (byName !== undefined) return byName
+  if (spk.id) {
+    const byId = shareById.get(spk.id)
+    if (byId !== undefined) return byId
+  }
+  return null
+}
+
+const sharePercent = (share: number): number => Math.round(Math.max(0, Math.min(1, share)) * 100)
 
 const stopSample = (): void => {
   if (sampleAudio) {
@@ -474,6 +512,8 @@ const onInputKey = (e: KeyboardEvent, btn: HTMLButtonElement | null): void => {
           spk.matched_pack_name ? spk.matched_pack_name : '',
           typeof spk.silhouette === 'number' ? `силуэт: ${spk.silhouette.toFixed(2)}` : '',
         ].filter(Boolean).join(' • ')}
+        {@const share = speechShare(spk, displayName)}
+        {@const sharePct = share === null ? null : sharePercent(share)}
         <div
           class="speaker-card {spk.matched ? 'matched' : ''}"
           style={`--spk: ${speakerColor(displayName)}; --spk-bg: ${speakerTint(displayName)}`}
@@ -497,6 +537,15 @@ const onInputKey = (e: KeyboardEvent, btn: HTMLButtonElement | null): void => {
               <div class="speaker-meta">{meta}</div>
             {/if}
           </div>
+
+          {#if sharePct !== null}
+            <div class="speaker-share">
+              <span class="speaker-share-track" aria-hidden="true">
+                <span class="speaker-share-fill" style={`width: ${sharePct}%`}></span>
+              </span>
+              <span class="speaker-share-label">доля речи: {sharePct} %</span>
+            </div>
+          {/if}
 
           {#if spk.candidates && spk.candidates.length > 0}
             {@const names = spk.candidates
@@ -690,3 +739,35 @@ const onInputKey = (e: KeyboardEvent, btn: HTMLButtonElement | null): void => {
     </div>
   {/if}
 </aside>
+
+<style>
+  .speaker-share {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .speaker-share-track {
+    flex: 1;
+    height: 3px;
+    border-radius: var(--radius-pill);
+    background: rgba(15, 30, 51, 0.09);
+    overflow: hidden;
+  }
+
+  .speaker-share-fill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--spk);
+  }
+
+  .speaker-share-label {
+    flex-shrink: 0;
+    font-size: 10.5px;
+    line-height: 1.3;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+  }
+</style>

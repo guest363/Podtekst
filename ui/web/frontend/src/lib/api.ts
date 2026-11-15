@@ -446,6 +446,90 @@ export type TranscriptData = {
   rev?: string
 }
 
+export type MetricsQuality = {
+  grade: 'good' | 'degraded' | 'unavailable'
+  snr_db: number | null
+  clipping_ratio: number | null
+  bandwidth_hz: number | null
+  channel_balance_db: number | null
+}
+
+export type SpeakerMetrics = {
+  id: string
+  name: string
+  channel: number | null
+  speech_sec: number
+  share: number
+  turns: number
+  words: number
+  vowels: number
+  fillers: number
+  fillers_per_100_words: number | null
+  turn_sec_median: number | null
+  turn_sec_p90: number | null
+  monologue_max_sec: number | null
+  monologues_over_30s: number
+  interruptions_made: number
+  interruptions_successful: number
+  interruptions_suffered: number
+  overlap_sec: number
+  response_latency_ms_median: number | null
+  response_latency_n: number
+  wpm: number | null
+  f0_median_hz: number | null
+  f0_iqr_st: number | null
+  f0_range_st: number | null
+  energy_dbfs: number | null
+  energy_iqr_db: number | null
+  articulation_rate: number | null
+  pause_share: number | null
+  voiced_sec: number | null
+  baseline: {
+    available: boolean
+    n_meetings: number
+    f0_delta_st: number | null
+    energy_delta_db: number | null
+  } | null
+}
+
+export type MetricsNavigation = {
+  longest_monologue: { speaker: string; start: number; end: number } | null
+  first_long_pause: { start: number; end: number } | null
+  first_interruption: { start: number; end: number } | null
+  pauses_over_5s: { start: number; end: number }[]
+}
+
+export type MetricsTotals = {
+  turns: number
+  turn_sec_median: number | null
+  turn_sec_p90: number | null
+  monologue_sec_median: number | null
+  monologue_sec_p90: number | null
+  monologues_over_30s: number
+  interruptions: number
+  interruptions_successful: number
+  response_latency_ms_median: number | null
+  switches_per_min: number | null
+  overlap_sec: number
+  overlap_share: number | null
+  dead_air_n: number
+  dead_air_sec: number
+  dead_air_max_sec: number | null
+  dead_air_share: number | null
+  density: number | null
+}
+
+export type SpeechMetrics = {
+  schema: number
+  duration_sec: number
+  speech_sec: number
+  quality: MetricsQuality
+  totals: MetricsTotals
+  speakers: SpeakerMetrics[]
+  navigation: MetricsNavigation
+  warnings: string[]
+}
+
 export type RecordingItem = {
   name: string
   path: string
@@ -483,6 +567,51 @@ export const readJsonSafe = async <T = Record<string, unknown>>(res: Response): 
   if (ct.includes('application/json')) return (await res.json()) as T // SAFETY: контракт endpoint, тип задаёт вызывающая сторона
   const text = await res.text()
   throw new Error(`Сервер вернул HTTP ${res.status}: ${text.slice(0, 160)}`)
+}
+
+export type HttpStatusError = Error & { status: number }
+
+const httpStatusError = (status: number, detail: string): HttpStatusError =>
+  Object.assign(new Error(detail), { status })
+
+export const isHttpStatus = (error: unknown, status: number): boolean =>
+  error instanceof Error && 'status' in error && error.status === status
+
+// Метрики считаются по аудио: часовая запись - секунды, поэтому потолок выше обычного.
+const METRICS_TIMEOUT_MS = 120_000
+
+export const fetchTranscriptMetrics = async (
+  path: string,
+  signal?: AbortSignal,
+): Promise<SpeechMetrics> => {
+  const controller = new AbortController()
+  const timer = setTimeout(
+    () => controller.abort(new DOMException('timeout', 'TimeoutError')),
+    METRICS_TIMEOUT_MS,
+  )
+  const abort = (): void => controller.abort()
+  signal?.addEventListener('abort', abort)
+  try {
+    const res = await fetch(`/api/transcript/metrics?file=${encPath(path)}&record=1`, {
+      signal: controller.signal,
+    })
+    if (!res.ok) {
+      const detail = await readJsonSafe<{ error?: string }>(res).catch(() => null)
+      throw httpStatusError(res.status, detail?.error || `HTTP ${res.status}`)
+    }
+    return readJsonSafe<SpeechMetrics>(res)
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', abort)
+  }
+}
+
+export const resetMetricsBaseline = async (): Promise<void> => {
+  const res = await fetch('/api/metrics/baseline', { method: 'DELETE' })
+  if (!res.ok) {
+    const detail = await readJsonSafe<{ error?: string }>(res).catch(() => null)
+    throw httpStatusError(res.status, detail?.error || `HTTP ${res.status}`)
+  }
 }
 
 export const baseName = (p: string): string => {

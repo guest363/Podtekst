@@ -18,6 +18,9 @@
 - `src/recording.rs` - управление активной сессией записи и таймерами памяти.
 - `src/summary/` - локальные итоги (G2/G3): `mod.rs` (флаги/ошибки/SSE-активность), `job.rs` (один job, cancel, preflight), `runner.rs` (worker и RAII-сброс), `view.rs` (`GET /api/summary`, classify), `catalog.rs` (модель/настройки/presets), `sidecar.rs` + `sidecar/helpers.rs` (pinned `llama-server`, токен 0600, stderr без текста, idle 120 с), `process.rs` (PID-файл и orphan cleanup по per-OS start_time), `runtime_locator.rs` (env/adjacent/Resources/Tauri/Linux `usr/lib/Podtekst`/dev + `--version`/`--help`; упаковка — `tauri.summary.conf.json`, `summary-runtime-manifest.json`, `.github/scripts/fetch_summary_runtime.sh`), `gpu.rs` + `gpu/archive.rs` (необязательный Vulkan-пакет: SHA-256, докачка, безопасная распаковка, `GGML_BACKEND_PATH`, CPU fallback; манифест — `summary-gpu-manifest.json`), `memory.rs` (12 ГиБ/6,5 ГиБ, VmHWM), `store.rs` (`<stem>.summary.json/.md`, 0600, stale/corrupt/unsupported), `pipeline.rs` (prompt → parse → ground → artifact), `config.rs` (D15: heuristic по умолчанию, manual_only — fallback; `gpu=auto|off`). HTTP-адаптер — `src/http/summary_api.rs` (64 КиБ, коды §11); все summary-роуты безусловны, Android — 501, headless без runtime — 503.
 - `src/media_registry.rs` - реестр записанных и внешних импортированных файлов.
+- `src/metrics.rs` - личная базовая линия метрик (`<app_data>/metrics-baseline.json`, 0600): ключ по голосовому пакету и каналу, версия формата, сброс.
+- `src/http/metrics_api.rs` - `GET /api/transcript/metrics` (+ `record=1` для базовой линии),
+  `DELETE /api/metrics/baseline`; кэш по mtime расшифровки и WAV.
 - `src/desktop.rs` - управление системным треем, глобальным хоткеем и автозапуском.
 - `src/ipc.rs` - локальный сокет IPC для команд управления записью из терминала.
 - `src/journal.rs` - JSONL-журнал последних сессий записи без аудио и текста.

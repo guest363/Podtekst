@@ -1,0 +1,16 @@
+[package]
+name = "mr-metrics"
+version = "0.7.6"
+edition = "2021"
+rust-version = "1.92"
+description = "Измеримые метрики речи: взаимодействие, просодия, качество записи"
+license = "MIT"
+repository = "https://github.com/guest363/podtekst"
+
+[dependencies]
+serde = { workspace = true }
+mr-audio = { path = "../mr-audio" }
+hound = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

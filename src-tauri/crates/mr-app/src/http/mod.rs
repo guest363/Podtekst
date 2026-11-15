@@ -2,6 +2,7 @@ pub(crate) mod export_dialog;
 pub(crate) mod files;
 pub(crate) mod journal_api;
 pub(crate) mod media;
+pub(crate) mod metrics_api;
 pub(crate) mod people;
 pub(crate) mod summary_api;
 pub(crate) mod system_api;
@@ -25,6 +26,7 @@ use self::files::{
 };
 use self::journal_api::{handle_crash_ack, handle_crashes, handle_journal};
 use self::media::{local_request_allowed, recordings_list, serve_audio_file, serve_media_snippet};
+use self::metrics_api::{serve_metrics, serve_reset_baseline};
 use self::people::{
     handle_people_add, handle_people_move, handle_voiceprint_delete,
     handle_voiceprint_learn_sample, handle_voiceprint_sample_delete, handle_voiceprint_save,
@@ -1132,6 +1134,12 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) {
                 }
                 (tiny_http::Method::Get, "/api/transcript") => {
                     serve_transcript(request, &query);
+                }
+                (tiny_http::Method::Get, "/api/transcript/metrics") => {
+                    serve_metrics(request, &query);
+                }
+                (tiny_http::Method::Delete, "/api/metrics/baseline") => {
+                    serve_reset_baseline(request);
                 }
                 (tiny_http::Method::Post, "/api/transcript/edit") => {
                     let body = read_body_to_json(&mut request);

@@ -1,5 +1,20 @@
-import type { ModelInfo, OkResponse, SpeakerInfo, TranscriptData, Utterance } from './api'
-import { baseName, encPath, isCoreModel, isVideoPath, readJsonSafe } from './api'
+import type {
+  ModelInfo,
+  OkResponse,
+  SpeakerInfo,
+  SpeechMetrics,
+  TranscriptData,
+  Utterance,
+} from './api'
+import {
+  baseName,
+  encPath,
+  fetchTranscriptMetrics,
+  isCoreModel,
+  isHttpStatus,
+  isVideoPath,
+  readJsonSafe,
+} from './api'
 import { errText, isAbortError } from './guards.ts'
 import { loadQueue, type QueueItem, queueState } from './queue.svelte.ts'
 import { settings } from './settings.svelte.ts'
@@ -40,6 +55,9 @@ type TranscriptState = {
   hasText: boolean
   loadError: string
   extractVisible: boolean
+  metrics: SpeechMetrics | null
+  metricsLoading: boolean
+  metricsError: string
 }
 
 export const transcript: TranscriptState = $state({
@@ -50,6 +68,9 @@ export const transcript: TranscriptState = $state({
   hasText: false,
   loadError: '',
   extractVisible: false,
+  metrics: null,
+  metricsLoading: false,
+  metricsError: '',
 })
 
 // Единственное состояние движка для всего UI (дека, модалка, настройки):
@@ -81,6 +102,51 @@ export const engine: EngineState = $state({
 
 let openSeq = 0
 let openAbort: AbortController | null = null
+let metricsToken = 0
+let metricsAbort: AbortController | null = null
+
+// Метрики идут секунды и не нужны, пока панель закрыта. Поэтому грузим их
+// только по запросу панели, а поздний ответ не перебивает другой открытый файл.
+const loadMetrics = async (rawPath: string): Promise<void> => {
+  const token = ++metricsToken
+  metricsAbort?.abort()
+  const controller = new AbortController()
+  metricsAbort = controller
+  transcript.metricsLoading = true
+  try {
+    const metrics = await fetchTranscriptMetrics(rawPath, controller.signal)
+    if (token !== metricsToken || rawPath !== ui.currentTranscriptPath) return
+    transcript.metrics = metrics
+    transcript.metricsError = ''
+  } catch (e) {
+    if (token !== metricsToken || isAbortError(e)) return
+    transcript.metrics = null
+    transcript.metricsError = isHttpStatus(e, 404) ? 'Для этой записи нет метрик.' : errText(e)
+  } finally {
+    if (token === metricsToken) {
+      transcript.metricsLoading = false
+      if (metricsAbort === controller) metricsAbort = null
+    }
+  }
+}
+
+const resetMetrics = (): void => {
+  metricsToken += 1
+  metricsAbort?.abort()
+  metricsAbort = null
+  transcript.metrics = null
+  transcript.metricsError = ''
+  transcript.metricsLoading = false
+}
+
+export const ensureTranscriptMetrics = (): void => {
+  if (!ui.currentTranscriptPath || transcript.metrics || transcript.metricsLoading) return
+  void loadMetrics(ui.currentTranscriptPath)
+}
+
+export const reloadTranscriptMetrics = (): void => {
+  if (ui.currentTranscriptPath) void loadMetrics(ui.currentTranscriptPath)
+}
 
 export const openTranscriptFile = async (rawPath: string): Promise<void> => {
   const seq = ++openSeq
@@ -93,6 +159,7 @@ export const openTranscriptFile = async (rawPath: string): Promise<void> => {
   transcript.hasText = false
   transcript.loadError = ''
   transcript.extractVisible = isVideoPath(rawPath)
+  resetMetrics()
 
   let d: TranscriptData
   try {
@@ -124,6 +191,7 @@ export const applyTranscriptState = (d: TranscriptData): void => {
   if (typeof d.markdown === 'string') transcript.markdown = d.markdown
   if (typeof d.rev === 'string') transcript.rev = d.rev
   transcript.hasText = Boolean(transcript.markdown.trim() || transcript.utterances.length)
+  resetMetrics()
   emit('transcript-edited')
 }
 

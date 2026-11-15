@@ -2379,6 +2379,7 @@ dependencies = [
  "libc",
  "log",
  "mr-audio",
+ "mr-metrics",
  "mr-ml",
  "mr-models",
  "mr-packs",
@@ -2415,6 +2416,16 @@ dependencies = [
  "symphonia",
  "thiserror 2.0.21",
  "windows",
+]
+
+[[package]]
+name = "mr-metrics"
+version = "0.7.6"
+dependencies = [
+ "hound",
+ "mr-audio",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

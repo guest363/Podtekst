@@ -5,6 +5,7 @@ members = [
   "crates/mr-packs",
   "crates/mr-models",
   "crates/mr-summarize",
+  "crates/mr-metrics",
   "crates/mr-app",
 ]
 resolver = "2"
