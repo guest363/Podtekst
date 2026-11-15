@@ -75,7 +75,12 @@
     var demoMotionOk = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     var demoPlay = function () { demo.play().catch(function () {}); };
     var demoPause = function () { demo.pause(); };
-    if (demoMotionOk && "IntersectionObserver" in window) {
+    var demoSync = function () {
+      var paused = demo.paused;
+      demoToggle.setAttribute("aria-pressed", paused ? "true" : "false");
+      demoToggle.textContent = paused ? "Продолжить демо" : "Поставить на паузу";
+    };
+    if (demoMotionOk && typeof window.IntersectionObserver === "function") {
       var demoWatch = new IntersectionObserver(function (entries) {
         for (var i = 0; i < entries.length; i += 1) {
           if (entries[i].isIntersecting) {
@@ -95,21 +100,18 @@
       });
     } else if (demoMotionOk) {
       demoPlay();
-    } else {
-      demoToggle.hidden = true;
     }
+    demo.addEventListener("play", demoSync);
+    demo.addEventListener("pause", demoSync);
+    demoSync();
     if (demoToggle) {
       demoToggle.addEventListener("click", function () {
         if (demo.paused) {
           demoUserPaused = false;
           demoPlay();
-          demoToggle.setAttribute("aria-pressed", "false");
-          demoToggle.textContent = "Поставить на паузу";
         } else {
           demoUserPaused = true;
           demoPause();
-          demoToggle.setAttribute("aria-pressed", "true");
-          demoToggle.textContent = "Продолжить демо";
         }
       });
     }
