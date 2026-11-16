@@ -28,9 +28,21 @@ pub(super) fn serve_transcript(request: tiny_http::Request, query: &str) {
     let mut meta = serde_json::json!({});
     let mut speakers_info = serde_json::json!([]);
     let mut utterances = serde_json::json!([]);
+    let mut rev = None;
     #[cfg(feature = "onnx")]
     match crate::transcribe::document::read_transcript(&json_p) {
         Ok(doc) => {
+            let summary_utts: Vec<mr_summarize::Utterance> = doc
+                .utterances
+                .iter()
+                .map(|u| mr_summarize::Utterance {
+                    start: u.start,
+                    end: u.end,
+                    speaker: u.speaker.clone(),
+                    text: u.text.clone(),
+                })
+                .collect();
+            rev = Some(mr_summarize::artifact::source_rev(&summary_utts));
             meta = serde_json::to_value(&doc.meta).unwrap_or_else(|_| json!({}));
             speakers_info = meta.get("speakers_info").cloned().unwrap_or(json!([]));
             // Полный список реплик без лимита: обрезка «первые 200» теряла
@@ -66,9 +78,14 @@ pub(super) fn serve_transcript(request: tiny_http::Request, query: &str) {
         }
     }
     let md_text = std::fs::read_to_string(&md_p).unwrap_or_default();
-    let rev = serde_json::from_value::<Vec<mr_summarize::Utterance>>(utterances.clone())
-        .ok()
-        .map(|items| mr_summarize::artifact::source_rev(&items));
+    // Без onnx расшифровка читается как Value: повторный разбор нужен только
+    // для source_rev, в обычной сборке rev уже посчитан по типизированному doc.
+    #[cfg(not(feature = "onnx"))]
+    let rev = rev.or_else(|| {
+        serde_json::from_value::<Vec<mr_summarize::Utterance>>(utterances.clone())
+            .ok()
+            .map(|items| mr_summarize::artifact::source_rev(&items))
+    });
     log::debug!(
         target: "json",
         file = crate::logging::file_token(&p),

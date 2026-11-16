@@ -24,15 +24,24 @@ pub(crate) fn normalize_unit_rms(samples: &mut [f32]) {
     }
 }
 
-fn extract(
+struct PreparedUnit {
+    utterance: usize,
+    start: f64,
+    end: f64,
+    dur: f64,
+    quality: f64,
+    chunk: Vec<f32>,
+    anchor: bool,
+}
+
+fn prepare(
     samples: &[f32],
     start: f64,
     end: f64,
     utterance: usize,
-    extractor: &mut EmbeddingExtractor,
     support: SpeechSupport<'_>,
     anchor: bool,
-) -> Option<AcoustUnit> {
+) -> Option<PreparedUnit> {
     const SR: f64 = 16000.0;
     let lo = ((start.max(0.0) * SR) as usize).min(samples.len());
     let hi = ((end.max(0.0) * SR) as usize).min(samples.len());
@@ -44,57 +53,31 @@ fn extract(
     if clean_len < (SR * acoustic_windows::MIN_UNIT_SEC) as usize {
         return None;
     }
-    let clean = &mut chunk[..clean_len];
-    let quality = super::rms_quality(clean);
+    chunk.truncate(clean_len);
+    let quality = super::rms_quality(&chunk);
     if experiment::current().embedding == Embedding::UnitNorm {
-        normalize_unit_rms(clean);
+        normalize_unit_rms(&mut chunk);
     }
-    let started = std::time::Instant::now();
-    let result = extractor.embed(clean);
-    if log::log_enabled!(target: "diar", log::Level::Trace) {
-        let (outcome, dim, norm) = match &result {
-            Ok(Some(embedding)) => (
-                "ok",
-                embedding.len(),
-                embedding.iter().map(|x| x * x).sum::<f64>().sqrt(),
-            ),
-            Ok(None) => ("none", 0, 0.0),
-            Err(_) => ("error", 0, 0.0),
-        };
-        log::trace!(
-            target: "diar",
-            unit = utterance,
-            anchor = anchor,
-            dur_sec = clean_len as f64 / SR,
-            dim = dim,
-            norm = norm,
-            result = outcome,
-            elapsed_ms = started.elapsed().as_millis() as u64;
-            "ev=diar.embed"
-        );
-    }
-    let embedding = match result {
-        Ok(Some(embedding)) => embedding,
-        Ok(None) => return None,
-        Err(error) => {
-            log::warn!(
-                target: "diar",
-                unit = utterance,
-                anchor = anchor,
-                error = error.to_string();
-                "ev=diar.embed_error"
-            );
-            return None;
-        }
-    };
-    Some(AcoustUnit {
+    Some(PreparedUnit {
         utterance,
         start,
         end,
         dur: clean_len as f64 / SR,
         quality,
-        embedding,
+        chunk,
+        anchor,
     })
+}
+
+fn unit_from(prepared: PreparedUnit, embedding: Vec<f64>) -> AcoustUnit {
+    AcoustUnit {
+        utterance: prepared.utterance,
+        start: prepared.start,
+        end: prepared.end,
+        dur: prepared.dur,
+        quality: prepared.quality,
+        embedding,
+    }
 }
 
 pub(super) fn build(
@@ -118,6 +101,7 @@ pub(super) fn build(
         let (start, end) = (utterance.start, utterance.end);
         let first = units.items.len();
         let anchor_count = units.anchors.len();
+        let mut prepared = Vec::new();
         if anchors_enabled {
             let region = match echo {
                 Some(evidence) => {
@@ -127,9 +111,8 @@ pub(super) fn build(
             };
             if let Some((start, end)) = region {
                 let (start, end) = turn_anchors::support_bounds(start, end, support);
-                if let Some(unit) = extract(samples, start, end, index, extractor, support, true) {
-                    units.anchors.push(units.items.len());
-                    units.items.push(unit);
+                if let Some(unit) = prepare(samples, start, end, index, support, true) {
+                    prepared.push(unit);
                 }
             }
         }
@@ -143,8 +126,45 @@ pub(super) fn build(
             let Some((start, end)) = region else {
                 continue;
             };
-            if let Some(unit) = extract(samples, start, end, index, extractor, support, false) {
-                units.items.push(unit);
+            if let Some(unit) = prepare(samples, start, end, index, support, false) {
+                prepared.push(unit);
+            }
+        }
+        if !prepared.is_empty() {
+            let started = std::time::Instant::now();
+            let refs: Vec<&[f32]> = prepared.iter().map(|unit| unit.chunk.as_slice()).collect();
+            let embeddings = match extractor.embed_batch(&refs) {
+                Ok(embeddings) => embeddings,
+                Err(error) => {
+                    log::warn!(
+                        target: "diar",
+                        unit = index,
+                        windows = prepared.len(),
+                        error = error.to_string();
+                        "ev=diar.embed_error"
+                    );
+                    prepared
+                        .iter()
+                        .map(|unit| extractor.embed(&unit.chunk).ok().flatten())
+                        .collect()
+                }
+            };
+            if log::log_enabled!(target: "diar", log::Level::Trace) {
+                log::trace!(
+                    target: "diar",
+                    unit = index,
+                    windows = prepared.len(),
+                    elapsed_ms = started.elapsed().as_millis() as u64;
+                    "ev=diar.embed_batch"
+                );
+            }
+            for (prepared, embedding) in prepared.into_iter().zip(embeddings) {
+                if let Some(embedding) = embedding {
+                    if prepared.anchor {
+                        units.anchors.push(units.items.len());
+                    }
+                    units.items.push(unit_from(prepared, embedding));
+                }
             }
         }
         if anchors_enabled && units.anchors.len() == anchor_count {

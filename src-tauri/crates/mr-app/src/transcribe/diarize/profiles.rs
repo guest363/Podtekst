@@ -5,11 +5,12 @@ use mr_packs as packs;
 
 use crate::transcribe::{Sample, Utterance};
 
-use super::MIN_NAMED_CLEAN_SEC;
+use super::MIN_SHORT_NAME_SEC;
 
-pub(crate) fn pick_samples(utterances: &[Utterance], max_samples: usize) -> Vec<Sample> {
+pub(crate) fn pick_samples(utterances: &[&Utterance], max_samples: usize) -> Vec<Sample> {
     let mut scored: Vec<(f64, &Utterance)> = utterances
         .iter()
+        .copied()
         .map(|u| {
             let dur = (u.end - u.start).max(0.0);
             let words = u.text.split_whitespace().count() as f64;
@@ -235,14 +236,15 @@ pub(super) fn empty_match() -> ClusterMatch {
     }
 }
 
-/// Индексы в `raw_clusters`, которым можно назначать имя профиля: только
-/// кластеры с достаточным объёмом чистой (локальной) речи.
+/// Индексы в `raw_clusters` с объёмом чистой (локальной) речи. Нижняя граница
+/// здесь — 1.5 с; кластеры короче 2 с получают имя только при почти точном
+/// совпадении с профилем (проверка в `diarize_channel`).
 pub(super) fn eligible_clusters(
     raw_clusters: &[usize],
     label_of: &HashMap<usize, usize>,
     embs: &[Option<Vec<f64>>],
     durs: &[f64],
-) -> Vec<usize> {
+) -> Vec<(usize, f64)> {
     let mut clean_sec: HashMap<usize, f64> = HashMap::new();
     for (&index, &label) in label_of.iter() {
         if embs.get(index).is_some_and(Option::is_some) {
@@ -250,7 +252,10 @@ pub(super) fn eligible_clusters(
         }
     }
     (0..raw_clusters.len())
-        .filter(|&k| clean_sec.get(&raw_clusters[k]).copied().unwrap_or(0.0) >= MIN_NAMED_CLEAN_SEC)
+        .filter_map(|k| {
+            let sec = clean_sec.get(&raw_clusters[k]).copied().unwrap_or(0.0);
+            (sec >= MIN_SHORT_NAME_SEC).then_some((k, sec))
+        })
         .collect()
 }
 

@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use crate::cosine_similarity;
-
 struct DistanceMatrix {
     n: usize,
     values: Vec<f64>,
@@ -11,10 +9,29 @@ impl DistanceMatrix {
     fn new(embeddings: &[Vec<f64>]) -> Self {
         let n = embeddings.len();
         let mut values = vec![0.0; n * (n - 1) / 2];
+        // Нормы не зависят от пары: в O(n²)-цикле их пересчёт был основной
+        // стоимостью cosine_similarity.
+        let norms: Vec<f64> = embeddings
+            .iter()
+            .map(|v| v.iter().map(|x| x * x).sum::<f64>().sqrt())
+            .collect();
         for i in 0..n {
             for j in (i + 1)..n {
                 let index = Self::index(n, i, j);
-                values[index] = 1.0 - cosine_similarity(&embeddings[i], &embeddings[j]);
+                let similarity = if embeddings[i].len() != embeddings[j].len()
+                    || norms[i] < 1e-12
+                    || norms[j] < 1e-12
+                {
+                    0.0
+                } else {
+                    let dot: f64 = embeddings[i]
+                        .iter()
+                        .zip(&embeddings[j])
+                        .map(|(a, b)| a * b)
+                        .sum();
+                    dot / (norms[i] * norms[j])
+                };
+                values[index] = 1.0 - similarity;
             }
         }
         Self { n, values }
@@ -67,13 +84,21 @@ fn chain_merges(
     let mut sizes: Vec<f64> = (0..n)
         .map(|i| weights.get(i).copied().unwrap_or(1.0).max(1e-6))
         .collect();
-    let mut blocked = vec![vec![false; n]; n];
+    // n×n bool — до сотен мегабайт на длинных встречах; без ограничений
+    // матрица не нужна вовсе.
+    let mut blocked = if cannot_link.is_empty() {
+        None
+    } else {
+        Some(vec![vec![false; n]; n])
+    };
     for &(i, j) in cannot_link {
         if i >= n || j >= n || i == j {
             continue;
         }
-        blocked[i][j] = true;
-        blocked[j][i] = true;
+        if let Some(blocked) = blocked.as_mut() {
+            blocked[i][j] = true;
+            blocked[j][i] = true;
+        }
         distances.set(i, j, CANNOT_LINK_DISTANCE);
     }
     let mut active_count = n;
@@ -99,14 +124,15 @@ fn chain_merges(
             for (c, &is_active) in active.iter().enumerate() {
                 if is_active && c != a && c != b {
                     let d = (distances.get(a, c) * wa + distances.get(b, c) * wb) / (wa + wb);
-                    let d = if blocked[a][c] || blocked[b][c] {
-                        CANNOT_LINK_DISTANCE
-                    } else {
-                        d
-                    };
+                    let is_blocked = blocked
+                        .as_ref()
+                        .is_some_and(|blocked| blocked[a][c] || blocked[b][c]);
+                    let d = if is_blocked { CANNOT_LINK_DISTANCE } else { d };
                     distances.set(a, c, d);
-                    blocked[a][c] = blocked[a][c] || blocked[b][c];
-                    blocked[c][a] = blocked[a][c];
+                    if let Some(blocked) = blocked.as_mut() {
+                        blocked[a][c] = blocked[a][c] || blocked[b][c];
+                        blocked[c][a] = blocked[a][c];
+                    }
                 }
             }
             sizes[a] += sizes[b];
@@ -415,6 +441,7 @@ pub fn silhouette_scores(embeddings: &[Vec<f64>], labels: &[usize]) -> Vec<f64> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cosine_similarity;
     use std::collections::HashSet;
 
     fn unit(dim: usize, idx: usize) -> Vec<f64> {

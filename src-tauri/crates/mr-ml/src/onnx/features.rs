@@ -507,6 +507,16 @@ pub fn log_mel_frames(samples: &[f32], p: FrontendParams) -> Vec<Vec<f32>> {
             FilterKind::Htk
         },
     );
+    // Треугольники занимают несколько бинов из сотен; ведущие/хвостовые нули
+    // не меняют сумму, но их перебор был основной стоимостью кадра.
+    let bands: Vec<(usize, &[f64])> = fb
+        .iter()
+        .map(|row| {
+            let start = row.iter().position(|w| *w != 0.0).unwrap_or(0);
+            let end = row.iter().rposition(|w| *w != 0.0).map_or(start, |i| i + 1);
+            (start, &row[start..end])
+        })
+        .collect();
     let n = sig.len();
     let mut frames = Vec::new();
     let mut frame = vec![0.0f64; p.fft_size];
@@ -543,8 +553,12 @@ pub fn log_mel_frames(samples: &[f32], p: FrontendParams) -> Vec<Vec<f32>> {
             &mut power,
         );
         let mut mel = vec![0f32; p.n_mels];
-        for (m, row) in fb.iter().enumerate() {
-            let e: f64 = row.iter().zip(power.iter()).map(|(w, q)| w * q).sum();
+        for (m, (start, weights)) in bands.iter().enumerate() {
+            let e: f64 = weights
+                .iter()
+                .zip(&power[*start..*start + weights.len()])
+                .map(|(w, q)| w * q)
+                .sum();
             mel[m] = if p.natural_log {
                 (e.max(1e-9)).ln() as f32
             } else {
@@ -584,6 +598,14 @@ pub fn whisper_mel(samples: &[f32]) -> Vec<Vec<f32>> {
     }
     let win = cached_window(WindowKind::PeriodicHann, p.win_length);
     let fb = cached_filters(p, FilterKind::Slaney);
+    let bands: Vec<(usize, &[f64])> = fb
+        .iter()
+        .map(|row| {
+            let start = row.iter().position(|w| *w != 0.0).unwrap_or(0);
+            let end = row.iter().rposition(|w| *w != 0.0).map_or(start, |i| i + 1);
+            (start, &row[start..end])
+        })
+        .collect();
     // center=True добавляет по half-window с каждой стороны; torch отдаёт на
     // один кадр больше, чем нужно модели, и эталон его отбрасывает.
     let n_frames = (1 + (padded.len() - p.win_length) / p.hop) - 1;
@@ -607,8 +629,12 @@ pub fn whisper_mel(samples: &[f32]) -> Vec<Vec<f32>> {
             &mut power,
         );
         let mut mel = vec![0f32; p.n_mels];
-        for (m, row) in fb.iter().enumerate() {
-            let e: f64 = row.iter().zip(power.iter()).map(|(w, q)| w * q).sum();
+        for (m, (start, weights)) in bands.iter().enumerate() {
+            let e: f64 = weights
+                .iter()
+                .zip(&power[*start..*start + weights.len()])
+                .map(|(w, q)| w * q)
+                .sum();
             let v = (e.max(1e-10)).log10() as f32;
             mel[m] = v;
             global_max = global_max.max(v);

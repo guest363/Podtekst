@@ -75,7 +75,10 @@ pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
         )
     };
 
-    let mut chans: Vec<Vec<f32>> = (0..n_ch).map(|_| Vec::new()).collect();
+    // `n_frames` из заголовка — точный хинт для обычных файлов; ограничение
+    // не даёт битому заголовку зарезервировать гигабайты заранее.
+    let capacity = codec_params.n_frames.unwrap_or(0).min(16_000 * 60 * 60 * 6) as usize;
+    let mut chans: Vec<Vec<f32>> = (0..n_ch).map(|_| Vec::with_capacity(capacity)).collect();
     // Буферы вне цикла: аллокация на каждый пакет — это тысячи malloc на файл.
     let mut opus_pcm = vec![0.0f32; 0usize];
     let mut pcm_buf: Option<symphonia::core::audio::SampleBuffer<f32>> = None;
@@ -133,6 +136,9 @@ pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
     }
     if chans.iter().all(|c| c.is_empty()) {
         return Err(AudioError::Other("пустой аудиопоток".to_string()));
+    }
+    if src_rate == 16_000 {
+        return Ok(chans);
     }
     Ok(chans
         .into_iter()

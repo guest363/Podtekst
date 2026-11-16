@@ -5,6 +5,7 @@ use crate::transcribe::echo::FrameClass;
 use crate::transcribe::{SpeakerInfo, Utterance, WordConf};
 
 use super::constraint_links::cannot_link_units;
+use super::core::short_name_allowed;
 use super::profiles::{eligible_clusters, pick_samples, reassign_short_replies};
 use super::reconcile::{
     dedupe_cross_channel, merge_utterances, reconcile_channels, refresh_speaker_stats,
@@ -754,7 +755,7 @@ fn pick_samples_prefers_well_separated_voice() {
     good.silhouette = 0.9;
     let mut noisy = utt(1.0, 5.0, "A", 0, "чистая обособленная реплика");
     noisy.silhouette = -0.5;
-    let samples = pick_samples(&[noisy, good], 1);
+    let samples = pick_samples(&[&noisy, &good], 1);
     assert_eq!(samples.len(), 1);
     assert_eq!(samples[0].start, 10.0);
 }
@@ -762,7 +763,7 @@ fn pick_samples_prefers_well_separated_voice() {
 #[test]
 fn sample_window_stays_inside_utterance() {
     let utterance = utt(10.0, 13.96, "A", 0, "чистая обособленная реплика");
-    let samples = pick_samples(&[utterance], 1);
+    let samples = pick_samples(&[&utterance], 1);
     assert!(samples[0].start >= 10.0, "{samples:?}");
     assert!(
         samples[0].end <= 13.96,
@@ -1729,7 +1730,7 @@ fn split_window_region_rejects_echo_dominant_window() {
 }
 
 #[test]
-fn short_cluster_is_not_eligible_for_profile_name() {
+fn short_cluster_is_candidate_for_profile_match() {
     let label_of: HashMap<usize, usize> = HashMap::from([(0, 0), (1, 0), (2, 1), (3, 1)]);
     let embs = vec![
         Some(vec![1.0, 0.0]),
@@ -1739,16 +1740,44 @@ fn short_cluster_is_not_eligible_for_profile_name() {
     ];
     let durs = vec![1.5, 1.5, 1.0, 4.0];
     let raw_clusters = vec![0usize, 1];
+    let eligible = eligible_clusters(&raw_clusters, &label_of, &embs, &durs);
     assert_eq!(
-        eligible_clusters(&raw_clusters, &label_of, &embs, &durs),
-        vec![0]
+        eligible.iter().map(|&(index, _)| index).collect::<Vec<_>>(),
+        vec![0, 1]
     );
+    assert!((eligible[0].1 - 3.0).abs() < 1e-9, "{eligible:?}");
+    assert!((eligible[1].1 - 1.0).abs() < 1e-9, "{eligible:?}");
 
     let durs = vec![1.5, 1.5, 2.4, 4.0];
     assert_eq!(
-        eligible_clusters(&raw_clusters, &label_of, &embs, &durs),
+        eligible_clusters(&raw_clusters, &label_of, &embs, &durs)
+            .iter()
+            .map(|&(index, _)| index)
+            .collect::<Vec<_>>(),
         vec![0, 1]
     );
+}
+
+#[test]
+fn short_name_requires_high_similarity_and_margin() {
+    let mut candidate = mr_ml::ClusterMatch {
+        matched: true,
+        name: Some("A".to_string()),
+        pack_id: None,
+        pack_name: None,
+        similarity: 0.96,
+        margin: 0.06,
+        candidates: vec![],
+    };
+    assert!(short_name_allowed(&candidate));
+    candidate.similarity = 0.94;
+    assert!(!short_name_allowed(&candidate));
+    candidate.similarity = 0.96;
+    candidate.margin = 0.04;
+    assert!(!short_name_allowed(&candidate));
+    candidate.margin = 0.06;
+    candidate.matched = false;
+    assert!(!short_name_allowed(&candidate));
 }
 
 #[test]

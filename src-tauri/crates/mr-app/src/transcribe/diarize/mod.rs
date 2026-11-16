@@ -57,6 +57,14 @@ pub(super) const MIN_NAMED_CLEAN_SEC: f64 = 2.0;
 /// куске ERes2NetV2 не набирает стабильный вектор голоса.
 pub(super) const MIN_LOCAL_EMBED_SEC: f64 = 0.8;
 
+/// Короткий кластер можно назвать только при почти точном совпадении с
+/// профилем: 1.5–2 с чистого аудио уже дают устойчивый вектор, но обычный
+/// порог имени остаётся 2 с. Исключение закрывает образец, записанный с той же
+/// реплики, которая позже стала отдельным коротким кластером.
+pub(super) const MIN_SHORT_NAME_SEC: f64 = 0.9;
+pub(super) const SHORT_NAME_MIN_SIM: f64 = 0.95;
+pub(super) const SHORT_NAME_MIN_MARGIN: f64 = 0.05;
+
 struct AcoustUnit {
     utterance: usize,
     start: f64,

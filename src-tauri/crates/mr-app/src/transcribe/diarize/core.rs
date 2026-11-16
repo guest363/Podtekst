@@ -12,12 +12,21 @@ use super::segments::{
     short_join_threshold, smooth_labels_mono,
 };
 use super::{acoustic_units, coverage, diagnostics, turn_anchors};
-use super::{CORE_LINKAGE_THRESHOLD, CORE_MIN_DUR};
+use super::{
+    CORE_LINKAGE_THRESHOLD, CORE_MIN_DUR, MIN_NAMED_CLEAN_SEC, SHORT_NAME_MIN_MARGIN,
+    SHORT_NAME_MIN_SIM,
+};
 
 use crate::transcribe::clean_speech::SpeechSupport;
 use crate::transcribe::echo::EchoEvidence;
 use crate::transcribe::experiment::{self, Anchors, Centroids, Guards};
 use crate::transcribe::{SpeakerInfo, Utterance};
+
+pub(super) fn short_name_allowed(candidate: &ClusterMatch) -> bool {
+    candidate.matched
+        && candidate.similarity >= SHORT_NAME_MIN_SIM
+        && candidate.margin >= SHORT_NAME_MIN_MARGIN
+}
 
 /// Верхняя граница auto-k, если пользователь не задал max_speakers: защита от
 /// дробления шума на десятки «голосов». shortcut: 12 без размеченного набора.
@@ -422,20 +431,37 @@ pub(crate) fn diarize_channel(
     durs.resize(n, 0.0);
     quals.resize(n, 1.0);
     let label_duration = coverage::label_durations(&units, &unit_label, support);
+    let mut durations_by_utterance: HashMap<usize, Vec<(usize, f64)>> = HashMap::new();
+    for (&(utterance, label), &duration) in &label_duration {
+        durations_by_utterance
+            .entry(utterance)
+            .or_default()
+            .push((label, duration));
+    }
+    let mut units_by_utterance: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (index, unit) in units.iter().enumerate() {
+        if unit.utterance < n {
+            units_by_utterance[unit.utterance].push(index);
+        }
+    }
     let mut label_of: HashMap<usize, usize> = HashMap::new();
     let mut valid: Vec<usize> = vec![];
     for utterance in 0..n {
-        let Some((&(_, label), _)) = label_duration
-            .iter()
-            .filter(|((index, _), _)| *index == utterance)
-            .max_by(|a, b| a.1.total_cmp(b.1).then_with(|| b.0 .1.cmp(&a.0 .1)))
+        let Some((label, _)) = durations_by_utterance
+            .get(&utterance)
+            .and_then(|durations| {
+                durations
+                    .iter()
+                    .copied()
+                    .max_by(|a, b| a.1.total_cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+            })
         else {
             continue;
         };
-        let members: Vec<usize> = (0..units.len())
-            .filter(|&index| {
-                units[index].utterance == utterance && unit_label.get(&index) == Some(&label)
-            })
+        let members: Vec<usize> = units_by_utterance[utterance]
+            .iter()
+            .copied()
+            .filter(|&index| unit_label.get(&index) == Some(&label))
             .collect();
         if members.is_empty() {
             continue;
@@ -561,19 +587,41 @@ pub(crate) fn diarize_channel(
         }
     };
     let eligible = eligible_clusters(&raw_clusters, &label_of, &embs, &durs);
-    let eligible_centroids: Vec<Vec<f64>> = eligible
+    let (long, short): (Vec<_>, Vec<_>) = eligible
+        .into_iter()
+        .partition(|&(_, clean_sec)| clean_sec >= MIN_NAMED_CLEAN_SEC);
+    let mut matches: Vec<ClusterMatch> = raw_clusters.iter().map(|_| empty_match()).collect();
+    // Длинные кластеры матчатся первыми и не конкурируют с коротким образцом:
+    // иначе точное совпадение короткой реплики могло занять имя и оставить
+    // длинный кластер того же человека безымянным.
+    let long_centroids: Vec<Vec<f64>> = long
         .iter()
-        .map(|&k| cluster_centroid(raw_clusters[k]))
+        .map(|&(k, _)| cluster_centroid(raw_clusters[k]))
         .collect();
-    let matched_eligible = match_voiceprints_matrix(
-        &eligible_centroids,
+    let matched_long = match_voiceprints_matrix(
+        &long_centroids,
         profiles,
         mr_ml::DEFAULT_MATCH_THRESHOLD,
         mr_ml::DEFAULT_MIN_MARGIN,
     );
-    let mut matches: Vec<ClusterMatch> = raw_clusters.iter().map(|_| empty_match()).collect();
-    for (slot, &k) in eligible.iter().enumerate() {
-        matches[k] = matched_eligible[slot].clone();
+    for (slot, &(k, _)) in long.iter().enumerate() {
+        matches[k] = matched_long[slot].clone();
+    }
+    let short_centroids: Vec<Vec<f64>> = short
+        .iter()
+        .map(|&(k, _)| cluster_centroid(raw_clusters[k]))
+        .collect();
+    let matched_short = match_voiceprints_matrix(
+        &short_centroids,
+        profiles,
+        mr_ml::DEFAULT_MATCH_THRESHOLD,
+        mr_ml::DEFAULT_MIN_MARGIN,
+    );
+    for (slot, &(k, _)) in short.iter().enumerate() {
+        let candidate = &matched_short[slot];
+        if short_name_allowed(candidate) {
+            matches[k] = candidate.clone();
+        }
     }
     let mut cluster_name: HashMap<usize, String> = HashMap::new();
     let mut cluster_pack_id: HashMap<usize, String> = HashMap::new();
@@ -695,7 +743,7 @@ pub(crate) fn diarize_channel(
                 }
             }
         }
-        let member_utts: Vec<Utterance> = members.iter().map(|&i| utterances[i].clone()).collect();
+        let member_utts: Vec<&Utterance> = members.iter().map(|&i| &utterances[i]).collect();
         let samples = pick_samples(&member_utts, 3);
         let (weighted_sil, sil_weight) =
             members

@@ -376,6 +376,12 @@ pub(crate) fn detach_overlap_words(
     if voices.len() < 2 {
         return utterances;
     }
+    let mut sorted: Vec<&Utterance> = runs.iter().collect();
+    sorted.sort_by(|a, b| a.start.total_cmp(&b.start));
+    let max_span = sorted
+        .iter()
+        .map(|run| (run.end - run.start).max(0.0))
+        .fold(0.0, f64::max);
     let mut detached = 0usize;
     let mut out = Vec::with_capacity(utterances.len());
     for u in utterances {
@@ -386,7 +392,7 @@ pub(crate) fn detach_overlap_words(
         let mut word_speakers: Vec<&str> = Vec::with_capacity(u.words.len());
         let mut changed = false;
         for w in &u.words {
-            match detaching_speaker(w, &u.speaker, runs) {
+            match detaching_speaker(w, &u.speaker, &sorted, max_span) {
                 Some(name) => {
                     log::debug!(
                         target: "diar",
@@ -458,7 +464,12 @@ pub(crate) fn detach_overlap_words(
 /// владении чужого прогона или у уже замолчавшего голоса — территория пословного
 /// покрытия и кластеризации: шумные чистые прогоны PyAnnote не должны
 /// перекидывать целые края реплик.
-fn detaching_speaker<'a>(word: &WordConf, own: &str, runs: &'a [Utterance]) -> Option<&'a str> {
+fn detaching_speaker<'a>(
+    word: &WordConf,
+    own: &str,
+    runs: &[&'a Utterance],
+    max_span: f64,
+) -> Option<&'a str> {
     if word.end_sec <= word.start_sec {
         return None;
     }
@@ -467,15 +478,24 @@ fn detaching_speaker<'a>(word: &WordConf, own: &str, runs: &'a [Utterance]) -> O
     let half = 0.5 * (word.end_sec - word.start_sec);
     let own_cover: f64 = runs
         .iter()
+        .copied()
         .filter(|run| run.speaker == own)
         .map(overlap)
         .sum();
     if own_cover <= 0.0 || own_cover >= half {
         return None;
     }
+    // Кандидат должен начинаться до конца слова и дотянуться до его начала;
+    // нижняя граница отсекает прогоны, которые физически не перекрываются.
+    let lo = runs.partition_point(|run| run.start < word.start_sec - max_span);
+    let hi = runs.partition_point(|run| run.start < word.end_sec);
+    if lo >= hi {
+        return None;
+    }
     let mut other: BTreeMap<&str, f64> = BTreeMap::new();
-    for run in runs
+    for run in runs[lo..hi]
         .iter()
+        .copied()
         .filter(|run| run.speaker != own && run.end >= word.end_sec)
     {
         let ov = overlap(run);

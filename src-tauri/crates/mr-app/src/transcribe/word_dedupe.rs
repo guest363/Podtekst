@@ -39,7 +39,7 @@ pub(crate) fn dedupe_words(
         .filter(|u| u.channel == Some(1))
         .map(|u| (u.start, u.end))
         .collect();
-    let echo_words: Vec<(f64, f64, String)> = utterances
+    let mut echo_words: Vec<(f64, f64, String)> = utterances
         .iter()
         .filter(|u| u.channel == Some(1))
         .flat_map(|u| u.words.iter())
@@ -50,6 +50,11 @@ pub(crate) fn dedupe_words(
     if other_spans.is_empty() || echo_words.is_empty() {
         return 0;
     }
+    echo_words.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let max_span = echo_words
+        .iter()
+        .map(|(start, end, _)| (end - start).max(0.0))
+        .fold(0.0, f64::max);
 
     let mut changed = 0usize;
     let mut dropped = 0usize;
@@ -63,7 +68,7 @@ pub(crate) fn dedupe_words(
             kept.push(utterance);
             continue;
         }
-        let local = local_words(&utterance, mic, echo, &echo_words);
+        let local = local_words(&utterance, mic, echo, &echo_words, max_span);
         if local.len() == utterance.words.len() {
             kept.push(utterance);
             continue;
@@ -122,11 +127,12 @@ fn local_words(
     mic: &[f32],
     echo: &EchoEvidence,
     echo_words: &[(f64, f64, String)],
+    max_span: f64,
 ) -> Vec<WordConf> {
     utterance
         .words
         .iter()
-        .filter(|word| !is_echo(word, mic, echo, echo_words))
+        .filter(|word| !is_echo(word, mic, echo, echo_words, max_span))
         .cloned()
         .collect()
 }
@@ -136,6 +142,7 @@ fn is_echo(
     mic: &[f32],
     echo: &EchoEvidence,
     echo_words: &[(f64, f64, String)],
+    max_span: f64,
 ) -> bool {
     if word.end_sec <= word.start_sec {
         return false;
@@ -156,6 +163,7 @@ fn is_echo(
         word.end_sec,
         echo.delay_sec,
         echo_words,
+        max_span,
     ) {
         return true;
     }
@@ -173,6 +181,7 @@ fn matches_echo_word(
     end: f64,
     delay_sec: f64,
     echo_words: &[(f64, f64, String)],
+    max_span: f64,
 ) -> bool {
     [
         delay_sec - DELAY_DRIFT_SEC,
@@ -181,11 +190,20 @@ fn matches_echo_word(
     ]
     .iter()
     .any(|shift| {
-        echo_words.iter().any(|(other_start, other_end, other)| {
-            let shifted_start = other_start + shift;
-            let shifted_end = other_end + shift;
-            shifted_end > start && shifted_start < end && diarize::words_match(word, other)
-        })
+        // Кандидат обязан начинаться не позже `end - shift` и перекрывать
+        // `start`; нижняя граница отсекает слова, которые не дотянутся.
+        let lo = echo_words.partition_point(|w| w.0 < start - shift - max_span);
+        let hi = echo_words.partition_point(|w| w.0 < end - shift);
+        if lo >= hi {
+            return false;
+        }
+        echo_words[lo..hi]
+            .iter()
+            .any(|(other_start, other_end, other)| {
+                let shifted_start = other_start + shift;
+                let shifted_end = other_end + shift;
+                shifted_end > start && shifted_start < end && diarize::words_match(word, other)
+            })
     })
 }
 

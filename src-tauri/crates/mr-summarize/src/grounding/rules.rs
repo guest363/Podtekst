@@ -2,18 +2,15 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use crate::text::{self, Utterance};
+use crate::text;
 
 /// Факт из соседней реплики — не выдумка: сводка законно склеивает контекст.
-pub(super) fn hard_facts_supported(item: &str, utterances: &[Utterance], known: &[String]) -> bool {
-    let support = utterances
-        .iter()
-        .map(|u| format!("{} {}", u.speaker, u.text))
-        .collect::<Vec<_>>()
-        .join(" ");
+/// `support` уже нормализован вызывающим: нормализация всего транскрипта на
+/// каждый пункт была квадратичной по размеру встречи.
+pub(super) fn hard_facts_supported(item: &str, known: &[String], support: &str) -> bool {
     hard_facts(item, known)
         .iter()
-        .all(|fact| fact_supported(fact, &support))
+        .all(|fact| fact_supported(fact, support))
 }
 
 fn hard_facts(text: &str, known: &[String]) -> Vec<String> {
@@ -82,12 +79,11 @@ fn fact_patterns() -> &'static [Regex] {
     })
 }
 
-fn fact_supported(fact: &str, support: &str) -> bool {
+fn fact_supported(fact: &str, normalized_support: &str) -> bool {
     let normalized_fact = text::normalize(fact);
     if normalized_fact.is_empty() {
         return true;
     }
-    let normalized_support = text::normalize(support);
     if normalized_fact.contains(' ') {
         return format!(" {normalized_support} ").contains(&format!(" {normalized_fact} "));
     }
