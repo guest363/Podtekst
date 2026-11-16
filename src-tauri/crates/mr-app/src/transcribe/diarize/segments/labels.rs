@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use mr_ml::interval_gap;
 
+use crate::transcribe::clean_speech::SpeechSupport;
 use crate::transcribe::{SpeakerInfo, Utterance};
 
 use super::super::AcoustUnit;
@@ -75,18 +76,148 @@ pub(crate) fn fill_unit_labels_by_time(units: &[AcoustUnit], label_of: &mut Hash
         if label_of.contains_key(&index) {
             continue;
         }
-        let mut best = (f64::INFINITY, 0usize);
+        // Только внутри своей реплики: сосед по времени из чужой реплики —
+        // это другой голос, а не продолжение окна.
+        let mut best: Option<(f64, usize)> = None;
         for &other in &labeled {
+            if units[other].utterance != unit.utterance {
+                continue;
+            }
             let gap = interval_gap(unit.start, unit.end, units[other].start, units[other].end);
-            if gap < best.0 {
-                best = (gap, other);
+            if best.is_none_or(|(best_gap, _)| gap < best_gap) {
+                best = Some((gap, other));
             }
         }
-        if let Some(&label) = label_of.get(&best.1) {
+        let Some((_, other)) = best else {
+            continue;
+        };
+        if let Some(&label) = label_of.get(&other) {
             label_of.insert(index, label);
             labeled.push(index);
         }
     }
+}
+
+/// Реплика, целиком не попавшая ни в один кластер, — отдельный голос, а не
+/// продолжение соседа по времени. Иначе `fill_unit_labels_by_time` копирует
+/// метку ближайшей реплики, и короткая вставка незнакомого собеседника
+/// получает имя соседа (P10: решение принимается на слое кластеризации).
+/// Порог длительности тот же, что у эмбеддинга: короче — реплика-реакция,
+/// её оставляем соседу. Возвращает метки созданных кластеров.
+pub(in crate::transcribe::diarize) fn promote_unmatched_utterances(
+    units: &[AcoustUnit],
+    label_of: &mut HashMap<usize, usize>,
+    next_label: &mut usize,
+    max_speakers: usize,
+    support: SpeechSupport<'_>,
+) -> Vec<usize> {
+    let mut unmatched: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for (index, unit) in units.iter().enumerate() {
+        if !label_of.contains_key(&index) {
+            unmatched.entry(unit.utterance).or_default().push(index);
+        }
+    }
+    let mut groups: Vec<(Vec<usize>, f64, Vec<f64>)> = Vec::new();
+    for (utterance, indices) in unmatched {
+        // Частично размеченную реплику добирает fill_unit_labels_by_time.
+        if units
+            .iter()
+            .enumerate()
+            .any(|(index, unit)| unit.utterance == utterance && label_of.contains_key(&index))
+        {
+            continue;
+        }
+        let start = indices
+            .iter()
+            .map(|&index| units[index].start)
+            .fold(f64::INFINITY, f64::min);
+        let previous_end = units
+            .iter()
+            .enumerate()
+            .filter(|(index, unit)| label_of.contains_key(index) && unit.end <= start)
+            .map(|(_, unit)| unit.end)
+            .fold(f64::NEG_INFINITY, f64::max);
+        // Вплотную к предыдущей реплике — это её продолжение, разрезанное
+        // паузой, а не новый голос: продолжение наследует соседа по времени.
+        if start - previous_end < 0.15 {
+            continue;
+        }
+        let intervals: Vec<(f64, f64)> = indices
+            .iter()
+            .map(|&index| (units[index].start, units[index].end))
+            .collect();
+        let clean = support.duration(&intervals);
+        if clean < super::super::MIN_LOCAL_EMBED_SEC {
+            continue;
+        }
+        let vectors: Vec<Vec<f64>> = indices
+            .iter()
+            .map(|&index| units[index].embedding.clone())
+            .collect();
+        let weights: Vec<f64> = indices
+            .iter()
+            .map(|&index| units[index].dur.clamp(0.4, 4.0) * units[index].quality)
+            .collect();
+        let centroid = mr_ml::weighted_centroid(&vectors, &weights);
+        groups.push((indices, clean, centroid));
+    }
+    groups.sort_by(|a, b| {
+        b.1.total_cmp(&a.1)
+            .then_with(|| a.0.first().cmp(&b.0.first()))
+    });
+    let mut clusters: Vec<(Vec<usize>, f64, Vec<f64>)> = Vec::new();
+    for (indices, clean, centroid) in groups {
+        let best = clusters
+            .iter()
+            .enumerate()
+            .map(|(slot, (_, _, candidate))| (slot, mr_ml::cosine_similarity(&centroid, candidate)))
+            .max_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((slot, _)) =
+            best.filter(|(_, similarity)| *similarity >= mr_ml::SAME_SPEAKER_MERGE_SIM)
+        {
+            clusters[slot].0.extend(indices);
+            clusters[slot].1 += clean;
+            let members = &clusters[slot].0;
+            let vectors: Vec<Vec<f64>> = members
+                .iter()
+                .map(|&index| units[index].embedding.clone())
+                .collect();
+            let weights: Vec<f64> = members
+                .iter()
+                .map(|&index| units[index].dur.clamp(0.4, 4.0) * units[index].quality)
+                .collect();
+            clusters[slot].2 = mr_ml::weighted_centroid(&vectors, &weights);
+        } else {
+            clusters.push((indices, clean, centroid));
+        }
+    }
+    let mut used: HashSet<usize> = label_of.values().copied().collect();
+    let mut promoted = Vec::new();
+    for (indices, _, _) in clusters {
+        if max_speakers > 0 && used.len() >= max_speakers {
+            break;
+        }
+        let label = *next_label;
+        *next_label += 1;
+        used.insert(label);
+        for index in indices {
+            label_of.insert(index, label);
+        }
+        promoted.push(label);
+    }
+    promoted
+}
+
+/// Реплики, которые остались за неизвестными голосами, по их меткам.
+/// Индексы реплик меняет `split_covered_utterances`, метки — нет.
+pub(in crate::transcribe::diarize) fn promoted_utterances(
+    label_of: &HashMap<usize, usize>,
+    promoted: &HashSet<usize>,
+) -> HashMap<usize, usize> {
+    label_of
+        .iter()
+        .filter_map(|(&utterance, &label)| promoted.contains(&label).then_some((utterance, label)))
+        .collect()
 }
 
 pub(crate) fn log_cluster_summary(

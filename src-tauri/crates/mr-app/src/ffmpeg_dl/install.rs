@@ -1,8 +1,7 @@
 //! Скачивание, проверка и распаковка архива — всё до публикации в `<bin>`.
 
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::io::{BufReader, Read, Write};
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use super::pins::Package;
@@ -143,50 +142,34 @@ fn unzip(archive: &Path, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// `tar.xz` распаковывается Rust-кодеком: системный `xz` в AppImage
+/// подхватывает старую `liblzma` из `/tmp/.mount_*` и падает на `XZ_5.6.0`.
 fn untar(archive: &Path, dest: &Path) -> Result<(), String> {
-    let listing = Command::new("tar")
-        .arg("-tvf")
-        .arg(archive)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("tar недоступен: {e}"))?;
-    if !listing.status.success() {
-        return Err(format!(
-            "tar не прочитал архив: {}",
-            String::from_utf8_lossy(&listing.stderr).trim()
-        ));
-    }
-    validate_tar_listing(&String::from_utf8_lossy(&listing.stdout))?;
-    let extracted = Command::new("tar")
-        .arg("-xf")
-        .arg(archive)
-        .arg("-C")
-        .arg(dest)
-        .stdin(Stdio::null())
-        .status()
-        .map_err(|e| format!("tar недоступен: {e}"))?;
-    if !extracted.success() {
-        return Err("tar не распаковал архив".to_string());
+    let file = std::fs::File::open(archive).map_err(|e| format!("архив: {e}"))?;
+    let xz = lzma_rust2::XzReader::new(BufReader::new(file), true);
+    let mut tar = tar::Archive::new(xz);
+    for entry in tar.entries().map_err(|e| format!("tar: {e}"))? {
+        let mut entry = entry.map_err(|e| format!("tar: {e}"))?;
+        let path = entry.path().map_err(|e| format!("tar: {e}"))?;
+        validate_tar_entry(&path, entry.header().entry_type())?;
+        entry
+            .unpack_in(dest)
+            .map_err(|e| format!("распаковка: {e}"))?;
     }
     Ok(())
 }
 
-/// Список `tar -tvf`: отказ на абсолютные пути, `..` и ссылки до распаковки.
-pub(super) fn validate_tar_listing(listing: &str) -> Result<(), String> {
-    for line in listing.lines().map(str::trim_end).filter(|l| !l.is_empty()) {
-        let kind = line.chars().next().unwrap_or(' ');
-        if kind == 'l' || kind == 'h' {
-            return Err(format!("ссылка в архиве запрещена: {line}"));
-        }
-        if line.contains("..") {
-            return Err(format!("недопустимый путь в архиве: {line}"));
-        }
-        if line
-            .split_whitespace()
-            .any(|token| token.starts_with('/') || token.contains(":\\"))
-        {
-            return Err(format!("абсолютный путь в архиве: {line}"));
-        }
+/// Ссылки и пути с `..` или абсолютным началом отклоняются до записи на диск.
+fn validate_tar_entry(path: &Path, kind: tar::EntryType) -> Result<(), String> {
+    if kind.is_symlink() || kind.is_hard_link() {
+        return Err(format!("ссылка в архиве запрещена: {}", path.display()));
+    }
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|c| matches!(c, Component::ParentDir | Component::Prefix(_)))
+    {
+        return Err(format!("недопустимый путь в архиве: {}", path.display()));
     }
     Ok(())
 }
@@ -254,20 +237,41 @@ mod tests {
     }
 
     #[test]
-    fn tar_listing_rejects_escapes_and_links() {
-        assert!(validate_tar_listing(
-            "-rwxr-xr-x user/group 12 2025-01-01 00:00 ffmpeg-7.0.2-amd64-static/ffmpeg\n"
-        )
-        .is_ok());
-        assert!(validate_tar_listing("-rw-r--r-- u/g 1 2025-01-01 00:00 ../evil\n").is_err());
-        assert!(validate_tar_listing("-rw-r--r-- u/g 1 2025-01-01 00:00 /etc/passwd\n").is_err());
-        assert!(
-            validate_tar_listing("lrwxrwxrwx u/g 0 2025-01-01 00:00 link -> /etc/passwd\n")
-                .is_err()
-        );
-        assert!(
-            validate_tar_listing("hrw-r--r-- u/g 0 2025-01-01 00:00 hard -> ffmpeg\n").is_err()
-        );
+    fn tar_entries_reject_escapes_and_links() {
+        let regular = tar::EntryType::Regular;
+        assert!(validate_tar_entry(Path::new("ffmpeg-7.0.2-amd64-static/ffmpeg"), regular).is_ok());
+        assert!(validate_tar_entry(Path::new("../evil"), regular).is_err());
+        assert!(validate_tar_entry(Path::new("/etc/passwd"), regular).is_err());
+        assert!(validate_tar_entry(Path::new("link"), tar::EntryType::Symlink).is_err());
+        assert!(validate_tar_entry(Path::new("hard"), tar::EntryType::Link).is_err());
+    }
+
+    #[test]
+    fn tar_xz_is_unpacked_without_system_tar() {
+        let dir = temp_dir("tarxz");
+        let archive = dir.join("a.tar.xz");
+        let mut tar_bytes = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut tar_bytes);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(3);
+            header.set_mode(0o755);
+            builder
+                .append_data(&mut header, "pkg/ffmpeg", &b"bin"[..])
+                .unwrap();
+            builder.finish().unwrap();
+        }
+        let mut xz = Vec::new();
+        let mut writer =
+            lzma_rust2::XzWriter::new(&mut xz, lzma_rust2::XzOptions::default()).unwrap();
+        writer.write_all(&tar_bytes).unwrap();
+        writer.finish().unwrap();
+        std::fs::write(&archive, xz).unwrap();
+
+        let out = dir.join("out");
+        extract(&package("tar.xz"), &archive, &out).expect("tar.xz распаковывается");
+        assert_eq!(std::fs::read(out.join("pkg/ffmpeg")).unwrap(), b"bin");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

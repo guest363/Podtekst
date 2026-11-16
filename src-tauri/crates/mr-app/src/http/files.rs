@@ -495,7 +495,7 @@ pub(super) fn handle_extract_audio(request: tiny_http::Request, body: serde_json
             out.to_string_lossy().to_string(),
         ]
     };
-    match std::process::Command::new(mr_audio::tools::ffmpeg_path())
+    match mr_audio::tools::external_command(mr_audio::tools::ffmpeg_path())
         .args(&args)
         .output()
     {
@@ -674,7 +674,7 @@ pub(super) fn handle_attach_video(mut request: tiny_http::Request, blocked: bool
     }
 
     let run_ffmpeg = |extra_args: &[&str]| -> std::io::Result<std::process::Output> {
-        let mut cmd = std::process::Command::new(mr_audio::tools::ffmpeg_path());
+        let mut cmd = mr_audio::tools::external_command(mr_audio::tools::ffmpeg_path());
         cmd.arg("-y")
             .arg("-i")
             .arg(&temp_video)

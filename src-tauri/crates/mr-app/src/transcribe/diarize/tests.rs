@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::transcribe::clean_speech::SpeechSupport;
 use crate::transcribe::echo::FrameClass;
@@ -11,8 +11,8 @@ use super::reconcile::{
 };
 use super::segments::{
     constraint_retry_needed, fill_labels_by_time, fill_unit_labels_by_time, group_segments,
-    merge_quiet_short_with_evidence, merge_tiny_clusters, short_join_threshold, smooth_labels_mono,
-    switch_penalty,
+    merge_quiet_short_with_evidence, merge_tiny_clusters, promote_unmatched_utterances,
+    promoted_utterances, short_join_threshold, smooth_labels_mono, switch_penalty,
 };
 use super::split::{
     local_region, speaker_change_cuts, split_at_pauses, split_by_word_pauses,
@@ -771,7 +771,32 @@ fn sample_window_stays_inside_utterance() {
 }
 
 #[test]
-fn fill_unit_labels_by_time_uses_nearest_unit() {
+fn fill_unit_labels_by_time_uses_nearest_unit_inside_utterance() {
+    let units = vec![
+        AcoustUnit {
+            utterance: 0,
+            start: 0.0,
+            end: 1.0,
+            dur: 1.0,
+            quality: 1.0,
+            embedding: vec![1.0, 0.0],
+        },
+        AcoustUnit {
+            utterance: 0,
+            start: 5.0,
+            end: 6.0,
+            dur: 1.0,
+            quality: 1.0,
+            embedding: vec![0.0, 1.0],
+        },
+    ];
+    let mut labels = std::collections::HashMap::from([(0usize, 7usize)]);
+    fill_unit_labels_by_time(&units, &mut labels);
+    assert_eq!(labels.get(&1), Some(&7));
+}
+
+#[test]
+fn fill_unit_labels_by_time_does_not_cross_utterance_boundary() {
     let units = vec![
         AcoustUnit {
             utterance: 0,
@@ -792,7 +817,248 @@ fn fill_unit_labels_by_time_uses_nearest_unit() {
     ];
     let mut labels = std::collections::HashMap::from([(0usize, 7usize)]);
     fill_unit_labels_by_time(&units, &mut labels);
-    assert_eq!(labels.get(&1), Some(&7));
+    assert!(!labels.contains_key(&1));
+}
+
+#[test]
+fn unmatched_utterance_becomes_its_own_speaker() {
+    let units = vec![
+        AcoustUnit {
+            utterance: 0,
+            start: 0.0,
+            end: 2.0,
+            dur: 2.0,
+            quality: 1.0,
+            embedding: vec![1.0, 0.0],
+        },
+        AcoustUnit {
+            utterance: 1,
+            start: 10.0,
+            end: 10.9,
+            dur: 0.9,
+            quality: 1.0,
+            embedding: vec![0.0, 1.0],
+        },
+        AcoustUnit {
+            utterance: 2,
+            start: 20.0,
+            end: 20.5,
+            dur: 0.5,
+            quality: 1.0,
+            embedding: vec![0.0, 1.0],
+        },
+    ];
+    let mut labels = std::collections::HashMap::from([(0usize, 0usize)]);
+    let mut next = 1usize;
+    let promoted =
+        promote_unmatched_utterances(&units, &mut labels, &mut next, 0, SpeechSupport::default());
+    assert_eq!(promoted, vec![1]);
+    assert_eq!(labels.get(&1), Some(&1));
+    assert!(!labels.contains_key(&2));
+    assert_eq!(next, 2);
+}
+
+#[test]
+fn unmatched_utterance_touching_previous_is_its_continuation() {
+    let units = vec![
+        AcoustUnit {
+            utterance: 0,
+            start: 0.0,
+            end: 2.0,
+            dur: 2.0,
+            quality: 1.0,
+            embedding: vec![1.0, 0.0],
+        },
+        AcoustUnit {
+            utterance: 1,
+            start: 2.0,
+            end: 3.0,
+            dur: 1.0,
+            quality: 1.0,
+            embedding: vec![0.0, 1.0],
+        },
+    ];
+    let mut labels = std::collections::HashMap::from([(0usize, 0usize)]);
+    let mut next = 1usize;
+    let promoted =
+        promote_unmatched_utterances(&units, &mut labels, &mut next, 0, SpeechSupport::default());
+    assert!(promoted.is_empty());
+    assert!(!labels.contains_key(&1));
+}
+
+#[test]
+fn unmatched_utterances_of_one_voice_share_a_label() {
+    let units = vec![
+        AcoustUnit {
+            utterance: 0,
+            start: 0.0,
+            end: 2.0,
+            dur: 2.0,
+            quality: 1.0,
+            embedding: vec![1.0, 0.0],
+        },
+        AcoustUnit {
+            utterance: 1,
+            start: 10.0,
+            end: 11.0,
+            dur: 1.0,
+            quality: 1.0,
+            embedding: vec![0.0, 1.0],
+        },
+        AcoustUnit {
+            utterance: 2,
+            start: 20.0,
+            end: 21.0,
+            dur: 1.0,
+            quality: 1.0,
+            embedding: vec![0.01, 1.0],
+        },
+    ];
+    let mut labels = std::collections::HashMap::from([(0usize, 0usize)]);
+    let mut next = 1usize;
+    let promoted =
+        promote_unmatched_utterances(&units, &mut labels, &mut next, 0, SpeechSupport::default());
+    assert_eq!(promoted, vec![1]);
+    assert_eq!(labels.get(&1), Some(&1));
+    assert_eq!(labels.get(&2), Some(&1));
+}
+
+#[test]
+fn unmatched_utterance_respects_speaker_limit() {
+    let units = vec![
+        AcoustUnit {
+            utterance: 0,
+            start: 0.0,
+            end: 2.0,
+            dur: 2.0,
+            quality: 1.0,
+            embedding: vec![1.0, 0.0],
+        },
+        AcoustUnit {
+            utterance: 1,
+            start: 10.0,
+            end: 11.0,
+            dur: 1.0,
+            quality: 1.0,
+            embedding: vec![0.0, 1.0],
+        },
+    ];
+    let mut labels = std::collections::HashMap::from([(0usize, 0usize)]);
+    let mut next = 1usize;
+    let promoted =
+        promote_unmatched_utterances(&units, &mut labels, &mut next, 1, SpeechSupport::default());
+    assert!(promoted.is_empty());
+    assert!(!labels.contains_key(&1));
+}
+
+#[test]
+fn overlapping_units_do_not_inflate_promotion_duration() {
+    let units = vec![
+        AcoustUnit {
+            utterance: 0,
+            start: 0.0,
+            end: 2.0,
+            dur: 2.0,
+            quality: 1.0,
+            embedding: vec![1.0, 0.0],
+        },
+        AcoustUnit {
+            utterance: 1,
+            start: 10.0,
+            end: 10.45,
+            dur: 0.45,
+            quality: 1.0,
+            embedding: vec![0.0, 1.0],
+        },
+        AcoustUnit {
+            utterance: 1,
+            start: 10.0,
+            end: 10.45,
+            dur: 0.45,
+            quality: 1.0,
+            embedding: vec![0.0, 1.0],
+        },
+    ];
+    let mut labels = HashMap::from([(0usize, 0usize)]);
+    let mut next = 1usize;
+    let promoted =
+        promote_unmatched_utterances(&units, &mut labels, &mut next, 0, SpeechSupport::default());
+    assert!(promoted.is_empty());
+    assert!(!labels.contains_key(&1));
+    assert!(!labels.contains_key(&2));
+}
+
+#[test]
+fn promoted_utterances_survive_coverage_renumbering() {
+    let mut utterances = vec![
+        utt(0.0, 8.0, "", 0, "one two three four"),
+        utt(10.0, 12.0, "", 0, "five six"),
+        utt(20.0, 22.0, "", 0, "seven eight"),
+    ];
+    let mut units = vec![
+        AcoustUnit {
+            utterance: 0,
+            start: 0.0,
+            end: 6.0,
+            dur: 6.0,
+            quality: 1.0,
+            embedding: vec![1.0, 0.0],
+        },
+        AcoustUnit {
+            utterance: 0,
+            start: 6.0,
+            end: 8.0,
+            dur: 2.0,
+            quality: 1.0,
+            embedding: vec![0.0, 1.0],
+        },
+        AcoustUnit {
+            utterance: 1,
+            start: 10.0,
+            end: 12.0,
+            dur: 2.0,
+            quality: 1.0,
+            embedding: vec![0.0, -1.0],
+        },
+        AcoustUnit {
+            utterance: 2,
+            start: 20.0,
+            end: 22.0,
+            dur: 2.0,
+            quality: 1.0,
+            embedding: vec![0.0, -1.0],
+        },
+    ];
+    let mut unit_labels = HashMap::from([(0usize, 0usize), (1, 1), (2, 3), (3, 3)]);
+    super::coverage::split_covered_utterances(
+        &mut utterances,
+        &mut units,
+        &mut unit_labels,
+        SpeechSupport::default(),
+    );
+    assert_eq!(utterances.len(), 4, "первая реплика должна разделиться");
+    let promoted_units: Vec<usize> = units
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| unit_labels.get(index) == Some(&3))
+        .map(|(_, unit)| unit.utterance)
+        .collect();
+    assert_eq!(
+        promoted_units,
+        vec![2, 3],
+        "после split метки неизвестных голосов должны переехать на новые индексы"
+    );
+    // После split: 0–1 — части первой реплики, 2–3 — неизвестные голоса.
+    let label_of = HashMap::from([(0usize, 0usize), (1, 1), (2, 3), (3, 3)]);
+    let promoted = promoted_utterances(&label_of, &HashSet::from([3usize]));
+    assert_eq!(
+        promoted,
+        HashMap::from([(2usize, 3usize), (3usize, 3usize)])
+    );
+    assert!(
+        !promoted.contains_key(&1),
+        "часть чужой реплики не должна получить метку неизвестного"
+    );
 }
 
 #[test]

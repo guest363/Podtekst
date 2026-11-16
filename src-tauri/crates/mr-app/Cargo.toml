@@ -1,6 +1,6 @@
 [package]
 name = "mr-app"
-version = "0.8.1"
+version = "0.8.2"
 edition = "2021"
 rust-version = "1.92"
 description = "Подтекст (Podtekst) — нативное ядро (CLI + HTTP REST + трей; Tauri WebView за фичей)"
@@ -36,6 +36,8 @@ mr-summarize = { path = "../mr-summarize" }
 mr-metrics = { path = "../mr-metrics" }
 ureq.workspace = true
 zip.workspace = true
+tar.workspace = true
+lzma-rust2.workspace = true
 sha2.workspace = true
 uuid = { version = "1", features = ["v4"] }
 

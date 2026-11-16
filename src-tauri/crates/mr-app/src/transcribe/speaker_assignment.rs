@@ -1,11 +1,18 @@
 //! Ограниченное назначение локальных спикеров PyAnnote глобальным кластерам.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use mr_ml::onnx::segmentation::{Segmentation, FRAME_SAMPLES};
 use mr_ml::{cosine_similarity, linear_sum_assignment_max, weighted_centroid};
 
 use super::Utterance;
+
+/// Ниже этого сходства собственный вектор реплики не подтверждает целевой
+/// кластер: калибровка ERes2NetV2 даёт ≤ 0.22 для разных дикторов, поэтому
+/// 0.30 — граница «явно чужой голос». Порог нужен только для реплик,
+/// получивших собственный кластер как неизвестный голос: иначе решение окна
+/// перебивает решение кластеризации.
+const PROMOTED_OVERRIDE_MIN_SIM: f64 = 0.30;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct SpeakerSpan {
@@ -24,6 +31,7 @@ pub(super) struct Outcome {
 /// Венгерский алгоритм внутри каждого окна не даёт двум локальным спикерам
 /// занять один глобальный кластер. При нехватке кластеров создаётся новый,
 /// если это разрешено явным ограничением `max_speakers`.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn apply(
     segmentation: &Segmentation,
     utterances: &[Utterance],
@@ -31,6 +39,7 @@ pub(super) fn apply(
     durs: &[f64],
     quals: &[f64],
     label_of: &mut HashMap<usize, usize>,
+    protected: &HashSet<usize>,
     max_speakers: usize,
 ) -> Outcome {
     let mut members: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -217,6 +226,18 @@ pub(super) fn apply(
         &mut next_label,
     );
     for (index, label) in labels {
+        if protected.contains(&index) {
+            let supported = embs
+                .get(index)
+                .and_then(Option::as_ref)
+                .zip(globals.get(&label))
+                .is_some_and(|(embedding, global)| {
+                    cosine_similarity(embedding, global) >= PROMOTED_OVERRIDE_MIN_SIM
+                });
+            if !supported {
+                continue;
+            }
+        }
         label_of.insert(index, label);
     }
     Outcome {
@@ -606,6 +627,7 @@ mod tests {
             &[5.0, 5.0],
             &[1.0, 1.0],
             &mut labels,
+            &HashSet::new(),
             2,
         );
         assert_ne!(labels[&0], labels[&1]);
@@ -634,6 +656,7 @@ mod tests {
             &[5.0, 5.0],
             &[1.0, 1.0],
             &mut labels,
+            &HashSet::new(),
             1,
         );
         assert_eq!(labels[&0], labels[&1]);
@@ -661,6 +684,7 @@ mod tests {
             &[5.0, 5.0],
             &[1.0, 1.0],
             &mut labels,
+            &HashSet::new(),
             2,
         );
         let frame = FRAME_SAMPLES as f64 / 16000.0;
@@ -766,5 +790,71 @@ mod tests {
         assert_eq!(labels[&0], 10);
         assert_eq!(labels[&1], 10);
         assert_eq!(next, 12);
+    }
+
+    #[test]
+    fn promoted_voice_keeps_label_without_acoustic_support() {
+        let segmentation = Segmentation {
+            frames: vec![],
+            windows: vec![SegmentationWindow {
+                start_sample: 0,
+                classes: vec![1; 300],
+            }],
+        };
+        let utterances = vec![
+            utterance(0.0, 1.0),
+            utterance(1.0, 2.0),
+            utterance(2.0, 3.0),
+        ];
+        let embs = vec![
+            Some(vec![1.0, 0.0]),
+            Some(vec![1.0, 0.0]),
+            Some(vec![0.0, 1.0]),
+        ];
+        let mut labels = HashMap::from([(0usize, 0usize), (1, 0), (2, 1)]);
+        apply(
+            &segmentation,
+            &utterances,
+            &embs,
+            &[1.0, 1.0, 1.0],
+            &[1.0, 1.0, 1.0],
+            &mut labels,
+            &HashSet::from([2usize]),
+            0,
+        );
+        assert_eq!(labels[&2], 1, "чужой голос нельзя вернуть соседу по окну");
+    }
+
+    #[test]
+    fn promoted_voice_follows_supported_window_vote() {
+        let segmentation = Segmentation {
+            frames: vec![],
+            windows: vec![SegmentationWindow {
+                start_sample: 0,
+                classes: vec![1; 300],
+            }],
+        };
+        let utterances = vec![
+            utterance(0.0, 1.0),
+            utterance(1.0, 2.0),
+            utterance(2.0, 3.0),
+        ];
+        let embs = vec![
+            Some(vec![1.0, 0.0]),
+            Some(vec![1.0, 0.0]),
+            Some(vec![0.8, 0.2]),
+        ];
+        let mut labels = HashMap::from([(0usize, 0usize), (1, 0), (2, 1)]);
+        apply(
+            &segmentation,
+            &utterances,
+            &embs,
+            &[1.0, 1.0, 1.0],
+            &[1.0, 1.0, 1.0],
+            &mut labels,
+            &HashSet::from([2usize]),
+            0,
+        );
+        assert_eq!(labels[&2], 0, "подтверждённый голос должен следовать окну");
     }
 }

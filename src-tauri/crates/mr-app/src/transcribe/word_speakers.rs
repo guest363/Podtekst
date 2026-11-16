@@ -848,6 +848,7 @@ mod tests {
             &[5.0, 5.0],
             &[1.0, 1.0],
             &mut labels,
+            &std::collections::HashSet::new(),
             2,
         );
         let names: std::collections::HashMap<usize, &str> =
