@@ -36,6 +36,8 @@ mr-summarize = { path = "../mr-summarize" }
 mr-metrics = { path = "../mr-metrics" }
 ureq.workspace = true
 zip.workspace = true
+tar.workspace = true
+lzma-rust2.workspace = true
 sha2.workspace = true
 uuid = { version = "1", features = ["v4"] }
 

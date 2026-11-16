@@ -5,9 +5,10 @@ mod arch;
 
 pub use arch::binary_arch;
 
+use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -61,6 +62,47 @@ pub fn ffmpeg_path() -> PathBuf {
 
 pub fn ffprobe_path() -> PathBuf {
     resolve("ffprobe")
+}
+
+/// Системная утилита не должна наследовать библиотеки AppImage: его старые
+/// `liblzma`/`libmpg123` перекрывают системные и ломают запуск ffmpeg.
+pub fn external_command(program: impl AsRef<OsStr>) -> Command {
+    let mut command = Command::new(program);
+    let Some(value) = std::env::var_os("LD_LIBRARY_PATH") else {
+        return command;
+    };
+    let appdir = std::env::var_os("APPDIR").map(PathBuf::from);
+    match host_library_path(&value, appdir.as_deref()) {
+        Some(paths) => {
+            command.env("LD_LIBRARY_PATH", paths);
+        }
+        None => {
+            command.env_remove("LD_LIBRARY_PATH");
+        }
+    }
+    command
+}
+
+/// Убирает из `LD_LIBRARY_PATH` только каталоги монтирования AppImage,
+/// включая подвисшие от предыдущих запусков; остальные пути сохраняются.
+fn host_library_path(value: &OsStr, appdir: Option<&Path>) -> Option<OsString> {
+    let paths: Vec<PathBuf> = std::env::split_paths(value)
+        .filter(|path| !appimage_lib_path(path, appdir))
+        .collect();
+    if paths.is_empty() {
+        return None;
+    }
+    std::env::join_paths(paths).ok()
+}
+
+fn appimage_lib_path(path: &Path, appdir: Option<&Path>) -> bool {
+    appdir.is_some_and(|dir| path.starts_with(dir))
+        || path.components().any(|component| {
+            component
+                .as_os_str()
+                .as_encoded_bytes()
+                .starts_with(b".mount_")
+        })
 }
 
 /// Версия и паспорт ffmpeg — с кэшем на 30 с: `/api/status` опрашивается часто,
@@ -177,7 +219,7 @@ fn source_of(path: &Path) -> &'static str {
 }
 
 fn run_version(path: &Path) -> Option<String> {
-    let mut child = std::process::Command::new(path)
+    let mut child = external_command(path)
         .arg("-version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -242,6 +284,31 @@ pub fn version_token(token: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn appimage_library_entries_are_filtered() {
+        let appdir = Path::new("/tmp/.mount_cur");
+        let value = std::ffi::OsStr::new(
+            "/tmp/.mount_cur/usr/lib:/usr/lib/x86_64-linux-gnu:/tmp/.mount_old/usr/lib:/opt/lib",
+        );
+        assert_eq!(
+            host_library_path(value, Some(appdir)),
+            Some(std::ffi::OsString::from(
+                "/usr/lib/x86_64-linux-gnu:/opt/lib"
+            ))
+        );
+        let only_appimage = std::ffi::OsStr::new("/tmp/.mount_cur/usr/lib");
+        assert_eq!(host_library_path(only_appimage, Some(appdir)), None);
+        assert!(appimage_lib_path(
+            Path::new("/tmp/.mount_old/usr/lib"),
+            None
+        ));
+        assert!(!appimage_lib_path(
+            Path::new("/usr/lib/x86_64-linux-gnu"),
+            Some(appdir)
+        ));
+    }
 
     #[test]
     fn resolve_prefers_extra_bin_dir_then_path() {

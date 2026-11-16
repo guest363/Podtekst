@@ -2,9 +2,8 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 #[cfg(any(windows, target_os = "macos"))]
-use std::process::{Child, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
@@ -152,7 +151,7 @@ fn windows_encoder() -> Option<&'static str> {
 
 #[cfg(windows)]
 fn probe_windows_encoder() -> Option<&'static str> {
-    let out = Command::new(mr_audio::tools::ffmpeg_path())
+    let out = mr_audio::tools::external_command(mr_audio::tools::ffmpeg_path())
         .args(["-hide_banner", "-encoders"])
         .output()
         .ok()?;
@@ -173,7 +172,7 @@ fn macos_encoder() -> Option<&'static str> {
 
 #[cfg(target_os = "macos")]
 fn probe_macos_encoder() -> Option<&'static str> {
-    let out = Command::new(mr_audio::tools::ffmpeg_path())
+    let out = mr_audio::tools::external_command(mr_audio::tools::ffmpeg_path())
         .args(["-hide_banner", "-encoders"])
         .output()
         .ok()?;
@@ -276,7 +275,7 @@ impl ScreenCaptureSession {
         };
         let video_path = std::env::temp_dir().join(format!(".mr_screen_{started_ts}.mp4"));
 
-        let mut cmd = Command::new(mr_audio::tools::ffmpeg_path());
+        let mut cmd = mr_audio::tools::external_command(mr_audio::tools::ffmpeg_path());
         cmd.args([
             "-hide_banner",
             "-loglevel",
@@ -313,7 +312,7 @@ impl ScreenCaptureSession {
         };
         let video_path = std::env::temp_dir().join(format!(".mr_screen_{started_ts}.mp4"));
 
-        let mut cmd = Command::new(mr_audio::tools::ffmpeg_path());
+        let mut cmd = mr_audio::tools::external_command(mr_audio::tools::ffmpeg_path());
         cmd.args(macos_ffmpeg_args(encoder, &video_path));
         // ffmpeg без разрешения TCC выходит сразу — подсказываем, что включить.
         let child = spawn_child(&mut cmd, &video_path).map_err(|e| {
@@ -506,7 +505,7 @@ pub(crate) fn mux_screen_and_audio(
         Err(format!("{reason}{note}"))
     };
 
-    let mut cmd = Command::new(mr_audio::tools::ffmpeg_path());
+    let mut cmd = mr_audio::tools::external_command(mr_audio::tools::ffmpeg_path());
     cmd.args(mux_args(video_offset_sec));
     cmd.arg("-i")
         .arg(video_path)
@@ -535,7 +534,7 @@ pub(crate) fn mux_screen_and_audio(
 
     crate::note!("[SCREEN] Прямое копирование не сработало, запускаю перекодирование...");
     let encoder = fallback_encoder();
-    let mut cmd = Command::new(mr_audio::tools::ffmpeg_path());
+    let mut cmd = mr_audio::tools::external_command(mr_audio::tools::ffmpeg_path());
     cmd.args(mux_args(video_offset_sec));
     cmd.arg("-i")
         .arg(video_path)
@@ -710,7 +709,7 @@ mod windows_tests {
             .len();
         assert!(size > 1000, "видео слишком маленькое: {size} байт");
         // Файл должен быть валидным контейнером mp4, а не просто непустым
-        if let Ok(out) = Command::new(mr_audio::tools::ffprobe_path())
+        if let Ok(out) = mr_audio::tools::external_command(mr_audio::tools::ffprobe_path())
             .args([
                 "-v",
                 "error",
