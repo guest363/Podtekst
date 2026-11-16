@@ -17,8 +17,9 @@ yarn build                 # прод-сборка в ../static (index.html + cs
 ```
 
 `ui/web/static/` - только dist, руками не править (перезаписывается сборкой).
-`run.sh` сам пересобирает фронт при изменении исходников. После `yarn build` нужно
-пересчитать `ui/web/static/.mr-stamp` (команда в `docs/ai/workflow.md`).
+`run.sh` и `./scripts/verify.sh --ui` из корня репозитория пересчитывают `ui/web/static/.mr-stamp`.
+Node.js ≥ 20.19 / ≥ 22.12 (минимум диктует Vite 8) и Yarn 4 через `corepack enable` нужны
+только для пересборки; в рантайме Node нет.
 
 ## Структура `src/`
 
@@ -62,5 +63,5 @@ yarn build                 # прод-сборка в ../static (index.html + cs
 - **Svelte 5:** только runes (`$props`, `$state`, `$derived`, `$effect`), сниппеты вместо слотов.
   `export let`, `$:` и `on:click` в новом коде запрещены.
 - **Имена файлов:** kebab-case (проверяется `style/useFilenamingConvention`).
-- Перед коммитом: `yarn lint` + `yarn check` + `yarn build` + пересчёт `.mr-stamp` + `cargo test`
+- Перед коммитом из корня: `./scripts/verify.sh --ui` (lint, check, build, штамп) + `cargo test`
   (Rust-тесты сверяют маркеры `transcript-grid`, `packsListSettings` в бандле и отдают всю статику с 200).

@@ -30,6 +30,15 @@ jobs:
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # P11 и инструкции: та же точка входа, что в pre-push, — иначе гейты расходятся.
+      - name: Instruction gates (P11 and docs)
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          base="${PR_BASE:-$PUSH_BEFORE}"
+          if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]]; then base="HEAD~1"; fi
+          MR_P11_REF="$base...HEAD" ./scripts/verify.sh --fast
 
   components-lint:
     runs-on: ubuntu-24.04
@@ -84,14 +93,10 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: src-tauri
-      - name: Format
-        run: cargo fmt --all -- --check
-      - name: Clippy (zero warnings)
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: Tests
-        run: cargo test --workspace --locked
-      - name: Summary API contract (no model, no runtime)
-        run: cargo test -p mr-app --test summary_api_contract --locked
+      # Команды не дублируются: CI и pre-push берут их из verify.sh.
+      - name: Gates (fmt, clippy, tests)
+        working-directory: ${{ github.workspace }}
+        run: ./scripts/verify.sh --rust
       - name: Release build (default features, no system deps)
         run: cargo build --release -p mr-app --locked
       - name: Headless --web smoke (no runtime -> 503, startup OK)
@@ -108,7 +113,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
-          cargo clippy -p mr-app --features tauri-ui --all-targets --locked -- -D warnings
+          ../scripts/verify.sh --tauri
 
   macos:
     needs: frontend
@@ -137,22 +142,14 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
-      - name: Build frontend (Svelte)
+      - name: Install
         working-directory: ui/web/frontend
         run: |
           corepack enable
           yarn install --immutable
-          yarn lint
-          yarn check
-          yarn build
-      - name: Static build is committed
-        run: |
-          # yarn build очищает static/ и не создаёт .mr-stamp — его пишет run.sh или pre-push.
-          root="$(git rev-parse --show-toplevel)"
-          git -C "$root" checkout -- ui/web/static/.mr-stamp
-          expected="$(cd "$root" && ./scripts/frontend-stamp.sh)"
-          test "$(cat "$root/ui/web/static/.mr-stamp")" = "$expected"
-          git -C "$root" diff --exit-code -- ui/web/static
+      # Статика и штамп обязаны быть в коммите: verify.sh --ui падает при расхождении.
+      - name: Gates (lint, check, build, static stamp)
+        run: ./scripts/verify.sh --ui
 
   android:
     runs-on: ubuntu-24.04

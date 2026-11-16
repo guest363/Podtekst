@@ -1,16 +1,21 @@
 # Pre-push повторяет гейты CI: ошибки формата и линта ловятся до отправки ветки.
+# Команды не дублируются: их правка живёт в verify.sh, здесь — только режимы.
 pre-push:
   parallel: true
   commands:
-    rust-fmt:
-      run: cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
-    rust-clippy:
-      run: cargo clippy --workspace --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
+    # Инструкции идут первыми: сборка фронта переписывает .mr-stamp, и p11 принял бы
+    # новый штамп за локальную правку.
+    instructions:
+      run: ./scripts/verify.sh --fast
+      priority: 1
+    rust:
+      run: ./scripts/verify.sh --rust
+      priority: 2
     # tauri_shell.rs и код под #[cfg(feature = "tauri-ui")] компилируются
     # только с этой фичей: без отдельного прогона окно падает лишь в CI.
-    rust-clippy-tauri:
-      run: cargo clippy -p mr-app --features tauri-ui --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
-    rust-tests:
-      run: cargo test --workspace --locked --manifest-path src-tauri/Cargo.toml
+    tauri:
+      run: ./scripts/verify.sh --tauri
+      priority: 2
     frontend:
-      run: bash ./scripts/check-frontend.sh
+      run: ./scripts/verify.sh --ui
+      priority: 2

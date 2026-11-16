@@ -1,131 +1,86 @@
-# Подтекст (Podtekst) - AGENTS.md
+# Подтекст (Podtekst) — AGENTS.md
 
 Нативное кроссплатформенное приложение для записи встреч и локальной ИИ-расшифровки
-(Linux PipeWire/PulseAudio - живой захват; macOS - CoreAudio: микрофон и ScreenCaptureKit для системного звука (BlackHole - запасной вариант); Windows - WASAPI: микрофон и loopback системного звука).
-Микрофон и система обрабатываются раздельно, в том числе при выводе на колонки. Акустическое эхо подавляется VAD-гейтом и дедупликацией; только цифровые дубли сокращаются до одного исходного канала.
-Стек: **Rust + Tauri v2 + ONNX Runtime** (zero-dependency бинарник ~20-30 МБ).
-Модели: **GigaAM-v3 e2e RNNT int8** (русский, SOTA) + **Whisper-turbo** (30+ языков) +
-**Silero VAD v6** + **PyAnnote Segmentation 3.0** (речь и перекрытия) +
-**ERes2NetV2 192-dim** (3D-Speaker) - всё локально, без облаков.
+(Linux PipeWire/PulseAudio, macOS CoreAudio + ScreenCaptureKit, Windows WASAPI loopback).
+Микрофон и система пишутся раздельно, в том числе при выводе на колонки; акустическое эхо
+подавляется VAD-гейтом и дедупликацией, цифровые дубли сводятся к одному исходному каналу.
+Стек: Rust + Tauri v2 + ONNX Runtime. Модели: GigaAM-v3 e2e RNNT int8, Whisper turbo,
+Silero VAD v6, PyAnnote 3.0, ERes2NetV2 192-dim — всё локально, без облаков.
 
----
+Это карта проекта, а не мануал: правила — `docs/ai/code-style.md`, процесс —
+`docs/ai/workflow.md`. Документ, на который ссылается карта, — единственный источник правды
+по своей теме; не пересказывайте его в других файлах.
 
-## Команды
+## Запуск и гейт
 
 ```bash
-# Запуск (первый запуск сам соберёт релизный бинарник)
-./run.sh                  # Нативное окно Tauri (WebView) + HTTP API http://127.0.0.1:8765
-./run.sh --web            # Только HTTP API + автооткрытие браузера (без окна, лёгкая сборка)
-./run.sh --dev            # dev-opt профиль: dev-логи и артефакты распознавания
-./run.sh --tray           # Нативное окно скрыто, только трей (Tauri)
-./run.sh --toggle         # Переключить запись (старт / стоп через IPC)
-./run.sh --start          # Начать запись через IPC
-./run.sh --stop           # Остановить запись через IPC
-./run.sh --transcribe встреча.mp3 [--engine auto|gigaam|whisper]  # Расшифровка в CLI
+./run.sh                  # окно Tauri + HTTP API 127.0.0.1:8765
+./run.sh --web            # только HTTP API и браузер
+./run.sh --transcribe meeting.mp3 [--engine auto|gigaam|whisper]
 
-# Нативное окно требует системный WebView (один раз):
-# sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev
-# (macOS: WKWebView из системы; Windows: WebView2 из системы)
-
-# Разработка
-cargo test --workspace --manifest-path src-tauri/Cargo.toml   # Все unit + мат. тесты
-cargo test -p mr-ml --features onnx --test onnx_real -- --nocapture  # Живой инференс (нужны модели + WAV, иначе skip)
-cargo clippy --workspace --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings  # Ноль предупреждений - обязательно
-cargo clippy -p mr-app --features tauri-ui --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings  # Нативное окно/трей (tauri_shell.rs компилируется только так)
-cargo build --release -p mr-app --manifest-path src-tauri/Cargo.toml
-cd ui/web/frontend && yarn lint && yarn check && yarn build  # Фронт: Biome + типы + прод-сборка в ui/web/static
+./scripts/verify.sh --fast  # P11 и доки: секунды, без сборки
+./scripts/verify.sh --rust  # fmt, clippy, тесты
+./scripts/verify.sh --ui    # lint, check, build, штамп статики
+./scripts/verify.sh --tauri # clippy с tauri-ui
+./scripts/verify.sh --all   # полный гейт перед PR
 ```
 
-Переменные окружения для тестов/запуска:
-`MEETING_RECORDER_DATA_DIR` (переопределение папки данных),
-`MR_MODELS_DIR` + `MR_TEST_WAV` (живые ONNX-тесты).
+Охват режимов и критерий готовности — `docs/ai/workflow.md`. Первый запуск окна требует
+системный WebView; пакеты для Linux — в `README.md`.
 
----
+## Инварианты
 
-## Локальное окружение
+- **[P12] Zero-Leak.** Аудио, отпечатки и статистика не покидают машину. В PR, коммитах,
+  issue, коде и тестах нет имён людей, названий файлов, тем и фрагментов речи — только
+  технические параметры: канал, хронометраж, число спикеров.
+- **[P10] Root Cause.** Причина чинится на своём слое, а не маскируется в вызывающем коде.
+- **Ноль предупреждений.** `clippy -D warnings`, `yarn lint`, `yarn check` — блокеры.
+- **[P2] Минимальный diff.** Простейшее решение, закрывающее задачу; новые зависимости —
+  только с критическим поводом.
+- **[P9] Контракты.** CLI-флаги, REST, `voiceprints.json` v3 и `.transcript.json` не ломаются
+  без мажорной версии.
 
-- **Rust**: точная версия закреплена в `rust-toolchain.toml` (последний стабильный);
-  минимум для сборки - 1.92 (MSRV по `Cargo.lock`: ort 2.0.0-rc.15 требует 1.92,
-  Tauri - 1.90): всё собирается Cargo, внешних сред исполнения нет.
-- **Node.js ≥ 20.19 / ≥ 22.12 + Yarn 4** (`corepack enable`; минимум диктует Vite 8):
-  только для пересборки фронта при изменении исходников (`ui/web/frontend` →
-  `yarn install --immutable && yarn build`). В рантайме Node нет. Штамп с хешем исходников
-  коммитится внутрь `ui/web/static/.mr-stamp`: чистый клон с неизменёнными исходниками
-  запускается без Node.
-- **Модели** скачиваются один раз через вкладку «Компоненты» в UI
-  (`POST /api/models/update`, докачка `.part` + проверка `SHA-256` из `core/models-manifest.json`
-  - точнее, `src-tauri/crates/mr-models/models-manifest.json`),
-  лежат в `<app_data>/models/<id>/`.
-- **Голосовые пакеты**: `<app_data>/packs/<id>/` (`people.json`, `voiceprints.json` v3, `snippets/*.wav`).
-  Личные `people.json` / `voiceprints.json` / `config.json` в корне репозитория -
-  локальные данные владельца, в git не коммитятся.
-
----
-
-## Основные правила разработки (P1-P12)
-
-Правила обязательны для всех агентов и разработчиков:
-
-- **[P1] DRY & Single Source of Truth.** Форматы (`voiceprints.json` v3, `.transcript.json`,
-  `models-manifest.json`) имеют одно каноническое описание; Rust и тесты - единственная реализация.
-- **[P2] YAGNI & Простота (Ponytail).** Стандартная библиотека и текущие зависимости вместо новых крейтов.
-  Функциональность за cargo-параметрами (`onnx`, `tauri-ui`); базовая сборка - без системных зависимостей.
-- **[P3] Изоляция UI от ядра.** HTTP REST API (`mr-app`) - единственный мост между Web UI и ядром.
-  Никаких ML-импортов в HTTP-слое, никакой файловой логики в математике.
-- **[P4] Статические ассеты вне кода.** Web UI - только `ui/web/static/` (сборка Svelte);
-  исходники - `ui/web/frontend/src/` (Svelte 5 + TS + CSS Cascade Layers).
-  Имена сборки детерминированы (`css/app.css`, `js/app.js`, без хешей) - их знает
-  `static_body` в `mr-app/src/http/mod.rs`: он отдаёт файлы из `ui/web/static` по расширению,
-  а `css/app.css` и `js/app.js` дополнительно вшиты `include_bytes!` как аварийный fallback
-  на случай отсутствующего каталога. Новые файлы статики регистрируются там же.
-- **[P5] Кроссплатформенность без исключений.** Пути - `PathBuf`; захват аудио - через `mr-audio`
-  (WASAPI Loopback / CoreAudio + ScreenCaptureKit / PipeWire); специфика операционных систем - за `#[cfg(target_os)]`.
-- **[P6] Минимум внешних процессов.** Основной путь - нативные библиотеки (libpulse через dlopen, symphonia). Исключения: `ffprobe`/`ffmpeg` (длительность медиа и контейнеры без демуксера symphonia), `pactl`/`pw-record`/`parec` (если libpulse отсутствует), `gsettings` (горячие клавиши GNOME), открытие браузера и папок.
-- **[P7] Корректное завершение.** IPC-сервер и HTTP останавливаются вместе с процессом; запись финализирует WAV-заголовки.
-- **[P8] Модули до 300-400 строк.** Роутер HTTP (`http/mod.rs`) и конвейер (`transcribe/mod.rs`) - координаторы, чьи ветки разнесены в соседние файлы; сами решения держим компактными.
-- **[P9] Обратная совместимость.** CLI-флаги (`--toggle/--start/--stop/--tray/--web/--port`),
-  REST-контракты и форматы файлов не ломаются без мажорной версии.
-- **[P10] Root Cause.** Чинить причину на базовом слое; проверка - запуском на реальной записи.
-- **[P11] Строгая типизация; комментарии — только «ЗАЧЕМ» и в крайнем случае.** Каждый комментарий приходится поддерживать вместе с кодом: пересказ кода устаревает и вводит в заблуждение. Для ИИ-агентов: по умолчанию 0 комментариев (код самодокументируется типами и именами). Запрещены пересказы действий кода, дублирующие docstrings и разделители (`// ---`). Разрешены только обоснования: ограничение платформы, контракт формата, калибровка порога с источником замера, `SAFETY:`/`shortcut: <ограничение>, <когда апгрейдить>`, ссылки на правила (`[P3]`, `[P9]`). Язык — русский. Перед завершением задачи агент проверяет diff через `./scripts/p11-diff.sh --check`.
-- **[P12] Безопасность пользовательских данных и Zero-Leak.** Аудио, голосовые отпечатки и статистика - только локально.
-  Категорически запрещено утекать личные данные в PR, коммиты, issue, код, комментарии и тесты:
-  никаких реальных имён файлов/записей (например, «Марина Александровна»), имён людей, тем бесед или фрагментов речи.
-  Описывать сценарии, ошибки и замеры производительности строго через обезличенные технические характеристики:
-  канал (моно/стерео), хронометраж, число спикеров, частота, параметры перекрытий (например, «моно, 5 мин, 2 спикера»).
-  Исходящий трафик: скачивание открытых весов моделей, проверка последнего релиза
-  на GitHub и - по явному согласию - загрузка подписанного обновления (без аудио и идентификаторов).
-  Автоустановка обновлений без действия пользователя не выполняется.
-- **Стиль фронтенда.** Svelte/TS-код проверяется Biome (`yarn lint`), правила — в
-  `ui/web/frontend/AGENTS.md`: `type` вместо `interface`, `const`-стрелки, `import type`,
-  без `any` и лишних `as`, kebab-case имён файлов.
-
----
+Полный свод — `docs/ai/code-style.md` (P1–P12). Перед правкой прочтите разделы по
+затронутому коду.
 
 ## Карта контекста
 
-| Задача / Домен | Куда смотреть |
+| Задача | Куда смотреть |
 |---|---|
-| Доменные термины (Turn, Voiceprint, Cluster, Person, VAD) | `CONTEXT.md` |
+| Доменные термины (Turn, Voiceprint, Person, VAD…) | `CONTEXT.md` |
+| Правила P1–P12, стиль, комментарии | `docs/ai/code-style.md` |
+| Процесс, Track 1/2, верификация, критерий готовности | `docs/ai/workflow.md` |
+| Архитектура, стадии конвейера, UI ↔ Rust ↔ файлы | `docs/architecture.md` |
 | Dev-логи, артефакты запуска, разбор сбоев | `docs/dev-logging.md` |
-| Тестирование на открытых датасетах: метрики, наборы, приёмка | `docs/testing/SPEC.md` и `tools/diar_eval/baseline.json` |
-| Регламент работы с ИИ (Track 1 / Track 2), верификация | `docs/ai/workflow.md` |
-| Мобильная версия (Android AAudio, Foreground Service) | `ANDROID.md` |
-| ML-инференс, ONNX, Silero, GigaAM, Whisper, эмбеддинги | `src-tauri/crates/mr-ml/AGENTS.md` |
-| Аудио: устройства, сплит, WAV, symphonia, захват звука | `src-tauri/crates/mr-audio/AGENTS.md` |
-| HTTP REST API, Tauri IPC, координация транскрибации | `src-tauri/crates/mr-app/AGENTS.md` |
-| Каталог и загрузка ИИ-моделей (манифест, SHA-256) | `src-tauri/crates/mr-models/AGENTS.md` |
-| Домен локальных итогов (шаблоны, эвристика, парсер, grounding) | `src-tauri/crates/mr-summarize/AGENTS.md` |
-| Голосовые пакеты, экспорт и импорт биометрии | `src-tauri/crates/mr-packs/AGENTS.md` |
-| Метрики речи (доли, монологи, F0, качество записи) | `src-tauri/crates/mr-metrics/AGENTS.md` |
-| Web UI (Svelte 5 + Vite + TS, собирает `run.sh`) | `ui/web/frontend/AGENTS.md` |
-| CI: тесты + бинарники + Tauri-бандлы | `.github/workflows/release.yml` |
-| Релизный цикл и публикация версий | `docs/RELEASING.md` |
+| Тестирование на датасетах, метрики, приёмка | `docs/testing/SPEC.md`, `tools/diar_eval/baseline.json` |
+| ML, ONNX, Silero, GigaAM, Whisper, эмбеддинги | `src-tauri/crates/mr-ml/AGENTS.md` |
+| Захват аудио, устройства, WAV, symphonia | `src-tauri/crates/mr-audio/AGENTS.md` |
+| HTTP API, Tauri IPC, конвейер транскрибации | `src-tauri/crates/mr-app/AGENTS.md` |
+| Каталог и загрузка моделей, SHA-256 | `src-tauri/crates/mr-models/AGENTS.md` |
+| Локальные итоги: шаблоны, парсер, grounding | `src-tauri/crates/mr-summarize/AGENTS.md` |
+| Голосовые пакеты, экспорт и импорт | `src-tauri/crates/mr-packs/AGENTS.md` |
+| Метрики речи, F0, качество записи | `src-tauri/crates/mr-metrics/AGENTS.md` |
+| Web UI (Svelte 5 + Vite + TS) | `ui/web/frontend/AGENTS.md` |
+| Android (AAudio, Foreground Service) | `ANDROID.md` |
+| Релиз и публикация версий | `docs/RELEASING.md` |
+| CI: тесты, бинарники, Tauri-бандлы | `.github/workflows/release.yml` |
 
-> **Правило маршрутизации:** перед изменением крейта обязательно прочитайте его локальный `AGENTS.md`.
+## Локальные AGENTS.md
 
----
+Перед изменением крейта или фронта прочтите его `AGENTS.md`: инварианты, карта файлов,
+локальная верификация. Файл создаётся только при существенных правилах, которых нет в общей
+документации (`docs/ai/agents-template.md`); описывать очевидную структуру не нужно.
+
+README пакета — конвенции, API и примеры (канон для людей и агентов). `AGENTS.md` — только
+правила изменения и особенности, без дублей README. Уже прочитанные и неизменившиеся
+инструкции повторно не загружайте.
+
+## Роли
+
+Основной процесс един для всех агентов — `docs/ai/workflow.md`. Antigravity входит через
+`.agent/rules/audio-record.md`, Claude Code — через `CLAUDE.md` (импорт `AGENTS.md`).
 
 ## Сообщения коммитов и PR
 
-Формат - Conventional Commits: `<type>(<scope>): <subject>`. Типы: `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `chore`.
-В заголовках и описаниях PR/коммитов строго соблюдать [P12]: только обезличенные технические параметры записи, ноль личных названий файлов и контекста.
+`<type>(<scope>): <subject>`; типы `feat|fix|refactor|perf|test|docs|chore`.
+В заголовках и описаниях — только обезличенные технические параметры [P12].

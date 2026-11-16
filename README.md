@@ -283,23 +283,17 @@ cd podtekst
 Стек: **Rust** (MSRV 1.92, Tokio, Symphonia, Ort, llama.cpp) + **Tauri v2** + **Svelte 5** (Vite, TypeScript, Biome).
 
 ```bash
-# Запуск модульных тестов ядра и математики диаризации
-cargo test --workspace --locked --manifest-path src-tauri/Cargo.toml
+# Полный гейт перед PR: формат, clippy, тесты, фронт, Tauri, P11 и инструкции
+./scripts/verify.sh --all
 
-# Проверка кода линтером clippy (строгий режим без предупреждений)
-cargo clippy --workspace --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
-
-# Проверка оконного слоя Tauri и системного трея
-cargo clippy -p mr-app --features tauri-ui --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
-
-# Проверка форматирования Rust-кода
-cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
-
-# Проверка типов и сборка фронтенда
-cd ui/web/frontend && yarn install --immutable && yarn lint && yarn check && yarn build
+# Точечные режимы: --fast, --rust, --ui, --tauri, --docs
+./scripts/verify.sh --help
 ```
 
-Подробное описание архитектуры, внутренних крейтов и правил разработки находится в [AGENTS.md](AGENTS.md). Правила участия в проекте описаны в [CONTRIBUTING.md](CONTRIBUTING.md). Перед отправкой коммитов полезно установить хуки lefthook: они запускают проверки автоматически перед `git push`.
+Карта проекта и правила для агентов — [AGENTS.md](AGENTS.md), архитектура —
+[docs/architecture.md](docs/architecture.md), свод правил — [docs/ai/code-style.md](docs/ai/code-style.md).
+Правила участия — [CONTRIBUTING.md](CONTRIBUTING.md). Перед отправкой коммитов полезно
+установить хуки lefthook: они запускают те же режимы `verify.sh` перед `git push`.
 
 ---
 

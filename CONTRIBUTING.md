@@ -5,26 +5,25 @@
 
 ## Проверки перед PR (все гоняет CI)
 
-```bash
-# Rust (из корня репозитория; тулчейн закреплён rust-toolchain.toml)
-cargo fmt --all --manifest-path src-tauri/Cargo.toml
-cargo clippy --workspace --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
-cargo test --workspace --locked --manifest-path src-tauri/Cargo.toml
-# Нативное окно/трей - отдельная проверка (нужны системные WebKit-пакеты, см. README):
-cargo clippy -p mr-app --features tauri-ui --all-targets --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
+Единая точка входа — `./scripts/verify.sh`; её же запускают `lefthook` и CI, поэтому
+команды не расходятся:
 
-# Web UI
-cd ui/web/frontend && corepack enable && yarn install --immutable && yarn lint && yarn check && yarn build
+```bash
+./scripts/verify.sh --fast   # P11 и инструкции: секунды, без сборки
+./scripts/verify.sh --rust   # формат, clippy, тесты
+./scripts/verify.sh --ui     # lint, check, build, штамп статики
+./scripts/verify.sh --tauri  # clippy с tauri-ui (нужны системные WebKit-пакеты, см. README)
+./scripts/verify.sh --all    # всё перечисленное перед PR
 ```
 
-После изменения исходников фронта пересоберите статику (`yarn build`) и
-закоммитьте её вместе с `ui/web/static/.mr-stamp` - так чистый клон запускается без Node.
+После изменения исходников фронта `--ui` пересобирает статику и пересчитывает
+`ui/web/static/.mr-stamp`; закоммитьте их вместе - так чистый клон запускается без Node.
+Перед первым `--ui` один раз установите зависимости:
+`cd ui/web/frontend && corepack enable && yarn install --immutable`.
 
 ## Git hooks (lefthook)
 
-`lefthook.yml` повторяет гейты CI перед `git push`: `cargo fmt --check`, clippy,
-тесты, `yarn lint`, `yarn check`, `yarn build` и проверку закоммиченной статики.
-Установка один раз:
+`lefthook.yml` запускает те же режимы `verify.sh` перед `git push`. Установка один раз:
 
 ```bash
 go install github.com/evilmartians/lefthook@latest   # или npm i -g lefthook / brew install lefthook
@@ -43,7 +42,7 @@ lefthook install
 * Ноль предупреждений clippy, форматирование cargo fmt - обязательно.
 * `tauri_shell.rs` и мобильная точка входа компилируются только с `--features tauri-ui` -
   проверяйте, если трогали их.
-* Правила архитектуры (P1-P12) - в `AGENTS.md`.
+* Правила архитектуры (P1-P12) - в `docs/ai/code-style.md`.
 * Сообщения коммитов и PR - Conventional Commits: `<type>(<scope>): <subject>`, типы `feat|fix|refactor|perf|test|docs|chore`. В описаниях и коммитах - только обезличенные технические параметры записей, без личных названий файлов и контекста (P12).
 * Документация и комментарии - на русском (P11).
 

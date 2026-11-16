@@ -72,11 +72,28 @@ top="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   exit 2
 }
 cd "$top" || exit 2
-if ! git rev-parse --verify --quiet "$ref" > /dev/null; then
-  # Раньше опечатка в ref давала зелёный «чисто» — ложный пропуск гейта.
-  echo "P11: неизвестный ref '$ref' — проверка не выполнена." >&2
-  exit 2
-fi
+# Диапазон A...B нужен pre-push и CI: P11 смотрит только на отправляемое.
+untracked_scan=1
+case "$ref" in
+  *...*)
+    # В диапазоне отправляются только коммиты: незакоммиченные файлы не смотрим.
+    untracked_scan=0
+    left="${ref%%...*}"
+    right="${ref##*...}"
+    if ! git rev-parse --verify --quiet "$left" > /dev/null \
+      || ! git rev-parse --verify --quiet "$right" > /dev/null; then
+      echo "P11: неизвестный диапазон '$ref' — проверка не выполнена." >&2
+      exit 2
+    fi
+    ;;
+  *)
+    if ! git rev-parse --verify --quiet "$ref" > /dev/null; then
+      # Раньше опечатка в ref давала зелёный «чисто» — ложный пропуск гейта.
+      echo "P11: неизвестный ref '$ref' — проверка не выполнена." >&2
+      exit 2
+    fi
+    ;;
+esac
 
 # Комментарии: // и /* для Rust/TS/CSS, # для Python/YAML/TOML/shell.
 # Shebang и `#!`-строки исключаем: это не комментарии.
@@ -90,7 +107,7 @@ tracked_comments="$(printf '%s\n' "$changed" | grep "^+" | grep -v "^+++" \
 # Новые (untracked) файлы в diff не попадают: ровно их агент и создаёт.
 untracked="$(git ls-files --others --exclude-standard)"
 untracked_comments=""
-if [ -n "$untracked" ]; then
+if [ "$untracked_scan" -eq 1 ] && [ -n "$untracked" ]; then
   untracked_comments="$(printf '%s\n' "$untracked" | while IFS= read -r file; do
     case "$file" in
       ui/web/static/*|scripts/p11-diff.sh|*.md) continue ;;

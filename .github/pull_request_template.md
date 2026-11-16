@@ -4,14 +4,10 @@
 
 ## Проверки
 
-- [ ] `cargo fmt --all -- --check`
-- [ ] `cargo clippy --workspace --all-targets --locked -- -D warnings`
-- [ ] `cargo test --workspace --locked`
-- [ ] `cargo clippy -p mr-app --features tauri-ui --all-targets --locked -- -D warnings` (если трогал Tauri)
-- [ ] `cd ui/web/frontend && yarn lint && yarn check && yarn build` (если трогал UI)
-- [ ] Пересобранная статика `ui/web/static` закоммичена
+- [ ] `./scripts/verify.sh --all` прошёл (или указано, какие режимы недоступны и почему)
+- [ ] Пересобранная статика `ui/web/static` и `.mr-stamp` закоммичены (если трогал UI)
 - [ ] В diff нет `people.json`, `voiceprints.json`, `config.json`, логов, записей и моделей
-- [ ] В описании PR и коммитах нет личных данных (имен, названий файлов, тем бесед - только технические параметры: моно/стерео, длительность, N спикеров, см. P12 в AGENTS.md)
+- [ ] В описании PR и коммитах нет личных данных (имен, названий файлов, тем бесед - только технические параметры: моно/стерео, длительность, N спикеров, см. P12 в `docs/ai/code-style.md`)
 - [ ] Лицензия вклада - MIT (см. `CONTRIBUTING.md`)
 
 ## Связанные issue
