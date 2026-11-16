@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, HashMap};
 
 use super::super::clean_speech::SpeechSupport;
-use super::{AcoustUnit, Utterance};
+use super::AcoustUnit;
+
+use crate::transcribe::Utterance;
 
 pub(super) fn core(
     stage: &'static str,

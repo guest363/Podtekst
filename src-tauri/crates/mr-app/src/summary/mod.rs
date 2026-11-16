@@ -161,6 +161,13 @@ pub fn init() {
             process::cleanup_orphans();
             sidecar::arm_idle_monitor();
         }
+        // Первая проверка SHA-256 модели (~2.4 ГБ, 2–6 с) не должна случаться
+        // на HTTP-потоке первого /api/summary: греем кэш в фоне при старте.
+        std::thread::spawn(|| {
+            if let Some(path) = catalog::model_path() {
+                let _ = catalog::verified_model_sha(&path);
+            }
+        });
     });
 }
 

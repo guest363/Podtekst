@@ -16,11 +16,25 @@ jobs:
   lint:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Compile scripts
         run: python3 -m py_compile scripts/components_lint.py scripts/components_monitor.py
       - name: Lint manifest and pins (offline, no network)
         run: python3 scripts/components_lint.py
+
+  verify-ffmpeg:
+    # Пин ffmpeg проверяется на каждой платформе: sha/архив/кодировщики
+    # отличаются, и «зелёный» Linux ничего не говорит про macOS/Windows.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Verify pinned ffmpeg
+        shell: bash
+        run: bash scripts/components.sh verify-ffmpeg
 
   monitor:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -29,7 +43,7 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Upstream versions
         run: |
           set -o pipefail

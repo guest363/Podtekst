@@ -427,6 +427,62 @@ fn unsupported_decision_moves_to_brief() {
 }
 
 #[test]
+fn decision_without_cue_stays_in_preset_without_brief() {
+    let summary = run(
+        "personal",
+        "## Решения\n- Перейти на новый график.\n",
+        vec![u(0.0, "Я", "Обсудил переход на новый график.")],
+    );
+    let decisions = summary
+        .sections
+        .iter()
+        .find(|s| s.id == "decisions")
+        .unwrap_or_else(|| panic!("{summary:?}"));
+    assert_eq!(decisions.items.len(), 1);
+    assert_eq!(decisions.items[0].text, "Перейти на новый график.");
+    assert!(summary.warnings.contains(&Warning::DecisionWithoutCue));
+}
+
+#[test]
+fn negated_utterance_does_not_disable_decisions() {
+    let summary = run(
+        "meeting",
+        "## Решения\n- Запуск переносится на среду.\n",
+        vec![
+            u(0.0, "Анна", "Решили перенести запуск на среду."),
+            u(1.0, "Борис", "Сроки проверки пока не решили."),
+        ],
+    );
+    let decisions = summary
+        .sections
+        .iter()
+        .find(|s| s.id == "decisions")
+        .unwrap_or_else(|| panic!("{summary:?}"));
+    assert_eq!(decisions.items.len(), 1);
+    assert!(!summary.warnings.contains(&Warning::DecisionWithoutCue));
+}
+
+#[test]
+fn items_dropped_counts_cap_truncation() {
+    let summary = run(
+        "meeting",
+        "## Кратко\n- Первый пункт.\n- Второй пункт.\n- Третий пункт.\n\
+         - Четвёртый пункт.\n- Пятый пункт.\n\
+         ## Решения\n- Перенести запуск.\n- Согласовать бюджет.\n\
+         - Утвердить план.\n- Зафиксировать сроки.\n\
+         ## Открытые вопросы\n- Вопрос по бюджету?\n- Вопрос по срокам?\n\
+         - Вопрос по составу команды?\n- Вопрос по стенду?\n",
+        vec![
+            u(0.0, "Анна", "Решили перенести запуск."),
+            u(1.0, "Борис", "Бюджет согласовали."),
+        ],
+    );
+    assert!(summary.items_dropped > 0, "{summary:?}");
+    let kept: usize = summary.sections.iter().map(|s| s.items.len()).sum();
+    assert_eq!(kept + summary.items_dropped, 13);
+}
+
+#[test]
 fn quote_markers_are_stripped_without_refs() {
     let summary = run(
         "meeting",

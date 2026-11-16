@@ -50,6 +50,7 @@ pub(crate) fn finish(
     sys_silent: bool,
     warnings: &[String],
 ) {
+    let session = session_id(session);
     let warnings: Vec<String> = warnings
         .iter()
         .map(|warning| privacy::redact_text(warning))
@@ -131,11 +132,20 @@ fn error_event(session: Option<&str>, stage: &str, code: &str, message: &str) ->
         "schema": SCHEMA,
         "at": now(),
         "event": "recording_error",
-        "session": session,
+        "session": session.map(session_id).unwrap_or_else(|| session_id("")),
         "stage": stage,
         "code": code,
         "message": privacy::redact_text(&message),
     })
+}
+
+/// Ошибка без сессии (запись не стартовала) иначе выпадала из журнала при чтении.
+fn session_id(session: &str) -> String {
+    if session.trim().is_empty() {
+        "system".to_string()
+    } else {
+        session.to_string()
+    }
 }
 
 fn append_event(dir: &Path, event: Value) {
@@ -152,11 +162,25 @@ fn append_event(dir: &Path, event: Value) {
         let _ = std::fs::remove_file(&rotated);
         let _ = std::fs::rename(&path, &rotated);
     }
-    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) else {
+    let Ok(mut file) = open_private_append(&path) else {
         return;
     };
     // O_APPEND и одна запись: параллельные сессии не перемешивают строки.
     let _ = file.write_all(line.as_bytes());
+}
+
+fn open_private_append(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // Журнал хранит полные пути записей: на общей машине он только для владельца.
+        options.mode(0o600);
+    }
+    let file = options.open(path)?;
+    crate::fsutil::restrict_to_owner(path);
+    Ok(file)
 }
 
 fn read_events(dir: &Path) -> Vec<Value> {
@@ -443,5 +467,35 @@ mod tests {
         assert_eq!(a, file_id(Path::new("/tmp/a.wav")));
         assert_ne!(a, file_id(Path::new("/tmp/b.wav")));
         assert_eq!(a.len(), 16);
+    }
+
+    #[test]
+    fn error_without_session_stays_visible() {
+        let dir = temp_dir("error-no-session");
+        append_event(
+            &dir,
+            error_event(None, "start", "already_recording", "занято"),
+        );
+        append_event(&dir, error_event(Some(""), "start", "busy", "занято"));
+        let list = list_from(&dir, 10);
+        assert_eq!(list.len(), 1, "{list:?}");
+        assert_eq!(list[0]["id"], "system");
+        assert_eq!(list[0]["errors"].as_array().map(Vec::len), Some(2));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn journal_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("mode");
+        append_event(&dir, json!({"event": "recording_start", "session": "s"}));
+        let mode = std::fs::metadata(dir.join(CURRENT))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "журнал содержит пути записей");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

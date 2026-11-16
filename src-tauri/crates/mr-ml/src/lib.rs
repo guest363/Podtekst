@@ -283,15 +283,18 @@ pub fn linear_sum_assignment_max(score: &[Vec<f64>]) -> Vec<(usize, usize)> {
     } else {
         (score.to_vec(), n_rows, n_cols, false)
     };
+    // Нефинитное сходство (inf/nan) превращало cost в NaN: `cur < minv[j]`
+    // никогда не срабатывал, и венгерский цикл не находил j1 (зависание).
+    let score_of = |x: f64| if x.is_finite() { x.max(0.0) } else { 0.0 };
     let max_val = mat
         .iter()
         .flat_map(|r| r.iter())
-        .map(|x| x.max(0.0))
+        .map(|&x| score_of(x))
         .fold(0.0_f64, f64::max)
         + 1.0;
     let cost: Vec<Vec<f64>> = mat
         .iter()
-        .map(|row| row.iter().map(|x| max_val - x.max(0.0)).collect())
+        .map(|row| row.iter().map(|&x| max_val - score_of(x)).collect())
         .collect();
     let mut u = vec![0.0; n + 1];
     let mut v = vec![0.0; m + 1];
@@ -827,6 +830,20 @@ mod tests {
         assert_eq!(pairs, vec![(1, 0)]);
         assert!(linear_sum_assignment_max(&[]) == vec![]);
         assert!(linear_sum_assignment_max(&[vec![]]) == vec![]);
+    }
+
+    #[test]
+    fn hungarian_survives_non_finite_scores() {
+        // +inf в матрице давал cost = inf - inf = NaN и вечный цикл поиска j1.
+        let score = vec![
+            vec![f64::INFINITY, 1.0],
+            vec![1.0, f64::INFINITY],
+            vec![f64::NAN, 0.5],
+        ];
+        let mut pairs = linear_sum_assignment_max(&score);
+        pairs.sort();
+        assert_eq!(pairs.len(), 2, "{pairs:?}");
+        assert_eq!(pairs, vec![(0, 1), (1, 0)], "{pairs:?}");
     }
 
     #[test]

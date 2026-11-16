@@ -1,9 +1,15 @@
-use super::super::clean_speech::SpeechSupport;
-use super::{AcoustUnit, Utterance, CORE_LINKAGE_THRESHOLD};
 use std::collections::HashMap;
 
-const MIN_CLUSTER_SHARE: f64 = 0.05;
-const MIN_CLUSTER_SEC: f64 = 1.5;
+use super::super::clean_speech::SpeechSupport;
+use super::{AcoustUnit, CORE_LINKAGE_THRESHOLD};
+
+use crate::transcribe::Utterance;
+
+/// Замер на AMI (real10, 120 с): реальный четвёртый спикер с 2.48 с чистой речи
+/// (3.9 % от 64 с) отбраковывался порогом 5 %/1.5 с и переезжал в чужой кластер.
+/// Шумовые обрывки того же набора — 1.2–1.52 с, их режет MIN_CLUSTER_SEC = 2.0.
+const MIN_CLUSTER_SHARE: f64 = 0.03;
+const MIN_CLUSTER_SEC: f64 = 2.0;
 const MIN_TURN_SHARE: f64 = 0.25;
 const MIN_TURN_SEC: f64 = 1.0;
 /// Замер ERes2NetV2 на живой встрече: куски одной реплики, получившие разные
@@ -190,13 +196,23 @@ pub(super) fn label_durations(
     labels: &HashMap<usize, usize>,
     support: SpeechSupport<'_>,
 ) -> HashMap<(usize, usize), f64> {
+    // Окна одного юнита перекрываются на ~50%: время разрезаем по `timeline`,
+    // иначе общий кусок засчитывается обеим меткам и доминанта выбирается по сумме.
+    let mut utterances: Vec<usize> = units
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| labels.contains_key(index))
+        .map(|(_, unit)| unit.utterance)
+        .collect();
+    utterances.sort_unstable();
+    utterances.dedup();
     let mut intervals: HashMap<(usize, usize), Vec<(f64, f64)>> = HashMap::new();
-    for (index, unit) in units.iter().enumerate() {
-        if let Some(&label) = labels.get(&index) {
+    for utterance in utterances {
+        for (start, end, label) in timeline(units, labels, utterance) {
             intervals
-                .entry((unit.utterance, label))
+                .entry((utterance, label))
                 .or_default()
-                .push((unit.start, unit.end));
+                .push((start, end));
         }
     }
     intervals

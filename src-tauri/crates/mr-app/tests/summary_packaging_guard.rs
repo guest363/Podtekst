@@ -40,19 +40,29 @@ fn appimage_bundles_media_framework() {
     );
 }
 
+/// Ожидаемый префикс URL выводится из самого манифеста: при обновлении build
+/// не нужно править ещё и тест (P1).
+fn release_prefix(manifest: &Value) -> String {
+    let build = manifest["build"]
+        .as_str()
+        .expect("build в манифесте — строка");
+    format!("https://github.com/ggml-org/llama.cpp/releases/download/b{build}/")
+}
+
 #[test]
 fn runtime_manifest_is_complete_per_target() {
     let manifest = json(include_str!("../summary-runtime-manifest.json"));
     assert_eq!(manifest["layout"], "resources_dir");
     assert_eq!(manifest["runtime"], "llama.cpp");
-    assert_eq!(manifest["build"], "12182");
-    assert_eq!(manifest["commit"], "fd27b2034");
+    assert!(!manifest["build"].as_str().unwrap_or_default().is_empty());
+    assert!(!manifest["commit"].as_str().unwrap_or_default().is_empty());
     assert_eq!(manifest["license"], "MIT");
     assert_eq!(manifest["launcher"], "llama-server");
     assert!(manifest["nightly"].as_bool().unwrap_or(false));
 
     let targets = manifest["targets"].as_object().expect("targets");
     assert_eq!(targets.len(), 3);
+    let prefix = release_prefix(&manifest);
     for (key, triple) in [
         ("linux-x86_64", "x86_64-unknown-linux-gnu"),
         ("macos-arm64", "aarch64-apple-darwin"),
@@ -63,7 +73,7 @@ fn runtime_manifest_is_complete_per_target() {
         assert!(target["url"]
             .as_str()
             .unwrap_or_default()
-            .starts_with("https://github.com/ggml-org/llama.cpp/releases/download/b12182/"));
+            .starts_with(&prefix));
         let sha = target["sha256"].as_str().expect("sha256");
         assert_eq!(sha.len(), 64);
         assert!(sha.chars().all(|c| c.is_ascii_hexdigit()));
@@ -95,11 +105,12 @@ fn gpu_pack_manifest_is_pinned_and_small() {
     assert!(packs.contains_key("linux-x86_64"));
     assert!(packs.contains_key("windows-x86_64"));
     assert!(!packs.contains_key("macos-arm64"), "macOS Metal встроен");
+    let prefix = release_prefix(&runtime);
     for (key, pack) in packs {
         assert!(pack["url"]
             .as_str()
             .unwrap_or_default()
-            .starts_with("https://github.com/ggml-org/llama.cpp/releases/download/b12182/"));
+            .starts_with(&prefix));
         let sha = pack["sha256"].as_str().expect("sha256");
         assert_eq!(sha.len(), 64, "{key}");
         assert!(sha.chars().all(|c| c.is_ascii_hexdigit()));

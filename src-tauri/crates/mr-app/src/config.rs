@@ -17,10 +17,42 @@ pub(crate) fn config_lock<T>(f: impl FnOnce() -> T) -> T {
 }
 
 pub(crate) fn load_config() -> serde_json::Value {
-    std::fs::read_to_string(app_data_dir().join("config.json"))
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_else(|| json!({}))
+    parse_config().ok().flatten().unwrap_or_else(|| json!({}))
+}
+
+/// `Ok(None)` — файла нет; `Err(())` — файл есть, но не разбирается.
+/// Различие нужно, чтобы не затереть настройки молча (save_dir, хотворды, пороги).
+fn parse_config() -> Result<Option<serde_json::Value>, ()> {
+    let text = match std::fs::read_to_string(config_path()) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Ok(None),
+    };
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(value) if value.is_object() => Ok(Some(value)),
+        _ => Err(()),
+    }
+}
+
+fn config_path() -> PathBuf {
+    app_data_dir().join("config.json")
+}
+
+/// Битый файл остаётся на месте вместе с копией: пользователь может его починить.
+fn backup_corrupt_config() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let path = config_path();
+        let backup = path.with_extension("json.bak");
+        if !backup.exists() {
+            let _ = std::fs::copy(&path, &backup);
+        }
+        crate::note!(
+            "ev=config.corrupt file={} backup={}",
+            crate::logging::file_token(&path),
+            crate::logging::file_token(&backup)
+        );
+    });
 }
 
 pub(crate) fn update_config<F>(mutate: F)
@@ -28,15 +60,20 @@ where
     F: FnOnce(&mut serde_json::Value),
 {
     config_lock(|| {
-        let mut cfg = load_config();
+        let mut cfg = match parse_config() {
+            Ok(Some(cfg)) => cfg,
+            Ok(None) => json!({}),
+            Err(()) => {
+                // Запись поверх битого файла стирает все настройки: не пишем,
+                // пока пользователь не починит config.json.
+                backup_corrupt_config();
+                return;
+            }
+        };
         mutate(&mut cfg);
         let _ = std::fs::create_dir_all(app_data_dir());
-        let p = app_data_dir().join("config.json");
-        let tmp = p.with_extension("json.tmp");
         if let Ok(body) = serde_json::to_string_pretty(&cfg) {
-            if std::fs::write(&tmp, body).is_ok() {
-                let _ = std::fs::rename(&tmp, &p);
-            }
+            let _ = crate::fsutil::write_atomic(&config_path(), body.as_bytes());
         }
     });
 }
@@ -178,15 +215,21 @@ pub(crate) fn static_dir() -> PathBuf {
 }
 
 pub(crate) fn cleanup_stale_files() {
-    let Ok(rd) = std::fs::read_dir(save_dir()) else {
+    let dir = save_dir();
+    // Сначала восстанавливаем хвост прерванной записи из сырья, и только
+    // после успеха сырьё удаляется внутри recover_interrupted.
+    let recovered = crate::recording::recover_interrupted(&dir, std::time::Duration::from_secs(15));
+    if recovered > 0 {
+        crate::note!("Восстановлено прерванных записей: {recovered}");
+    }
+    let Ok(rd) = std::fs::read_dir(&dir) else {
         return;
     };
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
-        if name.ends_with(".part")
-            || (name.starts_with('.') && (name.ends_with(".mic.f32") || name.ends_with(".sys.f32")))
-        {
-            // Защита от удаления активной записи: не трогаем файлы, изменённые < 15 сек назад.
+        // Только собственные недокачанные загрузки (`.<имя>.<наносекунды>.part`):
+        // чужие `*.part` в общей папке не трогаем.
+        if name.starts_with('.') && name.ends_with(".part") {
             if let Ok(meta) = e.metadata() {
                 if let Ok(mtime) = meta.modified() {
                     if mtime.elapsed().unwrap_or_default() < std::time::Duration::from_secs(15) {
@@ -196,5 +239,44 @@ pub(crate) fn cleanup_stale_files() {
             }
             let _ = std::fs::remove_file(e.path());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("mr-config-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn corrupt_config_is_not_overwritten() {
+        let _guard = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("corrupt");
+        std::env::set_var("MEETING_RECORDER_DATA_DIR", &dir);
+        let path = dir.join("config.json");
+        std::fs::write(&path, b"{ broken").unwrap();
+
+        update_config(|cfg| cfg["transcribed_count"] = json!(1));
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"{ broken");
+        assert!(dir.join("config.json.bak").exists(), "нет резервной копии");
+
+        // Исправленный файл снова обновляется, прежние ключи сохраняются.
+        std::fs::write(&path, br#"{"save_dir":"/tmp/x"}"#).unwrap();
+        update_config(|cfg| cfg["record_mode"] = json!("mix"));
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["save_dir"], "/tmp/x");
+        assert_eq!(saved["record_mode"], "mix");
+
+        std::env::remove_var("MEETING_RECORDER_DATA_DIR");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

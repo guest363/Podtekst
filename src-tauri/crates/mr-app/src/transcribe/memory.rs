@@ -14,7 +14,11 @@ const SHARE: f64 = 0.8;
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
 pub(crate) fn peak_bytes(duration_sec: f64, channels: usize) -> u64 {
-    let samples = duration_sec.max(0.0) * 16_000.0 * 4.0 * channels.clamp(1, 2) as f64;
+    // Декодер держит все каналы файла (до `MAX_CHANNELS`), а диаризация —
+    // ещё и AGC-копию каждого используемого канала (не больше двух).
+    let decoded = channels.clamp(1, mr_audio::decode::MAX_CHANNELS) as f64;
+    let copies = decoded + decoded.min(2.0);
+    let samples = duration_sec.max(0.0) * 16_000.0 * 4.0 * copies;
     BASE_BYTES + samples as u64
 }
 
@@ -72,11 +76,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn peak_counts_two_channels_only() {
+    fn peak_counts_every_decoded_channel_and_agc_copy() {
+        let unit = 3600.0 * 16_000.0 * 4.0;
         let mono = peak_bytes(3600.0, 1);
         let stereo = peak_bytes(3600.0, 2);
-        assert_eq!((stereo - mono) as f64, 3600.0 * 16_000.0 * 4.0);
-        assert_eq!(peak_bytes(3600.0, 8), stereo);
+        assert_eq!((stereo - mono) as f64, 2.0 * unit);
+        let six = peak_bytes(3600.0, 6);
+        assert_eq!((six - mono) as f64, 6.0 * unit);
+        assert_eq!(peak_bytes(3600.0, 8) - six, (2.0 * unit) as u64);
+        assert_eq!(peak_bytes(3600.0, 64), peak_bytes(3600.0, 8));
         assert_eq!(peak_bytes(0.0, 2), BASE_BYTES);
     }
 

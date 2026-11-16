@@ -1,7 +1,7 @@
 <script lang="ts">
 import { onMount } from 'svelte'
 import { fmtClock, isMobile } from '../lib/api'
-import { statusBadge } from '../lib/settings.svelte.ts'
+import { settings, statusBadge } from '../lib/settings.svelte.ts'
 import type { CheckFix, JournalSession, SystemCheck } from '../lib/system.svelte.ts'
 import {
   ackCrash,
@@ -39,7 +39,13 @@ const usedBytes = $derived(totalBytes > freeBytes ? totalBytes - freeBytes : 0)
 const usedPct = $derived(
   totalBytes > 0 ? Math.min(100, Math.round((usedBytes / totalBytes) * 100)) : 0,
 )
-const freeHours = $derived(freeBytes > 0 ? Math.floor(freeBytes / (450 * 1024 * 1024)) : 0)
+// WAV 16 кГц / 16 бит — 32 КБ/с на канал; split пишет микрофон и систему.
+const RECORD_BYTES_PER_HOUR = 16000 * 2 * 60 * 60
+const freeHours = $derived(
+  freeBytes > 0
+    ? Math.floor(freeBytes / (RECORD_BYTES_PER_HOUR * (settings.recordMode === 'split' ? 2 : 1)))
+    : 0,
+)
 
 const overallKind = $derived(
   system.error || unacknowledged > 0 || system.summary?.status === 'error'

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::save_dir;
 
@@ -157,6 +157,144 @@ fn pcm(sample: f32) -> i16 {
     (sample.clamp(-1.0, 1.0) * 32767.0) as i16
 }
 
+const RECOVER_CHUNK: usize = 64 * 1024;
+
+/// Хвост убитой записи: сырые `.mic.f32`/`.sys.f32` — единственные полные
+/// данные (чекпоинт WAV отстаёт до 30 с), поэтому на старте собираем WAV
+/// из сырья и только после успеха удаляем его.
+pub(crate) fn recover_interrupted(dir: &Path, min_age: Duration) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut recovered = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some(stem) = name
+            .strip_prefix('.')
+            .and_then(|n| n.strip_suffix(".mic.f32"))
+        else {
+            continue;
+        };
+        if older_than(&path, min_age) && recover_one(dir, stem).is_ok() {
+            recovered += 1;
+        }
+    }
+    recovered
+}
+
+fn older_than(path: &Path, age: Duration) -> bool {
+    std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .map(|modified| modified.elapsed().unwrap_or_default() >= age)
+        .unwrap_or(true)
+}
+
+fn recover_one(dir: &Path, stem: &str) -> Result<(), String> {
+    let mic_path = dir.join(format!(".{stem}.mic.f32"));
+    let sys_path = dir.join(format!(".{stem}.sys.f32"));
+    let has_sys = sys_path.is_file();
+    let out = dir.join(format!("{stem}.wav"));
+    // shortcut: имя остаётся стартовым (без времени окончания) — досчитать его
+    // из числа сэмплов можно, когда появится спрос на точное имя.
+    let tmp = dir.join(format!(".{stem}.recover.wav"));
+    let spec = hound::WavSpec {
+        channels: if has_sys { 2 } else { 1 },
+        sample_rate: 16000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(&tmp, spec).map_err(|e| e.to_string())?;
+    let mut mic = std::io::BufReader::new(
+        std::fs::File::open(&mic_path).map_err(|e| format!("микрофон: {e}"))?,
+    );
+    let mut sys = if has_sys {
+        Some(std::io::BufReader::new(
+            std::fs::File::open(&sys_path).map_err(|e| format!("система: {e}"))?,
+        ))
+    } else {
+        None
+    };
+    let mut mic_block = Block::default();
+    let mut sys_block = Block::default();
+    let mut frames = 0u64;
+    loop {
+        let mic_count = mic_block.read(&mut mic)?;
+        let sys_count = match sys.as_mut() {
+            Some(reader) => sys_block.read(reader)?,
+            None => 0,
+        };
+        let count = mic_count.max(sys_count);
+        if count == 0 {
+            break;
+        }
+        for index in 0..count {
+            writer
+                .write_sample(pcm(mic_block.samples.get(index).copied().unwrap_or(0.0)))
+                .map_err(|e| e.to_string())?;
+            if has_sys {
+                writer
+                    .write_sample(pcm(sys_block.samples.get(index).copied().unwrap_or(0.0)))
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        frames += count as u64;
+    }
+    let finished = writer.finalize().map_err(|e| e.to_string());
+    if let Err(e) = finished {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    if frames == 0 {
+        let _ = std::fs::remove_file(&tmp);
+        let _ = std::fs::remove_file(&mic_path);
+        let _ = std::fs::remove_file(&sys_path);
+        return Ok(());
+    }
+    if std::fs::rename(&tmp, &out).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err("не удалось заменить WAV".to_string());
+    }
+    crate::note!("Восстановлен хвост прерванной записи: {} с", frames / 16000);
+    let _ = std::fs::remove_file(&mic_path);
+    let _ = std::fs::remove_file(&sys_path);
+    Ok(())
+}
+
+#[derive(Default)]
+struct Block {
+    bytes: Vec<u8>,
+    samples: Vec<f32>,
+}
+
+impl Block {
+    fn read(&mut self, reader: &mut impl Read) -> Result<usize, String> {
+        self.bytes.resize(RECOVER_CHUNK * 4, 0);
+        let mut filled = 0;
+        while filled < self.bytes.len() {
+            let read = reader
+                .read(&mut self.bytes[filled..])
+                .map_err(|e| e.to_string())?;
+            if read == 0 {
+                break;
+            }
+            filled += read;
+        }
+        let complete = filled / 4 * 4;
+        self.samples.clear();
+        self.samples.extend(
+            self.bytes[..complete]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|chunk| f32::from_le_bytes(*chunk)),
+        );
+        Ok(complete / 4)
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct RecordingState {
     pub(crate) is_recording: bool,
@@ -201,6 +339,7 @@ pub(crate) fn set_recording_state_callback(cb: RecordingStateCallback) {
 }
 
 pub(crate) fn notify_recording_state(is_recording: bool) {
+    RECORDING_ACTIVE.store(is_recording, Ordering::Relaxed);
     if let Some(slot) = RECORDING_STATE_CALLBACK.get() {
         if let Ok(g) = slot.lock() {
             if let Some(cb) = g.as_ref() {
@@ -208,6 +347,54 @@ pub(crate) fn notify_recording_state(is_recording: bool) {
             }
         }
     }
+}
+
+static RECORDING_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Факт записи без доступа к состоянию: замена бинарников ffmpeg не должна
+/// трогать файлы под работающим ffmpeg.
+pub(crate) fn is_active() -> bool {
+    RECORDING_ACTIVE.load(Ordering::Relaxed)
+}
+
+/// Пока идёт открытие устройств или финализация WAV, мьютекс состояния
+/// свободен: `/api/status`, `/api/journal` и CLI не должны ждать десятки секунд.
+fn lifecycle<R>(
+    state: &Arc<Mutex<RecordingState>>,
+    run: impl FnOnce(&mut RecordingState) -> R,
+) -> R {
+    static SERIAL: Mutex<()> = Mutex::new(());
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let taken = std::mem::take(&mut *state.lock().unwrap_or_else(|e| e.into_inner()));
+    let mut slot = StateSlot { state, taken };
+    run(&mut slot.taken)
+}
+
+struct StateSlot<'a> {
+    state: &'a Arc<Mutex<RecordingState>>,
+    taken: RecordingState,
+}
+
+impl Drop for StateSlot<'_> {
+    fn drop(&mut self) {
+        let taken = std::mem::take(&mut self.taken);
+        *self.state.lock().unwrap_or_else(|e| e.into_inner()) = taken;
+    }
+}
+
+pub(crate) fn start_recording(
+    state: &Arc<Mutex<RecordingState>>,
+    mode: &str,
+    screen: bool,
+) -> serde_json::Value {
+    lifecycle(state, |st| start_recording_inner(st, mode, screen))
+}
+
+pub(crate) fn stop_recording(
+    state: &Arc<Mutex<RecordingState>>,
+    defer_autotranscribe: bool,
+) -> serde_json::Value {
+    lifecycle(state, |st| stop_recording_inner(st, defer_autotranscribe))
 }
 
 pub(crate) fn now_secs() -> u64 {
@@ -360,6 +547,8 @@ pub(crate) fn start_recording_inner(
             return json!({"ok": false, "error": message});
         }
     };
+    // Аудио уже пишется: от этой точки считаем, насколько отстал старт видео.
+    let audio_started = Instant::now();
     let has_sys = session.system.is_some();
     let sys_error = session.system_error.clone();
     // Если системный канал не открылся, честно пишем моно, а не стерео с нулями.
@@ -382,7 +571,7 @@ pub(crate) fn start_recording_inner(
 
     let mut screen_error = None;
     let screen_session = if record_screen {
-        match crate::screen::ScreenCaptureSession::start(started) {
+        match crate::screen::ScreenCaptureSession::start(started, audio_started) {
             Ok(sess) => Some(std::sync::Arc::new(Mutex::new(Some(sess)))),
             Err(e) => {
                 // Сбой захвата экрана не должен отнимать запись звука встречи.
@@ -434,6 +623,25 @@ pub(crate) fn start_recording_inner(
         "screen_error": screen_error})
 }
 
+/// Сессия экрана, которую нужно остановить на любом пути выхода из финализации.
+struct ScreenGuard(Option<Arc<Mutex<Option<crate::screen::ScreenCaptureSession>>>>);
+
+impl ScreenGuard {
+    fn take(&mut self) -> Option<crate::screen::ScreenCaptureSession> {
+        let arc = self.0.take()?;
+        let session = arc.lock().ok()?.take();
+        session
+    }
+}
+
+impl Drop for ScreenGuard {
+    fn drop(&mut self) {
+        if let Some(session) = self.take() {
+            let _ = session.stop();
+        }
+    }
+}
+
 fn finalize_recording_name(file: &str, start: u64, end: u64) -> (String, String) {
     let old = PathBuf::from(file);
     let dir = old.parent().unwrap_or_else(|| Path::new("."));
@@ -480,10 +688,15 @@ pub(crate) fn stop_recording_inner(
     if let Some(checkpoint) = st.checkpoint.take() {
         checkpoint.stop();
     }
+    // Экран снимаем до финализации: при любой ошибке ниже сессия должна быть
+    // остановлена, иначе ffmpeg продолжает писать экран после сбоя (P7).
+    let mut screen = ScreenGuard(st.screen_session.take());
+    let mode = st.mode.clone();
     let mut peak: Option<f32> = None;
     let mut sys_peak: Option<f32> = None;
+    let mut mic_missing = false;
     if let Some(capture) = st.capture.take() {
-        let mut finalize = || -> std::result::Result<f32, String> {
+        let mut finalize = || -> std::result::Result<(f32, Vec<String>, bool), String> {
             let (mic_path, sys_path, session_peak) = {
                 let mut session = capture.lock().map_err(|_| "захват занят".to_string())?;
                 let mic = session.mic.as_ref().map(|s| s.path.clone());
@@ -492,14 +705,23 @@ pub(crate) fn stop_recording_inner(
                 session.stop();
                 (mic, sys, peak)
             };
-            let mic = mic_path
-                .as_ref()
-                .and_then(|p| mr_audio::capture::read_raw_f32(p).ok())
-                .unwrap_or_default();
-            let sys = sys_path
-                .as_ref()
-                .and_then(|p| mr_audio::capture::read_raw_f32(p).ok())
-                .unwrap_or_default();
+            // Ошибка чтения дорожки — не «тишина»: иначе WAV с нулями и `ok: true`.
+            let (mic, mic_error) = match mic_path.as_ref() {
+                Some(path) => match mr_audio::capture::read_raw_f32(path) {
+                    Ok(samples) => (samples, None),
+                    Err(e) => (Vec::new(), Some(format!("микрофон: {e}"))),
+                },
+                None => (Vec::new(), None),
+            };
+            let (sys, sys_error) = match sys_path.as_ref() {
+                Some(path) => match mr_audio::capture::read_raw_f32(path) {
+                    Ok(samples) => (samples, None),
+                    Err(e) => (Vec::new(), Some(format!("система: {e}"))),
+                },
+                None => (Vec::new(), None),
+            };
+            let warnings: Vec<String> = [mic_error, sys_error].into_iter().flatten().collect();
+            let mic_missing = mic_path.is_some() && mic.is_empty();
             if mic.is_empty() && sys.is_empty() {
                 for p in [mic_path.as_ref(), sys_path.as_ref()].into_iter().flatten() {
                     let _ = std::fs::remove_file(p);
@@ -509,6 +731,9 @@ pub(crate) fn stop_recording_inner(
                 } else {
                     ""
                 };
+                if let Some(warning) = warnings.first() {
+                    return Err(format!("дорожки не прочитаны ({warning}){hint}"));
+                }
                 return Err(format!("запись пустая (0 сэмплов){hint}"));
             }
             let mut mic = mic;
@@ -519,15 +744,15 @@ pub(crate) fn stop_recording_inner(
             if sys_path.is_some() {
                 sys_peak = Some(sys.iter().fold(0.0f32, |acc, &s| acc.max(s.abs())));
             }
-            let (l, r) = if st.mode == "mix" && sys_path.is_none() {
-                (mic.clone(), Vec::new())
+            let (l, r) = if mode == "mix" && sys_path.is_none() {
+                (std::mem::take(&mut mic), Vec::new())
             } else {
-                mr_audio::mix_channels(&mic, &sys, ChannelMode::parse(&st.mode))
+                mr_audio::mix_channels(&mic, &sys, ChannelMode::parse(&mode))
             };
             // Финал пишем во временный файл рядом с целевым: сбой не обрезает
             // уже сохранённый WAV, а rename атомарно подменяет его целиком.
             let tmp_path = out_path.with_extension("tmp.wav");
-            let written = if st.mode == "mix" {
+            let written = if mode == "mix" {
                 mr_audio::write_mono_wav(&tmp_path, &l, 16000)
             } else {
                 mr_audio::write_stereo_wav(&tmp_path, &l, &r, 16000)
@@ -547,10 +772,14 @@ pub(crate) fn stop_recording_inner(
                 .iter()
                 .chain(sys.iter())
                 .fold(session_peak, |acc, &s| acc.max(s.abs()));
-            Ok(true_peak)
+            Ok((true_peak, warnings, mic_missing))
         };
         match finalize() {
-            Ok(p) => peak = Some(p),
+            Ok((p, warnings, missing)) => {
+                peak = Some(p);
+                mic_missing = missing;
+                st.warnings.extend(warnings);
+            }
             Err(e) => {
                 crate::media_registry::unmark_owned(&out_path);
                 st.current_file = None;
@@ -571,40 +800,37 @@ pub(crate) fn stop_recording_inner(
         crate::media_registry::path_renamed(&old_path, Path::new(&file));
     }
 
-    let screen_session = st.screen_session.take();
     let mut is_video = false;
-    if let Some(arc) = screen_session {
-        if let Ok(mut g) = arc.lock() {
-            if let Some(session) = g.take() {
-                match session.stop() {
-                    Ok(video_tmp) => {
-                        let final_video = Path::new(&file).with_extension("mp4");
-                        match crate::screen::mux_screen_and_audio(
-                            &video_tmp,
-                            Path::new(&file),
-                            &final_video,
-                        ) {
-                            Ok(()) => {
-                                crate::media_registry::unmark_owned(Path::new(&file));
-                                crate::media_registry::mark_owned(&final_video);
-                                file = final_video.to_string_lossy().to_string();
-                                name = final_video
-                                    .file_name()
-                                    .map(|s| s.to_string_lossy().to_string())
-                                    .unwrap_or(name);
-                                is_video = true;
-                            }
-                            Err(e) => {
-                                crate::note!("[SCREEN] Ошибка склейки видео с аудио: {e}");
-                                st.warnings.push(format!("screen mux: {e}"));
-                            }
-                        }
+    if let Some(session) = screen.take() {
+        let video_offset = session.offset_sec();
+        match session.stop() {
+            Ok(video_tmp) => {
+                let final_video = Path::new(&file).with_extension("mp4");
+                match crate::screen::mux_screen_and_audio(
+                    &video_tmp,
+                    Path::new(&file),
+                    &final_video,
+                    video_offset,
+                ) {
+                    Ok(()) => {
+                        crate::media_registry::unmark_owned(Path::new(&file));
+                        crate::media_registry::mark_owned(&final_video);
+                        file = final_video.to_string_lossy().to_string();
+                        name = final_video
+                            .file_name()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or(name);
+                        is_video = true;
                     }
                     Err(e) => {
-                        crate::note!("[SCREEN] Ошибка остановки захвата экрана: {e}");
-                        st.warnings.push(format!("screen stop: {e}"));
+                        crate::note!("[SCREEN] Ошибка склейки видео с аудио: {e}");
+                        st.warnings.push(format!("screen mux: {e}"));
                     }
                 }
+            }
+            Err(e) => {
+                crate::note!("[SCREEN] Ошибка остановки захвата экрана: {e}");
+                st.warnings.push(format!("screen stop: {e}"));
             }
         }
     }
@@ -616,6 +842,7 @@ pub(crate) fn stop_recording_inner(
         "filename": name,
         "elapsed_sec": elapsed,
         "is_video": is_video,
+        "mic_missing": mic_missing,
     });
     if let Some(p) = peak {
         // shortcut: порог −46 дБFS; тише — почти наверняка мьют/не тот источник, чинить выбором дефолта в pactl
@@ -672,7 +899,7 @@ pub(crate) fn maybe_autotranscribe(file: &str) {
     let _ = file;
 }
 
-pub(crate) fn start_recording_with_notify(st: &mut RecordingState) -> serde_json::Value {
+fn start_recording_notified(st: &mut RecordingState) -> serde_json::Value {
     let mode = crate::configured_record_mode();
     let res = start_recording_inner(st, &mode, false);
     if res.get("ok").and_then(|x| x.as_bool()) == Some(true) {
@@ -693,7 +920,7 @@ pub(crate) fn start_recording_with_notify(st: &mut RecordingState) -> serde_json
     res
 }
 
-pub(crate) fn stop_recording_with_notify(st: &mut RecordingState) -> serde_json::Value {
+fn stop_recording_notified(st: &mut RecordingState) -> serde_json::Value {
     let res = stop_recording_inner(st, false);
     if res.get("ok").and_then(|x| x.as_bool()) == Some(true) {
         let fname = res
@@ -715,15 +942,24 @@ pub(crate) fn stop_recording_with_notify(st: &mut RecordingState) -> serde_json:
     res
 }
 
-#[cfg(feature = "tauri-ui")]
-pub(crate) fn toggle_recording_with_notify(st: &mut RecordingState) -> &'static str {
-    if st.is_recording {
-        stop_recording_with_notify(st);
-        "STOPPED"
-    } else {
-        start_recording_with_notify(st);
-        "STARTED"
-    }
+pub(crate) fn start_recording_with_notify(state: &Arc<Mutex<RecordingState>>) -> serde_json::Value {
+    lifecycle(state, start_recording_notified)
+}
+
+pub(crate) fn stop_recording_with_notify(state: &Arc<Mutex<RecordingState>>) -> serde_json::Value {
+    lifecycle(state, stop_recording_notified)
+}
+
+pub(crate) fn toggle_recording_with_notify(
+    state: &Arc<Mutex<RecordingState>>,
+) -> serde_json::Value {
+    lifecycle(state, |st| {
+        if st.is_recording {
+            stop_recording_notified(st)
+        } else {
+            start_recording_notified(st)
+        }
+    })
 }
 
 #[cfg(unix)]
@@ -736,11 +972,13 @@ pub(crate) mod shutdown {
     static PENDING: AtomicBool = AtomicBool::new(false);
 
     extern "C" fn on_signal(_: libc::c_int) {
-        // Только async-signal-safe операции: выставляем флаг.
+        // SAFETY: обработчик только выставляет atomic — это async-signal-safe.
         PENDING.store(true, Ordering::SeqCst);
     }
 
     pub fn install(state: std::sync::Arc<std::sync::Mutex<crate::recording::RecordingState>>) {
+        // SAFETY: libc::signal получает указатель на extern "C" функцию с
+        // сигнатурой sighandler_t; обработчик не обращается к общим данным.
         unsafe {
             libc::signal(libc::SIGINT, on_signal as *const () as libc::sighandler_t);
             libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
@@ -749,12 +987,14 @@ pub(crate) mod shutdown {
         std::thread::spawn(move || loop {
             if PENDING.load(Ordering::SeqCst) {
                 crate::note!("\nЗавершение по сигналу: финализирую запись…");
-                let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-                if st.is_recording {
-                    let _ = super::stop_recording_inner(&mut st, false);
+                let recording = state.lock().unwrap_or_else(|e| e.into_inner()).is_recording;
+                if recording {
+                    let _ = super::stop_recording(&state, false);
                 }
                 crate::summary::shutdown();
                 crate::crash::mark_clean();
+                crate::logging::flush();
+                crate::logging::shutdown();
                 std::process::exit(0);
             }
             std::thread::sleep(std::time::Duration::from_millis(200));
@@ -823,6 +1063,67 @@ mod checkpoint_tests {
             assert_eq!(reader.samples::<i16>().count(), 6);
         }
         drop(checkpoint);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lifecycle_keeps_state_lock_free_during_work() {
+        let state = Arc::new(Mutex::new(RecordingState::default()));
+        let probe = state.clone();
+        let free = lifecycle(&state, |_st| probe.try_lock().is_ok());
+        assert!(free, "мьютекс состояния занят на время финализации");
+        assert!(state.lock().is_ok(), "состояние должно вернуться в мьютекс");
+    }
+
+    #[test]
+    fn recovers_tail_of_killed_recording() {
+        let dir = std::env::temp_dir().join(format!("mr-recover-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mic = dir.join(".take.mic.f32");
+        let sys = dir.join(".take.sys.f32");
+        std::fs::write(&mic, raw_bytes(&[0.5, -0.5, 0.25])).unwrap();
+        std::fs::write(&sys, raw_bytes(&[0.1, -0.1])).unwrap();
+        // Чекпоинт успел записать только первый сэмпл — сырьё полнее.
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate: 16000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        {
+            let mut stale = hound::WavWriter::create(dir.join("take.wav"), spec).unwrap();
+            stale.write_sample(0i16).unwrap();
+            stale.write_sample(0i16).unwrap();
+            stale.finalize().unwrap();
+        }
+
+        let recovered = recover_interrupted(&dir, Duration::ZERO);
+        assert_eq!(recovered, 1);
+        assert!(
+            !mic.exists() && !sys.exists(),
+            "сырьё удаляется после успеха"
+        );
+
+        let mut reader = hound::WavReader::open(dir.join("take.wav")).unwrap();
+        assert_eq!(reader.spec().channels, 2);
+        let samples: Vec<i16> = reader.samples::<i16>().collect::<Result<_, _>>().unwrap();
+        // Три кадра: микрофон длиннее, системный канал добит нулями.
+        assert_eq!(samples.len(), 6, "кадры: {samples:?}");
+        assert_eq!(samples[0], pcm(0.5));
+        assert_eq!(samples[5], 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fresh_raw_files_are_not_recovered() {
+        let dir = std::env::temp_dir().join(format!("mr-recover-fresh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mic = dir.join(".live.mic.f32");
+        std::fs::write(&mic, raw_bytes(&[0.5])).unwrap();
+        assert_eq!(recover_interrupted(&dir, Duration::from_secs(15)), 0);
+        assert!(mic.exists(), "свежее сырьё может принадлежать живой записи");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -75,15 +75,27 @@ pub(super) fn check_ffmpeg(snapshot: &Value) -> Outcome {
         .pointer("/ffmpeg/available")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let pair_ok = snapshot
+        .pointer("/ffmpeg/pair_ok")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let downloading = snapshot
         .pointer("/ffmpeg/downloading")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    if available {
-        return Outcome::ok("ffmpeg найден");
+    if available && pair_ok {
+        return Outcome::ok("ffmpeg и ffprobe на месте");
     }
     if downloading {
         return Outcome::warn("ffmpeg скачивается", "Дождитесь окончания загрузки");
+    }
+    if available {
+        // Частый Windows-случай: скачан один ffmpeg.exe — ffprobe нет или версии разные.
+        return Outcome::warn(
+            "ffprobe отсутствует или версия расходится с ffmpeg",
+            "Без пары ffmpeg+ffprobe не определяются длительности и не собирается видео",
+        )
+        .with_fix("download_ffmpeg", "ffmpeg", "Переустановить пару");
     }
     Outcome::warn(
         "ffmpeg не найден",
@@ -105,16 +117,40 @@ pub(super) fn check_integration(snapshot: &Value) -> Outcome {
         .pointer("/integration/single_instance")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let ipc = snapshot
+        .pointer("/integration/ipc")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let hotkey = snapshot
+        .pointer("/integration/hotkey/registered")
+        .and_then(Value::as_bool);
     let detail = format!(
-        "Хоткей {accelerator} (регистрация не проверена), автозапуск {}, один экземпляр {}",
+        "Хоткей {accelerator} {}, автозапуск {}, один экземпляр {}, IPC {}",
+        match hotkey {
+            Some(true) => "зарегистрирован",
+            Some(false) => "не зарегистрирован",
+            None => "не проверялся",
+        },
         if autostart {
             "включён"
         } else {
             "выключен — это нормально"
         },
-        if single_instance { "да" } else { "нет" }
+        if single_instance { "да" } else { "нет" },
+        if ipc {
+            "работает"
+        } else {
+            "недоступен"
+        }
     );
-    Outcome::ok(detail)
+    // null (не проверено) не считается успехом: иначе сломанный хоткей выглядит нормой.
+    match (ipc, hotkey) {
+        (true, Some(true)) => Outcome::ok(detail),
+        _ => Outcome::warn(
+            detail,
+            "Без IPC и глобальной клавиши запись не запустить из трея и терминала",
+        ),
+    }
 }
 
 pub(super) fn check_updates(snapshot: &Value) -> Outcome {
@@ -236,11 +272,33 @@ mod tests {
     fn disabled_autostart_is_not_a_problem() {
         let value = json!({
             "integration": {
-                "hotkey": {"accelerator": "Ctrl+Shift+R"},
+                "hotkey": {"accelerator": "Ctrl+Shift+R", "registered": true},
                 "autostart": false,
                 "single_instance": true,
+                "ipc": true,
             },
         });
         assert_eq!(check_integration(&value).status, "ok");
+    }
+
+    #[test]
+    fn broken_ipc_or_hotkey_is_a_warning() {
+        for integration in [
+            json!({"ipc": false, "hotkey": {"registered": true}}),
+            json!({"ipc": true, "hotkey": {"registered": false}}),
+            // null = не проверено: это не успех.
+            json!({"ipc": true, "hotkey": {"registered": null}}),
+        ] {
+            let value = json!({"integration": integration});
+            assert_eq!(check_integration(&value).status, "warn", "{value}");
+        }
+    }
+
+    #[test]
+    fn ffmpeg_without_pair_is_not_ok() {
+        let single = json!({"ffmpeg": {"available": true, "pair_ok": false}});
+        assert_eq!(check_ffmpeg(&single).status, "warn");
+        let pair = json!({"ffmpeg": {"available": true, "pair_ok": true}});
+        assert_eq!(check_ffmpeg(&pair).status, "ok");
     }
 }

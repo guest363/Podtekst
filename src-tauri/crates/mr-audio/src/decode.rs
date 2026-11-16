@@ -13,7 +13,7 @@ use super::{AudioError, Result};
 const MIN_RATE: u32 = 4000;
 const MAX_RATE: u32 = 384_000;
 /// Верхняя граница каналов: файл с сотней каналов — это атака на память, не музыка.
-const MAX_CHANNELS: usize = 8;
+pub const MAX_CHANNELS: usize = 8;
 
 /// Контракт формата: моно-дорожки 16 кГц `[-1, 1]`. В стерео: [0] = микрофон, [1] = система.
 pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {

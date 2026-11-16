@@ -65,13 +65,10 @@ fn load() -> Registry {
 
 fn save(reg: &Registry) {
     let _ = std::fs::create_dir_all(app_data_dir());
-    let path = registry_path();
-    let tmp = path.with_extension("json.tmp");
     let body = json!({"owned": reg.owned, "imported": reg.imported, "hidden": reg.hidden});
     if let Ok(text) = serde_json::to_string_pretty(&body) {
-        if std::fs::write(&tmp, text).is_ok() {
-            let _ = std::fs::rename(&tmp, &path);
-        }
+        // Реестр хранит полные пути всех записей: файл только для владельца.
+        let _ = crate::fsutil::write_atomic_private(&registry_path(), text.as_bytes());
     }
 }
 

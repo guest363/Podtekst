@@ -37,8 +37,9 @@ impl DistanceMatrix {
 
 const CANNOT_LINK_DISTANCE: f64 = 10.0;
 /// Минимальный абсолютный разрыв между высотами слияний, при котором
-/// автоматический выбор k считается уверенным. shortcut: 0.04; проверено на
-/// VoxConverse и AMI через tools/diar_eval, см. docs/testing/SPEC.md.
+/// автоматический выбор k считается уверенным. shortcut: 0.04 — стартовое
+/// значение; замера именно по разрыву в репозитории нет, нужен прогон
+/// tools/diar_eval на размеченном наборе.
 const MIN_AUTO_K_GAP: f64 = 0.04;
 
 pub fn agglomerative(
@@ -244,12 +245,32 @@ pub fn agglomerative_gap(
         }
     }
     if let Some((gap, k)) = best.filter(|(gap, _)| *gap >= MIN_AUTO_K_GAP) {
+        // Замер на AMI (real10, 120 с): два близких мужских голоса дают разрыв на
+        // k-1 при слиянии 0.605 — выше границы «один голос» (CORE_LINKAGE_THRESHOLD),
+        // хотя следующий (более далёкий) разрыв маскирует этот. Если порог того же
+        // голоса запрещает ровно одно следующее слияние — берём разбиение на
+        // кластер мельче. Больше одного кластера не добавляем: иначе шумная
+        // дендрограмма снова раздувает число спикеров (там же: EN2002b 4→9).
+        let threshold_labels = labels_with_limit(n, &merges, min_k, distance_threshold);
+        let mut threshold_clusters = threshold_labels.clone();
+        threshold_clusters.sort_unstable();
+        threshold_clusters.dedup();
         log::debug!(
             target: "cluster",
             k = k,
-            gap = gap;
+            gap = gap,
+            threshold_k = threshold_clusters.len();
             "ev=cluster.auto_k"
         );
+        if threshold_clusters.len() == k + 1 && k < max_k {
+            log::debug!(
+                target: "cluster",
+                k = k,
+                threshold_k = threshold_clusters.len();
+                "ev=cluster.auto_k_threshold"
+            );
+            return threshold_labels;
+        }
         return labels_with_limit(n, &merges, k, f64::INFINITY);
     }
     log::debug!(
@@ -603,6 +624,25 @@ mod tests {
         ];
         let labels = agglomerative_gap(&embs, &[1.0; 7], &[], 0.52, 1, 7);
         assert!(unique_labels(&labels) >= 2);
+    }
+
+    #[test]
+    fn gap_adds_one_cluster_when_threshold_forbids_the_next_merge() {
+        // Три пары в ±1°: слияние A+B — 0.577, выше границы «один голос» 0.52;
+        // C далеко (1.6–2.0). Разрыв максимален на k=2 (1.21), но порог
+        // запрещает слияние A+B: третий кластер восстанавливается.
+        let at = |deg: f64| vec![deg.to_radians().cos(), deg.to_radians().sin()];
+        let embs = vec![at(-1.0), at(1.0), at(64.0), at(66.0), at(179.0), at(181.0)];
+        let labels = agglomerative_gap(&embs, &[1.0; 6], &[], 0.52, 1, 6);
+        assert_eq!(unique_labels(&labels), 3);
+    }
+
+    #[test]
+    fn gap_threshold_floor_respects_max_clusters() {
+        let at = |deg: f64| vec![deg.to_radians().cos(), deg.to_radians().sin()];
+        let embs = vec![at(-1.0), at(1.0), at(64.0), at(66.0), at(179.0), at(181.0)];
+        let labels = agglomerative_gap(&embs, &[1.0; 6], &[], 0.52, 1, 2);
+        assert_eq!(unique_labels(&labels), 2);
     }
 
     #[test]

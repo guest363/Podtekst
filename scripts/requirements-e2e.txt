@@ -1,0 +1,6 @@
+# Python 3.12+. Dev-only зависимости e2e-скриптов, в рантайм приложения не попадают.
+# Установка:
+#   python3 -m venv ~/.cache/podtekst-e2e/venv
+#   uv pip install --python ~/.cache/podtekst-e2e/venv/bin/python -r scripts/requirements-e2e.txt
+#   ~/.cache/podtekst-e2e/venv/bin/playwright install chromium
+playwright==1.65.2

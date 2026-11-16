@@ -6,3 +6,13 @@ export const errText = (error: unknown, fallback = 'неизвестная ош�
 
 export const isAbortError = (error: unknown): boolean =>
   (error instanceof Error || error instanceof DOMException) && error.name === 'AbortError'
+
+/** Заблокированное хранилище (приватный режим, политика WebView) бросает
+ *  SecurityError: без обёртки падал весь граф модулей до mount. */
+export const readLocal = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}

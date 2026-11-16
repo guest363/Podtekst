@@ -1,4 +1,4 @@
-import type { OkResponse } from './api'
+import type { ModelInfo, OkResponse } from './api'
 import { fetchWithTimeout, readJsonSafe } from './api'
 import { errText, isAbortError, isRecord } from './guards.ts'
 import { toast } from './toast.svelte.ts'
@@ -67,35 +67,13 @@ export type RecordingInfo = {
   mode?: string
 }
 
-export type ModelItem = {
-  id: string
-  kind?: string
-  title: string
-  version?: string
-  installed_version?: string | null
-  is_installed: boolean
-  has_update?: boolean
-  needs_reinstall?: boolean
-  total_size_bytes?: number
-  on_disk_bytes?: number
-  license?: string
-  description?: string
-  ram_mb?: number
-  required_free_mb?: number
-  context_tokens?: number
-  native_context_tokens?: number
-  min_system_ram_mb?: number
-  license_url?: string
-  source_url?: string
-}
-
 export type ModelsSummary = {
   core_ready?: boolean
   installed?: number
   total?: number
   missing_core?: string[]
   updates?: string[]
-  items?: ModelItem[]
+  items?: ModelInfo[]
 }
 
 export type FfmpegStatus = {

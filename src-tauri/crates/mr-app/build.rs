@@ -76,6 +76,34 @@ fn link_swift_runtime() {
     }
 }
 
+/// Имя исполняемого файла из `[[bin]]`: `-link-arg-bin` действует только на
+/// точное имя, и переименование иначе молча оставило бы бинарник без plist.
+fn bin_name() -> String {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+    std::fs::read_to_string(manifest)
+        .ok()
+        .and_then(|text| {
+            let mut in_bin = false;
+            for line in text.lines() {
+                let line = line.trim();
+                if line.starts_with("[[bin]]") {
+                    in_bin = true;
+                    continue;
+                }
+                if line.starts_with('[') {
+                    in_bin = false;
+                }
+                if in_bin && line.starts_with("name") {
+                    return line
+                        .split_once('=')
+                        .map(|(_, value)| value.trim().trim_matches('"').to_string());
+                }
+            }
+            None
+        })
+        .unwrap_or_else(|| "podtekst".to_string())
+}
+
 /// Command-line запуск (`run.command`) идёт мимо .app-бандла, а TCC требует
 /// NSMicrophoneUsageDescription до первого обращения к микрофону. Вшиваем
 /// Info.plist в секцию __TEXT бинарника — macOS читает её как у бандла.
@@ -93,7 +121,8 @@ fn embed_macos_info_plist() {
     }
     println!("cargo:rerun-if-changed={}", plist.display());
     println!(
-        "cargo:rustc-link-arg-bin=podtekst=-Wl,-sectcreate,__TEXT,__info_plist,{}",
+        "cargo:rustc-link-arg-bin={}=-Wl,-sectcreate,__TEXT,__info_plist,{}",
+        bin_name(),
         plist.display()
     );
 }
@@ -116,6 +145,11 @@ fn main() {
     embed_macos_info_plist();
     println!("cargo:rerun-if-env-changed=CC");
     println!("cargo:rerun-if-env-changed=TARGET_CC");
+    // Коммит и dirty меняются без правки файлов пакета: без этих строк
+    // build-скрипт не перезапускается и артефакты несут чужую ревизию.
+    println!("cargo:rerun-if-changed=../../.git/HEAD");
+    println!("cargo:rerun-if-changed=../../.git/refs");
+    println!("cargo:rerun-if-changed=Cargo.toml");
 
     // manifest.json dev-запуска хранит точку воспроизведения; git может
     // отсутствовать (сборка из архива), тогда честно пишем unknown.

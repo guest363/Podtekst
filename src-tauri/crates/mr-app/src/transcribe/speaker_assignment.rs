@@ -230,11 +230,21 @@ pub(super) fn apply(
 /// рвут реплику на десятки кусков.
 fn aggregate_spans(spans: &[SpeakerSpan]) -> Vec<SpeakerSpan> {
     let frame_sec = FRAME_SAMPLES as f64 / 16000.0;
+    // Буферы отсчитываются от первого кадра, а не от нулевой секунды: для записи
+    // в 2 ч разница — 225 тыс. кадров на каждую метку.
+    let Some(origin) = spans
+        .iter()
+        .map(|span| (span.start.max(0.0) / frame_sec).floor() as usize)
+        .min()
+    else {
+        return vec![];
+    };
     let frames = spans
         .iter()
         .map(|s| (s.end / frame_sec).ceil() as usize)
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0)
+        .saturating_sub(origin);
     if frames == 0 {
         return vec![];
     }
@@ -243,8 +253,12 @@ fn aggregate_spans(spans: &[SpeakerSpan]) -> Vec<SpeakerSpan> {
     labels.dedup();
     let mut deltas: Vec<Vec<f32>> = vec![vec![0.0; frames + 1]; labels.len()];
     for span in spans {
-        let start = ((span.start / frame_sec).floor() as usize).min(frames);
-        let end = ((span.end / frame_sec).ceil() as usize).min(frames);
+        let start = ((span.start / frame_sec).floor() as usize)
+            .saturating_sub(origin)
+            .min(frames);
+        let end = ((span.end / frame_sec).ceil() as usize)
+            .saturating_sub(origin)
+            .min(frames);
         if end <= start {
             continue;
         }
@@ -274,8 +288,8 @@ fn aggregate_spans(spans: &[SpeakerSpan]) -> Vec<SpeakerSpan> {
         if let Some((current, start)) = run {
             if frame - start >= min_frames {
                 out.push(SpeakerSpan {
-                    start: start as f64 * frame_sec,
-                    end: frame as f64 * frame_sec,
+                    start: (origin + start) as f64 * frame_sec,
+                    end: (origin + frame) as f64 * frame_sec,
                     label: labels[current],
                 });
             }
@@ -533,6 +547,19 @@ mod tests {
                 "spans={spans:?}"
             );
         }
+    }
+
+    #[test]
+    fn aggregate_spans_keeps_absolute_time_of_late_spans() {
+        let span = SpeakerSpan {
+            start: 100.0,
+            end: 103.0,
+            label: 0,
+        };
+        let out = aggregate_spans(&[span]);
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert!((out[0].start - 100.0).abs() < 0.05, "{out:?}");
+        assert!((out[0].end - 103.0).abs() < 0.05, "{out:?}");
     }
 
     fn utterance(start: f64, end: f64) -> Utterance {

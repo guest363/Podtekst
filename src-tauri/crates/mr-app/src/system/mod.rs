@@ -88,11 +88,11 @@ pub(crate) fn snapshot(recording: bool, elapsed: u64, mode: &str) -> Value {
         "integration": {
             "hotkey": {
                 "accelerator": if cfg!(target_os = "macos") { "Cmd+Shift+R" } else { "Ctrl+Shift+R" },
-                "registered": Value::Null,
+                "registered": crate::desktop::hotkey_registered(),
             },
             "autostart": crate::desktop::is_autostart_enabled(),
             "single_instance": true,
-            "ipc": true,
+            "ipc": crate::ipc::is_active(),
             "updater": update_mode(),
         },
         "update": {
@@ -220,38 +220,19 @@ fn devices_value(catalog: &mr_audio::capture::DeviceCatalog) -> Value {
     })
 }
 
+/// Считаем тем же списком, что отдаёт `/api/crashes`: счётчик по именам
+/// расходился с ним на нечитаемых файлах, и такой сбой нельзя было закрыть.
 fn crash_stats(dir: &Path) -> Value {
-    let acked: std::collections::HashSet<String> = std::fs::read_to_string(dir.join("ack.json"))
-        .ok()
-        .and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok())
-        .unwrap_or_default()
+    let unacked: Vec<Value> = crate::crash::list_from(dir)
         .into_iter()
+        .filter(|crash| crash.get("acked").and_then(Value::as_bool) != Some(true))
         .collect();
-    let mut count = 0u64;
-    let mut last: Option<SystemTime> = None;
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if !name.starts_with("crash-") || !name.ends_with(".json") {
-                continue;
-            }
-            let id = name
-                .trim_start_matches("crash-")
-                .trim_end_matches(".json")
-                .to_string();
-            if acked.contains(&id) {
-                continue;
-            }
-            let Ok(meta) = entry.metadata() else {
-                continue;
-            };
-            count += 1;
-            if let Ok(modified) = meta.modified() {
-                last = Some(last.map_or(modified, |prev| prev.max(modified)));
-            }
-        }
-    }
-    json!({"count": count, "last_at": last.and_then(iso_time)})
+    let last = unacked
+        .iter()
+        .filter_map(|crash| crash.get("created_at").and_then(Value::as_str))
+        .max()
+        .map(|at| json!(at));
+    json!({"count": unacked.len(), "last_at": last.unwrap_or(Value::Null)})
 }
 
 fn dir_stats(dir: &Path) -> Value {

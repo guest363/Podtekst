@@ -6,6 +6,15 @@ use mr_ml::onnx::segmentation::FRAME_SAMPLES;
 use super::super::clean_speech::SpeechSupport;
 use super::{AcoustUnit, CORE_MIN_DUR};
 
+/// Замер на AMI (real10, 120 с) и на synth-ru-2spk: ложные пары PyAnnote, где
+/// один голос разведён на два локальных класса, дают sim юнитов 0.66–0.81 при
+/// min_purity 0.98–1.0; единственная верная пара перекрытия в synth-ru-2spk —
+/// sim 0.677 при min_purity 0.679. Дискриминатор — сочетание: уверенная
+/// локальная метка вместе с акустическим сходством «один голос» означает
+/// ошибку меток, а не перекрытие; при размытой метке ограничение сохраняется.
+const CONTRADICTION_SIM: f64 = 0.65;
+const CONTRADICTION_PURITY: f64 = 0.90;
+
 pub(super) fn cannot_link_units(
     units: &[AcoustUnit],
     core_pos: &HashMap<usize, usize>,
@@ -100,11 +109,16 @@ pub(super) fn cannot_link_units(
     pairs.sort_unstable();
     let mut evidence: Vec<_> = evidence.into_iter().collect();
     evidence.sort_unstable_by_key(|(key, _)| *key);
+    let mut dropped: HashSet<(usize, usize)> = HashSet::new();
     for ((i, j), stats) in &evidence {
         let sim = match (core_vecs.get(*i), core_vecs.get(*j)) {
             (Some(a), Some(b)) if !a.is_empty() && !b.is_empty() => cosine_similarity(a, b),
             _ => f64::NAN,
         };
+        let conflicts = sim >= CONTRADICTION_SIM && stats.min_purity >= CONTRADICTION_PURITY;
+        if conflicts {
+            dropped.insert((*i, *j));
+        }
         log::debug!(
             target: "diar",
             i,
@@ -115,16 +129,20 @@ pub(super) fn cannot_link_units(
             local_b = stats.local_b,
             min_purity = stats.min_purity,
             min_support = stats.min_support,
-            sim;
+            sim,
+            dropped = conflicts;
             "ev=diar.cannot_link_pair"
         );
     }
+    let dropped_pairs = dropped.len();
+    pairs.retain(|key| !dropped.contains(key));
     log::debug!(
         target: "diar",
         windows = segmentation.windows.len(),
         core_units = core_pos.len(),
         supported_memberships = supported_memberships,
         pairs = pairs.len(),
+        dropped_pairs = dropped_pairs,
         cross_turn_pairs = cross_turn_pairs;
         "ev=diar.cannot_link"
     );

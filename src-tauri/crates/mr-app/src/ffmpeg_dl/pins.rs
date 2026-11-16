@@ -26,13 +26,42 @@ struct PinFile {
     packages: Vec<Package>,
 }
 
-pub(super) fn all() -> &'static [Package] {
-    static PINS: OnceLock<Vec<Package>> = OnceLock::new();
+fn parsed() -> &'static Result<Vec<Package>, String> {
+    static PINS: OnceLock<Result<Vec<Package>, String>> = OnceLock::new();
     PINS.get_or_init(|| {
-        serde_json::from_str::<PinFile>(PINS_JSON)
-            .map(|file| file.packages)
-            .unwrap_or_default()
+        let file = serde_json::from_str::<PinFile>(PINS_JSON)
+            .map_err(|e| format!("components-pins.json не разбирается: {e}"))?;
+        validate(&file.packages)?;
+        Ok(file.packages)
     })
+}
+
+pub(super) fn all() -> &'static [Package] {
+    parsed().as_deref().unwrap_or(&[])
+}
+
+/// Пины вшиты в сборку: битый файл не должен выглядеть как «нет пина для платформы».
+fn validate(packages: &[Package]) -> Result<(), String> {
+    const OSES: [&str; 3] = ["linux", "macos", "windows"];
+    const ARCHES: [&str; 2] = ["x86_64", "aarch64"];
+    for package in packages {
+        if !OSES.contains(&package.os.as_str()) || !ARCHES.contains(&package.arch.as_str()) {
+            return Err(format!(
+                "неизвестная платформа {}/{}",
+                package.os, package.arch
+            ));
+        }
+        if !package.url.starts_with("https://") {
+            return Err(format!("{}: url не https", package.source));
+        }
+        if package.sha256.len() != 64 || !package.sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(format!("{}: sha256 не 64 hex", package.source));
+        }
+        if package.provides.is_empty() {
+            return Err(format!("{}: пустой список файлов", package.source));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn current() -> Result<Vec<Package>, String> {
@@ -45,6 +74,11 @@ pub(super) fn for_target(os: &str, arch: &str) -> Result<Vec<Package>, String> {
             "Сборка для Mac с процессором Intel не поддерживается: ffmpeg устанавливается только на Apple Silicon."
                 .to_string(),
         );
+    }
+    if let Err(error) = parsed() {
+        return Err(format!(
+            "Вшитый список пинов повреждён ({error}): переустановите приложение."
+        ));
     }
     let packages: Vec<Package> = all()
         .iter()
@@ -143,5 +177,33 @@ mod tests {
     #[test]
     fn unknown_target_is_rejected() {
         assert!(for_target("freebsd", "x86_64").is_err());
+    }
+
+    #[test]
+    fn bundled_pins_pass_validation() {
+        parsed().as_ref().expect("пины должны проходить проверку");
+        let mut broken = vec![Package {
+            os: "linux".to_string(),
+            arch: "x86_64".to_string(),
+            version: "1".to_string(),
+            source: "test".to_string(),
+            provides: vec!["ffmpeg".to_string()],
+            format: "zip".to_string(),
+            url: "http://example.invalid/a.zip".to_string(),
+            sha256: "0".repeat(64),
+        }];
+        assert!(validate(&broken).is_err(), "http-пин должен отклоняться");
+        broken[0].url = "https://example.invalid/a.zip".to_string();
+        broken[0].sha256 = "zz".to_string();
+        assert!(
+            validate(&broken).is_err(),
+            "некороткий sha должен отклоняться"
+        );
+        broken[0].sha256 = "0".repeat(64);
+        broken[0].os = "freebsd".to_string();
+        assert!(
+            validate(&broken).is_err(),
+            "неизвестная ось должна отклоняться"
+        );
     }
 }

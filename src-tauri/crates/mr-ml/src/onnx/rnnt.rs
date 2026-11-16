@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use super::features;
 use super::session::{NamedTensors, OrtSession, ShapeDataI64};
 
 pub const BLANK_ID: i64 = 1024;
@@ -139,9 +140,10 @@ impl GigaAM {
         if mel.is_empty() {
             return Ok(String::new());
         }
+        features::ensure_mel_width(mel, features::GIGAAM_MEL_BANDS)?;
         let tf = mel.len();
-        let mut flat = Vec::with_capacity(64 * tf);
-        for c in 0..64 {
+        let mut flat = Vec::with_capacity(features::GIGAAM_MEL_BANDS * tf);
+        for c in 0..features::GIGAAM_MEL_BANDS {
             for row in mel.iter() {
                 flat.push(row[c]);
             }
@@ -183,6 +185,7 @@ impl GigaAM {
         h = nh;
         c = nc;
         let mut ids: Vec<i64> = Vec::new();
+        let mut blanks = 0usize;
         for t in 0..frames {
             let enc_frame = &frames_data[t * 768..(t + 1) * 768];
             // Цикл joiner: пока не blank — эмитим токены (защита от зацикливания)
@@ -193,6 +196,9 @@ impl GigaAM {
                 }
                 let y = argmax(&logits) as i64;
                 if y == BLANK_ID {
+                    // Blank считаем по факту: `frames - tokens` врёт, когда
+                    // один кадр эмитит несколько токенов.
+                    blanks += 1;
                     break;
                 }
                 ids.push(y);
@@ -205,7 +211,7 @@ impl GigaAM {
         self.last_stats = DecodeStats {
             frames,
             tokens: ids.len(),
-            blank: frames.saturating_sub(ids.len()),
+            blank: blanks,
         };
         Ok(decode_pieces(&ids, &self.vocab))
     }

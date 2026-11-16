@@ -90,7 +90,10 @@ fi
 NEEDS_RUST_BUILD=0
 if [ "$WANT_BUILD" = 1 ] || [ ! -f "$BIN" ]; then
     NEEDS_RUST_BUILD=1
-elif [ -n "$(find "$SCRIPT_DIR/src-tauri/crates"/*/src "$SCRIPT_DIR/src-tauri/Cargo.toml" -type f -newer "$BIN" 2>/dev/null | head -n 1)" ]; then
+elif [ -n "$(find "$SCRIPT_DIR/src-tauri/crates"/*/src "$SCRIPT_DIR/src-tauri/crates"/*/Cargo.toml \
+    "$SCRIPT_DIR/src-tauri/crates"/*/build.rs "$SCRIPT_DIR/src-tauri/crates/mr-app/tauri.conf.json" \
+    "$SCRIPT_DIR/src-tauri/Cargo.toml" "$SCRIPT_DIR/src-tauri/Cargo.lock" \
+    -type f -newer "$BIN" 2>/dev/null | head -n 1)" ]; then
     NEEDS_RUST_BUILD=1
 elif [ "$NEEDS_FRONT_BUILD" = 1 ]; then
     NEEDS_RUST_BUILD=1

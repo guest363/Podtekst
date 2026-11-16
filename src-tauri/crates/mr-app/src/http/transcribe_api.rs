@@ -1,11 +1,6 @@
-use std::path::PathBuf;
-
-#[cfg(feature = "onnx")]
-use std::path::Path;
-
 use serde_json::json;
 
-use super::media::inside_save_dir;
+use super::media::{inside_save_dir, resolve_media_path};
 #[cfg(feature = "onnx")]
 use super::media::{is_video_path, video_supported};
 use super::{json_response, query_param};
@@ -18,14 +13,7 @@ pub(super) fn serve_transcript(request: tiny_http::Request, query: &str) {
     };
     // Относительное имя резолвим от папки записей ДО проверок и чтения:
     // иначе голое имя файла читалось бы из CWD процесса.
-    let p = {
-        let raw = PathBuf::from(&f);
-        if raw.is_absolute() {
-            raw
-        } else {
-            save_dir().join(raw)
-        }
-    };
+    let p = resolve_media_path(&f);
     if p.file_name().is_none() || !inside_save_dir(&p) {
         json_response(request, json!({"error": "Файл вне папки записей"}), 404);
         return;
@@ -203,7 +191,10 @@ pub(super) fn handle_transcribe_start(request: tiny_http::Request, body: serde_j
         .and_then(|v| v.as_str())
         .unwrap_or("Я")
         .to_string();
-    if audio_file.is_empty() || !PathBuf::from(&audio_file).exists() {
+    // Резолвим путь ДО проверок: иначе `exists()` смотрел бы в CWD процесса,
+    // а конвейер писал бы артефакты рядом с файлом вне папки записей.
+    let audio = resolve_media_path(&audio_file);
+    if audio_file.is_empty() || !audio.is_file() {
         json_response(
             request,
             json!({"ok": false, "error": "Аудиофайл не найден. Проверьте путь и повторите."}),
@@ -213,7 +204,7 @@ pub(super) fn handle_transcribe_start(request: tiny_http::Request, body: serde_j
     }
     // Транскрибируем только записи из папки записей: результат (md/json)
     // пишется рядом с исходником — произвольный путь означал бы запись на диск.
-    if !inside_save_dir(Path::new(&audio_file)) {
+    if !inside_save_dir(&audio) {
         json_response(
             request,
             json!({"ok": false, "error": "Файл вне папки записей"}),
@@ -221,7 +212,7 @@ pub(super) fn handle_transcribe_start(request: tiny_http::Request, body: serde_j
         );
         return;
     }
-    if !video_supported() && is_video_path(Path::new(&audio_file)) {
+    if !video_supported() && is_video_path(&audio) {
         json_response(
             request,
             json!({"ok": false, "error": "На Android видео не поддерживается. Импортируйте аудиофайл."}),
@@ -229,7 +220,7 @@ pub(super) fn handle_transcribe_start(request: tiny_http::Request, body: serde_j
         );
         return;
     }
-    if !mr_audio::has_audio_track(Path::new(&audio_file)) {
+    if !mr_audio::has_audio_track(&audio) {
         json_response(
             request,
             json!({"ok": false, "error": "Файл не содержит аудиодорожки"}),
@@ -258,8 +249,7 @@ pub(super) fn handle_transcribe_start(request: tiny_http::Request, body: serde_j
             .and_then(|v| v.as_bool())
             .unwrap_or_else(crate::config::configured_ctc_enabled),
     };
-    let (started, position) =
-        crate::transcribe::enqueue_transcription(PathBuf::from(audio_file), opts);
+    let (started, position) = crate::transcribe::enqueue_transcription(audio, opts);
     let already_running = !started && position == 1;
     json_response(
         request,

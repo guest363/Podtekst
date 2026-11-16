@@ -51,11 +51,6 @@
   }
 
   /* Шапка: компактный заголовок без дублирующихся плашек, кнопка настроек не вылезает за экран */
-  .app-header {
-    padding: 2px 2px;
-    gap: 8px;
-    width: 100%;
-  }
   .app-title {
     font-size: 18px;
     gap: 8px;
@@ -66,12 +61,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .app-title-sub {
-    display: none;
-  }
-  .platform-pill {
-    display: none;
   }
   .header-right {
     flex-shrink: 0;
@@ -109,9 +98,6 @@
   }
   .seg-bar {
     flex-direction: column;
-  }
-  .transcript-media-player {
-    flex-basis: 100%;
   }
 
   /* Модалки и тосты */

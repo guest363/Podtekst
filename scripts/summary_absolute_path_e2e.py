@@ -257,19 +257,23 @@ def start_app(binary: Path, data: Path, enabled: bool, fake: bool, model: Path |
         env["MR_SUMMARY_FAKE_BACKEND"] = "slow"
         if model:
             env["MR_SUMMARY_MODEL"] = str(model)
+    # Лог в файл, а не в пайп: невычитанный PIPE на 64 КБ блокирует писателя
+    # и прогон зависает вместо внятной ошибки.
+    log_path = data / f"app-{port}.log"
+    log_file = open(log_path, "wb")
     process = subprocess.Popen(
         [str(binary), "--web", "--no-browser", "--port", str(port)],
         cwd=str(ROOT),
         env=env,
-        stdout=subprocess.PIPE,
+        stdout=log_file,
         stderr=subprocess.STDOUT,
-        text=True,
     )
     try:
         wait_http(port)
     except Exception:
         process.terminate()
-        output = process.stdout.read() if process.stdout else ""
+        log_file.close()
+        output = log_path.read_text(errors="replace") if log_path.is_file() else ""
         raise RuntimeError(f"app failed to start:\n{output[-4000:]}")
     return process, port
 
@@ -468,7 +472,7 @@ def main() -> int:
         print("missing built frontend: run `yarn build` in ui/web/frontend", file=sys.stderr)
         return 2
 
-    base_dir = Path(tempfile.mkdtemp(prefix="podtekst-summary-e2e-", dir="/tmp/opencode"))
+    base_dir = Path(tempfile.mkdtemp(prefix="podtekst-summary-e2e-"))
     fake = not args.real
     data, model = prepare_data(base_dir, fake)
     recordings = data / "recordings"

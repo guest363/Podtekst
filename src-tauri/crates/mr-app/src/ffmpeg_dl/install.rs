@@ -8,6 +8,10 @@ use std::time::Duration;
 use super::pins::Package;
 
 const CHUNK: usize = 256 * 1024;
+/// Архив ffmpeg — 40–120 МиБ; 300 МиБ с запасом ловит подменённый CDN.
+const MAX_ARCHIVE_BYTES: u64 = 300 * 1024 * 1024;
+/// Общий дедлайн: `timeout_read` ограничивает паузу сокета, а не всю загрузку.
+const DOWNLOAD_DEADLINE: Duration = Duration::from_secs(15 * 60);
 
 pub(super) fn download(
     package: &Package,
@@ -20,11 +24,17 @@ pub(super) fn download(
         uuid::Uuid::new_v4(),
         extension(&package.format)
     ));
+    if !package.url.starts_with("https://") {
+        return Err(format!("пин ссылается не на https: {}", package.url));
+    }
     // Медленный канал не должен ронять установку, пока данные идут, поэтому
     // предел ставится на простой сокета, а не на весь архив.
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(15))
         .timeout_read(Duration::from_secs(120))
+        // Редирект только на https и не больше двух хопов: http-пин не качаем.
+        .https_only(true)
+        .redirects(2)
         .build();
     let resp = agent
         .get(&package.url)
@@ -35,20 +45,35 @@ pub(super) fn download(
         .header("Content-Length")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
+    if total > MAX_ARCHIVE_BYTES {
+        return Err(format!(
+            "архив больше {} МиБ: проверьте пин",
+            MAX_ARCHIVE_BYTES / 1024 / 1024
+        ));
+    }
     progress(0, total);
 
     let mut file = std::fs::File::create_new(&path).map_err(|e| format!("файл: {e}"))?;
     let mut reader = resp.into_reader();
     let mut buf = vec![0u8; CHUNK];
     let mut done = 0u64;
+    let deadline = std::time::Instant::now() + DOWNLOAD_DEADLINE;
     loop {
+        if std::time::Instant::now() > deadline {
+            let _ = std::fs::remove_file(&path);
+            return Err("скачивание не уложилось в 15 минут".to_string());
+        }
         let n = reader.read(&mut buf).map_err(|e| format!("чтение: {e}"))?;
         if n == 0 {
             break;
         }
+        done += n as u64;
+        if done > MAX_ARCHIVE_BYTES {
+            let _ = std::fs::remove_file(&path);
+            return Err("архив больше допустимого размера".to_string());
+        }
         file.write_all(&buf[..n])
             .map_err(|e| format!("запись: {e}"))?;
-        done += n as u64;
         progress(done, total);
     }
     file.flush().map_err(|e| format!("запись: {e}"))?;
@@ -179,10 +204,9 @@ pub(super) fn find_binary(root: &Path, tool: &str) -> Option<PathBuf> {
                 continue;
             }
             let name = entry.file_name().to_string_lossy().to_lowercase();
-            if name == tool
-                || name == format!("{tool}.exe")
-                || name.starts_with(&format!("{tool}-"))
-            {
+            // Только точное имя: `ffmpeg-readme.txt` из архива не должен
+            // подменять бинарник в зависимости от порядка обхода каталога.
+            if name == tool || name == format!("{tool}.exe") {
                 return Some(path);
             }
         }

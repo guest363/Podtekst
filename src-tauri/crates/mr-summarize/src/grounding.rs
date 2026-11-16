@@ -24,8 +24,13 @@ struct Scored {
 
 /// Есть ли в источнике явный decision-cue: нужен для `decision_missed`
 /// retry/flag без дублирования таблицы cue в mr-app.
+/// Cue ищется по каждой реплике отдельно: отрицание в одной («пока не решили»)
+/// не выключает решения, сформулированные в другой.
 pub fn has_decision_cue(transcript: &Transcript) -> bool {
-    decision_cue(&text::normalize(&transcript.full_text()))
+    transcript
+        .utterances
+        .iter()
+        .any(|utterance| decision_cue(&utterance.text))
 }
 
 pub fn ground(
@@ -67,13 +72,14 @@ pub fn ground(
             }
             if section.role == SectionRole::Decision && !decision_cue {
                 push_once(&mut warnings, Warning::DecisionWithoutCue);
-                if let Some(brief) = brief_index {
-                    output.role = SectionRole::Plain;
-                    sections[brief].push(Scored {
-                        item: output,
-                        ev: 1.0,
-                    });
-                }
+                // Без секции `brief` пункт остаётся в своей: инвариант «текст
+                // модели сохраняется» важнее того, что cue не нашёлся.
+                let target = brief_index.unwrap_or(section_index);
+                output.role = SectionRole::Plain;
+                sections[target].push(Scored {
+                    item: output,
+                    ev: 1.0,
+                });
                 continue;
             }
             sections[section_index].push(Scored {
@@ -98,7 +104,7 @@ pub fn ground(
         }
     }
 
-    merge::cap(&mut sections, &parsed.sections, detail);
+    let items_dropped = merge::cap(&mut sections, &parsed.sections, detail);
     if unverified > 0 {
         push_once(&mut warnings, Warning::FactUnverified);
     }
@@ -135,7 +141,7 @@ pub fn ground(
     GroundedSummary {
         sections: ordered,
         warnings,
-        items_dropped: 0,
+        items_dropped,
         soft_claims_dropped: 0,
         parser_recovered: parsed.parser_recovered,
     }

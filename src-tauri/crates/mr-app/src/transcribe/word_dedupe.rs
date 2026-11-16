@@ -19,7 +19,9 @@ const ECHO_SHARE: f32 = 0.7;
 const DELAY_DRIFT_SEC: f64 = 0.06;
 /// Остаток эха короче трёх слов — ошибки ASR, а не реплика; короткие ответы не трогаем.
 const MIN_LOCAL_WORDS: usize = 3;
-const ECHO_RESIDUE_WORDS: usize = 5;
+/// Доля локальных слов, ниже которой остаток реплики считается шумом: правило
+/// по доле, а не по абсолютному числу, иначе длинная реплика теряет реальные слова.
+const MIN_LOCAL_SHARE: f32 = 0.25;
 
 /// Пословная дедупликация эха в микрофонном канале; счётчик изменённых
 /// реплик нужен только для лога `ev=diar.word_dedupe`.
@@ -50,6 +52,8 @@ pub(crate) fn dedupe_words(
     }
 
     let mut changed = 0usize;
+    let mut dropped = 0usize;
+    let mut dropped_words = 0usize;
     let mut kept: Vec<Utterance> = Vec::with_capacity(utterances.len());
     for mut utterance in utterances.drain(..) {
         if utterance.channel != Some(0)
@@ -65,7 +69,10 @@ pub(crate) fn dedupe_words(
             continue;
         }
         changed += 1;
-        if local.len() < MIN_LOCAL_WORDS && utterance.words.len() >= ECHO_RESIDUE_WORDS {
+        let local_share = local.len() as f32 / utterance.words.len().max(1) as f32;
+        if local.len() < MIN_LOCAL_WORDS && local_share < MIN_LOCAL_SHARE {
+            dropped += 1;
+            dropped_words += utterance.words.len() - local.len();
             continue;
         }
         let Some(first) = local.first() else {
@@ -93,6 +100,14 @@ pub(crate) fn dedupe_words(
         kept.push(utterance);
     }
     *utterances = kept;
+    if dropped > 0 {
+        log::debug!(
+            target: "diar",
+            utterances = dropped,
+            words = dropped_words;
+            "ev=word_dedupe.drop"
+        );
+    }
     changed
 }
 
@@ -314,6 +329,50 @@ mod tests {
         assert_eq!(changed, 1);
         assert_eq!(utts.len(), 1, "{utts:?}");
         assert_eq!(utts[0].channel, Some(1));
+    }
+
+    #[test]
+    fn long_utterance_with_two_local_words_keeps_them() {
+        // 6 слов: 4 эха + 2 реальных локальных. Старое правило по абсолютному
+        // числу выбрасывало всю реплику вместе с локальными словами.
+        let ev = evidence(
+            &[
+                (0.0, 0.6, FrameClass::EchoOnly, 0.0),
+                (0.6, 1.4, FrameClass::LocalOnly, 0.0),
+                (1.4, 2.0, FrameClass::EchoOnly, 0.0),
+            ],
+            2.0,
+        );
+        let mut utts = vec![
+            utterance(
+                0.0,
+                2.0,
+                0,
+                vec![
+                    word("альфа", 0.0, 0.3),
+                    word("альфа", 0.35, 0.55),
+                    word("Бета", 0.65, 0.85),
+                    word("Дельта", 0.9, 1.1),
+                    word("гамма", 1.45, 1.7),
+                    word("гамма", 1.75, 1.95),
+                ],
+            ),
+            utterance(
+                0.0,
+                2.0,
+                1,
+                vec![
+                    word("альфа", 0.0, 0.3),
+                    word("альфа", 0.35, 0.55),
+                    word("гамма", 1.45, 1.7),
+                    word("гамма", 1.75, 1.95),
+                ],
+            ),
+        ];
+        let changed = dedupe_words(&mut utts, &samples(), &ev, None);
+        assert_eq!(changed, 1, "{utts:?}");
+        assert_eq!(utts.len(), 2, "реплика не должна исчезнуть: {utts:?}");
+        assert_eq!(utts[0].text, "Бета Дельта");
     }
 
     #[test]

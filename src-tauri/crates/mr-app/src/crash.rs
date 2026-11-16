@@ -54,6 +54,10 @@ pub(crate) fn list() -> Vec<Value> {
     list_in(&crashes_dir())
 }
 
+pub(crate) fn list_from(dir: &Path) -> Vec<Value> {
+    store::list_in(dir)
+}
+
 pub(crate) fn latest() -> Option<Value> {
     list().into_iter().next()
 }
@@ -158,7 +162,11 @@ fn os_info() -> Value {
 }
 
 fn log_tail() -> String {
-    let bytes = std::fs::read(crate::logging::log_path()).unwrap_or_default();
+    log_tail_in(&crate::logging::log_path())
+}
+
+fn log_tail_in(path: &Path) -> String {
+    let bytes = std::fs::read(path).unwrap_or_default();
     let start = bytes.len().saturating_sub(MAX_LOG_BYTES);
     let text = String::from_utf8_lossy(&bytes[start..]);
     let lines: Vec<&str> = text.lines().rev().take(MAX_LOG_LINES).collect();
@@ -377,6 +385,23 @@ mod tests {
         assert_eq!(read_run(&dir).unwrap()["clean"], json!(false));
         mark_clean_in(&dir);
         assert_eq!(read_run(&dir).unwrap()["clean"], json!(true));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// P12: имя записи не должно попадать в crash-отчёт и диагностический zip.
+    #[test]
+    fn log_tail_hides_recording_paths() {
+        let dir = temp_dir("tail");
+        let log = dir.join("app.log");
+        std::fs::write(
+            &log,
+            "2026-11-03 10:00:00 [ATTACH_VIDEO] -> /home/user/Recordings/file-123.mp4\n",
+        )
+        .unwrap();
+        let tail = log_tail_in(&log);
+        assert!(!tail.contains("file-123"), "{tail}");
+        assert!(!tail.contains("/home/user"), "{tail}");
+        assert!(tail.contains("recording-"), "{tail}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

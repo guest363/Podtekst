@@ -21,13 +21,23 @@ struct Case {
     channels: u16,
     expected_speakers: usize,
     #[serde(default)]
-    probe_mark: Option<String>,
-    #[serde(default)]
     expected_turns: Option<Vec<Turn>>,
     #[serde(default)]
     max_rtf: Option<f64>,
+    #[serde(default = "default_max_der")]
+    max_der: f64,
+    #[serde(default = "default_collar")]
+    collar_sec: f64,
     #[serde(default)]
     identity_turns: Vec<Turn>,
+}
+
+fn default_max_der() -> f64 {
+    0.12
+}
+
+fn default_collar() -> f64 {
+    0.25
 }
 
 #[derive(serde::Deserialize, Clone)]
@@ -94,6 +104,31 @@ fn wrong_identity_seconds(hyp: &[TranscriptUtterance], reference: &[Turn]) -> f6
         .sum()
 }
 
+fn union_seconds(intervals: &[(f64, f64)]) -> f64 {
+    let mut spans: Vec<(f64, f64)> = intervals
+        .iter()
+        .filter(|(start, end)| end > start)
+        .copied()
+        .collect();
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut total = 0.0;
+    let mut current: Option<(f64, f64)> = None;
+    for (start, end) in spans {
+        match current {
+            Some((from, to)) if start <= to => current = Some((from, to.max(end))),
+            Some((from, to)) => {
+                total += to - from;
+                current = Some((start, end));
+            }
+            None => current = Some((start, end)),
+        }
+    }
+    if let Some((from, to)) = current {
+        total += to - from;
+    }
+    total
+}
+
 fn compute_der(hyp: &[TranscriptUtterance], reference: &[Turn], collar_sec: f64) -> DerMetrics {
     let hyp_intervals: Vec<(&str, f64, f64)> = hyp
         .iter()
@@ -111,12 +146,21 @@ fn compute_der(hyp: &[TranscriptUtterance], reference: &[Turn], collar_sec: f64)
         .collect();
     edges.sort_by(f64::total_cmp);
     edges.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
-    let ref_edges: Vec<f64> = reference
+    let mut ref_edges: Vec<f64> = reference
         .iter()
         .flat_map(|t| [t.start, t.end])
         .filter(|x| x.is_finite())
         .collect();
-    let total_ref: f64 = reference.iter().map(|t| (t.end - t.start).max(0.0)).sum();
+    ref_edges.sort_by(f64::total_cmp);
+    ref_edges.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+    // Знаменатель — объединение эталонных реплик: сумма длительностей завышала
+    // бы его на перекрытиях и занижала DER (SPEC §4.2 задаёт 5 % и 15 %).
+    let total_ref: f64 = union_seconds(
+        &reference
+            .iter()
+            .map(|turn| (turn.start, turn.end))
+            .collect::<Vec<_>>(),
+    );
     let mut matrix: HashMap<(String, String), f64> = HashMap::new();
     let mut missed = 0.0;
     let mut false_alarm = 0.0;
@@ -208,6 +252,11 @@ fn local_diarization_cases() {
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
     else {
+        // Как SUMMARY_REQUIRE_REAL: явный гейт не должен давать зелёный прогон.
+        assert!(
+            std::env::var("DIAR_REQUIRE_LOCAL").as_deref() != Ok("1"),
+            "DIAR_REQUIRE_LOCAL=1, но MR_DIAR_FIXTURES_DIR не задан"
+        );
         eprintln!("MR_DIAR_FIXTURES_DIR не задан — пропуск");
         return;
     };
@@ -259,15 +308,20 @@ fn local_diarization_cases() {
                         failures.push(format!("{}: неверный профиль на {wrong:.2} с", case.id));
                     }
                     if let Some(reference) = &case.expected_turns {
-                        let der = compute_der(&transcript.utterances, reference, 0.25);
+                        let der = compute_der(&transcript.utterances, reference, case.collar_sec);
                         eprintln!(
                             "{}: DER {:.3} (miss {:.2}, fa {:.2}, conf {:.2})",
                             case.id, der.der, der.missed, der.false_alarm, der.confusion
                         );
-                        if der.total_ref <= 0.0 || der.der > 0.12 {
+                        if der.total_ref <= 0.0 {
                             failures.push(format!(
-                                "{}: DER {:.3} выше 0.12 (эталон {:.2} с)",
-                                case.id, der.der, der.total_ref
+                                "{}: эталонные реплики пусты — DER не считается",
+                                case.id
+                            ));
+                        } else if der.der > case.max_der {
+                            failures.push(format!(
+                                "{}: DER {:.3} выше {:.2} (эталон {:.2} с)",
+                                case.id, der.der, case.max_der, der.total_ref
                             ));
                         }
                     }
@@ -276,11 +330,8 @@ fn local_diarization_cases() {
             }
         }
         eprintln!(
-            "{}: спикеры {:?}, реплик {}, probe: {}",
-            case.id,
-            report.speakers,
-            report.utterances,
-            case.probe_mark.as_deref().unwrap_or("не задан")
+            "{}: спикеры {:?}, реплик {}",
+            case.id, report.speakers, report.utterances
         );
         if report.speakers.len() != case.expected_speakers {
             failures.push(format!(
@@ -334,6 +385,27 @@ fn der_counts_missed_and_false_alarm() {
     assert!((der.missed - 5.0).abs() < 1e-9, "{der:?}");
     assert!((der.false_alarm - 1.0).abs() < 1e-9, "{der:?}");
     assert!((der.der - 0.6).abs() < 1e-9, "{der:?}");
+}
+
+#[test]
+fn der_uses_union_of_overlapping_reference_turns() {
+    // Перекрытие 2..5 с: знаменатель — объединение (7 с), а не сумма (10 с).
+    let reference = vec![
+        Turn {
+            start: 0.0,
+            end: 5.0,
+            speaker: "A".to_string(),
+        },
+        Turn {
+            start: 2.0,
+            end: 7.0,
+            speaker: "B".to_string(),
+        },
+    ];
+    let der = compute_der(&[], &reference, 0.0);
+    assert!((der.total_ref - 7.0).abs() < 1e-9, "{der:?}");
+    assert!((der.missed - 7.0).abs() < 1e-9, "{der:?}");
+    assert!((der.der - 1.0).abs() < 1e-9, "{der:?}");
 }
 
 #[test]

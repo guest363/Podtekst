@@ -190,6 +190,9 @@ pub(crate) fn detect(
         return None;
     }
     let noise_floor = percentile(&mic_env, 0.10).max(1e-4);
+    // Пол системы отдельный: loopback часто шумнее микрофона, и сравнение его
+    // уровня с микрофонным полом никогда не даёт класс «только локальная речь».
+    let sys_floor = (percentile(&sys_env, 0.10) * 1.5).max(1e-4);
     let delay_frames = delay_samples as f32 / VAD_WINDOW as f32;
     let corr: Vec<f64> = (0..mic_env.len())
         .map(|frame| {
@@ -235,7 +238,7 @@ pub(crate) fn detect(
         let speech = mic_probs
             .and_then(|probs| probs.get(frame).copied())
             .is_none_or(|prob| prob >= 0.30);
-        let class = if sys_level < noise_floor && mic_level > noise_floor * 3.0 && speech {
+        let class = if sys_level < sys_floor && mic_level > noise_floor * 3.0 && speech {
             FrameClass::LocalOnly
         } else if value >= ECHO_CORR
             && mic_level <= predicted * ECHO_LEVEL_MARGIN
@@ -449,6 +452,28 @@ mod tests {
         let profile = segment_profile(&ev, 5.1, 5.9);
         assert!(profile.local_only >= 0.8, "{profile:?}");
         assert!(profile.echo_only <= 0.1, "{profile:?}");
+    }
+
+    #[test]
+    fn noisy_system_channel_does_not_hide_local_speech() {
+        let system_bursts = am_bursts(LEN, &[(0.5, 4.0), (8.0, 11.5)], 0.4, 11, 300.0);
+        let noise: Vec<f32> = (0..LEN).map(|i| (i as f32 * 0.9).sin() * 0.01).collect();
+        let system: Vec<f32> = system_bursts
+            .iter()
+            .zip(&noise)
+            .map(|(burst, floor)| burst + floor)
+            .collect();
+        let mut mic = delayed_echo(&system_bursts, DELAY, 0.1);
+        let local = am_bursts(LEN, &[(5.0, 6.0)], 0.3, 23, 900.0);
+        for (sample, speech) in mic.iter_mut().zip(local) {
+            *sample += speech;
+        }
+        let ev = detect(&mic, &system, None).expect("эхо должно быть найдено");
+        let profile = segment_profile(&ev, 5.1, 5.9);
+        assert!(
+            profile.local_only >= 0.8,
+            "шумный системный канал скрыл локальную речь: {profile:?}"
+        );
     }
 
     #[test]

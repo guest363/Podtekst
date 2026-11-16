@@ -21,6 +21,7 @@ import SummaryPromptModal from './summary-prompt-modal.svelte'
 
 let loading = $state(false)
 let saving = $state(false)
+let queuedPatch = $state<Partial<SummarySettings> | null>(null)
 let error = $state('')
 let presetOpen = $state(false)
 let presetTrigger = $state<HTMLButtonElement | null>(null)
@@ -57,13 +58,13 @@ const selectedPresetLabel = $derived(
   presetOptions.find((p) => p.id === defaultPreset)?.label ?? presetOptions[0].label,
 )
 const detail = $derived(settings?.detail ?? 'normal')
-const modelSizeGb = $derived(
-  ((model?.total_size_bytes || 2497281120) / 1073741824).toFixed(1).replace('.', ','),
-)
-const ramGib = $derived(((model?.ram_mb || 5530) / 1024).toFixed(1).replace('.', ','))
-const requiredFreeGib = $derived(
-  ((model?.required_free_mb || 6656) / 1024).toFixed(1).replace('.', ','),
-)
+// Размеры берём только из DTO модели: литералы расходились с манифестом.
+const gb = (bytes?: number | null): string =>
+  bytes ? (bytes / 1073741824).toFixed(1).replace('.', ',') : ''
+const gib = (mb?: number | null): string => (mb ? (mb / 1024).toFixed(1).replace('.', ',') : '…')
+const modelSizeGb = $derived(gb(model?.total_size_bytes) || '…')
+const ramGib = $derived(gib(model?.ram_mb))
+const requiredFreeGib = $derived(gib(model?.required_free_mb))
 const diskFree = $derived(fmtBytes(system.snapshot?.disk?.free_bytes) || '—')
 const ramText = $derived.by(() => {
   const total = fmtBytes(system.snapshot?.memory?.total_bytes)
@@ -116,23 +117,41 @@ const reload = async (): Promise<void> => {
   }
 }
 
-let gpuPoll: ReturnType<typeof setInterval> | null = null
+let gpuPoll: ReturnType<typeof setTimeout> | null = null
+let gpuPollActive = false
+let gpuPollFails = 0
 
 const stopGpuPoll = (): void => {
-  if (gpuPoll) clearInterval(gpuPoll)
+  if (gpuPoll) clearTimeout(gpuPoll)
   gpuPoll = null
+  gpuPollActive = false
 }
 
 const startGpuPoll = (): void => {
   stopGpuPoll()
-  gpuPoll = setInterval(async () => {
+  gpuPollActive = true
+  gpuPollFails = 0
+  const tick = async (): Promise<void> => {
+    if (!gpuPollActive) return
     try {
       await refreshSummaryGpu()
+      gpuPollFails = 0
     } catch {
+      // Три подряд неудачи — установка недоступна: опрос не должен крутиться вечно.
+      if (++gpuPollFails >= 3) {
+        stopGpuPoll()
+        return
+      }
+    }
+    if (!summaryState.gpu?.installing) {
+      stopGpuPoll()
       return
     }
-    if (!summaryState.gpu?.installing) stopGpuPoll()
-  }, 500)
+    // Следующий тик только после ответа: 500 мс при медленном бэкенде
+    // наслаивали запросы и число одновременных /api/summary/gpu росло.
+    gpuPoll = setTimeout(() => void tick(), 500)
+  }
+  gpuPoll = setTimeout(() => void tick(), 500)
 }
 
 onMount(() => {
@@ -188,7 +207,12 @@ const toggleGpu = (): void => {
 }
 
 const save = async (patch: Partial<SummarySettings>): Promise<void> => {
-  if (saving) return
+  // Второй клик в том же кадре (до перерисовки disabled) не выбрасываем:
+  // запоминаем последний патч и применяем сразу после текущего сохранения.
+  if (saving) {
+    queuedPatch = patch
+    return
+  }
   saving = true
   error = ''
   try {
@@ -199,6 +223,9 @@ const save = async (patch: Partial<SummarySettings>): Promise<void> => {
     await reload()
   } finally {
     saving = false
+    const next = queuedPatch
+    queuedPatch = null
+    if (next) void save(next)
   }
 }
 

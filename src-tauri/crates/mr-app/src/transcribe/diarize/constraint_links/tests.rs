@@ -41,6 +41,51 @@ fn links(segmentation: &Segmentation, units: &[AcoustUnit]) -> Vec<(usize, usize
     )
 }
 
+fn links_with_vectors(segmentation: &Segmentation, units: &[AcoustUnit]) -> Vec<(usize, usize)> {
+    let positions = (0..units.len()).map(|index| (index, index)).collect();
+    let vectors: Vec<Vec<f64>> = units.iter().map(|unit| unit.embedding.clone()).collect();
+    cannot_link_units(
+        units,
+        &positions,
+        SpeechSupport {
+            segmentation: Some(segmentation),
+            vad_probs: None,
+        },
+        &vectors,
+    )
+}
+
+#[test]
+fn contradictory_pair_is_dropped_only_with_confident_local_label() {
+    // Один голос, разведённый PyAnnote на два локальных класса: сходство юнитов
+    // высокое. Уверенная метка (purity 1.0) — ошибка меток, пара отбрасывается;
+    // размытая (purity 0.7) — ограничение сохраняется.
+    let first = 100;
+    let second = 100;
+    let scene = |second_class_frames: usize| {
+        let mut classes = vec![1u8; first];
+        classes.extend(std::iter::repeat_n(2u8, second_class_frames));
+        classes.extend(std::iter::repeat_n(3u8, second - second_class_frames));
+        segmentation(classes)
+    };
+    let pair = [unit(0, time(0), time(100)), {
+        let mut u = unit(1, time(100), time(200));
+        u.embedding = vec![1.0, 0.05];
+        u
+    }];
+    let confident = links_with_vectors(&scene(second), &pair);
+    assert!(
+        confident.is_empty(),
+        "purity 1.0 + sim 0.999 — это один голос, а не перекрытие: {confident:?}"
+    );
+    let blurry = links_with_vectors(&scene(70), &pair);
+    assert_eq!(
+        blurry,
+        vec![(0, 1)],
+        "purity 0.7 оставляет ограничение даже при высоком сходстве"
+    );
+}
+
 #[test]
 fn different_turns_with_identical_embeddings_stay_apart_even_with_fixed_k_one() {
     let mut classes = vec![1; 100];

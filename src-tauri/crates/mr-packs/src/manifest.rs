@@ -270,7 +270,7 @@ mod tests {
     fn traversal_rejected() {
         let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (_g, app) = tmp_app("traversal");
-        for bad in ["../evil", "a/b", "a\\b", "..", ""] {
+        for bad in ["../evil", "a/b", "a\\b", "..", "", "C:evil", "pack:stream"] {
             assert!(set_pack_enabled(&app, bad, true).is_err(), "{bad:?}");
             assert!(delete_pack(&app, bad).is_err(), "{bad:?}");
         }

@@ -1,6 +1,5 @@
-use super::super::Segmentation;
 use super::*;
-use mr_ml::onnx::segmentation::FRAME_SAMPLES;
+use mr_ml::onnx::segmentation::{Segmentation, FRAME_SAMPLES};
 use std::collections::HashMap;
 
 fn unit(utterance: usize, start: f64, end: f64) -> AcoustUnit {

@@ -4,13 +4,10 @@
 mod install;
 mod pins;
 
-use std::collections::BTreeMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use mr_audio::tools::{binary_arch, probe_at, ToolProbe};
-use serde::{Deserialize, Serialize};
 
 /// Страница ручной установки — подсказка в интерфейсе при неудаче автоскачивания.
 fn manual_url() -> &'static str {
@@ -29,16 +26,6 @@ struct Dl {
 }
 
 static DL: Mutex<Option<Dl>> = Mutex::new(None);
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct Installed {
-    version: String,
-    arch: String,
-    source: String,
-    installed_at: String,
-    #[serde(default)]
-    files: BTreeMap<String, String>,
-}
 
 fn bin_dir() -> PathBuf {
     crate::config::app_data_dir().join("bin")
@@ -144,8 +131,8 @@ fn pair_ok(ffmpeg: Option<&ToolProbe>, ffprobe: Option<&ToolProbe>) -> bool {
     }
 }
 
-pub(crate) fn start_download(force: bool, recording: bool, screen: bool) -> Result<(), String> {
-    if let Some(message) = blocker(recording, screen) {
+pub(crate) fn start_download(force: bool) -> Result<(), String> {
+    if let Some(message) = blocker() {
         return Err(message);
     }
     {
@@ -155,21 +142,22 @@ pub(crate) fn start_download(force: bool, recording: bool, screen: bool) -> Resu
         }
         *guard = Some(Dl::default());
     }
-    std::thread::Builder::new()
+    let spawned = std::thread::Builder::new()
         .name("ffmpeg-dl".into())
-        .spawn(move || download_worker(force))
-        .map_err(|e| format!("Не удалось запустить установку ffmpeg: {e}"))?;
+        .spawn(move || download_worker(force));
+    if let Err(e) = spawned {
+        // Иначе состояние «идёт скачивание» остаётся навсегда и повтор даёт 409.
+        *DL.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        return Err(format!("Не удалось запустить установку ffmpeg: {e}"));
+    }
     Ok(())
 }
 
 /// Замена бинарников ломает идущую работу: процесс держит файл, а расшифровка
 /// и запись экрана вызывают ffmpeg прямо сейчас.
-fn blocker(recording: bool, screen: bool) -> Option<String> {
-    if recording {
+fn blocker() -> Option<String> {
+    if crate::recording::is_active() {
         return Some("Идёт запись. Остановите запись и повторите.".to_string());
-    }
-    if screen {
-        return Some("Идёт запись экрана. Остановите запись и повторите.".to_string());
     }
     #[cfg(feature = "onnx")]
     if crate::transcribe::has_pending_work() {
@@ -209,34 +197,22 @@ fn download_and_install(force: bool) -> Option<String> {
         Err(error) => return Some(error),
     };
     let bin = bin_dir();
-    let mut state = read_state(&bin);
     let mut installed = false;
     for package in &packages {
         if !force && package_current(package, &bin) {
             continue;
         }
         crate::note!("[FFMPEG] Ставлю {} из {}", package.version, package.url);
-        let (version, files) = match install_package(package, &bin) {
-            Ok(result) => result,
+        match install_package(package, &bin) {
+            Ok(()) => installed = true,
             Err(error) => return Some(format!("Источник {}: {error}", package.source)),
-        };
-        installed = true;
-        let mut next = state.take().unwrap_or_default();
-        next.version = version;
-        next.arch = std::env::consts::ARCH.to_string();
-        next.source = package.source.clone();
-        next.installed_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        next.files.extend(files);
-        if let Err(error) = write_state(&bin, &next) {
-            return Some(error);
         }
-        state = Some(next);
     }
     if installed {
         mr_audio::tools::invalidate();
         crate::screen::invalidate_encoders();
         crate::http::media::invalidate_durations();
-        crate::note!("[FFMPEG] Готово: {}", bin.display());
+        crate::note!("[FFMPEG] Готово: {}", crate::logging::file_token(&bin));
     }
     None
 }
@@ -252,10 +228,7 @@ fn package_current(package: &pins::Package, bin: &Path) -> bool {
     })
 }
 
-fn install_package(
-    package: &pins::Package,
-    bin: &Path,
-) -> Result<(String, BTreeMap<String, String>), String> {
+fn install_package(package: &pins::Package, bin: &Path) -> Result<(), String> {
     let work = std::env::temp_dir().join(format!("mr-ffmpeg-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&work).map_err(|e| format!("временная папка: {e}"))?;
     let result = install_package_in(package, bin, &work);
@@ -263,11 +236,7 @@ fn install_package(
     result
 }
 
-fn install_package_in(
-    package: &pins::Package,
-    bin: &Path,
-    work: &Path,
-) -> Result<(String, BTreeMap<String, String>), String> {
+fn install_package_in(package: &pins::Package, bin: &Path, work: &Path) -> Result<(), String> {
     std::fs::create_dir_all(bin).map_err(|e| format!("bin: {e}"))?;
     let archive = install::download(package, work, &mut set_progress)?;
     install_archive(package, &archive, bin, work)
@@ -278,13 +247,12 @@ fn install_archive(
     archive: &Path,
     bin: &Path,
     work: &Path,
-) -> Result<(String, BTreeMap<String, String>), String> {
+) -> Result<(), String> {
     install::verify_archive(package, archive)?;
     let unpacked = work.join("unpacked");
     install::extract(package, archive, &unpacked)?;
 
     let mut staged = Staged::default();
-    let mut hashes = BTreeMap::new();
     let mut version: Option<String> = None;
     for name in &package.provides {
         let source =
@@ -326,16 +294,18 @@ fn install_archive(
         } else {
             version = Some(actual.to_string());
         }
-        hashes.insert(
-            name.clone(),
-            mr_models::sha256_of_file(&new).map_err(|e| format!("{name}: {e}"))?,
-        );
+    }
+    // Повторная проверка перед публикацией: за минуты загрузки могла начаться
+    // запись, и замена бинарника под работающим ffmpeg её сломает.
+    if let Some(message) = blocker() {
+        return Err(message);
     }
     for (new, dest) in &staged.0 {
-        std::fs::rename(new, dest).map_err(|e| format!("замена {}: {e}", dest.display()))?;
+        std::fs::rename(new, dest)
+            .map_err(|e| format!("замена {}: {e}", crate::logging::file_token(dest)))?;
     }
-    let version = version.ok_or_else(|| "в пакете нет бинарников".to_string())?;
-    Ok((version, hashes))
+    version.ok_or_else(|| "в пакете нет бинарников".to_string())?;
+    Ok(())
 }
 
 /// Неудачная проверка оставляет старый рабочий файл: `.new` удаляется на выходе,
@@ -360,29 +330,6 @@ fn make_executable(path: &Path) {
     }
     #[cfg(not(unix))]
     let _ = path;
-}
-
-fn state_path(bin: &Path) -> PathBuf {
-    bin.join("state.json")
-}
-
-fn read_state(bin: &Path) -> Option<Installed> {
-    let text = std::fs::read_to_string(state_path(bin)).ok()?;
-    serde_json::from_str(&text).ok()
-}
-
-fn write_state(bin: &Path, state: &Installed) -> Result<(), String> {
-    std::fs::create_dir_all(bin).map_err(|e| format!("bin: {e}"))?;
-    let path = state_path(bin);
-    let tmp = path.with_file_name(format!("state.json.tmp.{}", std::process::id()));
-    let body = serde_json::to_vec_pretty(state).map_err(|e| format!("state.json: {e}"))?;
-    {
-        let mut file = std::fs::File::create(&tmp).map_err(|e| format!("state.json: {e}"))?;
-        file.write_all(&body)
-            .map_err(|e| format!("state.json: {e}"))?;
-        file.sync_all().map_err(|e| format!("state.json: {e}"))?;
-    }
-    std::fs::rename(&tmp, &path).map_err(|e| format!("state.json: {e}"))
 }
 
 #[cfg(test)]

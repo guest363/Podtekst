@@ -103,10 +103,14 @@ pub fn read_transcript(path: &Path) -> Result<TranscriptDoc, TranscriptError> {
     let mut doc: TranscriptDoc = match serde_json::from_slice(&bytes) {
         Ok(doc) => doc,
         Err(error) => {
-            let head: String = String::from_utf8_lossy(&bytes)
-                .chars()
-                .take(200)
-                .collect::<String>();
+            // P12: в битом файле первыми идут meta.audio (имя записи) и тема —
+            // превью допустимо только при явном MR_LOG_TEXT=full.
+            let head = crate::logging::full_text_allowed().then(|| {
+                String::from_utf8_lossy(&bytes[..bytes.len().min(512)])
+                    .chars()
+                    .take(200)
+                    .collect::<String>()
+            });
             log::warn!(
                 target: "json",
                 path = crate::logging::file_token(path),
@@ -114,7 +118,10 @@ pub fn read_transcript(path: &Path) -> Result<TranscriptDoc, TranscriptError> {
                 error = error.to_string(),
                 line = error.line(),
                 col = error.column(),
-                head = crate::logging::text_preview(&head);
+                head = head
+                    .as_deref()
+                    .map(crate::logging::text_preview)
+                    .unwrap_or_default();
                 "ev=json.load"
             );
             return Err(TranscriptError::Json {

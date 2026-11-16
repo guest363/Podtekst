@@ -13,6 +13,8 @@
 |--------|----------|----------|
 | Silero VAD v6.2.3 | MIT | https://github.com/snakers4/silero-vad |
 | GigaAM-v3 e2e RNNT (int8, ONNX) | MIT | https://github.com/salute-developers/GigaAM , конвертация https://huggingface.co/istupakov/gigaam-v3-onnx |
+| GigaAM-v3 e2e CTC (int8, ONNX) | MIT | https://github.com/salute-developers/GigaAM , конвертация https://huggingface.co/istupakov/gigaam-v3-onnx |
+| PyAnnote Segmentation 3.0 (ONNX) | MIT | https://github.com/pyannote/pyannote-audio , конвертация https://huggingface.co/onnx-community/pyannote-segmentation-3.0 |
 | Whisper large-v3-turbo (int8, ONNX) | MIT (базовая модель OpenAI) | https://github.com/openai/whisper , конвертация https://huggingface.co/onnx-community/whisper-large-v3-turbo |
 | ERes2NetV2 192-dim (speech_eres2netv2_sv_zh-cn_16k-common) | Apache-2.0 | https://github.com/modelscope/3D-Speaker , конвертация https://huggingface.co/protocolvoice/asr-models |
 | Qwen3-4B-Instruct-2507 Q4_K_M (локальные итоги) | Apache-2.0 (базовая модель Qwen) | https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507 , веса https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF |
@@ -54,6 +56,20 @@ WAV-файлы `src-tauri/crates/mr-ml/tests/fixtures/speaker*.wav` - офици
 * **Android-сборка** - AndroidX, Material Components и Kotlin (Apache-2.0),
   https://developer.android.com/jetpack/androidx .
 * **Gradle wrapper** - Apache-2.0, https://gradle.org/license/ .
+
+## Системные библиотеки Linux (AppImage, DEB, RPM)
+
+* **GTK 3** - LGPL-2.1-or-later,
+  https://gitlab.gnome.org/GNOME/gtk/-/blob/gtk-3-24/COPYING
+* **WebKitGTK** - LGPL-2.0-or-later + BSD-style, https://webkitgtk.org/ ,
+  исходники https://github.com/WebKit/WebKit
+
+Обе библиотеки приложение использует как системные разделяемые
+(`libgtk-3.so`, `libwebkit2gtk-4.1.so`); их исходный код и тексты лицензий
+доступны по ссылкам выше. Если бандл (AppImage) включает эти библиотеки
+внутрь, пользователь может заменить их своими сборками: достаточно подменить
+файлы в каталоге бандла. Приложение не проверяет их подпись и не препятствует
+такой замене - это условие LGPL.
 
 ## Иконки
 

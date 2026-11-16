@@ -218,12 +218,14 @@ pub fn write(paths: &Paths, artifact: &SummaryArtifact) -> Result<bool, StoreErr
     if json.len() > mr_summarize::artifact::MAX_JSON_BYTES {
         return Err(StoreError::OutputCapped);
     }
-    crate::fsutil::write_atomic_private(&paths.json, json.as_bytes())
-        .map_err(|e| StoreError::Io(e.to_string()))?;
+    // Оба лимита проверяются до записи: иначе превышение MD оставляло бы
+    // новый JSON рядом со старым MD — противоречивое состояние.
     let md = artifact.to_markdown();
     if md.len() > mr_summarize::artifact::MAX_MD_BYTES {
         return Err(StoreError::OutputCapped);
     }
+    crate::fsutil::write_atomic_private(&paths.json, json.as_bytes())
+        .map_err(|e| StoreError::Io(e.to_string()))?;
     Ok(crate::fsutil::write_atomic_private(&paths.md, md.as_bytes()).is_ok())
 }
 

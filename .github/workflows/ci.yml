@@ -16,7 +16,7 @@ jobs:
   hygiene:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
       - name: No personal data, models or runtime binaries in git
@@ -27,20 +27,47 @@ jobs:
             echo "$bad"
             exit 1
           fi
-      - uses: gitleaks/gitleaks-action@v3
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   components-lint:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Compile scripts
         run: python3 -m py_compile scripts/components_lint.py scripts/components_monitor.py .github/scripts/updater_manifest.py
       - name: Self-test release notes gate
         run: python3 .github/scripts/updater_manifest.py --self-test
       - name: Lint models manifest and ffmpeg pins (offline, no network)
         run: python3 scripts/components_lint.py
+      # Инвентарь лицензий кладётся в каждый бандл: расхождение с Cargo.lock
+      # не должно уезжать пользователю.
+      - name: Third-party licenses match Cargo.lock
+        run: python3 scripts/gen-third-party-licenses.py --check
+
+  eval-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # jiwer нужен уже self-тестам metrics.py; остальные тяжёлые
+      # зависимости (pyannote/scipy/soundfile) в этот job не тянем.
+      - name: Install light eval deps
+        run: python3 -m pip install --user --break-system-packages --disable-pip-version-check jiwer==4.0.0
+      - name: diar_eval self-tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          set -e
+          for m in metrics.py normalize_wer.py report.py transcript_to_rttm.py evaluate.py; do
+            python3 "tools/diar_eval/$m" --self-test
+          done
+      - name: diar_eval unit tests without heavy deps
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 -m unittest -v test_check test_report_versions test_run_preservation test_run_suite test_text_metrics
+        working-directory: tools/diar_eval
 
   rust:
     needs: frontend
@@ -49,12 +76,12 @@ jobs:
       run:
         working-directory: src-tauri
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           toolchain: "1.99" # закреплён rust-toolchain.toml; MSRV по lock-файлу — 1.92 (ort)
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: src-tauri
       - name: Format
@@ -90,12 +117,12 @@ jobs:
       run:
         working-directory: src-tauri
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           toolchain: "1.99"
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: src-tauri
       - name: Tests
@@ -106,8 +133,8 @@ jobs:
   frontend:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
       - name: Build frontend (Svelte)
@@ -130,12 +157,12 @@ jobs:
   android:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           toolchain: "1.99"
           targets: aarch64-linux-android
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: src-tauri
       - name: Android NDK

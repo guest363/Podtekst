@@ -9,8 +9,9 @@
 
   function detectOS() {
     var ua = navigator.userAgent || "";
+    // На телефоне CTA ведёт на APK: «Скачать для компьютера» там бессмысленно.
     if (/Android|iPhone|iPad|iPod|Mobile/i.test(ua)) {
-      return "компьютера";
+      return "";
     }
     if (/Win/i.test(ua)) {
       return "Windows";

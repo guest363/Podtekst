@@ -140,8 +140,12 @@ fn map_ureq_error(err: ureq::Error) -> UpdateError {
 }
 
 fn agent() -> ureq::Agent {
+    // latest.json штатно редиректит на objects.githubusercontent.com; запрет
+    // https→http и лимит хопов не дают подменить ответ по пути (F-05-09).
     ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(8))
+        .https_only(true)
+        .redirects(2)
         .build()
 }
 

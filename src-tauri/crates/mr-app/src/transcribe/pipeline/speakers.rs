@@ -41,15 +41,22 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
     stage_begin("diar");
     models.ensure_diar();
     let profiles = diarize::load_profiles();
+    let verify_samples: HashMap<usize, &[f32]> = chan_list
+        .iter()
+        .map(|(ch, _label)| {
+            let samples: &[f32] = match experiment::current().embedding {
+                Embedding::Raw => channel_samples[ch].as_slice(),
+                Embedding::Frontend | Embedding::UnitNorm => frontend_samples[ch].as_ref(),
+            };
+            (*ch, samples)
+        })
+        .collect();
     let mut speakers_info: Vec<SpeakerInfo> = vec![];
     let mut all_utts: Vec<Utterance> = vec![];
     let mut channel_trees: HashMap<usize, word_speakers::DiarIntervalTree> = HashMap::new();
     let mut segmentations = HashMap::new();
     for (ch, _label) in chan_list.iter() {
-        let samples: &[f32] = match experiment::current().embedding {
-            Embedding::Frontend | Embedding::UnitNorm => &frontend_samples[ch][..],
-            Embedding::Raw => &channel_samples[ch][..],
-        };
+        let samples: &[f32] = verify_samples[ch];
         log::debug!(
             target: "diar",
             ch = *ch as i64,
@@ -206,7 +213,12 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
         &mut merged,
         &mut speakers_info,
         channel_samples,
-        &segmentations,
+        super::super::profile_verification::VerificationInput {
+            samples: &verify_samples,
+            vad: channel_vad,
+            segmentations: &segmentations,
+            echo: echo.as_ref(),
+        },
         &mut models.embed,
         &profiles,
     );

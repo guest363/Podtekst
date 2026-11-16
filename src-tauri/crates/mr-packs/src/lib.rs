@@ -152,14 +152,18 @@ pub fn default_app_data_dir() -> PathBuf {
     p
 }
 
-/// Идентификатор пакета валиден, если это одиночный компонент пути без `..`.
+/// Идентификатор пакета валиден, если это одиночный компонент пути без `..`,
+/// без разделителей и без `:` — на Windows `C:x` и `pack:stream` уводят путь
+/// из каталога пакетов (drive-relative / NTFS alternate data stream).
 /// Единая защита от path traversal для всех операций с пакетами.
 pub(crate) fn validate_pack_id(pack_id: &str) -> Result<&str> {
     if pack_id.is_empty()
         || pack_id.contains('/')
         || pack_id.contains('\\')
+        || pack_id.contains(':')
         || pack_id.contains("..")
         || pack_id == "."
+        || pack_id.chars().any(char::is_control)
     {
         return Err(PacksError::Other(format!(
             "недопустимый идентификатор пакета: {pack_id:?}"

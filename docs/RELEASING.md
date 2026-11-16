@@ -9,7 +9,7 @@ GitHub Release.
 
 Обновите версию в:
 
-* `src-tauri/crates/*/Cargo.toml` (6 крейтов);
+* `src-tauri/crates/*/Cargo.toml` (7 крейтов из `[workspace] members`);
 * `src-tauri/crates/mr-app/tauri.conf.json`;
 * `ui/web/frontend/package.json`;
 * `CHANGELOG.md`;
@@ -75,9 +75,9 @@ git status --short
 ## 3. Тег и релиз
 
 ```bash
-git tag -a v0.1.1 -m "Podtekst 0.1.1"
+git tag -a v0.8.0 -m "Podtekst 0.8.0"
 git push origin main
-git push origin v0.1.1
+git push origin v0.8.0
 ```
 
 После push:
@@ -104,11 +104,11 @@ git push origin v0.1.1
 Если workflow упал, исправьте причину, удалите тег и создайте заново:
 
 ```bash
-git tag -d v0.1.1
-git push origin :refs/tags/v0.1.1
+git tag -d v0.8.0
+git push origin :refs/tags/v0.8.0
 # после исправления и merge в main
-git tag -a v0.1.1 -m "Podtekst 0.1.1"
-git push origin v0.1.1
+git tag -a v0.8.0 -m "Podtekst 0.8.0"
+git push origin v0.8.0
 ```
 
 ## 4. Подпись и предупреждения ОС
@@ -156,23 +156,22 @@ workflow собирает APK с debug-подписью и предупрежд�
 
 Workflow декодирует keystore в `$RUNNER_TEMP` и передаёт Gradle пути через
 `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
-`ANDROID_KEY_PASSWORD`. Без них релиз не блокируется: release APK собирается
-с debug-подписью и предупреждением в логе. Локально переменные также можно
-не задавать.
+`ANDROID_KEY_PASSWORD`. При push тега их отсутствие останавливает сборку до
+публикации (debug-ключ публично известен); ручной `workflow_dispatch` собирает
+APK с debug-подписью и предупреждением в логе.
 
 ## 5. Сухой прогон
 
 ```bash
-gh workflow run release.yml -f dry_run=true
+gh workflow run release.yml
 ```
 
 Можно запускать на ветке: если ref не тег, тег берётся из версии
-`mr-app/Cargo.toml` (`v0.4.1`). Dry run собирает пакеты, прогоняет четыре
+`mr-app/Cargo.toml` (`v0.4.1`). Прогон собирает пакеты, прогоняет четыре
 смоука, собирает и проверяет `latest.json`, `SHA256SUMS` и подписи, но не
-публикует релиз. Для `workflow_dispatch` отсутствие ссылки на
-`docs/UNSIGNED-INSTALL.md` в исторических заметках допускается; при push
-тега ссылка обязательна. Публикация выполняется только для push тега.
-`workflow_dispatch` не публикует никогда, независимо от `dry_run`.
+публикует релиз: `workflow_dispatch` не публикует никогда. Для
+`workflow_dispatch` отсутствие ссылки на `docs/UNSIGNED-INSTALL.md` в
+исторических заметках допускается; при push тега ссылка обязательна.
 
 ## 6. Проверка после релиза
 
@@ -181,7 +180,7 @@ gh workflow run release.yml -f dry_run=true
 каждой платформы. Отдельный workflow:
 
 ```bash
-gh workflow run verify-release.yml -f tag=v0.1.1
+gh workflow run verify-release.yml -f tag=v0.8.0
 # без tag - последний релиз
 gh workflow run verify-release.yml
 ```
@@ -189,8 +188,8 @@ gh workflow run verify-release.yml
 Локально:
 
 ```bash
-gh release download v0.1.1 --pattern SHA256SUMS
-gh release download v0.1.1 --pattern latest.json
+gh release download v0.8.0 --pattern SHA256SUMS
+gh release download v0.8.0 --pattern latest.json
 sha256sum -c SHA256SUMS --ignore-missing
 ```
 

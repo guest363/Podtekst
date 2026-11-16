@@ -31,6 +31,7 @@ const handleFiles = async (files: FileList | File[]) => {
   if (!files || files.length === 0) return
   uploading = true
   let count = 0
+  let failed = 0
   try {
     for (const file of Array.from(files)) {
       const res = await fetch('/api/upload', {
@@ -45,17 +46,23 @@ const handleFiles = async (files: FileList | File[]) => {
       if (data?.ok && data.path) {
         count += 1
         await startTranscription(data.path)
+      } else {
+        // Сервер объясняет отказ (>4 ГБ, видео на Android, ошибка записи) —
+        // иначе пользователь уверен, что пакет принят целиком.
+        failed += 1
+        toast(data?.error || `Файл «${file.name}» не принят`, 'error')
       }
     }
-    if (count > 0) {
-      toast(`Добавлено файлов в очередь: ${count}`)
-      await loadRecordings()
-      await loadQueue()
-    }
+    if (count > 0) toast(`Добавлено файлов в очередь: ${count}`)
   } catch (e) {
+    failed += 1
     toast(`Ошибка загрузки: ${errText(e)}`, 'error')
   } finally {
     uploading = false
+    if (count > 0 || failed > 0) {
+      await loadRecordings()
+      await loadQueue()
+    }
   }
 }
 

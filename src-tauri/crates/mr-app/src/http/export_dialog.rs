@@ -1,4 +1,3 @@
-use std::io::Read;
 use std::path::PathBuf;
 
 use serde_json::json;
@@ -106,20 +105,44 @@ pub(crate) fn pick_save_path(default_name: &str, filter_pattern: &str) -> Option
     None
 }
 
+/// Тело запроса читаем с потолком и без молчаливого усечения: обрезанный
+/// DOCX/MD с ответом `ok: true` пользователь замечает только при открытии.
+fn read_export_body(request: &mut tiny_http::Request) -> Result<Vec<u8>, u16> {
+    use std::io::Read as _;
+    let max = super::MAX_JSON_BODY;
+    if request.body_length().is_some_and(|len| len as u64 > max) {
+        return Err(413);
+    }
+    let mut body = Vec::new();
+    let mut reader = request.as_reader().take(max + 1);
+    reader.read_to_end(&mut body).map_err(|_| 400u16)?;
+    if body.len() as u64 > max {
+        return Err(413);
+    }
+    if body.is_empty() {
+        return Err(400);
+    }
+    Ok(body)
+}
+
 pub(super) fn handle_save_dialog(mut request: tiny_http::Request, query: &str) {
     let name = query_param(query, "name").unwrap_or_else(|| "document.docx".to_string());
 
-    let mut body = Vec::new();
-    if request
-        .as_reader()
-        .take(super::MAX_JSON_BODY)
-        .read_to_end(&mut body)
-        .is_err()
-        || body.is_empty()
-    {
-        json_response(request, json!({"ok": false, "error": "Пустые данные"}), 400);
-        return;
-    }
+    let body = match read_export_body(&mut request) {
+        Ok(body) => body,
+        Err(413) => {
+            json_response(
+                request,
+                json!({"ok": false, "error": "Файл больше 16 МиБ: сохраните его из браузера"}),
+                413,
+            );
+            return;
+        }
+        Err(_) => {
+            json_response(request, json!({"ok": false, "error": "Пустые данные"}), 400);
+            return;
+        }
+    };
 
     let filter = if name.ends_with(".docx") {
         "*.docx"

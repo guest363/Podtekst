@@ -70,7 +70,7 @@ pub(crate) fn candidates(transcript: &Transcript, preset: &Preset) -> Vec<Candid
         }
         let normalized = text::normalize(source);
         if let Some(section) = questions {
-            if cues::question_line(&normalized) {
+            if cues::question_line(source) {
                 question_items.push(Candidate {
                     section_id: section,
                     item: plain_item(source, SectionRole::Plain),
@@ -79,7 +79,7 @@ pub(crate) fn candidates(transcript: &Transcript, preset: &Preset) -> Vec<Candid
             }
         }
         if let Some(section) = decisions {
-            if cues::decision_cue(&normalized) {
+            if cues::decision_cue(source) {
                 decision_items.push(Candidate {
                     section_id: section,
                     item: plain_item(source, SectionRole::Decision),

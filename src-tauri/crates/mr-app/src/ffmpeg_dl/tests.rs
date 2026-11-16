@@ -1,3 +1,5 @@
+use std::io::Write as _;
+
 use super::*;
 
 fn probe(version: Option<&str>, source: &'static str, arch: Option<&'static str>) -> ToolProbe {
@@ -35,20 +37,21 @@ fn write_zip(path: &Path, name: &str, body: &[u8]) {
 
 /// Настоящий ELF с нужной строкой версии: проверка пина запускает файл.
 #[cfg(unix)]
-fn fake_tool(dir: &Path, version: &str) -> Option<PathBuf> {
+fn fake_tool(dir: &Path, version: &str) -> PathBuf {
     let source = dir.join("fake.c");
     let body = format!(
         "#include <stdio.h>\nint main(void){{puts(\"ffmpeg version {version} Copyright (c) test\");return 0;}}\n"
     );
-    std::fs::write(&source, body).ok()?;
+    std::fs::write(&source, body).expect("исходник фикстуры");
     let binary = dir.join(bin_name("ffmpeg"));
     let status = std::process::Command::new("cc")
         .arg("-o")
         .arg(&binary)
         .arg(&source)
         .status()
-        .ok()?;
-    status.success().then_some(binary)
+        .expect("cc нужен для фикстуры установки ffmpeg");
+    assert!(status.success(), "cc не собрал фикстуру");
+    binary
 }
 
 #[test]
@@ -130,10 +133,7 @@ fn package_current_requires_working_probe() {
     assert!(!package_current(&pinned, &dir), "битый бинарник");
     #[cfg(unix)]
     {
-        let Some(fake) = fake_tool(&dir, "9.0.2") else {
-            let _ = std::fs::remove_dir_all(&dir);
-            return;
-        };
+        let fake = fake_tool(&dir, "9.0.2");
         assert_eq!(fake, dir.join(bin_name("ffmpeg")));
         assert!(package_current(&pinned, &dir));
         assert!(!package_current(&package("9.0.3", &["ffmpeg"]), &dir));
@@ -147,6 +147,9 @@ fn package_current_requires_working_probe() {
 
 #[test]
 fn failed_checks_keep_the_working_binary() {
+    let _guard = crate::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let dir = std::env::temp_dir().join(format!("mr-ffmpeg-keep-{}", uuid::Uuid::new_v4()));
     let bin = dir.join("bin");
     let work = dir.join("work");
@@ -183,23 +186,26 @@ fn failed_checks_keep_the_working_binary() {
 #[cfg(unix)]
 #[test]
 fn install_archive_publishes_pinned_version_and_replaces_broken() {
+    // install_archive перед публикацией читает глобальные флаги занятости
+    // (`recording::is_active`, `summary::is_active`, очередь): без общего
+    // замка тест ловит «Идут итоги» от параллельного job-теста.
+    let _guard = crate::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let dir = std::env::temp_dir().join(format!("mr-ffmpeg-ok-{}", uuid::Uuid::new_v4()));
     let bin = dir.join("bin");
     let work = dir.join("work");
     std::fs::create_dir_all(&bin).unwrap();
     std::fs::create_dir_all(&work).unwrap();
-    let Some(fake) = fake_tool(&dir, "9.0.2") else {
-        let _ = std::fs::remove_dir_all(&dir);
-        return;
-    };
+    // Без C-компилятора тест обязан падать: иначе публикация бинарника
+    // (самая рискованная операция модуля) остаётся непроверенной.
+    let fake = fake_tool(&dir, "9.0.2");
     let archive = dir.join("a.zip");
     write_zip(&archive, "ffmpeg", &std::fs::read(&fake).unwrap());
     let mut package = package("9.0.2", &["ffmpeg"]);
     package.sha256 = mr_models::sha256_of_file(&archive).unwrap();
 
-    let (version, hashes) = install_archive(&package, &archive, &bin, &work).expect("установка");
-    assert_eq!(version, "9.0.2", "версия из пробы, а не из пина");
-    assert_eq!(hashes.len(), 1);
+    install_archive(&package, &archive, &bin, &work).expect("установка");
     assert!(bin.join(bin_name("ffmpeg")).is_file());
     assert!(!bin.join(format!("{}.new", bin_name("ffmpeg"))).exists());
 
@@ -243,24 +249,4 @@ fn status_has_contract_keys() {
     ] {
         assert!(status.get(key).is_some(), "нет поля {key}");
     }
-}
-
-#[test]
-fn state_roundtrip_is_atomic() {
-    let dir = std::env::temp_dir().join(format!("mr-ffmpeg-state-{}", uuid::Uuid::new_v4()));
-    let state = Installed {
-        version: "9.0.2".to_string(),
-        arch: "aarch64".to_string(),
-        source: "martin-riedl".to_string(),
-        installed_at: "2025-01-01T00:00:00Z".to_string(),
-        files: BTreeMap::from([("ffmpeg".to_string(), "a".repeat(64))]),
-    };
-    write_state(&dir, &state).expect("запись state.json");
-    let read = read_state(&dir).expect("чтение state.json");
-    assert_eq!(read.version, state.version);
-    assert_eq!(read.files, state.files);
-    assert!(!dir
-        .join(format!("state.json.tmp.{}", std::process::id()))
-        .exists());
-    let _ = std::fs::remove_dir_all(&dir);
 }

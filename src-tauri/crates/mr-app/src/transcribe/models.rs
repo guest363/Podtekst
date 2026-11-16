@@ -175,7 +175,14 @@ pub(crate) fn extract_utterance_embedding(
     end: f64,
     channel: Option<i32>,
 ) -> Result<(Vec<f64>, f64, f64), String> {
-    memory::check(audio)?;
+    // WAV читается только запрошенным фрагментом (2–6 с): проверка по всему
+    // файлу запрещала бы обучение голоса из длинной записи без причины.
+    let is_wav = audio
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("wav"));
+    if !is_wav {
+        memory::check(audio)?;
+    }
     if end - start < 0.4 {
         return Err("Фрагмент короче 0.4 с: голос не извлечь".to_string());
     }
@@ -185,9 +192,7 @@ pub(crate) fn extract_utterance_embedding(
     if let Some((_, channels)) = mr_audio::decode::media_info(audio) {
         source_channel(channel, channels)?;
     }
-    let snippet = audio
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("wav"))
+    let snippet = is_wav
         .then(|| {
             // Отрицательный канал не клампим в 0: общий путь ниже вернёт понятную ошибку.
             let ch = match channel {

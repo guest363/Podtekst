@@ -82,15 +82,19 @@ impl EmbeddingExtractor {
         indices: &[usize],
         results: &mut [Option<Vec<f64>>],
     ) -> Result<(), String> {
+        // Одно плохое окно не должно обнулять всю пачку: строки тензора
+        // привязаны к индексам, поэтому отбрасываем только его.
         let mut features = Vec::with_capacity(indices.len());
+        let mut rows: Vec<usize> = Vec::with_capacity(indices.len());
         let mut frames = 0usize;
         for &index in indices {
             let fbank = eres2netv2_fbank(chunks[index]);
             if fbank.is_empty() || (frames != 0 && fbank.len() != frames) {
-                return Ok(());
+                continue;
             }
             frames = fbank.len();
             features.push(fbank);
+            rows.push(index);
         }
         if features.is_empty() {
             return Ok(());
@@ -116,7 +120,7 @@ impl EmbeddingExtractor {
             .find(|(_, data)| data.len() == batch * dim)
             .map(|(_, data)| data.as_slice())
             .ok_or_else(|| "embedding-модель не вернула вектор".to_string())?;
-        for (row, &index) in indices.iter().enumerate() {
+        for (row, &index) in rows.iter().enumerate() {
             let vector: Vec<f64> = data[row * dim..(row + 1) * dim]
                 .iter()
                 .map(|&x| x as f64)

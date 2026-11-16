@@ -7,7 +7,7 @@
 **Автономная запись с микрофона и локальная расшифровка речи на смартфоне.**  
 Собрано из единого Rust-ядра: на устройстве работает локальный HTTP-сервер (`127.0.0.1:8765`), нативный AAudio-бэкенд захвата и легковесное WebView Tauri v2.
 
-[![Android: 8.0+ (API 26+)](https://img.shields.io/badge/android-8.0%2B%20(API%2026%2B)-green.svg)](#системные-требования-для-сборки)
+[![Android: 7.0+ (API 24+)](https://img.shields.io/badge/android-7.0%2B%20(API%2024%2B)-green.svg)](#системные-требования-для-сборки)
 [![Target: aarch64](https://img.shields.io/badge/arch-arm64--v8a-blue.svg)](#сборка-одной-командой)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Status: Experimental](https://img.shields.io/badge/status-experimental-orange.svg)](#статус-и-ограничения)

@@ -39,7 +39,9 @@ const modelMissing = $derived(
 )
 const modelPct = $derived(summaryModelPct())
 const modelSizeGb = $derived(
-  ((summaryState.model?.total_size_bytes || 2497281120) / 1073741824).toFixed(1).replace('.', ','),
+  summaryState.model?.total_size_bytes
+    ? (summaryState.model.total_size_bytes / 1073741824).toFixed(1).replace('.', ',')
+    : '…',
 )
 const sourceChars = $derived(
   transcript.utterances.reduce((n, u) => n + (u.text?.trim().length || 0), 0) ||

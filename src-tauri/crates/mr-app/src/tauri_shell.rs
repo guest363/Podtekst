@@ -15,11 +15,6 @@ use tauri::menu::{Menu, MenuItem};
 #[cfg(feature = "tauri-ui")]
 use tauri::{Manager, RunEvent};
 
-#[cfg(all(
-    feature = "tauri-ui",
-    not(any(target_os = "android", target_os = "ios"))
-))]
-use crate::recording::toggle_recording_with_notify;
 #[cfg(feature = "tauri-ui")]
 use crate::recording::RecordingState;
 
@@ -42,8 +37,12 @@ pub(crate) const UI_BUILD_MARKER: &str = "PODTEKST_TAURI_UI_BUILD_V1";
     not(any(target_os = "android", target_os = "ios"))
 ))]
 fn toggle_recording(state: &Arc<Mutex<RecordingState>>) {
-    let mut guard = state.lock().unwrap_or_else(|e| e.into_inner());
-    toggle_recording_with_notify(&mut guard);
+    // Пункт меню и хоткей приходят в главный (UI) поток. Старт/стоп занимает
+    // секунды (устройства, финализация, ffmpeg) — уводим в рабочий поток.
+    let state = state.clone();
+    std::thread::spawn(move || {
+        let _ = crate::recording::toggle_recording_with_notify(&state);
+    });
 }
 
 #[cfg(feature = "tauri-ui")]
@@ -51,9 +50,9 @@ fn finalize_recording_on_exit(app: &tauri::AppHandle<tauri::Wry>) {
     let Some(st) = app.try_state::<Arc<Mutex<RecordingState>>>() else {
         return;
     };
-    let mut guard = st.lock().unwrap_or_else(|e| e.into_inner());
-    if guard.is_recording {
-        let _ = crate::recording::stop_recording_with_notify(&mut guard);
+    let recording = st.lock().unwrap_or_else(|e| e.into_inner()).is_recording;
+    if recording {
+        let _ = crate::recording::stop_recording_with_notify(st.inner());
     }
 }
 
@@ -160,20 +159,51 @@ fn setup_gnome_shortcut() -> Result<(), String> {
     feature = "tauri-ui",
     not(any(target_os = "android", target_os = "ios"))
 ))]
-fn setup_global_shortcut(app: &tauri::AppHandle<tauri::Wry>) {
+fn setup_global_shortcut(app: &tauri::AppHandle<tauri::Wry>) -> bool {
     #[cfg(target_os = "linux")]
     if is_wayland() && is_gnome() {
         if let Err(e) = setup_gnome_shortcut() {
             crate::note!("глобальная клавиша GNOME: {e}");
-            if let Err(e) = register_tauri_shortcut(app) {
-                crate::note!("глобальная клавиша: резервная регистрация не удалась: {e}");
+            match register_tauri_shortcut(app) {
+                Ok(()) => return true,
+                Err(e) => {
+                    crate::note!("глобальная клавиша: резервная регистрация не удалась: {e}");
+                    return false;
+                }
             }
         }
-        return;
+        return true;
     }
-    if let Err(e) = register_tauri_shortcut(app) {
-        crate::note!("глобальная клавиша: {e}");
+    match register_tauri_shortcut(app) {
+        Ok(()) => true,
+        Err(e) => {
+            crate::note!("глобальная клавиша: {e}");
+            false
+        }
     }
+}
+
+/// Занятый порт может отдать чужую страницу в окне «Подтекст», поэтому
+/// ждём ответ с нашим служебным заголовком, а не просто открытый сокет.
+#[cfg(feature = "tauri-ui")]
+fn wait_for_own_server(port: u16) -> bool {
+    use std::io::{Read, Write};
+    for _ in 0..50 {
+        if let Ok(mut stream) = std::net::TcpStream::connect(format!("127.0.0.1:{port}")) {
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
+            let request = format!("GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n");
+            if stream.write_all(request.as_bytes()).is_ok() {
+                let mut buf = [0u8; 4096];
+                if let Ok(read) = stream.read(&mut buf) {
+                    if String::from_utf8_lossy(&buf[..read]).contains(crate::http::SERVER_HEADER) {
+                        return true;
+                    }
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    false
 }
 
 #[cfg(feature = "tauri-ui")]
@@ -183,14 +213,15 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
     std::hint::black_box(UI_BUILD_MARKER.as_bytes());
     let st = state.clone();
     std::thread::spawn(move || {
-        crate::run_http_server(st, http_port);
+        crate::http::run_http_server(st, http_port);
     });
-    // Ждём поднятия порта, чтобы окно не открылось на пустой странице
-    for _ in 0..50 {
-        if std::net::TcpStream::connect(format!("127.0.0.1:{http_port}")).is_ok() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+    // Ждём именно свой сервер: занятый порт иначе открыл бы чужую страницу
+    // в окне «Подтекст» с выданными правами.
+    if !wait_for_own_server(http_port) {
+        crate::note!(
+            "Порт {http_port} занят чужим процессом: окно не открываю, чтобы не показать чужой интерфейс"
+        );
+        return 1;
     }
 
     let url = format!("http://127.0.0.1:{http_port}");
@@ -334,7 +365,7 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
                         }
                     });
                 }
-                setup_global_shortcut(app.handle());
+                crate::desktop::set_hotkey_registered(setup_global_shortcut(app.handle()));
             }
 
             let ipc_handle = app.handle().clone();
@@ -384,9 +415,11 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
                         }
                         tauri::webview::NewWindowResponse::Deny
                     })
+                    // UI не просит ни камеры, ни микрофона: запись идёт в ядре.
+                    // Любой запрос — повод для отказа и записи в лог.
                     .on_permission_request(|_, kind| {
-                        crate::note!("[PERMISSION_REQUEST] Разрешено: kind={kind:?}");
-                        tauri::webview::PermissionResponse::Allow
+                        crate::note!("[PERMISSION_REQUEST] Отказано: kind={kind:?}");
+                        tauri::webview::PermissionResponse::Deny
                     })
                     .build()
             {

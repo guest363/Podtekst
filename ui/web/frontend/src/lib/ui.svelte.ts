@@ -1,9 +1,11 @@
 import { isVideoPath } from './api'
 
 export type AppTab = 'studio' | 'queue' | 'people' | 'dict' | 'settings'
+export type SettingsTab = 'record' | 'voices' | 'models' | 'summary' | 'system'
 
 type UiState = {
   activeTab: AppTab
+  settingsTab: SettingsTab
   settingsOpen: boolean
   systemOpen: boolean
   donateOpen: boolean
@@ -14,6 +16,7 @@ type UiState = {
 
 export const ui: UiState = $state({
   activeTab: 'studio',
+  settingsTab: 'record',
   settingsOpen: false,
   systemOpen: false,
   donateOpen: false,
@@ -102,10 +105,18 @@ export const initRouting = (): void => {
 type Handler = (data?: unknown) => void
 const handlers = new Map<string, Handler[]>()
 
-export const on = (evt: string, fn: Handler): void => {
+/** Без отписки в cleanup после N переходов одно событие даёт N запросов:
+ *  поэтому возвращаем функцию снятия обработчика. */
+export const on = (evt: string, fn: Handler): (() => void) => {
   const list = handlers.get(evt) ?? []
   list.push(fn)
   handlers.set(evt, list)
+  return () => {
+    const current = handlers.get(evt)
+    if (!current) return
+    const index = current.indexOf(fn)
+    if (index >= 0) current.splice(index, 1)
+  }
 }
 
 export const emit = (evt: string, data?: unknown): void => {
