@@ -25,7 +25,7 @@ pub(super) struct AudioStats {
 }
 
 impl AudioStats {
-    /// Сводка по каналам: максимумы уровней и сумма счётчиков нефинитных сэмплов.
+    /// Счётчики складываются: нефинитные сэмплы могли встретиться в любом канале.
     pub(super) fn combine(channels: impl IntoIterator<Item = Self>) -> Self {
         channels
             .into_iter()

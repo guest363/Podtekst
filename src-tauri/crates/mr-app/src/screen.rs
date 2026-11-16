@@ -46,7 +46,6 @@ impl ScreenCaptureSession {
     }
 }
 
-/// Момент старта видео относительно начала аудиодорожки.
 fn video_offset(audio_started: Instant) -> f64 {
     Instant::now().duration_since(audio_started).as_secs_f64()
 }
