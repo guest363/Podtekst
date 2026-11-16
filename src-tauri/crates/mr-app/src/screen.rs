@@ -325,7 +325,7 @@ impl ScreenCaptureSession {
         Ok(Self {
             child,
             video_path,
-            offset_sec,
+            offset_sec: video_offset(audio_started),
         })
     }
 

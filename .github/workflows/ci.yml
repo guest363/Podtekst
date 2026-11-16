@@ -64,6 +64,7 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
+          python3 -m pip install --user --break-system-packages --disable-pip-version-check jiwer==4.0.0
           python3 -m unittest -v test_check test_report_versions test_run_preservation test_run_suite test_text_metrics
         working-directory: tools/diar_eval
 
