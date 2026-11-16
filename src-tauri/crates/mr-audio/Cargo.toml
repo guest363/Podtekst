@@ -1,6 +1,6 @@
 [package]
 name = "mr-audio"
-version = "0.8.1"
+version = "0.8.2"
 edition = "2021"
 rust-version = "1.92"
 description = "Нативный захват и декодирование аудио без FFmpeg: Linux — PipeWire/PulseAudio, Windows — WASAPI loopback, macOS — CoreAudio + ScreenCaptureKit"
