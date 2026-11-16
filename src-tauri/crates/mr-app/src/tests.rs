@@ -6,6 +6,8 @@ use clap::Parser;
 use serde_json::json;
 use std::net::TcpListener;
 
+/// Сериализует тесты, которым нужны переменные окружения или глобальное
+/// состояние процесса (`summary::is_active`, очередь расшифровки, флаги записи).
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 // Имя `tests` сохраняет прежние пути и имена тестов после выноса из `lib.rs`.

@@ -213,7 +213,7 @@ pub fn run_tauri_window(state: Arc<Mutex<RecordingState>>, http_port: u16, visib
     std::hint::black_box(UI_BUILD_MARKER.as_bytes());
     let st = state.clone();
     std::thread::spawn(move || {
-        crate::run_http_server(st, http_port);
+        crate::http::run_http_server(st, http_port);
     });
     // Ждём именно свой сервер: занятый порт иначе открыл бы чужую страницу
     // в окне «Подтекст» с выданными правами.

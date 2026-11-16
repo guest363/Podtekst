@@ -147,6 +147,9 @@ fn package_current_requires_working_probe() {
 
 #[test]
 fn failed_checks_keep_the_working_binary() {
+    let _guard = crate::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let dir = std::env::temp_dir().join(format!("mr-ffmpeg-keep-{}", uuid::Uuid::new_v4()));
     let bin = dir.join("bin");
     let work = dir.join("work");
@@ -183,6 +186,12 @@ fn failed_checks_keep_the_working_binary() {
 #[cfg(unix)]
 #[test]
 fn install_archive_publishes_pinned_version_and_replaces_broken() {
+    // install_archive перед публикацией читает глобальные флаги занятости
+    // (`recording::is_active`, `summary::is_active`, очередь): без общего
+    // замка тест ловит «Идут итоги» от параллельного job-теста.
+    let _guard = crate::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let dir = std::env::temp_dir().join(format!("mr-ffmpeg-ok-{}", uuid::Uuid::new_v4()));
     let bin = dir.join("bin");
     let work = dir.join("work");
