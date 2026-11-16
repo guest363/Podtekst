@@ -1,8 +1,11 @@
+use mr_ml::onnx::embed::EmbeddingExtractor;
+
 use super::super::clean_speech::SpeechSupport;
 use super::super::experiment::{self, Anchors, Embedding};
-use super::{
-    acoustic_windows, turn_anchors, AcoustUnit, EchoEvidence, EmbeddingExtractor, Utterance,
-};
+use super::{acoustic_windows, turn_anchors, AcoustUnit};
+
+use crate::transcribe::echo::EchoEvidence;
+use crate::transcribe::Utterance;
 
 pub(super) struct Units {
     pub items: Vec<AcoustUnit>,

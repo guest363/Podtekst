@@ -1,6 +1,9 @@
-use super::super::clean_speech::SpeechSupport;
-use super::{AcoustUnit, Utterance, CORE_LINKAGE_THRESHOLD};
 use std::collections::HashMap;
+
+use super::super::clean_speech::SpeechSupport;
+use super::{AcoustUnit, CORE_LINKAGE_THRESHOLD};
+
+use crate::transcribe::Utterance;
 
 /// Замер на AMI (real10, 120 с): реальный четвёртый спикер с 2.48 с чистой речи
 /// (3.9 % от 64 с) отбраковывался порогом 5 %/1.5 с и переезжал в чужой кластер.
