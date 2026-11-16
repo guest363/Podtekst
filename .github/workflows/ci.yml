@@ -50,8 +50,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      # Только stdlib-модули: тесты, которым нужны soundfile/jiwer,
-      # запускаются локально по tools/diar_eval/requirements-eval.txt.
+      # jiwer нужен уже self-тестам metrics.py; остальные тяжёлые
+      # зависимости (pyannote/scipy/soundfile) в этот job не тянем.
+      - name: Install light eval deps
+        run: python3 -m pip install --user --break-system-packages --disable-pip-version-check jiwer==4.0.0
       - name: diar_eval self-tests
         env:
           PYTHONDONTWRITEBYTECODE: "1"
@@ -64,7 +66,6 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
-          python3 -m pip install --user --break-system-packages --disable-pip-version-check jiwer==4.0.0
           python3 -m unittest -v test_check test_report_versions test_run_preservation test_run_suite test_text_metrics
         working-directory: tools/diar_eval
 
