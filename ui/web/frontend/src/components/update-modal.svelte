@@ -1,12 +1,6 @@
 <script lang="ts">
 import { inline, renderMarkdown } from '../lib/markdown'
-import {
-  collectDiagnostics,
-  fmtBytes,
-  fmtDateTime,
-  loadSystem,
-  system,
-} from '../lib/system.svelte.ts'
+import { fmtBytes, fmtDateTime, loadSystem, system } from '../lib/system.svelte.ts'
 import { copyText, toast } from '../lib/toast.svelte.ts'
 import {
   applyUpdate,
@@ -18,14 +12,8 @@ import {
 
 let { recording }: { recording?: boolean } = $props()
 
-let detailsOpen = $state(false)
-let diagBusy = $state(false)
-
 const isRecording = $derived(recording ?? system.snapshot?.recording?.active === true)
 const releaseUrl = $derived(update.url || 'https://github.com/guest363/podtekst/releases/latest')
-const hasDetails = $derived(
-  Boolean(update.errorCode || update.hint || update.attempt || update.stale),
-)
 
 // Владелец пропа может не передать состояние записи: читаем его из снимка системы.
 $effect(() => {
@@ -158,35 +146,6 @@ const STAGE_LABELS: Record<string, string> = {
   apply: 'Установка',
 }
 
-const ATTEMPT_OUTCOMES: Record<string, string> = {
-  started: 'запущена',
-  installed: 'установлено',
-  failed: 'ошибка',
-  not_confirmed: 'не подтверждено',
-}
-
-const detailRows = $derived.by(() => {
-  const rows: Array<[string, string]> = []
-  rows.push([
-    'Режим запуска',
-    update.selfUpdate ? 'самообновление (AppImage)' : 'исходники (run.sh)',
-  ])
-  if (update.errorCode) rows.push(['Код ошибки', update.errorCode])
-  if (update.hint) rows.push(['Подсказка', update.hint])
-  if (update.retryAfterSec > 0) rows.push(['Повтор через', `${update.retryAfterSec} с`])
-  rows.push(['Данные проверки', update.stale ? 'могли устареть' : 'актуальны'])
-  if (update.attempt) {
-    const a = update.attempt
-    rows.push([
-      'Последняя попытка',
-      `${a.from || '—'} → ${a.to || '—'}, ${ATTEMPT_OUTCOMES[a.outcome] || a.outcome || 'без итога'}${
-        a.started_at ? `, ${fmtDateTime(a.started_at)}` : ''
-      }`,
-    ])
-  }
-  return rows
-})
-
 const stageText = (stage: string): string => {
   return STAGE_LABELS[stage] || 'Обновление'
 }
@@ -207,16 +166,6 @@ const retry = (): void => {
 const copyPullCommand = async (): Promise<void> => {
   const ok = await copyText('git pull && ./run.sh')
   toast(ok ? 'Команда скопирована' : 'Не удалось скопировать', ok ? '' : 'error')
-}
-
-const diagnostics = async (): Promise<void> => {
-  if (diagBusy) return
-  diagBusy = true
-  try {
-    await collectDiagnostics()
-  } finally {
-    diagBusy = false
-  }
 }
 
 const onWindowKey = (e: KeyboardEvent): void => {
@@ -328,38 +277,6 @@ const onWindowKey = (e: KeyboardEvent): void => {
                 Идёт запись. Остановите её перед обновлением.
               </div>
             {/if}
-
-            {#if hasDetails}
-              <div class="update-details-wrap">
-                <button
-                  type="button"
-                  class="details-toggle-btn"
-                  aria-expanded={detailsOpen}
-                  onclick={() => (detailsOpen = !detailsOpen)}
-                >
-                  <span>Технические подробности</span>
-                  <span class="details-chevron {detailsOpen ? 'open' : ''}" aria-hidden="true">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                      <polyline points="6 9 12 15 18 9"></polyline>
-                    </svg>
-                  </span>
-                </button>
-                {#if detailsOpen}
-                  <dl class="update-details">
-                    {#each detailRows as [label, value] (label)}
-                      <dt>{label}</dt>
-                      <dd>{value}</dd>
-                    {/each}
-                    <dt>Диагностика</dt>
-                    <dd>
-                      <button class="link-btn" disabled={diagBusy} onclick={() => void diagnostics()}>
-                        {diagBusy ? 'Собираю…' : 'Собрать отчёт'}
-                      </button>
-                    </dd>
-                  </dl>
-                {/if}
-              </div>
-            {/if}
           </div>
 
           <div class="side-actions">
@@ -449,7 +366,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
 
 <style>
   .update-split-box {
-    max-width: 680px;
+    max-width: 760px;
     width: 92vw;
     padding: 0;
     gap: 0;
@@ -470,22 +387,22 @@ const onWindowKey = (e: KeyboardEvent): void => {
   }
   .update-split-body {
     display: grid;
-    grid-template-columns: 216px minmax(0, 1fr);
-    min-height: 380px;
+    grid-template-columns: 260px minmax(0, 1fr);
+    min-height: 450px;
   }
   .update-split-side {
     background: var(--bg-inset);
     border-right: 1px solid var(--border-soft);
-    padding: 14px;
+    padding: 16px;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    gap: 12px;
+    gap: 14px;
   }
   .side-info-group {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
   }
   .side-version-block {
     display: flex;
@@ -526,9 +443,9 @@ const onWindowKey = (e: KeyboardEvent): void => {
   .side-meta-list {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 6px;
     font-size: 11px;
-    padding: 8px 0;
+    padding: 10px 0;
     border-top: 1px solid var(--border-card);
     border-bottom: 1px solid var(--border-card);
   }
@@ -638,11 +555,11 @@ const onWindowKey = (e: KeyboardEvent): void => {
   .notes-feed {
     flex: 1;
     overflow-y: auto;
-    max-height: 360px;
+    max-height: 440px;
     display: flex;
     flex-direction: column;
     gap: 6px;
-    padding-right: 4px;
+    padding-right: 6px;
   }
   .note-card {
     background: #fff;
@@ -730,56 +647,6 @@ const onWindowKey = (e: KeyboardEvent): void => {
     display: flex;
     flex-direction: column;
     gap: 6px;
-  }
-  .update-details-wrap {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    border-top: 1px solid var(--border-card);
-    padding-top: 6px;
-  }
-  .details-toggle-btn {
-    border: none;
-    background: none;
-    padding: 0;
-    font: inherit;
-    font-size: 11px;
-    color: var(--text-muted);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    line-height: 1;
-    width: fit-content;
-  }
-  .details-toggle-btn:hover {
-    color: var(--text-primary);
-  }
-  .details-chevron {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-faint);
-    transition: transform 160ms var(--ease-spring);
-    flex-shrink: 0;
-    width: 11px;
-    height: 11px;
-  }
-  .details-chevron.open {
-    transform: rotate(180deg);
-  }
-  .update-details {
-    display: grid;
-    grid-template-columns: minmax(90px, max-content) minmax(0, 1fr);
-    gap: 3px 8px;
-    font-size: 10.5px;
-  }
-  .update-details dt {
-    color: var(--text-muted);
-  }
-  .update-details dd {
-    color: var(--text-primary);
-    word-break: break-word;
   }
   .error-text {
     color: var(--accent-rec);
