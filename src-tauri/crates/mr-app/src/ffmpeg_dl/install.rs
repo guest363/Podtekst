@@ -164,7 +164,7 @@ fn validate_tar_entry(path: &Path, kind: tar::EntryType) -> Result<(), String> {
     if kind.is_symlink() || kind.is_hard_link() {
         return Err(format!("ссылка в архиве запрещена: {}", path.display()));
     }
-    if path.is_absolute()
+    if path.has_root()
         || path
             .components()
             .any(|c| matches!(c, Component::ParentDir | Component::Prefix(_)))
