@@ -130,6 +130,7 @@ jobs:
       - name: Rust unit tests (host)
         run: cargo test --workspace --locked
       - name: Check Cargo.lock is up to date
+        shell: bash
         run: cargo metadata --locked --format-version 1 > /dev/null
       # projectPath: нестандартная раскладка — tauri.conf.json лежит в
       # crates/mr-app, а не в <корень>/src-tauri.
