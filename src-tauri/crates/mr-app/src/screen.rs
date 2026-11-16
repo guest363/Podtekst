@@ -89,6 +89,7 @@ fn probe_screencast_supported() -> bool {
     .unwrap_or(false)
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn cached_flag(
     cache: &Mutex<(Option<bool>, Option<Instant>)>,
     retry_after: Duration,
@@ -262,7 +263,7 @@ fn spawn_child(cmd: &mut Command, video_path: &Path) -> Result<Child, String> {
     }
     crate::note!(
         "[SCREEN] Запись экрана запущена: {}",
-        crate::logging::file_token(&video_path)
+        crate::logging::file_token(video_path)
     );
 
     Ok(child)
