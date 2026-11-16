@@ -1,5 +1,5 @@
 <script lang="ts">
-import { renderMarkdown } from '../lib/markdown'
+import { inline, renderMarkdown } from '../lib/markdown'
 import {
   collectDiagnostics,
   fmtBytes,
@@ -40,6 +40,88 @@ const cleanedNotes = $derived.by(() => {
     .replace(/Инструкция по установке без подписи ОС:.*$/gim, '')
     .replace(/Полный список изменений:.*$/gim, '')
     .trim()
+})
+
+type ParsedNoteItem = {
+  badge: 'НОВОЕ' | 'ИСПРАВЛЕНО' | 'КОМПОНЕНТЫ' | 'ОБНОВЛЕНИЕ'
+  badgeType: 'ok' | 'warn' | 'neutral' | 'blue'
+  title: string
+  desc: string
+}
+
+type ParsedNotes = {
+  intro: string
+  items: ParsedNoteItem[]
+}
+
+const parsedNotes = $derived.by((): ParsedNotes => {
+  if (!cleanedNotes) return { intro: '', items: [] }
+  const lines = cleanedNotes.split('\n')
+  const intro: string[] = []
+  const items: ParsedNoteItem[] = []
+
+  let currentBadge: ParsedNoteItem['badge'] = 'ОБНОВЛЕНИЕ'
+  let currentBadgeType: ParsedNoteItem['badgeType'] = 'blue'
+
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (!line) continue
+
+    const hMatch = line.match(/^#{2,3}\s+(.+)$/)
+    if (hMatch) {
+      const low = hMatch[1].toLowerCase()
+      if (low.includes('нов') || low.includes('добавл')) {
+        currentBadge = 'НОВОЕ'
+        currentBadgeType = 'ok'
+      } else if (low.includes('исправл') || low.includes('почин') || low.includes('баг')) {
+        currentBadge = 'ИСПРАВЛЕНО'
+        currentBadgeType = 'warn'
+      } else if (low.includes('компонент')) {
+        currentBadge = 'КОМПОНЕНТЫ'
+        currentBadgeType = 'neutral'
+      } else {
+        currentBadge = 'ОБНОВЛЕНИЕ'
+        currentBadgeType = 'blue'
+      }
+      continue
+    }
+
+    const bMatch = line.match(/^[-*]\s+(.+)$/)
+    if (bMatch) {
+      const rawText = bMatch[1].trim()
+      let itemTitle = ''
+      let itemDesc = rawText
+
+      const boldMatch = rawText.match(/^\*\*([^*]+?)\*\*[:.]?\s*(.*)$/)
+      if (boldMatch) {
+        itemTitle = boldMatch[1].trim()
+        itemDesc = boldMatch[2].trim()
+      } else {
+        const colonMatch = rawText.match(/^([^:]{2,35}):\s*(.*)$/)
+        if (colonMatch && !rawText.startsWith('http')) {
+          itemTitle = colonMatch[1].trim()
+          itemDesc = colonMatch[2].trim()
+        }
+      }
+
+      items.push({
+        badge: currentBadge,
+        badgeType: currentBadgeType,
+        title: itemTitle,
+        desc: itemDesc,
+      })
+      continue
+    }
+
+    if (items.length === 0) {
+      intro.push(line)
+    }
+  }
+
+  return {
+    intro: intro.join(' '),
+    items,
+  }
 })
 
 const STAGE_LABELS: Record<string, string> = {
@@ -130,176 +212,460 @@ const onWindowKey = (e: KeyboardEvent): void => {
       if (e.target === e.currentTarget) closeUpdateModal()
     }}
   >
-    <div class="modal-box update-box">
-      <div class="modal-top">
+    <div class="modal-box update-split-box">
+      <div class="modal-top update-split-top">
         <div class="modal-title">Обновление приложения</div>
         <button class="icon-btn" aria-label="Закрыть окно обновления" onclick={closeUpdateModal}>✕</button>
       </div>
 
-      <div class="update-version-row">
-        <span>Установлена версия {update.current || '…'}</span>
-        {#if update.isNewer}
-          <span class="update-version-avail">
-            Доступна {update.latest}
-            {#if update.date}<span class="update-date"> · {fmtDateTime(update.date)}</span>{/if}
-            {#if update.sizeBytes}<span class="update-date"> · {fmtBytes(update.sizeBytes)}</span>{/if}
-          </span>
-        {/if}
-      </div>
+      <div class="update-split-body">
+        <aside class="update-split-side">
+          <div class="side-info-group">
+            <div class="side-version-block">
+              <div class="side-label">Доступна версия</div>
+              <div class="side-version-num">{update.latest || '…'}</div>
+              {#if update.isNewer}
+                <div class="side-status-pill ok">Готова к установке</div>
+              {:else if update.checking}
+                <div class="side-status-pill">Проверка…</div>
+              {:else}
+                <div class="side-status-pill">Установлена</div>
+              {/if}
+            </div>
 
-      {#if update.isNewer && !update.selfUpdate && !update.applying}
-        <div class="help-text">
-          Приложение запущено из репозитория через <code>./run.sh</code>.
-          Встроенный перезапуск доступен только в готовом пакете AppImage.
-          Чтобы обновить текущую сборку, выполните в терминале:
-        </div>
-        <div class="cmd-field-group">
-          <input class="input-field" readonly value="git pull && ./run.sh" />
-          <button class="btn-secondary btn-sm" onclick={copyPullCommand}>Скопировать</button>
-        </div>
-      {/if}
+            <div class="side-meta-list">
+              <div class="side-meta-row">
+                <span class="side-meta-key">Текущая</span>
+                <span class="side-meta-val">{update.current || '—'}</span>
+              </div>
+              {#if update.sizeBytes}
+                <div class="side-meta-row">
+                  <span class="side-meta-key">Размер</span>
+                  <span class="side-meta-val">{fmtBytes(update.sizeBytes)}</span>
+                </div>
+              {/if}
+              {#if update.date}
+                <div class="side-meta-row">
+                  <span class="side-meta-key">Выпуск</span>
+                  <span class="side-meta-val">{fmtDateTime(update.date)}</span>
+                </div>
+              {/if}
+              <div class="side-meta-row">
+                <span class="side-meta-key">Режим</span>
+                <span class="side-meta-val">{update.selfUpdate ? 'AppImage' : 'run.sh'}</span>
+              </div>
+            </div>
 
-      {#if cleanedNotes && update.isNewer && !update.error}
-        <div class="update-notes md-body">
-          {@html renderMarkdown(cleanedNotes)}
-        </div>
-        {#if update.notesTruncated}
-          <div class="help-text">
-            Заметки сокращены до 16 КБ. Полный текст — на странице релиза.
-          </div>
-        {/if}
-      {/if}
-
-      {#if update.applying}
-        <div class="update-progress">
-          <div
-            class="progress-track"
-            role="progressbar"
-            aria-valuenow={update.pct}
-            aria-valuemin="0"
-            aria-valuemax="100"
-            aria-label="Прогресс обновления"
-          >
-            <div class="vu-bar" style={`width: ${update.pct}%`}></div>
-          </div>
-          <div class="help-text">
-            {stageText(update.stage)} — {update.pct}%{progressSize()}
-          </div>
-          <div class="help-text">
-            После установки приложение перезапустится само. Отменить скачивание нельзя.
-          </div>
-        </div>
-      {:else if update.error}
-        <div class="help-text error-text" role="alert">
-          {update.error}
-          {#if update.stage === 'check' && update.retryable}
-            <div>Проверка не удалась. Повторите позже.</div>
-          {/if}
-        </div>
-      {:else if !update.isNewer && !update.checking}
-        <div class="help-text">
-          Установлена последняя версия {update.current || update.latest || ''}.
-        </div>
-      {/if}
-
-      {#if isRecording && update.isNewer && update.selfUpdate && !update.applying}
-        <div class="help-text warn-text">
-          Идёт запись. Остановите её перед обновлением: приложение перезапустится.
-        </div>
-      {/if}
-
-      {#if hasDetails}
-        <div class="update-details-wrap">
-          <button
-            type="button"
-            class="details-toggle-btn"
-            aria-expanded={detailsOpen}
-            onclick={() => (detailsOpen = !detailsOpen)}
-          >
-            <span>Технические подробности</span>
-            <span class="details-chevron {detailsOpen ? 'open' : ''}" aria-hidden="true">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="6 9 12 15 18 9"></polyline>
-              </svg>
-            </span>
-          </button>
-          {#if detailsOpen}
-            <dl class="update-details">
-              {#each detailRows as [label, value] (label)}
-                <dt>{label}</dt>
-                <dd>{value}</dd>
-              {/each}
-              <dt>Диагностика</dt>
-              <dd>
-                <button class="link-btn" disabled={diagBusy} onclick={() => void diagnostics()}>
-                  {diagBusy ? 'Собираю…' : 'Собрать отчёт системы'}
+            {#if update.isNewer && !update.selfUpdate && !update.applying}
+              <div class="side-cmd-block">
+                <div class="side-cmd-label">Обновление сборки:</div>
+                <input class="input-field input-field-sm" readonly value="git pull && ./run.sh" />
+                <button class="btn-secondary btn-xs side-copy-btn" onclick={copyPullCommand}>
+                  Скопировать команду
                 </button>
-              </dd>
-            </dl>
-          {/if}
-        </div>
-      {/if}
-
-      <div class="row-between">
-        <div>
-          {#if update.isNewer && !update.error && !update.applying}
-            {#if update.skippedVersion === update.latest}
-              <button class="link-btn muted" onclick={() => void skipVersion(null)}>
-                Вернуть эту версию
-              </button>
-            {:else}
-              <button class="link-btn muted" onclick={() => void skipVersion(update.latest)}>
-                Пропустить эту версию
-              </button>
+              </div>
             {/if}
-          {/if}
-        </div>
-        <div class="row-start">
-          <button class="btn-secondary" onclick={closeUpdateModal}>Позже</button>
-          {#if update.applying}
-            <!-- Идёт скачивание: отмены нет, ждём перезапуска. -->
-          {:else if update.error && update.retryable}
-            <button class="btn-primary" onclick={retry}>Повторить</button>
-          {:else if update.isNewer && update.selfUpdate}
-            <button class="btn-primary" disabled={isRecording} onclick={() => void applyUpdate()}>
-              Обновить и перезапустить
-            </button>
-          {:else if update.isNewer}
-            <a class="btn-primary" href={releaseUrl} target="_blank" rel="noopener noreferrer">
-              Страница релиза
-            </a>
-          {/if}
-          {#if update.error && update.isNewer}
-            <a class="btn-secondary btn-sm" href={releaseUrl} target="_blank" rel="noopener noreferrer">
-              Страница релиза
-            </a>
-          {/if}
-        </div>
+
+            {#if update.applying}
+              <div class="update-progress">
+                <div
+                  class="progress-track"
+                  role="progressbar"
+                  aria-valuenow={update.pct}
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-label="Прогресс обновления"
+                >
+                  <div class="vu-bar" style={`width: ${update.pct}%`}></div>
+                </div>
+                <div class="help-text">
+                  {stageText(update.stage)} — {update.pct}%{progressSize()}
+                </div>
+                <div class="help-text">
+                  После установки приложение перезапустится само.
+                </div>
+              </div>
+            {:else if update.error}
+              <div class="help-text error-text" role="alert">
+                {update.error}
+                {#if update.stage === 'check' && update.retryable}
+                  <div>Проверка не удалась. Повторите позже.</div>
+                {/if}
+              </div>
+            {:else if !update.isNewer && !update.checking}
+              <div class="help-text">
+                Установлена последняя версия {update.current || update.latest || ''}.
+              </div>
+            {/if}
+
+            {#if isRecording && update.isNewer && update.selfUpdate && !update.applying}
+              <div class="help-text warn-text">
+                Идёт запись. Остановите её перед обновлением.
+              </div>
+            {/if}
+
+            {#if hasDetails}
+              <div class="update-details-wrap">
+                <button
+                  type="button"
+                  class="details-toggle-btn"
+                  aria-expanded={detailsOpen}
+                  onclick={() => (detailsOpen = !detailsOpen)}
+                >
+                  <span>Технические подробности</span>
+                  <span class="details-chevron {detailsOpen ? 'open' : ''}" aria-hidden="true">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </span>
+                </button>
+                {#if detailsOpen}
+                  <dl class="update-details">
+                    {#each detailRows as [label, value] (label)}
+                      <dt>{label}</dt>
+                      <dd>{value}</dd>
+                    {/each}
+                    <dt>Диагностика</dt>
+                    <dd>
+                      <button class="link-btn" disabled={diagBusy} onclick={() => void diagnostics()}>
+                        {diagBusy ? 'Собираю…' : 'Собрать отчёт'}
+                      </button>
+                    </dd>
+                  </dl>
+                {/if}
+              </div>
+            {/if}
+          </div>
+
+          <div class="side-actions">
+            {#if !update.applying}
+              {#if update.error && update.retryable}
+                <button class="btn-primary w-full" onclick={retry}>Повторить</button>
+              {:else if update.isNewer && update.selfUpdate}
+                <button class="btn-primary w-full" disabled={isRecording} onclick={() => void applyUpdate()}>
+                  Обновить и перезапустить
+                </button>
+              {:else if update.isNewer}
+                <a class="btn-primary w-full" href={releaseUrl} target="_blank" rel="noopener noreferrer">
+                  Страница релиза
+                </a>
+              {/if}
+              <button class="btn-secondary w-full" onclick={closeUpdateModal}>Позже</button>
+              {#if update.isNewer && !update.error}
+                <div class="side-skip-wrap">
+                  {#if update.skippedVersion === update.latest}
+                    <button class="link-btn muted" onclick={() => void skipVersion(null)}>
+                      Вернуть эту версию
+                    </button>
+                  {:else}
+                    <button class="link-btn muted" onclick={() => void skipVersion(update.latest)}>
+                      Пропустить эту версию
+                    </button>
+                  {/if}
+                </div>
+              {/if}
+            {/if}
+          </div>
+        </aside>
+
+        <section class="update-split-main" aria-label="Список изменений">
+          <div class="main-header">
+            <div class="main-title-row">
+              <span class="main-title">Что изменилось</span>
+              {#if parsedNotes.items.length > 0}
+                <span class="count-badge">{parsedNotes.items.length}</span>
+              {/if}
+            </div>
+            {#if parsedNotes.intro}
+              <p class="main-intro">{parsedNotes.intro}</p>
+            {/if}
+          </div>
+
+          <div class="notes-feed">
+            {#if parsedNotes.items.length > 0}
+              {#each parsedNotes.items as item}
+                <div class="note-card">
+                  <div class="note-card-header">
+                    <span class="item-badge badge-{item.badgeType}">{item.badge}</span>
+                    {#if item.title}
+                      <span class="note-card-title">{item.title}</span>
+                    {/if}
+                  </div>
+                  <div class="note-card-desc">
+                    {@html inline(item.desc)}
+                  </div>
+                </div>
+              {/each}
+            {:else if cleanedNotes}
+              <div class="notes-raw md-body">
+                {@html renderMarkdown(cleanedNotes)}
+              </div>
+            {:else}
+              <div class="empty-note">
+                {#if update.checking}
+                  Проверка обновлений…
+                {:else}
+                  Установлена последняя версия. Заметок нет.
+                {/if}
+              </div>
+            {/if}
+
+            {#if update.notesTruncated}
+              <div class="help-text notes-truncated">
+                Заметки сокращены. Полный текст — <a class="link-btn" href={releaseUrl} target="_blank" rel="noopener noreferrer">на странице релиза</a>.
+              </div>
+            {/if}
+          </div>
+        </section>
       </div>
     </div>
   </div>
 {/if}
 
 <style>
-  .update-box {
-    max-width: 520px;
-    gap: 14px;
+  .update-split-box {
+    max-width: 760px;
+    width: 94vw;
+    padding: 0;
+    gap: 0;
+    overflow: hidden;
   }
-  .update-version-row {
+  .update-split-top {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .update-split-body {
+    display: grid;
+    grid-template-columns: 248px minmax(0, 1fr);
+    min-height: 420px;
+  }
+  .update-split-side {
+    background: var(--bg-inset);
+    border-right: 1px solid var(--border-soft);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .side-info-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .side-version-block {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .side-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .side-version-num {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+  }
+  .side-status-pill {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: #fff;
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-pill);
+    padding: 1px 8px;
+    margin-top: 2px;
+  }
+  .side-status-pill.ok {
+    color: var(--accent-ok);
+    background: var(--accent-ok-bg);
+    border-color: #9fd8c0;
+  }
+  .side-meta-list {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-size: 12px;
+    padding: 10px 0;
+    border-top: 1px solid var(--border-card);
+    border-bottom: 1px solid var(--border-card);
+  }
+  .side-meta-row {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    font-size: 13px;
+    gap: 8px;
+  }
+  .side-meta-key {
+    color: var(--text-muted);
+  }
+  .side-meta-val {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .side-cmd-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .side-cmd-label {
+    font-size: 11.5px;
+    color: var(--text-muted);
+  }
+  .side-copy-btn {
+    align-self: flex-start;
+  }
+  .btn-xs {
+    padding: 3px 8px;
+    font-size: 11px;
+  }
+  .input-field-sm {
+    padding: 5px 8px;
+    font-size: 11.5px;
+  }
+  .side-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 8px;
+  }
+  .w-full {
+    width: 100%;
+    justify-content: center;
+    text-align: center;
+  }
+  .side-skip-wrap {
+    text-align: center;
+    padding-top: 2px;
+  }
+  .update-split-main {
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+    background: #fff;
+  }
+  .main-header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .main-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .main-title {
+    font-size: 14.5px;
     font-weight: 700;
     color: var(--text-primary);
   }
-  .update-version-avail {
-    color: var(--accent-ok);
-  }
-  .update-date {
-    font-size: 12px;
-    font-weight: 500;
+  .main-intro {
+    font-size: 12.5px;
     color: var(--text-muted);
+    line-height: 1.45;
+  }
+  .notes-feed {
+    flex: 1;
+    overflow-y: auto;
+    max-height: 380px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-right: 4px;
+  }
+  .note-card {
+    background: #fff;
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-inner);
+    padding: 9px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: border-color 140ms ease;
+  }
+  .note-card:hover {
+    border-color: #cbd5e1;
+  }
+  .note-card-header {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .item-badge {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 6px;
+    border-radius: 4px;
+    line-height: 1.3;
+    white-space: nowrap;
+  }
+  .badge-ok {
+    background: var(--accent-ok-bg);
+    color: var(--accent-ok);
+    border: 1px solid #9fd8c0;
+  }
+  .badge-warn {
+    background: var(--accent-amber-bg);
+    color: var(--accent-amber);
+    border: 1px solid #d9b45c;
+  }
+  .badge-neutral {
+    background: var(--bg-inset);
+    color: var(--text-muted);
+    border: 1px solid var(--border-card);
+  }
+  .badge-blue {
+    background: #edf3fc;
+    color: var(--accent-blue);
+    border: 1px solid #b8d0f8;
+  }
+  .note-card-title {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.35;
+  }
+  .note-card-desc {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-muted);
+  }
+  .note-card-desc :global(code) {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    background: var(--bg-inset);
+    border: 1px solid var(--border-card);
+    border-radius: 3px;
+    padding: 1px 4px;
+    color: var(--text-primary);
+  }
+  .note-card-desc :global(b),
+  .note-card-desc :global(strong) {
+    color: var(--text-primary);
+    font-weight: 700;
+  }
+  .notes-raw {
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+  .notes-truncated {
+    padding-top: 4px;
+    font-size: 11.5px;
   }
   .cmd-field-group {
     display: flex;
@@ -317,13 +683,6 @@ const onWindowKey = (e: KeyboardEvent): void => {
     width: 100%;
     color: var(--text-primary);
   }
-  .update-notes {
-    max-height: 200px;
-    overflow-y: auto;
-    padding: 8px 0;
-    border-top: 1px solid var(--border-soft);
-    border-bottom: 1px solid var(--border-soft);
-  }
   .update-progress {
     display: flex;
     flex-direction: column;
@@ -333,7 +692,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    border-top: 1px solid var(--border-soft);
+    border-top: 1px solid var(--border-card);
     padding-top: 8px;
   }
   .details-toggle-btn {
@@ -368,9 +727,9 @@ const onWindowKey = (e: KeyboardEvent): void => {
   }
   .update-details {
     display: grid;
-    grid-template-columns: minmax(110px, max-content) minmax(0, 1fr);
-    gap: 3px 12px;
-    font-size: 11.5px;
+    grid-template-columns: minmax(100px, max-content) minmax(0, 1fr);
+    gap: 3px 10px;
+    font-size: 11px;
   }
   .update-details dt {
     color: var(--text-muted);
@@ -390,5 +749,14 @@ const onWindowKey = (e: KeyboardEvent): void => {
   }
   .link-btn.muted:hover {
     color: var(--text-primary);
+  }
+  @media (max-width: 640px) {
+    .update-split-body {
+      grid-template-columns: 1fr;
+    }
+    .update-split-side {
+      border-right: none;
+      border-bottom: 1px solid var(--border-soft);
+    }
   }
 </style>
