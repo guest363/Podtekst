@@ -359,6 +359,7 @@ fn significant_coverage_survives_single_local_segmentation() {
         &durs,
         &[1.0; 3],
         &mut labels,
+        &std::collections::HashSet::new(),
         2,
     );
     restore_protected(&mut labels, &protected);

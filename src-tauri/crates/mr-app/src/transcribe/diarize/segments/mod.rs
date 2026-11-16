@@ -7,6 +7,7 @@ pub(crate) use labels::{
     constraint_retry_needed, fallback_info, fill_labels_by_time, fill_unit_labels_by_time,
     log_cluster_summary, rms_quality,
 };
+pub(super) use labels::{promote_unmatched_utterances, promoted_utterances};
 #[cfg_attr(not(test), allow(unused_imports))]
 pub(crate) use merge::merge_quiet_short;
 pub(crate) use merge::{

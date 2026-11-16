@@ -8,7 +8,8 @@ use super::constraint_links::{cannot_link_units, pairs_above_sim};
 use super::profiles::{eligible_clusters, empty_match, pick_samples, reassign_short_replies};
 use super::segments::{
     constraint_retry_needed, fallback_info, fill_labels_by_time, fill_unit_labels_by_time,
-    log_cluster_summary, merge_tiny_clusters, short_join_threshold, smooth_labels_mono,
+    log_cluster_summary, merge_tiny_clusters, promote_unmatched_utterances, promoted_utterances,
+    short_join_threshold, smooth_labels_mono,
 };
 use super::{acoustic_units, coverage, diagnostics, turn_anchors};
 use super::{CORE_LINKAGE_THRESHOLD, CORE_MIN_DUR};
@@ -389,6 +390,23 @@ pub(crate) fn diarize_channel(
             }
         }
     }
+    let mut next_label = unit_label
+        .values()
+        .copied()
+        .max()
+        .map_or(0, |label| label + 1);
+    let promoted: HashSet<usize> =
+        promote_unmatched_utterances(&units, &mut unit_label, &mut next_label, auto_max, support)
+            .into_iter()
+            .collect();
+    if !promoted.is_empty() {
+        log::debug!(
+            target: "diar",
+            ch = ch,
+            promoted = promoted.len();
+            "ev=diar.promote_unknown"
+        );
+    }
     fill_unit_labels_by_time(&units, &mut unit_label);
     if experiment.anchors == Anchors::Turns {
         turn_anchors::retain_refinement_labels(&units, &anchors, &mut unit_label);
@@ -461,6 +479,9 @@ pub(crate) fn diarize_channel(
             Vec::new(),
         );
     }
+    // Индексы реплик уже пересобраны split_covered_utterances:
+    // неизвестные голоса ищем по меткам, а не по индексам до split.
+    let promoted_utts = promoted_utterances(&label_of, &promoted);
     fill_labels_by_time(utterances, &mut label_of);
     let after_coverage = label_of.values().copied().collect::<HashSet<_>>().len();
     diagnostics::turns("assignment", ch, utterances, &label_of, support);
@@ -475,6 +496,7 @@ pub(crate) fn diarize_channel(
     coverage::restore_protected(&mut label_of, &protected);
     let mut spans = Vec::new();
     let mut voice_runs: Vec<crate::transcribe::speaker_assignment::SpeakerSpan> = Vec::new();
+    let promoted_keys: HashSet<usize> = promoted_utts.keys().copied().collect();
     if let Some(segmentation) = segmentation {
         let outcome = crate::transcribe::speaker_assignment::apply(
             segmentation,
@@ -483,6 +505,7 @@ pub(crate) fn diarize_channel(
             &durs,
             &quals,
             &mut label_of,
+            &promoted_keys,
             max_speakers,
         );
         spans = outcome.spans;
@@ -774,7 +797,12 @@ pub(crate) fn diarize_channel(
         let tree = crate::transcribe::word_speakers::DiarIntervalTree::new(&timeline);
         let mut refined = Vec::with_capacity(utterances.len());
         for (index, utterance) in utterances.iter().enumerate() {
-            if utterance.end - utterance.start >= 20.0 && !protected.contains_key(&index) {
+            // Неизвестный голос мог быть размечен соседом в spans:
+            // дробление по словам вернуло бы реплику соседу.
+            if utterance.end - utterance.start >= 20.0
+                && !protected.contains_key(&index)
+                && !promoted_utts.contains_key(&index)
+            {
                 refined.extend(
                     crate::transcribe::word_speakers::split_utterance_by_word_speakers(
                         utterance, &tree,
