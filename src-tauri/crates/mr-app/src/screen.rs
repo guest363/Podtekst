@@ -701,7 +701,8 @@ mod windows_tests {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let session = ScreenCaptureSession::start(started).expect("старт записи экрана");
+        let session = ScreenCaptureSession::start(started, std::time::Instant::now())
+            .expect("старт записи экрана");
         std::thread::sleep(Duration::from_secs(2));
         let video = session.stop().expect("остановка записи экрана");
         let size = std::fs::metadata(&video)
