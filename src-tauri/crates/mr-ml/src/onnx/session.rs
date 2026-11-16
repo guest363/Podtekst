@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use ort::environment::Environment;
-use ort::value::{DynTensor, Tensor};
+use ort::value::{DynTensor, Tensor, TensorRef};
 
 fn global_env() -> Result<Arc<Environment>, String> {
     static ENV: OnceLock<Result<Arc<Environment>, String>> = OnceLock::new();
@@ -249,6 +249,47 @@ impl OrtSession {
                 target: "model",
                 model = self.label,
                 inputs = format!("{names:?}"),
+                error = error.to_string();
+                "ev=model.infer_error"
+            );
+            error.to_string()
+        })?;
+        Self::collect_outputs(&self.output_names, outputs)
+    }
+
+    /// Запуск с заимствованными входными буферами: значения не копируются в
+    /// `Vec` на каждом шаге. Нужен для Whisper-декодера, где KV-кэш — десятки
+    /// мегабайт на токен.
+    pub fn run_mixed_views<'a>(
+        &mut self,
+        f32_inputs: Vec<(&'a str, Vec<i64>, &'a [f32])>,
+        i64_inputs: Vec<(&'a str, Vec<i64>, &'a [i64])>,
+        bool_inputs: Vec<(&'a str, Vec<i64>, &'a [bool])>,
+    ) -> Result<NamedTensors, String> {
+        use ort::session::SessionInputValue;
+        let mut map: HashMap<&str, SessionInputValue<'a>> = HashMap::new();
+        for (name, shape, data) in f32_inputs {
+            let value = TensorRef::from_array_view((shape, data))
+                .map_err(|e| e.to_string())?
+                .into_dyn();
+            map.insert(name, value.into());
+        }
+        for (name, shape, data) in i64_inputs {
+            let value = TensorRef::from_array_view((shape, data))
+                .map_err(|e| e.to_string())?
+                .into_dyn();
+            map.insert(name, value.into());
+        }
+        for (name, shape, data) in bool_inputs {
+            let value = TensorRef::from_array_view((shape, data))
+                .map_err(|e| e.to_string())?
+                .into_dyn();
+            map.insert(name, value.into());
+        }
+        let outputs = self.session.run(map).map_err(|error| {
+            log::error!(
+                target: "model",
+                model = self.label,
                 error = error.to_string();
                 "ev=model.infer_error"
             );

@@ -114,7 +114,10 @@ pub(super) fn run(
         );
         let original = &original_samples[ch];
         let original_windows = original.len().div_ceil(VAD_WINDOW);
-        let normalized = original.as_slice() != &samples[..];
+        // Cow::Borrowed указывает на тот же буфер; сравнение содержимого
+        // стоило полного прохода по каналу.
+        let normalized =
+            !std::ptr::eq(original.as_ptr(), samples.as_ptr()) || original.len() != samples.len();
         let total_windows = original_windows + if normalized { windows } else { 0 };
         let progress = |done: usize| {
             let pct = (base + span * done as f64 / total_windows.max(1) as f64) as u8;

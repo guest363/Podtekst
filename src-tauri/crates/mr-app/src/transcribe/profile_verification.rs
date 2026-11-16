@@ -388,10 +388,9 @@ pub(super) fn run(
     }
     super::diarize::dedupe_cross_channel(utterances, infos, channels);
     for info in infos.iter_mut() {
-        let members: Vec<_> = utterances
+        let members: Vec<&Utterance> = utterances
             .iter()
             .filter(|utterance| utterance.speaker == info.name)
-            .cloned()
             .collect();
         info.samples = pick_samples(&members, 3);
     }

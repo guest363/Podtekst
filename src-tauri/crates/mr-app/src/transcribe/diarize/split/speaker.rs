@@ -215,7 +215,7 @@ pub(crate) fn split_long_by_speaker_change(
             continue;
         }
         let step = split_step(dur);
-        let mut wins: Vec<(f64, Vec<f64>)> = vec![];
+        let mut chunks: Vec<(f64, Vec<f32>)> = Vec::new();
         let mut t = u.start;
         while t + SPLIT_WINDOW_SEC <= u.end + 1e-6 {
             let window_end = (t + SPLIT_WINDOW_SEC).min(u.end);
@@ -228,21 +228,38 @@ pub(crate) fn split_long_by_speaker_change(
                         .map(|seg| seg.exclude_overlap(&mut chunk, lo))
                         .unwrap_or(chunk.len());
                     if clean_len >= (sr * 0.4) as usize {
-                        match ext.embed(&chunk[..clean_len]) {
-                            Ok(Some(e)) => wins.push((t, e)),
-                            Ok(None) => {}
-                            Err(error) => log::warn!(
-                                target: "diar",
-                                i = index,
-                                error = error.to_string();
-                                "ev=diar.embed_error"
-                            ),
-                        }
+                        chunk.truncate(clean_len);
+                        chunks.push((t, chunk));
                     }
                 }
             }
             t += step;
         }
+        let refs: Vec<&[f32]> = chunks.iter().map(|(_, chunk)| chunk.as_slice()).collect();
+        let wins: Vec<(f64, Vec<f64>)> = match ext.embed_batch(&refs) {
+            Ok(embeddings) => chunks
+                .into_iter()
+                .zip(embeddings)
+                .filter_map(|((start, _), embedding)| embedding.map(|embedding| (start, embedding)))
+                .collect(),
+            Err(error) => {
+                log::warn!(
+                    target: "diar",
+                    i = index,
+                    error = error.to_string();
+                    "ev=diar.embed_error"
+                );
+                chunks
+                    .iter()
+                    .filter_map(|(start, chunk)| {
+                        ext.embed(chunk)
+                            .ok()
+                            .flatten()
+                            .map(|embedding| (*start, embedding))
+                    })
+                    .collect()
+            }
+        };
         if wins.len() < 3 {
             log::debug!(
                 target: "diar",

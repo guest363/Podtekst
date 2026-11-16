@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::artifact::{SummaryItem, SummarySection, TaskMeta, Warning};
 use crate::deadline;
 use crate::parse::ParsedSummary;
@@ -46,10 +48,24 @@ pub fn ground(
     let brief_index = parsed.sections.iter().position(|s| s.id == "brief");
     let known = crate::extract::speaker_names(&transcript.utterances);
     let decision_cue = has_decision_cue(transcript);
+    // Собираем опору и стемы один раз: иначе каждый пункт заново склеивал и
+    // нормализовал весь транскрипт.
+    let support = transcript
+        .utterances
+        .iter()
+        .map(|u| format!("{} {}", u.speaker, u.text))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let normalized_support = text::normalize(&support);
+    let stems: Vec<HashSet<String>> = transcript
+        .utterances
+        .iter()
+        .map(|u| text::stem_set(&u.text))
+        .collect();
 
     for (section_index, section) in parsed.sections.iter().enumerate() {
         for item in &section.items {
-            if !hard_facts_supported(&item.text, &transcript.utterances, &known) {
+            if !hard_facts_supported(&item.text, &known, &normalized_support) {
                 unverified += 1;
             }
             let mut output = SummaryItem {
@@ -58,8 +74,13 @@ pub fn ground(
                 task: item.task.clone(),
             };
             if section.role == SectionRole::Task
-                && reconcile_task(&mut output, &transcript.utterances, &known, &mut warnings)
-                    == TaskVerdict::Plain
+                && reconcile_task(
+                    &mut output,
+                    &transcript.utterances,
+                    &known,
+                    &stems,
+                    &mut warnings,
+                ) == TaskVerdict::Plain
             {
                 output.role = SectionRole::Plain;
                 output.task = None;
@@ -174,22 +195,15 @@ fn support_text(utterances: &[Utterance], indices: &[usize]) -> String {
         .join(" ")
 }
 
-fn best_utterance_index(item: &str, utterances: &[Utterance]) -> Option<usize> {
+fn best_utterance_index(item: &str, stems: &[HashSet<String>]) -> Option<usize> {
     let item_tokens = text::stem_set(item);
     if item_tokens.is_empty() {
         return None;
     }
-    utterances
+    stems
         .iter()
         .enumerate()
-        .map(|(index, utterance)| {
-            (
-                index,
-                item_tokens
-                    .intersection(&text::stem_set(&utterance.text))
-                    .count(),
-            )
-        })
+        .map(|(index, utterance)| (index, item_tokens.intersection(utterance).count()))
         .filter(|(_, overlap)| *overlap > 0)
         .max_by(|(a_index, a), (b_index, b)| a.cmp(b).then_with(|| b_index.cmp(a_index)))
         .map(|(index, _)| index)
@@ -199,9 +213,10 @@ fn reconcile_task(
     output: &mut SummaryItem,
     utterances: &[Utterance],
     known: &[String],
+    stems: &[HashSet<String>],
     warnings: &mut Vec<Warning>,
 ) -> TaskVerdict {
-    let best_index = best_utterance_index(&output.text, utterances);
+    let best_index = best_utterance_index(&output.text, stems);
     // Ворота задачи смотрят только реплику-источник, без соседей: иначе
     // соседняя задача делает задачей соседнее решение.
     let best_support = best_index

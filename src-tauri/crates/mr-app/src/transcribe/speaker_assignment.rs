@@ -208,7 +208,8 @@ pub(super) fn apply(
                 }
             }
         }
-        collect_spans(window, &assignment, &mut spans);
+        let locals = local_frames(&window.classes);
+        collect_spans(window, &locals, &assignment, &mut spans);
         collect_voice_runs(window, &assignment, &mut voice_runs);
         for (index, local, weight) in frame_weights {
             if let Some(&global) = assignment.get(&local) {
@@ -321,39 +322,46 @@ fn aggregate_spans(spans: &[SpeakerSpan]) -> Vec<SpeakerSpan> {
 }
 
 /// Для overlap берём входящий голос: именно он начинает новую реплику.
-fn frame_local(classes: &[u8], index: usize) -> Option<usize> {
-    match classes.get(index).copied()? {
-        1..=3 => Some(classes[index] as usize - 1),
-        4..=6 => {
-            let pair = match classes[index] {
+/// Локальные метки по кадрам окна. Для overlap-кадров берётся ближайший чистый
+/// сосед; предвычисление убирает повторный поиск того же кадра.
+fn local_frames(classes: &[u8]) -> Vec<Option<usize>> {
+    let mut next = vec![None; classes.len() + 1];
+    for i in (0..classes.len()).rev() {
+        next[i] = if (1..=3).contains(&classes[i]) {
+            Some(classes[i] as usize - 1)
+        } else {
+            next[i + 1]
+        };
+    }
+    let mut out = vec![None; classes.len()];
+    let mut prev = None;
+    for (i, &class) in classes.iter().enumerate() {
+        if (1..=3).contains(&class) {
+            prev = Some(class as usize - 1);
+            out[i] = prev;
+        } else if (4..=6).contains(&class) {
+            let pair = match class {
                 4 => (0, 1),
                 5 => (0, 2),
                 _ => (1, 2),
             };
-            let next = classes[index + 1..]
-                .iter()
-                .find(|&&c| (1..=3).contains(&c))
-                .map(|&c| c as usize - 1);
-            let prev = classes[..index]
-                .iter()
-                .rev()
-                .find(|&&c| (1..=3).contains(&c))
-                .map(|&c| c as usize - 1);
-            next.filter(|local| *local == pair.0 || *local == pair.1)
-                .or_else(|| prev.filter(|local| *local == pair.0 || *local == pair.1))
+            out[i] = next[i + 1]
+                .filter(|local| *local == pair.0 || *local == pair.1)
+                .or_else(|| prev.filter(|local| *local == pair.0 || *local == pair.1));
         }
-        _ => None,
     }
+    out
 }
 
 fn collect_spans(
     window: &mr_ml::onnx::segmentation::SegmentationWindow,
+    locals: &[Option<usize>],
     assignment: &HashMap<usize, usize>,
     out: &mut Vec<SpeakerSpan>,
 ) {
     let mut i = 0;
     while i < window.classes.len() {
-        let Some(local) = frame_local(&window.classes, i) else {
+        let Some(local) = locals[i] else {
             i += 1;
             continue;
         };
@@ -364,7 +372,7 @@ fn collect_spans(
         let start = i;
         i += 1;
         while i < window.classes.len()
-            && frame_local(&window.classes, i) == Some(local)
+            && locals[i] == Some(local)
             && assignment.get(&local) == Some(&label)
         {
             i += 1;
@@ -602,8 +610,9 @@ mod tests {
         let mut classes = vec![1u8; 10];
         classes.extend(vec![4u8; 5]);
         classes.extend(vec![2u8; 10]);
-        assert_eq!(frame_local(&classes, 12), Some(1));
-        assert_eq!(frame_local(&classes, 2), Some(0));
+        let locals = local_frames(&classes);
+        assert_eq!(locals[12], Some(1));
+        assert_eq!(locals[2], Some(0));
     }
 
     #[test]

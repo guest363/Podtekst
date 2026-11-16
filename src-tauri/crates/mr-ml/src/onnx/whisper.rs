@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use super::features::whisper_mel;
-use super::session::{NamedTensors, OrtSession, ShapeDataI64};
+use super::session::{NamedTensors, OrtSession};
 
 pub struct Whisper {
     enc: OrtSession,
@@ -164,16 +164,8 @@ impl Whisper {
                 vec![*tokens.last().unwrap()]
             };
             let t_ids = ids.len() as i64;
-            // Состояния энкодера нужны на каждом шаге — одна копия на шаг
-            // (внутрь рантайма они уходят по значению без второго копирования).
-            let mut f32_in = HashMap::new();
-            f32_in.insert(
-                self.state_input.clone(),
-                (vec![1i64, t_enc, 1280], enc_states.clone()),
-            );
-            let mut i64_in = HashMap::new();
-            i64_in.insert(self.ids_input.clone(), (vec![1i64, t_ids], ids));
-            let (logits, present) = self.dec_step(f32_in, i64_in, &kv_cache, first, t_enc)?;
+            let (logits, present) =
+                self.dec_step(enc_states, ids.as_slice(), &kv_cache, first, t_enc)?;
             let vocab = logits.len() / t_ids as usize;
             let last = &logits[(t_ids as usize - 1) * vocab..t_ids as usize * vocab];
             let next = argmax(last) as i64;
@@ -199,35 +191,49 @@ impl Whisper {
 
     fn dec_step(
         &mut self,
-        mut f32_all: NamedTensors,
-        i64_in: HashMap<String, ShapeDataI64>,
+        enc_states: &[f32],
+        ids: &[i64],
         kv_cache: &NamedTensors,
         first: bool,
         t_enc: i64,
     ) -> Result<(Vec<f32>, NamedTensors), String> {
         // past: decoder — пустые [1,20,0,64] на первом шаге, иначе из кэша;
         // encoder — нули [1,20,Tenc,64] на первом шаге, иначе из кэша.
+        // Все значения передаются срезами: копирование KV-кэша на каждом
+        // шаге было основной стоимостью декодера.
+        let zeros_len = (20 * t_enc * 64) as usize;
+        let zeros = first.then(|| vec![0.0f32; zeros_len]);
+        let mut f32_all: Vec<(&str, Vec<i64>, &[f32])> =
+            Vec::with_capacity(1 + self.past_names.len());
+        f32_all.push((self.state_input.as_str(), vec![1, t_enc, 1280], enc_states));
         for past in &self.past_names {
             if past.contains(".decoder.") {
                 if first {
-                    f32_all.insert(past.clone(), (vec![1i64, 20, 0, 64], vec![]));
+                    f32_all.push((past.as_str(), vec![1, 20, 0, 64], &[]));
                 } else if let Some(v) = kv_cache.get(&present_of(past)) {
-                    f32_all.insert(past.clone(), v.clone());
+                    f32_all.push((past.as_str(), v.0.clone(), v.1.as_slice()));
                 } else {
                     return Err(format!("нет кэша для {past}"));
                 }
             } else if first {
-                let n = (20 * t_enc * 64) as usize;
-                f32_all.insert(past.clone(), (vec![1i64, 20, t_enc, 64], vec![0.0; n]));
+                f32_all.push((
+                    past.as_str(),
+                    vec![1, 20, t_enc, 64],
+                    zeros.as_deref().unwrap_or(&[]),
+                ));
             } else if let Some(v) = kv_cache.get(&present_of(past)) {
-                f32_all.insert(past.clone(), v.clone());
+                f32_all.push((past.as_str(), v.0.clone(), v.1.as_slice()));
             } else {
                 return Err(format!("нет кэша для {past}"));
             }
         }
-        let mut bool_in = HashMap::new();
-        bool_in.insert(self.cache_input.clone(), (vec![1i64], vec![!first]));
-        let mut out = self.dec.run_mixed_full(f32_all, i64_in, bool_in)?;
+        let t_ids = ids.len() as i64;
+        let cache_branch = [!first];
+        let mut out = self.dec.run_mixed_views(
+            f32_all,
+            vec![(self.ids_input.as_str(), vec![1, t_ids], ids)],
+            vec![(self.cache_input.as_str(), vec![1], cache_branch.as_slice())],
+        )?;
         let mut logits: Option<Vec<f32>> = None;
         let mut present = HashMap::new();
         for name in &self.present_names {

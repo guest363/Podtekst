@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use super::session::OrtSession;
 
 pub const VAD_WINDOW: usize = 512;
@@ -42,6 +40,7 @@ pub struct SileroVad {
     session: OrtSession,
     state: Vec<f32>,
     context: Vec<f32>,
+    input: Vec<f32>,
     sample_rate: i64,
 }
 
@@ -51,6 +50,7 @@ impl SileroVad {
             session: OrtSession::load(path, 1)?,
             state: vec![0.0; STATE_DIMS.iter().product()],
             context: vec![0.0; VAD_CONTEXT],
+            input: vec![0.0; VAD_CONTEXT + VAD_WINDOW],
             sample_rate: 16000,
         })
     }
@@ -61,40 +61,33 @@ impl SileroVad {
     }
 
     pub fn process_window(&mut self, window: &[f32]) -> Result<f32, String> {
-        let mut full_input = Vec::with_capacity(VAD_CONTEXT + VAD_WINDOW);
-        full_input.extend_from_slice(&self.context);
         let n = window.len().min(VAD_WINDOW);
-        full_input.extend_from_slice(&window[..n]);
-        if full_input.len() < VAD_CONTEXT + VAD_WINDOW {
-            full_input.resize(VAD_CONTEXT + VAD_WINDOW, 0.0);
-        }
+        self.input.fill(0.0);
+        self.input[..VAD_CONTEXT].copy_from_slice(&self.context);
+        self.input[VAD_CONTEXT..VAD_CONTEXT + n].copy_from_slice(&window[..n]);
 
         // Контекст — последние 64 сэмпла реально поданного потока, без хвоста,
         // добитого нулями до окна модели: иначе короткое последнее окно
         // обнуляло бы контекст и следующий вызов терял конец фразы.
         let real_len = VAD_CONTEXT + n;
         self.context
-            .copy_from_slice(&full_input[real_len - VAD_CONTEXT..real_len]);
+            .copy_from_slice(&self.input[real_len - VAD_CONTEXT..real_len]);
 
-        let mut f32_in = HashMap::new();
-        f32_in.insert(
-            "input".to_string(),
-            (vec![1i64, (VAD_CONTEXT + VAD_WINDOW) as i64], full_input),
-        );
-        f32_in.insert(
-            "state".to_string(),
-            (
-                STATE_DIMS.iter().map(|&x| x as i64).collect(),
-                self.state.clone(),
-            ),
-        );
-        let mut i64_in = HashMap::new();
-        i64_in.insert(
-            "sr".to_string(),
-            (Vec::<i64>::new(), vec![self.sample_rate]),
-        );
-
-        let out = self.session.run_mixed(f32_in, i64_in)?;
+        let input = self.input.as_slice();
+        let state = self.state.as_slice();
+        let sample_rate = [self.sample_rate];
+        let out = self.session.run_mixed_views(
+            vec![
+                ("input", vec![1, (VAD_CONTEXT + VAD_WINDOW) as i64], input),
+                (
+                    "state",
+                    STATE_DIMS.iter().map(|&x| x as i64).collect(),
+                    state,
+                ),
+            ],
+            vec![("sr", Vec::new(), sample_rate.as_slice())],
+            Vec::new(),
+        )?;
         let prob = out
             .get("output")
             .and_then(|(_, d)| d.first().copied())

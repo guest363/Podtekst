@@ -40,6 +40,7 @@ pub(super) fn reject_small_clusters(
     let mut core = core.to_vec();
     let mut weights = weights.to_vec();
     let mut constraints = constraints.to_vec();
+    let by_utterance = index_units(units);
     loop {
         let unit_labels: HashMap<_, _> = core.iter().copied().zip(labels.iter().copied()).collect();
         let mut utterance_ids: Vec<_> = core.iter().map(|&i| units[i].utterance).collect();
@@ -47,7 +48,14 @@ pub(super) fn reject_small_clusters(
         utterance_ids.dedup();
         let mut intervals: HashMap<usize, Vec<(f64, f64)>> = HashMap::new();
         for utterance in utterance_ids {
-            for (start, end, label) in timeline(units, &unit_labels, utterance) {
+            for (start, end, label) in timeline(
+                units,
+                by_utterance
+                    .get(utterance)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
+                &unit_labels,
+            ) {
                 intervals.entry(label).or_default().push((start, end));
             }
         }
@@ -141,15 +149,29 @@ pub(super) fn reject_small_clusters(
     }
 }
 
+fn index_units(units: &[AcoustUnit]) -> Vec<Vec<usize>> {
+    let n = units
+        .iter()
+        .map(|unit| unit.utterance + 1)
+        .max()
+        .unwrap_or(0);
+    let mut index = vec![Vec::new(); n];
+    for (position, unit) in units.iter().enumerate() {
+        index[unit.utterance].push(position);
+    }
+    index
+}
+
 fn timeline(
     units: &[AcoustUnit],
+    members: &[usize],
     labels: &HashMap<usize, usize>,
-    utterance: usize,
 ) -> Vec<(f64, f64, usize)> {
-    let members: Vec<_> = units
+    let members: Vec<_> = members
         .iter()
-        .enumerate()
-        .filter(|(i, u)| u.utterance == utterance && labels.contains_key(i))
+        .copied()
+        .filter(|i| labels.contains_key(i))
+        .map(|i| (i, &units[i]))
         .collect();
     let mut bounds: Vec<_> = members.iter().flat_map(|(_, u)| [u.start, u.end]).collect();
     for (pos, (_, a)) in members.iter().enumerate() {
@@ -206,9 +228,17 @@ pub(super) fn label_durations(
         .collect();
     utterances.sort_unstable();
     utterances.dedup();
+    let by_utterance = index_units(units);
     let mut intervals: HashMap<(usize, usize), Vec<(f64, f64)>> = HashMap::new();
     for utterance in utterances {
-        for (start, end, label) in timeline(units, labels, utterance) {
+        for (start, end, label) in timeline(
+            units,
+            by_utterance
+                .get(utterance)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+            labels,
+        ) {
             intervals
                 .entry((utterance, label))
                 .or_default()
@@ -253,8 +283,10 @@ pub(super) fn split_covered_utterances(
     let mut output_units = Vec::new();
     let mut output_labels = HashMap::new();
     let mut protected = HashMap::new();
+    let by_utterance = index_units(units);
     for (i, u) in utterances.iter().enumerate() {
-        let spans = timeline(units, labels, i);
+        let members = by_utterance.get(i).map(Vec::as_slice).unwrap_or(&[]);
+        let spans = timeline(units, members, labels);
         let mut by_label: HashMap<usize, Vec<(f64, f64)>> = HashMap::new();
         for &(s, e, l) in &spans {
             by_label
@@ -322,11 +354,8 @@ pub(super) fn split_covered_utterances(
                 }
             }
 
-            for (index, unit) in units
-                .iter()
-                .enumerate()
-                .filter(|(_, unit)| unit.utterance == i)
-            {
+            for &index in members {
+                let unit = &units[index];
                 let Some(&label) = labels.get(&index) else {
                     continue;
                 };
