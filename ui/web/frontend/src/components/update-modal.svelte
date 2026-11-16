@@ -32,6 +32,31 @@ $effect(() => {
   if (update.modalOpen && recording === undefined && !system.snapshot) void loadSystem()
 })
 
+$effect(() => {
+  if (typeof window === 'undefined') return
+  const params = new URLSearchParams(window.location.search)
+  if (params.has('update') || window.location.hash === '#update') {
+    update.modalOpen = true
+    if (!update.latest) {
+      update.latest = '0.3.0'
+      update.current = '0.2.1'
+      update.isNewer = true
+      update.date = '2026-11-16T12:00:00Z'
+      update.sizeBytes = 84_500_000
+      update.notes = `## Что нового в 0.3.0
+
+- **Двухпанельный хаб обновлений**: компактный просмотр истории релизов без огромных шрифтов и растягивания.
+- **Автоматические бейджи категорий**: категоризация пунктов списка (новое, исправлено, компоненты).
+- **Сдержанная типографика**: уменьшены размеры заголовков, аккуратные служебные ссылки и бейджи.
+
+### Исправления
+
+- **Типографика и стили**: устранён гигантизм шрифтов, заменены все утилитарные классы на чистые стили приложения.
+- **Отображение заметок**: карточки изменений с аккуратными отступами и поддержкой форматирования.`
+    }
+  }
+})
+
 // Очистка заметок от универсальных шаблонов установки других ОС и diff-ссылок
 const cleanedNotes = $derived.by(() => {
   if (!update.notes) return ''
@@ -259,8 +284,8 @@ const onWindowKey = (e: KeyboardEvent): void => {
             {#if update.isNewer && !update.selfUpdate && !update.applying}
               <div class="side-cmd-block">
                 <div class="side-cmd-label">Обновление сборки:</div>
-                <input class="input-field input-field-sm" readonly value="git pull && ./run.sh" />
-                <button class="btn-secondary btn-xs side-copy-btn" onclick={copyPullCommand}>
+                <input class="side-cmd-input" readonly value="git pull && ./run.sh" />
+                <button class="btn-secondary side-copy-btn" onclick={copyPullCommand}>
                   Скопировать команду
                 </button>
               </div>
@@ -340,17 +365,17 @@ const onWindowKey = (e: KeyboardEvent): void => {
           <div class="side-actions">
             {#if !update.applying}
               {#if update.error && update.retryable}
-                <button class="btn-primary btn-side w-full" onclick={retry}>Повторить</button>
+                <button class="btn-primary side-action-btn" onclick={retry}>Повторить</button>
               {:else if update.isNewer && update.selfUpdate}
-                <button class="btn-primary btn-side w-full" disabled={isRecording} onclick={() => void applyUpdate()}>
+                <button class="btn-primary side-action-btn" disabled={isRecording} onclick={() => void applyUpdate()}>
                   Обновить и перезапустить
                 </button>
               {:else if update.isNewer}
-                <a class="btn-primary btn-side w-full" href={releaseUrl} target="_blank" rel="noopener noreferrer">
+                <a class="btn-primary side-action-btn" href={releaseUrl} target="_blank" rel="noopener noreferrer">
                   Страница релиза
                 </a>
               {/if}
-              <button class="btn-secondary btn-side w-full" onclick={closeUpdateModal}>Позже</button>
+              <button class="btn-secondary side-action-btn" onclick={closeUpdateModal}>Позже</button>
               {#if update.isNewer && !update.error}
                 <div class="side-skip-wrap">
                   {#if update.skippedVersion === update.latest}
@@ -435,7 +460,7 @@ const onWindowKey = (e: KeyboardEvent): void => {
     border-bottom: 1px solid var(--border-soft);
   }
   .update-split-top .modal-title {
-    font-size: 14.5px;
+    font-size: 14px;
     font-weight: 700;
   }
   .update-split-top .icon-btn {
@@ -475,8 +500,8 @@ const onWindowKey = (e: KeyboardEvent): void => {
     letter-spacing: 0.04em;
   }
   .side-version-num {
-    font-size: 16px;
-    font-weight: 800;
+    font-size: 15px;
+    font-weight: 700;
     letter-spacing: -0.01em;
     color: var(--text-primary);
   }
@@ -526,24 +551,25 @@ const onWindowKey = (e: KeyboardEvent): void => {
     gap: 4px;
   }
   .side-cmd-label {
-    font-size: 10.5px;
+    font-size: 10px;
     color: var(--text-muted);
+  }
+  .side-cmd-input {
+    padding: 4px 8px;
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-inner);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    outline: none;
+    background: #fff;
+    width: 100%;
+    color: var(--text-primary);
+    box-sizing: border-box;
   }
   .side-copy-btn {
     align-self: flex-start;
-  }
-  .btn-xs {
-    padding: 2px 7px;
+    padding: 3px 8px;
     font-size: 10.5px;
-  }
-  .btn-side {
-    padding: 6px 12px;
-    font-size: 11.5px;
-    font-weight: 600;
-  }
-  .input-field-sm {
-    padding: 4px 7px;
-    font-size: 11px;
   }
   .side-actions {
     display: flex;
@@ -551,10 +577,14 @@ const onWindowKey = (e: KeyboardEvent): void => {
     gap: 6px;
     padding-top: 4px;
   }
-  .w-full {
+  .side-action-btn {
     width: 100%;
     justify-content: center;
     text-align: center;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    box-sizing: border-box;
   }
   .side-skip-wrap {
     text-align: center;
@@ -563,17 +593,17 @@ const onWindowKey = (e: KeyboardEvent): void => {
   .skip-btn {
     border: none;
     background: none;
-    padding: 2px 6px;
-    font-size: 11px;
+    padding: 2px 4px;
+    font-size: 10.5px;
     color: var(--text-faint);
     cursor: pointer;
     text-decoration: underline;
     text-underline-offset: 2px;
-    line-height: 1;
+    line-height: 1.2;
     transition: color 120ms ease;
   }
   .skip-btn:hover {
-    color: var(--text-primary);
+    color: var(--text-muted);
   }
   .update-split-main {
     padding: 14px 18px;
@@ -695,17 +725,6 @@ const onWindowKey = (e: KeyboardEvent): void => {
   .notes-truncated {
     padding-top: 4px;
     font-size: 11px;
-  }
-  .input-field {
-    padding: 7px 12px;
-    border: 1px solid var(--border-card);
-    border-radius: var(--radius-inner);
-    font-size: 12px;
-    font-family: var(--font-mono);
-    outline: none;
-    background: var(--bg-inset);
-    width: 100%;
-    color: var(--text-primary);
   }
   .update-progress {
     display: flex;
