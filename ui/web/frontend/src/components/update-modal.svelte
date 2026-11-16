@@ -340,25 +340,25 @@ const onWindowKey = (e: KeyboardEvent): void => {
           <div class="side-actions">
             {#if !update.applying}
               {#if update.error && update.retryable}
-                <button class="btn-primary w-full" onclick={retry}>Повторить</button>
+                <button class="btn-primary btn-side w-full" onclick={retry}>Повторить</button>
               {:else if update.isNewer && update.selfUpdate}
-                <button class="btn-primary w-full" disabled={isRecording} onclick={() => void applyUpdate()}>
+                <button class="btn-primary btn-side w-full" disabled={isRecording} onclick={() => void applyUpdate()}>
                   Обновить и перезапустить
                 </button>
               {:else if update.isNewer}
-                <a class="btn-primary w-full" href={releaseUrl} target="_blank" rel="noopener noreferrer">
+                <a class="btn-primary btn-side w-full" href={releaseUrl} target="_blank" rel="noopener noreferrer">
                   Страница релиза
                 </a>
               {/if}
-              <button class="btn-secondary w-full" onclick={closeUpdateModal}>Позже</button>
+              <button class="btn-secondary btn-side w-full" onclick={closeUpdateModal}>Позже</button>
               {#if update.isNewer && !update.error}
                 <div class="side-skip-wrap">
                   {#if update.skippedVersion === update.latest}
-                    <button class="link-btn muted" onclick={() => void skipVersion(null)}>
+                    <button class="skip-btn" onclick={() => void skipVersion(null)}>
                       Вернуть эту версию
                     </button>
                   {:else}
-                    <button class="link-btn muted" onclick={() => void skipVersion(update.latest)}>
+                    <button class="skip-btn" onclick={() => void skipVersion(update.latest)}>
                       Пропустить эту версию
                     </button>
                   {/if}
@@ -424,64 +424,73 @@ const onWindowKey = (e: KeyboardEvent): void => {
 
 <style>
   .update-split-box {
-    max-width: 760px;
-    width: 94vw;
+    max-width: 680px;
+    width: 92vw;
     padding: 0;
     gap: 0;
     overflow: hidden;
   }
   .update-split-top {
-    padding: 16px 20px;
+    padding: 12px 18px;
     border-bottom: 1px solid var(--border-soft);
+  }
+  .update-split-top .modal-title {
+    font-size: 14.5px;
+    font-weight: 700;
+  }
+  .update-split-top .icon-btn {
+    width: 28px;
+    height: 28px;
+    font-size: 13px;
   }
   .update-split-body {
     display: grid;
-    grid-template-columns: 248px minmax(0, 1fr);
-    min-height: 420px;
+    grid-template-columns: 216px minmax(0, 1fr);
+    min-height: 380px;
   }
   .update-split-side {
     background: var(--bg-inset);
     border-right: 1px solid var(--border-soft);
-    padding: 16px;
+    padding: 14px;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    gap: 16px;
+    gap: 12px;
   }
   .side-info-group {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
   }
   .side-version-block {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 1px;
   }
   .side-label {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.04em;
   }
   .side-version-num {
-    font-size: 22px;
+    font-size: 16px;
     font-weight: 800;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.01em;
     color: var(--text-primary);
   }
   .side-status-pill {
     display: inline-flex;
     align-items: center;
     width: fit-content;
-    font-size: 11px;
+    font-size: 10.5px;
     font-weight: 600;
     color: var(--text-muted);
     background: #fff;
     border: 1px solid var(--border-card);
     border-radius: var(--radius-pill);
-    padding: 1px 8px;
+    padding: 1px 7px;
     margin-top: 2px;
   }
   .side-status-pill.ok {
@@ -492,9 +501,9 @@ const onWindowKey = (e: KeyboardEvent): void => {
   .side-meta-list {
     display: flex;
     flex-direction: column;
-    gap: 5px;
-    font-size: 12px;
-    padding: 10px 0;
+    gap: 4px;
+    font-size: 11px;
+    padding: 8px 0;
     border-top: 1px solid var(--border-card);
     border-bottom: 1px solid var(--border-card);
   }
@@ -514,28 +523,33 @@ const onWindowKey = (e: KeyboardEvent): void => {
   .side-cmd-block {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
   }
   .side-cmd-label {
-    font-size: 11.5px;
+    font-size: 10.5px;
     color: var(--text-muted);
   }
   .side-copy-btn {
     align-self: flex-start;
   }
   .btn-xs {
-    padding: 3px 8px;
-    font-size: 11px;
+    padding: 2px 7px;
+    font-size: 10.5px;
+  }
+  .btn-side {
+    padding: 6px 12px;
+    font-size: 11.5px;
+    font-weight: 600;
   }
   .input-field-sm {
-    padding: 5px 8px;
-    font-size: 11.5px;
+    padding: 4px 7px;
+    font-size: 11px;
   }
   .side-actions {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding-top: 8px;
+    gap: 6px;
+    padding-top: 4px;
   }
   .w-full {
     width: 100%;
@@ -546,53 +560,68 @@ const onWindowKey = (e: KeyboardEvent): void => {
     text-align: center;
     padding-top: 2px;
   }
+  .skip-btn {
+    border: none;
+    background: none;
+    padding: 2px 6px;
+    font-size: 11px;
+    color: var(--text-faint);
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    line-height: 1;
+    transition: color 120ms ease;
+  }
+  .skip-btn:hover {
+    color: var(--text-primary);
+  }
   .update-split-main {
-    padding: 16px 20px;
+    padding: 14px 18px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
     min-width: 0;
     background: #fff;
   }
   .main-header {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding-bottom: 8px;
+    gap: 3px;
+    padding-bottom: 6px;
     border-bottom: 1px solid var(--border-soft);
   }
   .main-title-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
   }
   .main-title {
-    font-size: 14.5px;
+    font-size: 13.5px;
     font-weight: 700;
     color: var(--text-primary);
   }
   .main-intro {
-    font-size: 12.5px;
+    font-size: 11.5px;
     color: var(--text-muted);
-    line-height: 1.45;
+    line-height: 1.4;
   }
   .notes-feed {
     flex: 1;
     overflow-y: auto;
-    max-height: 380px;
+    max-height: 360px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
     padding-right: 4px;
   }
   .note-card {
     background: #fff;
     border: 1px solid var(--border-card);
     border-radius: var(--radius-inner);
-    padding: 9px 12px;
+    padding: 7px 10px;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 3px;
     transition: border-color 140ms ease;
   }
   .note-card:hover {
@@ -605,11 +634,11 @@ const onWindowKey = (e: KeyboardEvent): void => {
     flex-wrap: wrap;
   }
   .item-badge {
-    font-size: 10px;
+    font-size: 9.5px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    padding: 1px 6px;
+    padding: 1px 5px;
     border-radius: 4px;
     line-height: 1.3;
     white-space: nowrap;
@@ -635,23 +664,23 @@ const onWindowKey = (e: KeyboardEvent): void => {
     border: 1px solid #b8d0f8;
   }
   .note-card-title {
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 700;
     color: var(--text-primary);
     line-height: 1.35;
   }
   .note-card-desc {
-    font-size: 12px;
-    line-height: 1.5;
+    font-size: 11.5px;
+    line-height: 1.45;
     color: var(--text-muted);
   }
   .note-card-desc :global(code) {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: 10.5px;
     background: var(--bg-inset);
     border: 1px solid var(--border-card);
     border-radius: 3px;
-    padding: 1px 4px;
+    padding: 1px 3px;
     color: var(--text-primary);
   }
   .note-card-desc :global(b),
@@ -660,23 +689,18 @@ const onWindowKey = (e: KeyboardEvent): void => {
     font-weight: 700;
   }
   .notes-raw {
-    font-size: 12.5px;
-    line-height: 1.5;
+    font-size: 12px;
+    line-height: 1.45;
   }
   .notes-truncated {
     padding-top: 4px;
-    font-size: 11.5px;
-  }
-  .cmd-field-group {
-    display: flex;
-    gap: 8px;
-    align-items: center;
+    font-size: 11px;
   }
   .input-field {
     padding: 7px 12px;
     border: 1px solid var(--border-card);
     border-radius: var(--radius-inner);
-    font-size: 12.5px;
+    font-size: 12px;
     font-family: var(--font-mono);
     outline: none;
     background: var(--bg-inset);
@@ -691,21 +715,21 @@ const onWindowKey = (e: KeyboardEvent): void => {
   .update-details-wrap {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
     border-top: 1px solid var(--border-card);
-    padding-top: 8px;
+    padding-top: 6px;
   }
   .details-toggle-btn {
     border: none;
     background: none;
     padding: 0;
     font: inherit;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted);
     cursor: pointer;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 5px;
     line-height: 1;
     width: fit-content;
   }
@@ -719,17 +743,17 @@ const onWindowKey = (e: KeyboardEvent): void => {
     color: var(--text-faint);
     transition: transform 160ms var(--ease-spring);
     flex-shrink: 0;
-    width: 12px;
-    height: 12px;
+    width: 11px;
+    height: 11px;
   }
   .details-chevron.open {
     transform: rotate(180deg);
   }
   .update-details {
     display: grid;
-    grid-template-columns: minmax(100px, max-content) minmax(0, 1fr);
-    gap: 3px 10px;
-    font-size: 11px;
+    grid-template-columns: minmax(90px, max-content) minmax(0, 1fr);
+    gap: 3px 8px;
+    font-size: 10.5px;
   }
   .update-details dt {
     color: var(--text-muted);
@@ -743,12 +767,6 @@ const onWindowKey = (e: KeyboardEvent): void => {
   }
   .warn-text {
     color: var(--accent-amber);
-  }
-  .link-btn.muted {
-    color: var(--text-faint);
-  }
-  .link-btn.muted:hover {
-    color: var(--text-primary);
   }
   @media (max-width: 640px) {
     .update-split-body {
