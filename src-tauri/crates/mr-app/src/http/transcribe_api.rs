@@ -28,7 +28,10 @@ pub(super) fn serve_transcript(request: tiny_http::Request, query: &str) {
     let mut meta = serde_json::json!({});
     let mut speakers_info = serde_json::json!([]);
     let mut utterances = serde_json::json!([]);
+    #[cfg(feature = "onnx")]
     let mut rev = None;
+    #[cfg(not(feature = "onnx"))]
+    let rev = None;
     #[cfg(feature = "onnx")]
     match crate::transcribe::document::read_transcript(&json_p) {
         Ok(doc) => {

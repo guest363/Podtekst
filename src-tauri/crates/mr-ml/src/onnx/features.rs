@@ -480,6 +480,18 @@ fn cached_filters(p: FrontendParams, kind: FilterKind) -> Arc<Vec<Vec<f64>>> {
     filters
 }
 
+/// Треугольники занимают несколько бинов из сотен; нули не меняют сумму,
+/// но их перебор был основной стоимостью кадра.
+fn band_ranges(fb: &[Vec<f64>]) -> Vec<(usize, &[f64])> {
+    fb.iter()
+        .map(|row| {
+            let start = row.iter().position(|w| *w != 0.0).unwrap_or(0);
+            let end = row.iter().rposition(|w| *w != 0.0).map_or(start, |i| i + 1);
+            (start, &row[start..end])
+        })
+        .collect()
+}
+
 pub fn log_mel_frames(samples: &[f32], p: FrontendParams) -> Vec<Vec<f32>> {
     let mut sig: Vec<f32> = Vec::with_capacity(samples.len());
     if p.preemphasis > 0.0 && !p.kaldi_exact {
@@ -507,16 +519,7 @@ pub fn log_mel_frames(samples: &[f32], p: FrontendParams) -> Vec<Vec<f32>> {
             FilterKind::Htk
         },
     );
-    // Треугольники занимают несколько бинов из сотен; ведущие/хвостовые нули
-    // не меняют сумму, но их перебор был основной стоимостью кадра.
-    let bands: Vec<(usize, &[f64])> = fb
-        .iter()
-        .map(|row| {
-            let start = row.iter().position(|w| *w != 0.0).unwrap_or(0);
-            let end = row.iter().rposition(|w| *w != 0.0).map_or(start, |i| i + 1);
-            (start, &row[start..end])
-        })
-        .collect();
+    let bands = band_ranges(&fb);
     let n = sig.len();
     let mut frames = Vec::new();
     let mut frame = vec![0.0f64; p.fft_size];
@@ -598,14 +601,7 @@ pub fn whisper_mel(samples: &[f32]) -> Vec<Vec<f32>> {
     }
     let win = cached_window(WindowKind::PeriodicHann, p.win_length);
     let fb = cached_filters(p, FilterKind::Slaney);
-    let bands: Vec<(usize, &[f64])> = fb
-        .iter()
-        .map(|row| {
-            let start = row.iter().position(|w| *w != 0.0).unwrap_or(0);
-            let end = row.iter().rposition(|w| *w != 0.0).map_or(start, |i| i + 1);
-            (start, &row[start..end])
-        })
-        .collect();
+    let bands = band_ranges(&fb);
     // center=True добавляет по half-window с каждой стороны; torch отдаёт на
     // один кадр больше, чем нужно модели, и эталон его отбрасывает.
     let n_frames = (1 + (padded.len() - p.win_length) / p.hop) - 1;
