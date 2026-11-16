@@ -30,6 +30,9 @@ pub(super) fn write_crash(dir: &Path, record: Value) -> Option<PathBuf> {
         {
             Ok(mut file) => {
                 let _ = file.write_all(&bytes);
+                // Windows обновляет размер файла только после закрытия handle:
+                // prune до drop видел 0 и не удерживал лимит.
+                drop(file);
                 prune(dir);
                 return Some(path);
             }

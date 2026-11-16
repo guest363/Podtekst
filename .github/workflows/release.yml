@@ -242,7 +242,7 @@ jobs:
           cd "$GITHUB_WORKSPACE/ui/web/frontend" && yarn install --immutable && yarn build
       - name: Check Cargo.lock is up to date
         shell: bash
-        run: cargo metadata --locked --format-version 1 > /dev/null
+        run: cargo metadata --locked --manifest-path src-tauri/Cargo.toml --format-version 1 > /dev/null
       - name: Build Android APK
         shell: bash
         run: |
