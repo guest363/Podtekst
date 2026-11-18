@@ -12,6 +12,84 @@
     "small": {
       "files": 10,
       "records": {
+        "main-en-2spk-60s-ov0-normal": {
+          "language": "en",
+          "dataset": "synth",
+          "subset": "en",
+          "speakers_ref": 2,
+          "speakers_hyp": 2,
+          "WER": 0.087719,
+          "CER": 0.054653,
+          "DER": 0.163029,
+          "SCA": 1.0,
+          "cpWER": 0.087719,
+          "attribution": 1.0
+        },
+        "main-en-2spk-60s-ov0-quiet": {
+          "language": "en",
+          "dataset": "synth",
+          "subset": "en",
+          "speakers_ref": 2,
+          "speakers_hyp": 2,
+          "WER": 0.114035,
+          "CER": 0.06647,
+          "DER": 0.181042,
+          "SCA": 1.0,
+          "cpWER": 0.114035,
+          "attribution": 1.0
+        },
+        "main-ru-2spk-60s-ov0-normal": {
+          "language": "ru",
+          "dataset": "synth",
+          "subset": "ru",
+          "speakers_ref": 2,
+          "speakers_hyp": 2,
+          "WER": 0.144578,
+          "CER": 0.039146,
+          "DER": 0.189507,
+          "SCA": 1.0,
+          "cpWER": 0.144578,
+          "attribution": 1.0
+        },
+        "main-ru-2spk-60s-ov0-quiet": {
+          "language": "ru",
+          "dataset": "synth",
+          "subset": "ru",
+          "speakers_ref": 2,
+          "speakers_hyp": 2,
+          "WER": 0.144578,
+          "CER": 0.039146,
+          "DER": 0.182007,
+          "SCA": 1.0,
+          "cpWER": 0.144578,
+          "attribution": 1.0
+        },
+        "synth-en-2spk-60s-ov0": {
+          "language": "en",
+          "dataset": "synth",
+          "subset": "en",
+          "speakers_ref": 2,
+          "speakers_hyp": 2,
+          "WER": 0.011364,
+          "CER": 0.003527,
+          "DER": 0.567079,
+          "SCA": 1.0,
+          "cpWER": 0.761364,
+          "attribution": 0.551724
+        },
+        "synth-en-2spk-60s-ov0-spk2-18db-quieter": {
+          "language": "en",
+          "dataset": "synth",
+          "subset": "en",
+          "speakers_ref": 2,
+          "speakers_hyp": 2,
+          "WER": 0.0,
+          "CER": 0.0,
+          "DER": 0.210727,
+          "SCA": 1.0,
+          "cpWER": 0.0,
+          "attribution": 1.0
+        },
         "synth-ru-2spk-60s-ov0": {
           "language": "ru",
           "dataset": "synth",
@@ -20,10 +98,10 @@
           "speakers_hyp": 2,
           "WER": 0.010417,
           "CER": 0.005051,
-          "DER": 0.300908,
+          "DER": 0.246943,
           "SCA": 1.0,
-          "cpWER": 0.552083,
-          "attribution": 0.729167
+          "cpWER": 0.427083,
+          "attribution": 0.791667
         },
         "synth-ru-2spk-60s-ov0-spk2-18db-quieter": {
           "language": "ru",
@@ -63,84 +141,6 @@
           "SCA": 0.0,
           "cpWER": 0.576577,
           "attribution": 0.700935
-        },
-        "synth-en-2spk-60s-ov0": {
-          "language": "en",
-          "dataset": "synth",
-          "subset": "en",
-          "speakers_ref": 2,
-          "speakers_hyp": 2,
-          "WER": 0.011364,
-          "CER": 0.003527,
-          "DER": 0.567079,
-          "SCA": 1.0,
-          "cpWER": 0.761364,
-          "attribution": 0.551724
-        },
-        "synth-en-2spk-60s-ov0-spk2-18db-quieter": {
-          "language": "en",
-          "dataset": "synth",
-          "subset": "en",
-          "speakers_ref": 2,
-          "speakers_hyp": 2,
-          "WER": 0.0,
-          "CER": 0.0,
-          "DER": 0.210727,
-          "SCA": 1.0,
-          "cpWER": 0.0,
-          "attribution": 1.0
-        },
-        "main-en-2spk-60s-ov0-normal": {
-          "language": "en",
-          "dataset": "synth",
-          "subset": "en",
-          "speakers_ref": 2,
-          "speakers_hyp": 2,
-          "WER": 0.087719,
-          "CER": 0.054653,
-          "DER": 0.163029,
-          "SCA": 1.0,
-          "cpWER": 0.087719,
-          "attribution": 1.0
-        },
-        "main-ru-2spk-60s-ov0-normal": {
-          "language": "ru",
-          "dataset": "synth",
-          "subset": "ru",
-          "speakers_ref": 2,
-          "speakers_hyp": 2,
-          "WER": 0.144578,
-          "CER": 0.039146,
-          "DER": 0.189507,
-          "SCA": 1.0,
-          "cpWER": 0.144578,
-          "attribution": 1.0
-        },
-        "main-en-2spk-60s-ov0-quiet": {
-          "language": "en",
-          "dataset": "synth",
-          "subset": "en",
-          "speakers_ref": 2,
-          "speakers_hyp": 2,
-          "WER": 0.114035,
-          "CER": 0.06647,
-          "DER": 0.181042,
-          "SCA": 1.0,
-          "cpWER": 0.114035,
-          "attribution": 1.0
-        },
-        "main-ru-2spk-60s-ov0-quiet": {
-          "language": "ru",
-          "dataset": "synth",
-          "subset": "ru",
-          "speakers_ref": 2,
-          "speakers_hyp": 2,
-          "WER": 0.144578,
-          "CER": 0.039146,
-          "DER": 0.182007,
-          "SCA": 1.0,
-          "cpWER": 0.144578,
-          "attribution": 1.0
         }
       }
     },
@@ -6547,8 +6547,32 @@
     }
   },
   "metrics": {
+    "main-en-2spk-60s-ov0-normal": {
+      "DER": 0.163029,
+      "speakers_hyp": 2
+    },
+    "main-en-2spk-60s-ov0-quiet": {
+      "DER": 0.181042,
+      "speakers_hyp": 2
+    },
+    "main-ru-2spk-60s-ov0-normal": {
+      "DER": 0.189507,
+      "speakers_hyp": 2
+    },
+    "main-ru-2spk-60s-ov0-quiet": {
+      "DER": 0.182007,
+      "speakers_hyp": 2
+    },
+    "synth-en-2spk-60s-ov0": {
+      "DER": 0.567079,
+      "speakers_hyp": 2
+    },
+    "synth-en-2spk-60s-ov0-spk2-18db-quieter": {
+      "DER": 0.210727,
+      "speakers_hyp": 2
+    },
     "synth-ru-2spk-60s-ov0": {
-      "DER": 0.300908,
+      "DER": 0.246943,
       "speakers_hyp": 2
     },
     "synth-ru-2spk-60s-ov0-spk2-18db-quieter": {
@@ -6562,30 +6586,6 @@
     "synth-ru-4spk-60s-ov15": {
       "DER": 0.388827,
       "speakers_hyp": 3
-    },
-    "synth-en-2spk-60s-ov0": {
-      "DER": 0.567079,
-      "speakers_hyp": 2
-    },
-    "synth-en-2spk-60s-ov0-spk2-18db-quieter": {
-      "DER": 0.210727,
-      "speakers_hyp": 2
-    },
-    "main-en-2spk-60s-ov0-normal": {
-      "DER": 0.163029,
-      "speakers_hyp": 2
-    },
-    "main-ru-2spk-60s-ov0-normal": {
-      "DER": 0.189507,
-      "speakers_hyp": 2
-    },
-    "main-en-2spk-60s-ov0-quiet": {
-      "DER": 0.181042,
-      "speakers_hyp": 2
-    },
-    "main-ru-2spk-60s-ov0-quiet": {
-      "DER": 0.182007,
-      "speakers_hyp": 2
     }
   },
   "groups": {
