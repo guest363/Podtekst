@@ -4,7 +4,7 @@ use mr_ml::onnx::embed::EmbeddingExtractor;
 use mr_ml::onnx::segmentation::Segmentation;
 use mr_ml::{
     cosine_similarity, match_voiceprints_matrix, score_speaker_similarity, weighted_centroid,
-    SpeakerProfile,
+    ClusterMatch, SpeakerProfile,
 };
 
 use super::clean_speech::SpeechSupport;
@@ -30,6 +30,9 @@ const CHAIN_MIN_SIM: f64 = 0.5;
 /// перевороты — маржа 0.30+; на коротких кусках переворачивает только уверенная смена.
 const SHORT_FLIP_SEC: f64 = 3.0;
 const SHORT_FLIP_MARGIN: f64 = 0.06;
+/// Ниже этого сходства со своим профилем карточка точно чужая, даже если
+/// альтернативного совпадения в базе голосов нет.
+const MIN_CLUSTER_KEEP_SIM: f64 = 0.30;
 
 struct ChannelNeighbor {
     speaker: String,
@@ -200,6 +203,86 @@ fn contradicts(
     own < mr_ml::DEFAULT_MATCH_THRESHOLD || best - own >= flip_margin
 }
 
+fn should_split_matched_card(
+    embedding: &[f64],
+    assigned: &str,
+    profiles: &[SpeakerProfile],
+    result: &ClusterMatch,
+    flip_margin: f64,
+) -> bool {
+    if result.matched {
+        return true;
+    }
+    let Some(profile) = profiles.iter().find(|profile| profile.name == assigned) else {
+        return false;
+    };
+    let own = score_speaker_similarity(embedding, profile);
+    let best = profiles
+        .iter()
+        .map(|profile| score_speaker_similarity(embedding, profile))
+        .fold(own, f64::max);
+    // При шуме кластера ниже порога 0.45, когда ни один профиль не совпал,
+    // карточку рвём лишь при явной чужой альтернативе или полном провале сходства.
+    own < MIN_CLUSTER_KEEP_SIM
+        || (best >= mr_ml::DEFAULT_MATCH_THRESHOLD && best - own >= flip_margin)
+}
+
+fn ensure_verified_speaker_info(
+    infos: &mut Vec<SpeakerInfo>,
+    names: &mut HashSet<String>,
+    utterance: &Utterance,
+    target_name: &str,
+    named_match: bool,
+    result: ClusterMatch,
+    embedding: &[f64],
+) {
+    if names.contains(target_name) {
+        return;
+    }
+    let mut new_info = infos
+        .iter()
+        .find(|info| info.name == utterance.speaker)
+        .cloned()
+        .unwrap_or_else(|| SpeakerInfo {
+            id: String::new(),
+            name: target_name.to_string(),
+            channel: utterance.channel,
+            matched: false,
+            matched_name: None,
+            matched_pack_id: None,
+            matched_pack_name: None,
+            similarity: 0.0,
+            silhouette: 0.0,
+            candidates: vec![],
+            embedding: None,
+            samples: vec![],
+            utterances_count: 0,
+            total_speech_sec: 0.0,
+        });
+    new_info.id = format!("verified_{}", infos.len());
+    new_info.name = target_name.to_string();
+    new_info.channel = utterance.channel;
+    new_info.matched = named_match && result.matched;
+    new_info.matched_name = new_info.matched.then(|| result.name.clone()).flatten();
+    new_info.matched_pack_id = new_info.matched.then(|| result.pack_id.clone()).flatten();
+    new_info.matched_pack_name = new_info.matched.then(|| result.pack_name.clone()).flatten();
+    new_info.similarity = if new_info.matched {
+        result.similarity
+    } else {
+        0.0
+    };
+    new_info.silhouette = 0.0;
+    new_info.candidates = result
+        .candidates
+        .into_iter()
+        .map(|candidate| (candidate.name, candidate.similarity))
+        .collect();
+    new_info.embedding = Some(embedding.to_vec());
+    new_info.samples.clear();
+    infos.push(new_info);
+    names.insert(target_name.to_string());
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run(
     utterances: &mut Vec<Utterance>,
@@ -233,7 +316,8 @@ pub(super) fn run(
         let verify_card = infos
             .iter()
             .any(|info| info.name == utterance.speaker && info.matched);
-        if chain_prev.is_none() && !verify_card {
+        let verify_unmatched_remote = !verify_card && channel != 0 && !profiles.is_empty();
+        if chain_prev.is_none() && !verify_card && !verify_unmatched_remote {
             continue;
         }
         let Some(samples) = audio.samples.get(&channel) else {
@@ -283,73 +367,82 @@ pub(super) fn run(
                 mr_ml::DEFAULT_MIN_MARGIN
             };
             if contradicts(&embedding, &utterance.speaker, profiles, flip_margin) {
-                let mut result = match_voiceprints_matrix(
+                let result = match_voiceprints_matrix(
                     std::slice::from_ref(&embedding),
                     profiles,
                     mr_ml::DEFAULT_MATCH_THRESHOLD,
                     mr_ml::DEFAULT_MIN_MARGIN,
-                );
-                let result = result.remove(0);
-                // Имя профиля требует 2 с чистого аудио: на 1.5-секундном куске
-                // карточка остаётся анонимной, даже если матчер уверен.
-                let named = may_claim_name(duration);
-                let name = if named { result.name.clone() } else { None }.unwrap_or_else(|| {
-                    if let Some(known) = nearest_anonymous(infos, &embedding, &utterance.speaker) {
-                        return known.to_string();
-                    }
-                    while names.contains(&format!("Собеседник {next_unknown}")) {
-                        next_unknown += 1;
-                    }
-                    let name = format!("Собеседник {next_unknown}");
-                    next_unknown += 1;
-                    name
-                });
-                if !names.contains(&name) {
-                    let mut new_info = infos
-                        .iter()
-                        .find(|info| info.name == utterance.speaker && info.matched)
-                        .cloned()
-                        .expect("verify_card");
-                    new_info.id = format!("verified_{}", infos.len());
-                    new_info.name = name.clone();
-                    new_info.channel = utterance.channel;
-                    new_info.matched = named && result.matched;
-                    new_info.matched_name = new_info.matched.then(|| result.name.clone()).flatten();
-                    new_info.matched_pack_id =
-                        new_info.matched.then(|| result.pack_id.clone()).flatten();
-                    new_info.matched_pack_name =
-                        new_info.matched.then(|| result.pack_name.clone()).flatten();
-                    new_info.similarity = if new_info.matched {
-                        result.similarity
-                    } else {
-                        0.0
-                    };
-                    new_info.silhouette = 0.0;
-                    new_info.candidates = result
-                        .candidates
-                        .into_iter()
-                        .map(|candidate| (candidate.name, candidate.similarity))
-                        .collect();
-                    new_info.embedding = Some(embedding.clone());
-                    new_info.samples.clear();
-                    infos.push(new_info);
-                    names.insert(name.clone());
+                )
+                .remove(0);
+                if should_split_matched_card(
+                    &embedding,
+                    &utterance.speaker,
+                    profiles,
+                    &result,
+                    flip_margin,
+                ) {
+                    // Новое имя профиля требует 2 с чистого аудио; в уже подтверждённую
+                    // на этом звонке карточку разрешаем переход уверенно с 1.5 с.
+                    let named = may_claim_name(duration)
+                        || (result.matched
+                            && result
+                                .name
+                                .as_ref()
+                                .is_some_and(|matched_name| names.contains(matched_name)));
+                    let name =
+                        if named { result.name.clone() } else { None }.unwrap_or_else(|| {
+                            if let Some(known) =
+                                nearest_anonymous(infos, &embedding, &utterance.speaker)
+                            {
+                                return known.to_string();
+                            }
+                            while names.contains(&format!("Собеседник {next_unknown}")) {
+                                next_unknown += 1;
+                            }
+                            let name = format!("Собеседник {next_unknown}");
+                            next_unknown += 1;
+                            name
+                        });
+                    ensure_verified_speaker_info(
+                        infos, &mut names, utterance, &name, named, result, &embedding,
+                    );
+                    changed.insert(utterance.speaker.clone());
+                    utterance.speaker = name;
+                    utterance.silhouette = 0.0;
+                    reassigned += 1;
                 }
-                changed.insert(utterance.speaker.clone());
-                utterance.speaker = name;
-                utterance.silhouette = 0.0;
-                reassigned += 1;
+            }
+        } else if verify_unmatched_remote && may_claim_name(duration) {
+            let result = match_voiceprints_matrix(
+                std::slice::from_ref(&embedding),
+                profiles,
+                mr_ml::DEFAULT_MATCH_THRESHOLD,
+                mr_ml::DEFAULT_MIN_MARGIN,
+            )
+            .remove(0);
+            if result.matched {
+                if let Some(name) = result.name.clone() {
+                    if name != utterance.speaker {
+                        ensure_verified_speaker_info(
+                            infos, &mut names, utterance, &name, true, result, &embedding,
+                        );
+                        changed.insert(utterance.speaker.clone());
+                        utterance.speaker = name;
+                        utterance.silhouette = 0.0;
+                        reassigned += 1;
+                    }
+                }
             }
         }
-        if inherited || verify_card {
+        let matched = infos
+            .iter()
+            .any(|info| info.name == utterance.speaker && info.matched);
+        if inherited || matched {
             verified
                 .entry(utterance.speaker.clone())
                 .or_default()
                 .push((embedding.clone(), duration));
         }
-        let matched = infos
-            .iter()
-            .any(|info| info.name == utterance.speaker && info.matched);
         last_on_channel.insert(
             channel,
             ChannelNeighbor {
@@ -929,5 +1022,117 @@ mod tests {
         assert!(infos[0].matched);
         assert_eq!(infos[0].samples[0].channel, Some(1));
         assert!((infos[0].similarity - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn noisy_below_threshold_matched_cluster_is_not_split_into_phantom() {
+        let mild_noise = vec![profile("A", 0.43), profile("B", 0.41)];
+        let unmatched = match_voiceprints_matrix(
+            &[vec![1.0, 0.0]],
+            &mild_noise,
+            mr_ml::DEFAULT_MATCH_THRESHOLD,
+            mr_ml::DEFAULT_MIN_MARGIN,
+        )
+        .remove(0);
+        assert!(!unmatched.matched);
+        assert!(!should_split_matched_card(
+            &[1.0, 0.0],
+            "A",
+            &mild_noise,
+            &unmatched,
+            mr_ml::DEFAULT_MIN_MARGIN
+        ));
+
+        let unsupported = vec![profile("A", 0.2)];
+        let empty = match_voiceprints_matrix(
+            &[vec![1.0, 0.0]],
+            &unsupported,
+            mr_ml::DEFAULT_MATCH_THRESHOLD,
+            mr_ml::DEFAULT_MIN_MARGIN,
+        )
+        .remove(0);
+        assert!(should_split_matched_card(
+            &[1.0, 0.0],
+            "A",
+            &unsupported,
+            &empty,
+            mr_ml::DEFAULT_MIN_MARGIN
+        ));
+
+        let ambiguous_alt = vec![
+            profile("A", 0.45),
+            profile("B", 0.55),
+            profile("C", 0.53),
+            profile("D", 0.51),
+            profile("E", 0.49),
+        ];
+        let tied = match_voiceprints_matrix(
+            &[vec![1.0, 0.0]],
+            &ambiguous_alt,
+            mr_ml::DEFAULT_MATCH_THRESHOLD,
+            mr_ml::DEFAULT_MIN_MARGIN,
+        )
+        .remove(0);
+        assert!(!tied.matched);
+        assert!(should_split_matched_card(
+            &[1.0, 0.0],
+            "A",
+            &ambiguous_alt,
+            &tied,
+            mr_ml::DEFAULT_MIN_MARGIN
+        ));
+    }
+
+    #[test]
+    fn real_voice_matches_unmatched_remote_cluster_utterance() {
+        let Some(models) = std::env::var_os("MR_MODELS_DIR") else {
+            return;
+        };
+        let model =
+            std::path::PathBuf::from(models).join("diar-eres2netv2-emb/eres2netv2_emb.onnx");
+        let mut extractor = EmbeddingExtractor::load(&model).expect("модель ERes2NetV2");
+        let fixtures =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../mr-ml/tests/fixtures");
+        let samples: Vec<f32> = hound::WavReader::open(fixtures.join("speaker1_a_cn_16k.wav"))
+            .expect("открытый WAV")
+            .samples::<i16>()
+            .map(|sample| sample.expect("PCM") as f32 / 32768.0)
+            .collect();
+        let own = extractor
+            .embed(&samples)
+            .expect("инференс")
+            .expect("голос A");
+        let mut a = profile("A", 0.5);
+        a.embedding = own;
+        let duration = samples.len() as f64 / 16000.0;
+        let mut utt = utterance(0.0, duration, "Собеседник 1");
+        utt.channel = Some(1);
+        utt.text = "раз два".to_string();
+        let mut utterances = vec![utt];
+        let mut infos = vec![info("Собеседник 1", false, vec![0.0; mr_ml::EMBEDDING_DIM])];
+        infos[0].channel = Some(1);
+        let channels = HashMap::from([(1, samples)]);
+        let views: HashMap<usize, &[f32]> = channels
+            .iter()
+            .map(|(channel, s)| (*channel, s.as_slice()))
+            .collect();
+        let no_vad = HashMap::new();
+        run(
+            &mut utterances,
+            &mut infos,
+            &channels,
+            VerificationInput {
+                samples: &views,
+                vad: &no_vad,
+                segmentations: &HashMap::new(),
+                echo: None,
+            },
+            &mut Some(extractor),
+            &[a],
+        );
+        super::super::diarize::refresh_speaker_stats(&mut infos, &utterances);
+        assert_eq!(utterances[0].speaker, "A");
+        assert_eq!(infos.len(), 1);
+        assert!(infos[0].matched);
     }
 }
