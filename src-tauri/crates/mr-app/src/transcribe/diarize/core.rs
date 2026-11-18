@@ -43,6 +43,37 @@ const CENTROID_MERGE_SIM: f64 = 0.70;
 /// только при ретрае после коллапса в один кластер.
 const CROSS_TURN_ACTIVE_SIM: f64 = 0.5;
 
+fn summarize_unit_members(
+    units: &[super::AcoustUnit],
+    members: &[usize],
+    support: SpeechSupport<'_>,
+) -> (Vec<f64>, f64, f64) {
+    let vecs: Vec<Vec<f64>> = members
+        .iter()
+        .map(|&index| units[index].embedding.clone())
+        .collect();
+    let mut intervals = Vec::with_capacity(members.len());
+    let mut covered = 0.0;
+    let ws: Vec<f64> = members
+        .iter()
+        .map(|&index| {
+            let unit = &units[index];
+            intervals.push((unit.start, unit.end));
+            let total = support.duration(&intervals);
+            let weight = (total - covered).max(0.0) * unit.quality;
+            covered = total;
+            weight
+        })
+        .collect();
+    let total_dur: f64 = members.iter().map(|&index| units[index].dur).sum();
+    let quality: f64 = members
+        .iter()
+        .map(|&index| units[index].quality * units[index].dur)
+        .sum::<f64>()
+        / total_dur.max(1e-6);
+    (mr_ml::weighted_centroid(&vecs, &ws), covered, quality)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn diarize_channel(
     samples: &[f32],
@@ -474,30 +505,8 @@ pub(crate) fn diarize_channel(
         if members.is_empty() {
             continue;
         }
-        let vecs: Vec<Vec<f64>> = members
-            .iter()
-            .map(|&index| units[index].embedding.clone())
-            .collect();
-        let mut intervals = Vec::with_capacity(members.len());
-        let mut covered = 0.0;
-        let ws: Vec<f64> = members
-            .iter()
-            .map(|&index| {
-                let unit = &units[index];
-                intervals.push((unit.start, unit.end));
-                let total = support.duration(&intervals);
-                let weight = (total - covered).max(0.0) * unit.quality;
-                covered = total;
-                weight
-            })
-            .collect();
-        let total_dur: f64 = members.iter().map(|&index| units[index].dur).sum();
-        let quality: f64 = members
-            .iter()
-            .map(|&index| units[index].quality * units[index].dur)
-            .sum::<f64>()
-            / total_dur.max(1e-6);
-        embs[utterance] = Some(mr_ml::weighted_centroid(&vecs, &ws));
+        let (embedding, covered, quality) = summarize_unit_members(&units, &members, support);
+        embs[utterance] = Some(embedding);
         durs[utterance] = covered;
         quals[utterance] = quality;
         label_of.insert(utterance, label);
@@ -512,6 +521,17 @@ pub(crate) fn diarize_channel(
             vec![fallback_info(default_name, channel_idx, utterances)],
             Vec::new(),
         );
+    }
+    // Короткие реплики без совпадения в diar.assign всё равно имеют готовый вектор:
+    // без него speaker_assignment пропускает их и теряет разделение в окнах PyAnnote.
+    for utterance in 0..n {
+        if embs[utterance].is_none() && !units_by_utterance[utterance].is_empty() {
+            let (embedding, covered, quality) =
+                summarize_unit_members(&units, &units_by_utterance[utterance], support);
+            embs[utterance] = Some(embedding);
+            durs[utterance] = covered;
+            quals[utterance] = quality;
+        }
     }
     // Индексы реплик уже пересобраны split_covered_utterances:
     // неизвестные голоса ищем по меткам, а не по индексам до split.
@@ -556,12 +576,13 @@ pub(crate) fn diarize_channel(
         reassign_short_replies(utterances, &embs, &durs, &quals, &mut label_of);
     }
     coverage::restore_protected(&mut label_of, &protected);
-    let final_vecs: Vec<Vec<f64>> = valid.iter().map(|&i| embs[i].clone().unwrap()).collect();
+    let scored: Vec<usize> = (0..n).filter(|&i| embs[i].is_some()).collect();
+    let final_vecs: Vec<Vec<f64>> = scored.iter().map(|&i| embs[i].clone().unwrap()).collect();
     diagnostics::turns("final", ch, utterances, &label_of, support);
-    let final_labels: Vec<usize> = valid.iter().map(|&i| label_of[&i]).collect();
+    let final_labels: Vec<usize> = scored.iter().map(|&i| label_of[&i]).collect();
     let final_scores = mr_ml::cluster::silhouette_scores(&final_vecs, &final_labels);
     let mut silhouettes = vec![0.0f64; n];
-    for (&i, score) in valid.iter().zip(final_scores) {
+    for (&i, score) in scored.iter().zip(final_scores) {
         silhouettes[i] = score;
     }
     let mut raw_clusters: Vec<usize> = label_of.values().copied().collect();
@@ -850,11 +871,37 @@ pub(crate) fn diarize_channel(
         .collect();
     // Консервативное доразбиение только для ch=1: моно и микрофон сохраняют прежнюю геометрию.
     if channel_idx == Some(1) {
-        super::split::refine_ch1_utterances(
+        let centroids: HashMap<&str, &[f64]> = infos
+            .iter()
+            .filter_map(|info| {
+                info.embedding
+                    .as_deref()
+                    .map(|emb| (info.name.as_str(), emb))
+            })
+            .collect();
+        super::split::refine_ch1_with_verifier(
             utterances,
             &voice_timeline,
             &protected,
             &promoted_utts,
+            &mut |own, target, start, end| {
+                let (Some(ext), Some(own_emb), Some(target_emb)) = (
+                    extractor.as_mut(),
+                    centroids.get(own).copied(),
+                    centroids.get(target).copied(),
+                ) else {
+                    return true;
+                };
+                let Some((chunk, _)) =
+                    acoustic_units::extract_clean_chunk(samples, start, end, support)
+                else {
+                    return false;
+                };
+                let Ok(Some(piece_emb)) = ext.embed(&chunk) else {
+                    return false;
+                };
+                cosine_similarity(&piece_emb, target_emb) > cosine_similarity(&piece_emb, own_emb)
+            },
         );
     }
     if cfg!(debug_assertions) {

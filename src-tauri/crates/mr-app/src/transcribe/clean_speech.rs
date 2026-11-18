@@ -8,7 +8,12 @@ pub(super) struct SpeechSupport<'a> {
 }
 
 impl<'a> SpeechSupport<'a> {
-    fn ranges(self, start: usize, end: usize) -> impl Iterator<Item = std::ops::Range<usize>> + 'a {
+    fn ranges(
+        self,
+        start: usize,
+        end: usize,
+        vad_pad_frames: usize,
+    ) -> impl Iterator<Item = std::ops::Range<usize>> + 'a {
         let mut cursor = start;
         std::iter::from_fn(move || {
             while cursor < end {
@@ -23,9 +28,17 @@ impl<'a> SpeechSupport<'a> {
                     cursor = cursor.min((segmentation_frame + 1) * FRAME_SAMPLES);
                 }
                 let speech = self.vad_probs.is_none_or(|probs| {
-                    probs
-                        .get(vad_frame)
-                        .is_some_and(|&prob| prob >= super::diag::VAD_THRESHOLD)
+                    if probs.is_empty() {
+                        return false;
+                    }
+                    let lo = vad_frame.saturating_sub(vad_pad_frames);
+                    let hi = vad_frame
+                        .saturating_add(vad_pad_frames)
+                        .min(probs.len() - 1);
+                    lo <= hi
+                        && probs[lo..=hi]
+                            .iter()
+                            .any(|&prob| prob >= super::diag::VAD_THRESHOLD)
                 });
                 let overlap = self.segmentation.is_some_and(|segmentation| {
                     segmentation
@@ -69,7 +82,7 @@ impl<'a> SpeechSupport<'a> {
                 continue;
             }
             count += self
-                .ranges(start, end)
+                .ranges(start, end, 0)
                 .map(|range| range.len())
                 .sum::<usize>();
             covered_end = end;
@@ -78,8 +91,17 @@ impl<'a> SpeechSupport<'a> {
     }
 
     pub fn retain_in_place(self, samples: &mut [f32], offset: usize) -> usize {
+        self.retain_with_vad_pad(samples, offset, 0)
+    }
+
+    pub fn retain_with_vad_pad(
+        self,
+        samples: &mut [f32],
+        offset: usize,
+        vad_pad_frames: usize,
+    ) -> usize {
         let mut write = 0;
-        for range in self.ranges(offset, offset + samples.len()) {
+        for range in self.ranges(offset, offset + samples.len(), vad_pad_frames) {
             let len = range.len();
             samples.copy_within(range.start - offset..range.end - offset, write);
             write += len;
@@ -187,5 +209,27 @@ mod speech_support_tests {
             support.duration(&[(0.0, 0.1)]),
             (1600 - FRAME_SAMPLES) as f64 / 16000.0
         );
+    }
+
+    #[test]
+    fn vad_pad_expands_edge_context_while_excluding_overlap() {
+        let vad = [0.0, 1.0, 0.0, 0.0];
+        let mut frames = vec![0u8; 8];
+        frames[4] = 4;
+        let segmentation = Segmentation {
+            frames,
+            windows: vec![],
+        };
+        let support = SpeechSupport {
+            vad_probs: Some(&vad),
+            segmentation: Some(&segmentation),
+        };
+        let mut samples: Vec<f32> = (0..VAD_WINDOW * vad.len()).map(|i| i as f32).collect();
+        let retained = support.retain_with_vad_pad(&mut samples, 0, 1);
+        let expected: Vec<f32> = (0..1080).chain(1350..1536).map(|i| i as f32).collect();
+        assert_eq!(retained, expected.len());
+        assert!(samples[..retained].iter().eq(expected.iter()));
+        let end = (VAD_WINDOW * vad.len()) as f64 / 16000.0;
+        assert_eq!(support.duration(&[(0.0, end)]), VAD_WINDOW as f64 / 16000.0);
     }
 }

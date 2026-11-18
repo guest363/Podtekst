@@ -16,11 +16,11 @@ use super::segments::{
     merge_quiet_short_with_evidence, merge_tiny_clusters, promote_unmatched_utterances,
     promoted_utterances, short_join_threshold, smooth_labels_mono, switch_penalty,
 };
-use super::split::refine_ch1_utterances;
 use super::split::{
     local_region, speaker_change_cuts, split_at_pauses, split_by_word_pauses,
     split_utterance_by_bounds, split_window_region,
 };
+use super::split::{refine_ch1_utterances, refine_ch1_with_verifier};
 use super::text::{move_boundary_words, words_match};
 use super::{
     merge_quiet_short, read_profiles_file, split_words_by_bounds, text_similarity, AcoustUnit,
@@ -2190,4 +2190,42 @@ fn ch1_refinement_clamps_untimed_dash_in_large_gap_to_part_bounds() {
     );
     assert!(dash.start_sec >= utterances[1].start - 0.5 && dash.end_sec <= utterances[1].end + 0.5);
     assert!(dash.start_sec <= dash.end_sec);
+}
+
+#[test]
+fn ch1_refinement_verifier_rejects_unconfirmed_split_and_allows_confirmed() {
+    let mut base = utt(0.0, 6.5, "Собеседник 1", 1, "альфа бета гамма. дельта");
+    base.words = vec![
+        word("альфа", 0.2, 1.5),
+        word("бета", 1.6, 3.0),
+        word("гамма.", 3.1, 5.0),
+        word("дельта", 5.4, 6.4),
+    ];
+    let voice_timeline = vec![
+        utt(0.0, 5.2, "Собеседник 1", 1, ""),
+        utt(5.3, 6.5, "Собеседник 2", 1, ""),
+    ];
+
+    let mut rejected = vec![base.clone()];
+    refine_ch1_with_verifier(
+        &mut rejected,
+        &voice_timeline,
+        &HashMap::new(),
+        &HashMap::new(),
+        &mut |_, _, _, _| false,
+    );
+    assert_eq!(rejected.len(), 1);
+    assert_eq!(rejected[0].speaker, "Собеседник 1");
+
+    let mut confirmed = vec![base];
+    refine_ch1_with_verifier(
+        &mut confirmed,
+        &voice_timeline,
+        &HashMap::new(),
+        &HashMap::new(),
+        &mut |_, _, _, _| true,
+    );
+    assert_eq!(confirmed.len(), 2);
+    assert_eq!(confirmed[0].speaker, "Собеседник 1");
+    assert_eq!(confirmed[1].speaker, "Собеседник 2");
 }

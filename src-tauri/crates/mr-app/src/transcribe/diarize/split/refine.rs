@@ -242,7 +242,11 @@ fn slice_part_words(
         .collect()
 }
 
-fn split_utterance_by_voice_runs(utterance: &Utterance, runs: &[Utterance]) -> Vec<Utterance> {
+fn split_utterance_by_voice_runs(
+    utterance: &Utterance,
+    runs: &[Utterance],
+    verify_switch: &mut impl FnMut(&str, &str, f64, f64) -> bool,
+) -> Vec<Utterance> {
     if utterance.end - utterance.start < REFINE_MIN_UTTERANCE_SEC {
         return vec![utterance.clone()];
     }
@@ -278,7 +282,14 @@ fn split_utterance_by_voice_runs(utterance: &Utterance, runs: &[Utterance]) -> V
             (word_lo, word_hi),
             (time_lo, time_hi),
         );
-        let speaker = dominant_piece_speaker(utterance, runs, time_lo, time_hi);
+        let candidate = dominant_piece_speaker(utterance, runs, time_lo, time_hi);
+        let speaker = if candidate != utterance.speaker
+            && !verify_switch(&utterance.speaker, &candidate, time_lo, time_hi)
+        {
+            utterance.speaker.clone()
+        } else {
+            candidate
+        };
         let fragment_text = words[word_lo..word_hi].join(" ");
         if let Some(last) = parts.last_mut().filter(|last| last.speaker == speaker) {
             last.end = time_hi;
@@ -310,11 +321,28 @@ fn split_utterance_by_voice_runs(utterance: &Utterance, runs: &[Utterance]) -> V
     }
 }
 
+#[cfg(test)]
 pub(in crate::transcribe::diarize) fn refine_ch1_utterances(
     utterances: &mut Vec<Utterance>,
     voice_timeline: &[Utterance],
     protected: &HashMap<usize, usize>,
     promoted_utts: &HashMap<usize, usize>,
+) {
+    refine_ch1_with_verifier(
+        utterances,
+        voice_timeline,
+        protected,
+        promoted_utts,
+        &mut |_, _, _, _| true,
+    );
+}
+
+pub(in crate::transcribe::diarize) fn refine_ch1_with_verifier(
+    utterances: &mut Vec<Utterance>,
+    voice_timeline: &[Utterance],
+    protected: &HashMap<usize, usize>,
+    promoted_utts: &HashMap<usize, usize>,
+    verify_switch: &mut impl FnMut(&str, &str, f64, f64) -> bool,
 ) {
     let runs = coalesce_clean_runs(voice_timeline);
     if runs.is_empty()
@@ -332,7 +360,11 @@ pub(in crate::transcribe::diarize) fn refine_ch1_utterances(
             && !protected.contains_key(&index)
             && !promoted_utts.contains_key(&index)
         {
-            refined.extend(split_utterance_by_voice_runs(utterance, &runs));
+            refined.extend(split_utterance_by_voice_runs(
+                utterance,
+                &runs,
+                verify_switch,
+            ));
         } else {
             refined.push(utterance.clone());
         }

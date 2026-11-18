@@ -34,14 +34,18 @@ struct PreparedUnit {
     anchor: bool,
 }
 
-fn prepare(
+/// Короткие реплики (0.4–1.0 с) при строгом срезе VAD теряют атаку и хвост гласного,
+/// что резко роняет сходство ERes2NetV2; 4 кадра (128 мс) в границах реплики без
+/// перекрытий восстанавливают стабильность вектора без завышения чистой длительности.
+const SHORT_CONTEXT_MAX_SEC: f64 = 1.0;
+const SHORT_VAD_PAD_FRAMES: usize = 4;
+
+pub(super) fn extract_clean_chunk(
     samples: &[f32],
     start: f64,
     end: f64,
-    utterance: usize,
     support: SpeechSupport<'_>,
-    anchor: bool,
-) -> Option<PreparedUnit> {
+) -> Option<(Vec<f32>, f64)> {
     const SR: f64 = 16000.0;
     let lo = ((start.max(0.0) * SR) as usize).min(samples.len());
     let hi = ((end.max(0.0) * SR) as usize).min(samples.len());
@@ -53,16 +57,35 @@ fn prepare(
     if clean_len < (SR * acoustic_windows::MIN_UNIT_SEC) as usize {
         return None;
     }
-    chunk.truncate(clean_len);
-    let quality = super::rms_quality(&chunk);
+    let clean_dur = clean_len as f64 / SR;
+    let final_len = if clean_dur < SHORT_CONTEXT_MAX_SEC && support.vad_probs.is_some() {
+        chunk.copy_from_slice(&samples[lo..hi]);
+        support.retain_with_vad_pad(&mut chunk, lo, SHORT_VAD_PAD_FRAMES)
+    } else {
+        clean_len
+    };
+    chunk.truncate(final_len);
     if experiment::current().embedding == Embedding::UnitNorm {
         normalize_unit_rms(&mut chunk);
     }
+    Some((chunk, clean_dur))
+}
+
+fn prepare(
+    samples: &[f32],
+    start: f64,
+    end: f64,
+    utterance: usize,
+    support: SpeechSupport<'_>,
+    anchor: bool,
+) -> Option<PreparedUnit> {
+    let (chunk, clean_dur) = extract_clean_chunk(samples, start, end, support)?;
+    let quality = super::rms_quality(&chunk);
     Some(PreparedUnit {
         utterance,
         start,
         end,
-        dur: clean_len as f64 / SR,
+        dur: clean_dur,
         quality,
         chunk,
         anchor,
@@ -208,5 +231,61 @@ mod tests {
         let mut silence = vec![0.0f32; 16_000];
         normalize_unit_rms(&mut silence);
         assert!(silence.iter().all(|&x| x == 0.0));
+    }
+
+    #[test]
+    fn extract_clean_chunk_pads_only_short_chunks_and_drops_subminimum() {
+        let mut vad = vec![0.0f32; 80];
+        let samples = vec![0.1f32; vad.len() * mr_ml::onnx::vad::VAD_WINDOW];
+        let frame_sec = mr_ml::onnx::vad::VAD_WINDOW as f64 / 16_000.0;
+
+        for prob in &mut vad[10..20] {
+            *prob = 1.0;
+        }
+        assert!(extract_clean_chunk(
+            &samples,
+            0.0,
+            vad.len() as f64 * frame_sec,
+            SpeechSupport {
+                vad_probs: Some(&vad),
+                segmentation: None,
+            },
+        )
+        .is_none());
+
+        for prob in &mut vad[20..26] {
+            *prob = 1.0;
+        }
+        let (short_chunk, short_dur) = extract_clean_chunk(
+            &samples,
+            0.0,
+            vad.len() as f64 * frame_sec,
+            SpeechSupport {
+                vad_probs: Some(&vad),
+                segmentation: None,
+            },
+        )
+        .unwrap();
+        assert!((short_dur - 16.0 * frame_sec).abs() < 1e-6);
+        assert_eq!(
+            short_chunk.len(),
+            (16 + 2 * SHORT_VAD_PAD_FRAMES) * mr_ml::onnx::vad::VAD_WINDOW
+        );
+
+        for prob in &mut vad[26..44] {
+            *prob = 1.0;
+        }
+        let (long_chunk, long_dur) = extract_clean_chunk(
+            &samples,
+            0.0,
+            vad.len() as f64 * frame_sec,
+            SpeechSupport {
+                vad_probs: Some(&vad),
+                segmentation: None,
+            },
+        )
+        .unwrap();
+        assert!((long_dur - 34.0 * frame_sec).abs() < 1e-6);
+        assert_eq!(long_chunk.len(), 34 * mr_ml::onnx::vad::VAD_WINDOW);
     }
 }

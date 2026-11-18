@@ -93,6 +93,7 @@ pub(super) fn run(
 ) -> Result<VadOutput, String> {
     let mut channel_grouped: HashMap<usize, Vec<(f64, f64)>> = HashMap::new();
     let mut channel_vad: HashMap<usize, Vec<f32>> = HashMap::new();
+    let mut raw_mic_probs: Option<Vec<f32>> = None;
     let mut channel_vad_stats: HashMap<usize, VadRunStats> = HashMap::new();
     let channel_count = chan_list.len().max(1) as f64;
     let vad_stage = Instant::now();
@@ -148,6 +149,11 @@ pub(super) fn run(
                 raw_rescued += usize::from(raw && !normalized);
                 new_norm_speech += usize::from(normalized && !raw);
             }
+            // Классификация эха сравнивает исходную огибающую микрофона с её
+            // шумовым полом: вероятности с AGC превращают тихий хвост реверберации в LocalOnly.
+            if *ch == 0 {
+                raw_mic_probs = Some(original_probs);
+            }
             (probs, stats, raw_rescued, new_norm_speech)
         } else {
             write_pass(*ch, "frontend", &original_probs, Some("raw"));
@@ -167,7 +173,9 @@ pub(super) fn run(
     let mut evidence: Option<EchoEvidence> = None;
     if is_stereo {
         if let (Some(mic), Some(system)) = (original_samples.get(&0), original_samples.get(&1)) {
-            let mic_probs = channel_vad.get(&0).map(Vec::as_slice);
+            let mic_probs = raw_mic_probs
+                .as_deref()
+                .or_else(|| channel_vad.get(&0).map(Vec::as_slice));
             let detected = channel_mix::classify_echo(mic, system, mic_probs);
             if let Some(echo) = detected.filter(EchoEvidence::is_strong) {
                 let suppressed = channel_vad

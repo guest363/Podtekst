@@ -19,6 +19,14 @@ const SELF_CLUSTER_MIN_DUR: f64 = 1.5;
 const SELF_CLUSTER_MIN_SIM: f64 = 0.45;
 const SELF_CLUSTER_MIN_MARGIN: f64 = 0.12;
 const COOCCUR_CONFLICT_MIN_OVERLAP: f64 = 0.5;
+/// Порог создания нового спикера в окне совпадает с MIN_LOCAL_EMBED_SEC:
+/// короткая реплика без похожего свободного голоса не плодит фантомную карточку.
+const MIN_NEW_SPEAKER_SEC: f64 = 0.8;
+/// При ложном разбиении монолога PyAnnote (нулевое перекрытие в окне) второй
+/// локальный класс акустически явно ближе к уже занятому голосу, чем к свободному.
+const MONOLOGUE_SAME_VOICE_SIM: f64 = 0.70;
+const MONOLOGUE_PEER_MIN_SIM: f64 = 0.50;
+const MONOLOGUE_REASSIGN_MARGIN: f64 = 0.25;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct SpeakerSpan {
@@ -187,31 +195,78 @@ pub(super) fn apply(
                 assigned_globals.insert(gid);
             }
         }
-        for (row, (_, embedding)) in locals.iter().enumerate() {
-            if !assigned[row] {
-                // Два локальных спикера в одном окне не могут быть одним человеком.
-                // Поэтому ищем совпадение только среди глобальных спикеров, не занятых в этом окне.
-                let best = global_ids
+        let has_overlap_frames = window.classes.iter().any(|&class| (4..=6).contains(&class));
+        for (row, &(local, ref embedding)) in locals.iter().enumerate() {
+            if assigned[row] {
+                continue;
+            }
+            let best_free = global_ids
+                .iter()
+                .filter(|&&label| !assigned_globals.contains(&label))
+                .map(|&label| (label, cosine_similarity(embedding, &globals[&label])))
+                .max_by(|a, b| a.1.total_cmp(&b.1));
+            if !has_overlap_frames {
+                let best_overall = global_ids
                     .iter()
-                    .filter(|&&label| !assigned_globals.contains(&label))
                     .map(|&label| (label, cosine_similarity(embedding, &globals[&label])))
                     .max_by(|a, b| a.1.total_cmp(&b.1));
-                if let Some((label, sim)) = best {
-                    if sim >= new_speaker_min_sim {
-                        assignment.insert(locals[row].0, label);
-                        assigned_globals.insert(label);
+                if let Some((overall_label, overall_sim)) = best_overall {
+                    let has_cooccur = assignment
+                        .iter()
+                        .filter(|(_, &gid)| gid == overall_label)
+                        .any(|(&other_local, _)| {
+                            local_members[local].iter().any(|&i| {
+                                local_members[other_local].iter().any(|&j| {
+                                    i != j
+                                        && cooccur
+                                            .get(&(i.min(j), i.max(j)))
+                                            .copied()
+                                            .unwrap_or(0.0)
+                                            > 0.0
+                                })
+                            })
+                        });
+                    let peers_match = locals
+                        .iter()
+                        .filter(|&&(other_local, _)| {
+                            assignment.get(&other_local) == Some(&overall_label)
+                        })
+                        .all(|(_, peer_emb)| {
+                            cosine_similarity(embedding, peer_emb) >= MONOLOGUE_PEER_MIN_SIM
+                        });
+                    let margin_ok = best_free.is_none_or(|(_, free_sim)| {
+                        overall_sim - free_sim >= MONOLOGUE_REASSIGN_MARGIN
+                    });
+                    if assigned_globals.contains(&overall_label)
+                        && !has_cooccur
+                        && peers_match
+                        && overall_sim >= MONOLOGUE_SAME_VOICE_SIM
+                        && margin_ok
+                    {
+                        assignment.insert(local, overall_label);
                         continue;
                     }
                 }
-                // Новый спикер создаётся только если нет свободных похожих спикеров (< 0.35)
-                if max_speakers == 0 || globals.len() < max_speakers {
-                    let local = locals[row].0;
-                    globals.insert(next_label, embedding.clone());
-                    global_ids.push(next_label);
-                    assignment.insert(local, next_label);
-                    assigned_globals.insert(next_label);
-                    next_label += 1;
+            }
+            if let Some((label, sim)) = best_free {
+                if sim >= new_speaker_min_sim {
+                    assignment.insert(local, label);
+                    assigned_globals.insert(label);
+                    continue;
                 }
+            }
+            let local_dur: f64 = local_members[local]
+                .iter()
+                .map(|&index| durs.get(index).copied().unwrap_or(0.0))
+                .sum();
+            if local_dur >= MIN_NEW_SPEAKER_SEC
+                && (max_speakers == 0 || globals.len() < max_speakers)
+            {
+                globals.insert(next_label, embedding.clone());
+                global_ids.push(next_label);
+                assignment.insert(local, next_label);
+                assigned_globals.insert(next_label);
+                next_label += 1;
             }
         }
         let locals = local_frames(&window.classes);
@@ -1121,5 +1176,100 @@ mod tests {
         assert_eq!(labels[&1], 1);
         assert_eq!(labels[&0], 0);
         assert_ne!(labels[&0], labels[&1]);
+    }
+
+    #[test]
+    fn non_overlapping_monologue_split_stays_with_overall_voice() {
+        let mut w0 = vec![1u8; 296];
+        w0.extend(vec![2u8; 178]);
+        let segmentation = Segmentation {
+            frames: vec![],
+            windows: vec![SegmentationWindow {
+                start_sample: 0,
+                classes: w0,
+            }],
+        };
+        let utterances = vec![
+            utterance(0.0, 5.0),
+            utterance(5.0, 8.0),
+            utterance(20.0, 28.0),
+        ];
+        let embs = vec![
+            Some(vec![1.0, 0.0]),
+            Some(vec![1.0, 0.0]),
+            Some(vec![0.0, 1.0]),
+        ];
+        let mut labels = HashMap::from([(0usize, 0usize), (1, 0), (2, 1)]);
+        apply(
+            &segmentation,
+            &utterances,
+            &embs,
+            &[5.0, 3.0, 8.0],
+            &[1.0; 3],
+            &mut labels,
+            &HashSet::new(),
+            0,
+        );
+        assert_eq!(labels[&0], 0);
+        assert_eq!(labels[&1], 0);
+        assert_eq!(labels[&2], 1);
+    }
+
+    #[test]
+    fn short_unassigned_local_does_not_spawn_new_global_speaker() {
+        let mut w0 = vec![1u8; 296];
+        w0.extend(vec![2u8; 36]);
+        let segmentation = Segmentation {
+            frames: vec![],
+            windows: vec![SegmentationWindow {
+                start_sample: 0,
+                classes: w0,
+            }],
+        };
+        let utterances = vec![utterance(0.0, 5.0), utterance(5.0, 5.6)];
+        let embs = vec![Some(vec![1.0, 0.0]), Some(vec![0.0, 1.0])];
+        let mut labels = HashMap::from([(0usize, 0usize)]);
+        let outcome = apply(
+            &segmentation,
+            &utterances,
+            &embs,
+            &[5.0, 0.6],
+            &[1.0; 2],
+            &mut labels,
+            &HashSet::new(),
+            0,
+        );
+        assert_eq!(labels[&0], 0);
+        assert_eq!(labels.get(&1), None);
+        assert!(outcome.voice_runs.iter().all(|span| span.label == 0));
+    }
+
+    #[test]
+    fn single_speaker_non_overlapping_monologue_split_stays_with_overall_voice() {
+        let mut w0 = vec![1u8; 296];
+        w0.extend(vec![2u8; 178]);
+        let segmentation = Segmentation {
+            frames: vec![],
+            windows: vec![SegmentationWindow {
+                start_sample: 0,
+                classes: w0,
+            }],
+        };
+        let utterances = vec![utterance(0.0, 5.0), utterance(5.0, 8.0)];
+        let embs = vec![Some(vec![1.0, 0.0]), Some(vec![0.99, 0.14])];
+        let mut labels = HashMap::from([(0usize, 0usize)]);
+        let outcome = apply(
+            &segmentation,
+            &utterances,
+            &embs,
+            &[5.0, 3.0],
+            &[1.0; 2],
+            &mut labels,
+            &HashSet::new(),
+            0,
+        );
+        assert_eq!(labels[&0], 0);
+        assert_eq!(labels[&1], 0);
+        assert!(outcome.voice_runs.iter().all(|span| span.label == 0));
     }
 }
