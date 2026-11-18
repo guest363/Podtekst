@@ -3,9 +3,14 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use mr_ml::interval_gap;
 
 use crate::transcribe::clean_speech::SpeechSupport;
+use crate::transcribe::echo::{segment_profile, EchoEvidence};
 use crate::transcribe::{SpeakerInfo, Utterance};
 
 use super::super::AcoustUnit;
+
+/// Минимальная доля чисто локальных кадров при сильном эхе: без порога
+/// остаточное эхо на микрофоне порождает фиктивные кластеры «Участник N».
+const MIN_PROMOTE_LOCAL_ONLY: f32 = 0.25;
 
 pub(crate) fn rms_quality(chunk: &[f32]) -> f64 {
     if chunk.is_empty() {
@@ -110,6 +115,7 @@ pub(in crate::transcribe::diarize) fn promote_unmatched_utterances(
     next_label: &mut usize,
     max_speakers: usize,
     support: SpeechSupport<'_>,
+    echo: Option<&EchoEvidence>,
 ) -> Vec<usize> {
     let mut unmatched: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for (index, unit) in units.iter().enumerate() {
@@ -127,10 +133,11 @@ pub(in crate::transcribe::diarize) fn promote_unmatched_utterances(
         {
             continue;
         }
-        let start = indices
+        let (start, end) = indices
             .iter()
-            .map(|&index| units[index].start)
-            .fold(f64::INFINITY, f64::min);
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &index| {
+                (lo.min(units[index].start), hi.max(units[index].end))
+            });
         let previous_end = units
             .iter()
             .enumerate()
@@ -141,6 +148,11 @@ pub(in crate::transcribe::diarize) fn promote_unmatched_utterances(
         // паузой, а не новый голос: продолжение наследует соседа по времени.
         if start - previous_end < 0.15 {
             continue;
+        }
+        if let Some(ev) = echo.filter(|ev| ev.is_strong()) {
+            if segment_profile(ev, start, end).local_only < MIN_PROMOTE_LOCAL_ONLY {
+                continue;
+            }
         }
         let intervals: Vec<(f64, f64)> = indices
             .iter()

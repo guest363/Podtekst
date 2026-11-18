@@ -108,7 +108,9 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
             None
         };
         let paused_utts = diarize::split_by_word_pauses(&source_utts, 0.8);
-        let mut diar_utts = if is_stereo {
+        // Микрофон (ch=0) не делим по паузам, чтобы не дробить остаточное эхо;
+        // системный канал (ch=1) и моно несут несколько удалённых голосов.
+        let mut diar_utts = if is_stereo && *ch == 0 {
             paused_utts
         } else {
             on_event(80, "Делю речь на паузы для спикеров…");
