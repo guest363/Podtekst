@@ -1,4 +1,4 @@
-use crate::transcribe::Utterance;
+use crate::transcribe::{Utterance, WordConf};
 
 use super::bounds::split_utterance_by_bounds;
 
@@ -123,6 +123,102 @@ pub(crate) fn split_at_pauses(samples: &[f32], utterances: &[Utterance]) -> Vec<
     out
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(super) struct WordBoundary {
+    pub cut_t: f64,
+    pub pause: f64,
+    pub ends_sentence: bool,
+    pub starts_turn_dash: bool,
+}
+
+pub(super) fn ends_sentence(word: &str) -> bool {
+    word.ends_with(['.', '!', '?', '…'])
+}
+
+pub(super) fn starts_turn_dash(word: &str) -> bool {
+    word.starts_with('—')
+}
+
+/// Строим границы между всеми словами, а не только с ненулевыми таймкодами:
+/// при CTC-выравнивании одиночные токены пунктуации (`…`, `—`) часто остаются
+/// без времени (`0.0, 0.0`), и пропуск скрыл бы смену реплики и реальную паузу.
+pub(super) fn word_boundaries(
+    words: &[WordConf],
+    utt_start: f64,
+    utt_end: f64,
+) -> Vec<WordBoundary> {
+    if words.len() < 2 || words.iter().filter(|w| w.end_sec > w.start_sec).count() < 2 {
+        return Vec::new();
+    }
+    let is_timed = |i: usize| words[i].end_sec > words[i].start_sec;
+    let is_punct_only = |i: usize| !words[i].w.chars().any(char::is_alphanumeric);
+    let resolved = words.iter().any(|w| w.end_sec <= w.start_sec).then(|| {
+        let texts: Vec<&str> = words.iter().map(|w| w.w.as_str()).collect();
+        crate::transcribe::word_speakers::resolve_word_bounds(&texts, words, utt_start, utt_end)
+    });
+
+    let mut boundaries = Vec::with_capacity(words.len() - 1);
+    for k in 0..words.len() - 1 {
+        let ends = ends_sentence(&words[k].w);
+        let dash = starts_turn_dash(&words[k + 1].w);
+        let (cut_t, pause) = match resolved.as_deref() {
+            Some(bounds) if !is_timed(k) || !is_timed(k + 1) => {
+                let mid_l = f64::midpoint(bounds[k].0, bounds[k].1);
+                let mid_r = f64::midpoint(bounds[k + 1].0, bounds[k + 1].1);
+                let raw_cut = if !is_timed(k + 1) && is_punct_only(k + 1) && is_timed(k) {
+                    f64::midpoint(bounds[k].1, mid_r)
+                } else if !is_timed(k) && is_punct_only(k) && is_timed(k + 1) {
+                    f64::midpoint(mid_l, bounds[k + 1].0)
+                } else {
+                    f64::midpoint(bounds[k].1, bounds[k + 1].0)
+                };
+                // Округление границ до 0.01 с не должно перекинуть «—» в левую половину.
+                let cut_t = if mid_r - mid_l > 0.012 {
+                    raw_cut.clamp(mid_l + 0.006, mid_r - 0.006)
+                } else {
+                    raw_cut.clamp(mid_l, mid_r)
+                };
+                let mut l = k;
+                while l > 0 && !is_timed(l) && is_punct_only(l) {
+                    l -= 1;
+                }
+                let mut r = k + 1;
+                while r + 1 < words.len() && !is_timed(r) && is_punct_only(r) {
+                    r += 1;
+                }
+                let pause = if is_timed(l) && is_timed(r) {
+                    let owner = ((l + 1)..r)
+                        .find(|&idx| starts_turn_dash(&words[idx].w))
+                        .map_or(r - 1, |idx| idx - 1);
+                    if k == owner {
+                        (words[r].start_sec - words[l].end_sec).max(0.0)
+                    } else {
+                        0.0
+                    }
+                } else {
+                    0.0
+                };
+                (cut_t, pause)
+            }
+            _ => {
+                let gap_start = words[k].end_sec;
+                let gap_end = words[k + 1].start_sec;
+                (
+                    f64::midpoint(gap_start, gap_end),
+                    (gap_end - gap_start).max(0.0),
+                )
+            }
+        };
+        boundaries.push(WordBoundary {
+            cut_t,
+            pause,
+            ends_sentence: ends,
+            starts_turn_dash: dash,
+        });
+    }
+    boundaries
+}
+
 pub(crate) fn split_by_word_pauses(utterances: &[Utterance], min_gap_sec: f64) -> Vec<Utterance> {
     const MIN_UNIT_SEC: f64 = 1.0;
     let mut out = Vec::with_capacity(utterances.len());
@@ -131,24 +227,21 @@ pub(crate) fn split_by_word_pauses(utterances: &[Utterance], min_gap_sec: f64) -
             out.push(u.clone());
             continue;
         }
-        let timed: Vec<(f64, f64)> = u
-            .words
-            .iter()
-            .filter(|w| w.end_sec > w.start_sec)
-            .map(|w| (w.start_sec, w.end_sec))
-            .collect();
-        if timed.len() < 2 {
+        let boundaries = word_boundaries(&u.words, u.start, u.end);
+        if boundaries.is_empty() {
             out.push(u.clone());
             continue;
         }
         let mut bounds = vec![u.start];
-        for w in timed.windows(2) {
-            let gap = w[1].0 - w[0].1;
-            if gap >= min_gap_sec {
-                let cut = (w[0].1 + w[1].0) / 2.0;
+        for b in boundaries {
+            // Быстрый обмен репликами с `.`/`!`/`?`/`…` перед «—» остаётся одним
+            // чанком при паузе < 0.8 с, если резать только по длине паузы.
+            let turn_dash = b.ends_sentence && b.starts_turn_dash;
+            if b.pause >= min_gap_sec || turn_dash {
+                let cut = (b.cut_t * 100.0).round() / 100.0;
                 let from = *bounds.last().unwrap();
                 if cut - from >= MIN_UNIT_SEC && u.end - cut >= MIN_UNIT_SEC {
-                    bounds.push((cut * 100.0).round() / 100.0);
+                    bounds.push(cut);
                 }
             }
         }
@@ -178,4 +271,139 @@ pub(super) const SPLIT_WINDOW_SEC: f64 = 1.6;
 pub(super) fn split_step(duration: f64) -> f64 {
     let span = (duration - SPLIT_WINDOW_SEC).max(0.0);
     (span / (SPLIT_MAX_WINDOWS - 1) as f64).max(0.5)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn word(w: &str, start_sec: f64, end_sec: f64) -> WordConf {
+        WordConf {
+            w: w.to_string(),
+            conf: 0.98,
+            needs_review: false,
+            start_sec,
+            end_sec,
+        }
+    }
+
+    fn utterance(start: f64, end: f64, words: Vec<WordConf>) -> Utterance {
+        let text = words
+            .iter()
+            .map(|w| w.w.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        Utterance {
+            start,
+            end,
+            speaker: "X".to_string(),
+            channel: Some(1),
+            text,
+            diarized: false,
+            silhouette: 0.0,
+            words,
+            ctc_used: true,
+        }
+    }
+
+    #[test]
+    fn rapid_turn_dash_after_sentence_end_splits_below_min_gap() {
+        for punct in [".", "!", "?", "…"] {
+            let end_word = format!("слово2{punct}");
+            let timed_dash = utterance(
+                0.0,
+                3.2,
+                vec![
+                    word("слово1", 0.2, 0.7),
+                    word(&end_word, 0.8, 1.4),
+                    word("—", 1.55, 1.60),
+                    word("слово3", 1.70, 2.3),
+                    word("слово4", 2.4, 3.0),
+                ],
+            );
+            let out = split_by_word_pauses(&[timed_dash], 0.8);
+            assert_eq!(out.len(), 2, "punct={punct}");
+            assert_eq!(out[0].text, format!("слово1 {end_word}"));
+            assert_eq!(out[1].text, "— слово3 слово4");
+            assert!(out[0].end - out[0].start >= 1.0);
+            assert!(out[1].end - out[1].start >= 1.0);
+        }
+
+        let untimed_punct = utterance(
+            0.0,
+            3.2,
+            vec![
+                word("слово1", 0.2, 0.7),
+                word("слово2", 0.8, 1.3),
+                word("...", 0.0, 0.0),
+                word("—", 0.0, 0.0),
+                word("слово3", 1.7, 2.4),
+                word("слово4", 2.5, 3.0),
+            ],
+        );
+        let out_untimed = split_by_word_pauses(&[untimed_punct], 0.8);
+        assert_eq!(out_untimed.len(), 2);
+        assert_eq!(out_untimed[0].text, "слово1 слово2 ...");
+        assert_eq!(out_untimed[1].text, "— слово3 слово4");
+        assert!(out_untimed[0].end - out_untimed[0].start >= 1.0);
+        assert!(out_untimed[1].end - out_untimed[1].start >= 1.0);
+
+        let prefixed = utterance(
+            0.0,
+            3.2,
+            vec![
+                word("слово1", 0.2, 0.7),
+                word("слово2?", 0.8, 1.4),
+                word("—слово3", 1.65, 2.3),
+                word("слово4", 2.4, 3.0),
+            ],
+        );
+        let out_prefixed = split_by_word_pauses(&[prefixed], 0.8);
+        assert_eq!(out_prefixed.len(), 2);
+        assert_eq!(out_prefixed[0].text, "слово1 слово2?");
+        assert_eq!(out_prefixed[1].text, "—слово3 слово4");
+        assert!(out_prefixed[0].end - out_prefixed[0].start >= 1.0);
+        assert!(out_prefixed[1].end - out_prefixed[1].start >= 1.0);
+    }
+
+    #[test]
+    fn turn_dash_respects_min_unit_and_ignores_mid_phrase_or_quoted_dash() {
+        let short_left = utterance(
+            0.0,
+            3.0,
+            vec![
+                word("слово1.", 0.1, 0.5),
+                word("—", 0.0, 0.0),
+                word("слово2", 0.7, 1.6),
+                word("слово3", 1.7, 2.8),
+            ],
+        );
+        assert_eq!(split_by_word_pauses(&[short_left], 0.8).len(), 1);
+
+        let mid_phrase_dash = utterance(
+            0.0,
+            3.2,
+            vec![
+                word("слово1", 0.2, 0.7),
+                word("слово2", 0.8, 1.4),
+                word("—", 0.0, 0.0),
+                word("слово3", 1.6, 2.3),
+                word("слово4", 2.4, 3.0),
+            ],
+        );
+        assert_eq!(split_by_word_pauses(&[mid_phrase_dash], 0.8).len(), 1);
+
+        let quoted_dash = utterance(
+            0.0,
+            3.2,
+            vec![
+                word("слово1", 0.2, 0.7),
+                word("«слово2.»", 0.8, 1.4),
+                word("—", 0.0, 0.0),
+                word("слово3", 1.6, 2.3),
+                word("слово4", 2.4, 3.0),
+            ],
+        );
+        assert_eq!(split_by_word_pauses(&[quoted_dash], 0.8).len(), 1);
+    }
 }
