@@ -14,6 +14,11 @@ const RESIDUAL_KEEP: f32 = 0.15;
 /// Двойная речь даёт остаток уже с 10% из-за наложения двух источников.
 const DOUBLE_TALK_RESIDUAL: f32 = 0.10;
 const ECHO_SHARE: f32 = 0.7;
+/// Приглушённое эхо комнаты может превысить медианный `gain` по файлу до 2.3x,
+/// когда на локальном отрезке почти нет чистых локальных кадров (`local_only <= 0.05`).
+const MAX_MUFFLED_LOCAL_ONLY: f32 = 0.05;
+const MUFFLED_SYS_NOISE_MULT: f32 = 5.0;
+const MUFFLED_GAIN_MULT: f32 = 2.3;
 /// Дрейф оценки задержки между зондами: ±60 мс перекрывают округление до кадра
 /// (32 мс) и медленное расхождение часов каналов.
 const DELAY_DRIFT_SEC: f64 = 0.06;
@@ -34,6 +39,7 @@ pub(crate) fn dedupe_words(
     let Some(mic) = samples.get(&0) else {
         return 0;
     };
+    let sys = samples.get(&1).map(Vec::as_slice);
     let other_spans: Vec<(f64, f64)> = utterances
         .iter()
         .filter(|u| u.channel == Some(1))
@@ -68,14 +74,24 @@ pub(crate) fn dedupe_words(
             kept.push(utterance);
             continue;
         }
-        let local = local_words(&utterance, mic, echo, &echo_words, max_span);
+        let local = local_words(&utterance, mic, sys, echo, &echo_words, max_span);
+        let real_local_words = count_real_words(&local);
+        // Токены голой пунктуации вроде «— — —» не содержат речи: без слов
+        // после отсева эха такую галлюцинацию нельзя оставлять в микрофоне.
+        if real_local_words == 0 {
+            changed += 1;
+            dropped += 1;
+            dropped_words += utterance.words.len();
+            continue;
+        }
         if local.len() == utterance.words.len() {
             kept.push(utterance);
             continue;
         }
         changed += 1;
-        let local_share = local.len() as f32 / utterance.words.len().max(1) as f32;
-        if local.len() < MIN_LOCAL_WORDS && local_share < MIN_LOCAL_SHARE {
+        let real_total_words = count_real_words(&utterance.words);
+        let local_share = real_local_words as f32 / real_total_words.max(1) as f32;
+        if real_local_words < MIN_LOCAL_WORDS && local_share < MIN_LOCAL_SHARE {
             dropped += 1;
             dropped_words += utterance.words.len() - local.len();
             continue;
@@ -116,6 +132,13 @@ pub(crate) fn dedupe_words(
     changed
 }
 
+fn count_real_words(words: &[WordConf]) -> usize {
+    words
+        .iter()
+        .filter(|word| !diarize::normalize_word(&word.w).is_empty())
+        .count()
+}
+
 fn overlaps_any(utterance: &Utterance, spans: &[(f64, f64)]) -> bool {
     spans
         .iter()
@@ -125,6 +148,7 @@ fn overlaps_any(utterance: &Utterance, spans: &[(f64, f64)]) -> bool {
 fn local_words(
     utterance: &Utterance,
     mic: &[f32],
+    sys: Option<&[f32]>,
     echo: &EchoEvidence,
     echo_words: &[(f64, f64, String)],
     max_span: f64,
@@ -132,7 +156,7 @@ fn local_words(
     utterance
         .words
         .iter()
-        .filter(|word| !is_echo(word, mic, echo, echo_words, max_span))
+        .filter(|word| !is_echo(word, mic, sys, echo, echo_words, max_span))
         .cloned()
         .collect()
 }
@@ -140,6 +164,7 @@ fn local_words(
 fn is_echo(
     word: &WordConf,
     mic: &[f32],
+    sys: Option<&[f32]>,
     echo: &EchoEvidence,
     echo_words: &[(f64, f64, String)],
     max_span: f64,
@@ -167,12 +192,32 @@ fn is_echo(
     ) {
         return true;
     }
-    let rms = mic_rms(mic, word.start_sec, word.end_sec);
+    let rms = channel_rms(mic, word.start_sec, word.end_sec);
     let residual_ratio = echo::mean_residual(echo, word.start_sec, word.end_sec) / rms.max(1e-6);
     if profile.double_talk > DOUBLE_TALK_SHARE && residual_ratio > DOUBLE_TALK_RESIDUAL {
         return false;
     }
-    residual_ratio <= RESIDUAL_KEEP && profile.echo_only + profile.uncertain >= ECHO_SHARE
+    if profile.echo_only + profile.uncertain < ECHO_SHARE {
+        return false;
+    }
+    if residual_ratio <= RESIDUAL_KEEP {
+        return true;
+    }
+    if echo.is_strong() && profile.local_only <= MAX_MUFFLED_LOCAL_ONLY {
+        if let Some(sys_samples) = sys {
+            let sys_rms = channel_rms(
+                sys_samples,
+                word.start_sec - echo.delay_sec,
+                word.end_sec - echo.delay_sec,
+            );
+            if sys_rms > echo.noise_floor * MUFFLED_SYS_NOISE_MULT
+                && rms <= echo.gain * sys_rms * MUFFLED_GAIN_MULT
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn matches_echo_word(
@@ -207,7 +252,7 @@ fn matches_echo_word(
     })
 }
 
-fn mic_rms(samples: &[f32], start: f64, end: f64) -> f32 {
+fn channel_rms(samples: &[f32], start: f64, end: f64) -> f32 {
     let lo = (start.max(0.0) * SAMPLE_RATE) as usize;
     let hi = ((end.max(0.0) * SAMPLE_RATE) as usize).min(samples.len());
     if hi <= lo {
@@ -475,5 +520,113 @@ mod tests {
         let changed = dedupe_words(&mut utts, &empty, &mixed_evidence(), None);
         assert_eq!(changed, 0);
         assert_eq!(utts[0].words.len(), 3);
+    }
+
+    #[test]
+    fn pure_punctuation_echo_utterance_is_dropped() {
+        let ev = evidence(&[(0.0, 2.0, FrameClass::EchoOnly, 0.0)], 2.0);
+        let mut utts = vec![
+            utterance(
+                0.0,
+                2.0,
+                0,
+                vec![
+                    word("—", 0.1, 0.3),
+                    word("—", 0.4, 0.6),
+                    word("—", 0.7, 0.9),
+                ],
+            ),
+            utterance(0.0, 2.0, 1, vec![word("альфа", 0.0, 0.5)]),
+        ];
+        let changed = dedupe_words(&mut utts, &samples(), &ev, None);
+        assert_eq!(changed, 1, "{utts:?}");
+        assert_eq!(utts.len(), 1, "{utts:?}");
+        assert_eq!(utts[0].channel, Some(1));
+
+        let mut mixed_punct = vec![
+            utterance(
+                0.0,
+                2.0,
+                0,
+                vec![
+                    word("альфа", 0.0, 0.3),
+                    word("альфа", 0.35, 0.55),
+                    word("альфа", 0.6, 0.8),
+                    word("альфа", 0.85, 1.05),
+                    word("лишнее", 1.1, 1.3),
+                    word("—", 1.35, 1.45),
+                    word("—", 1.5, 1.6),
+                    word("—", 1.65, 1.75),
+                ],
+            ),
+            utterance(
+                0.0,
+                2.0,
+                1,
+                vec![
+                    word("альфа", 0.0, 0.3),
+                    word("альфа", 0.35, 0.55),
+                    word("альфа", 0.6, 0.8),
+                    word("альфа", 0.85, 1.05),
+                ],
+            ),
+        ];
+        let changed = dedupe_words(&mut mixed_punct, &samples(), &ev, None);
+        assert_eq!(changed, 1, "{mixed_punct:?}");
+        assert_eq!(mixed_punct.len(), 1, "{mixed_punct:?}");
+        assert_eq!(mixed_punct[0].channel, Some(1));
+    }
+
+    #[test]
+    fn muffled_room_echo_is_suppressed_by_sys_rms() {
+        let mut ev = evidence(&[(0.0, 2.0, FrameClass::Uncertain, 0.05)], 2.0);
+        ev.prominence = 50.0;
+        ev.gain = 0.15;
+        ev.delay_sec = 0.0625;
+        let audio = HashMap::from([
+            (0usize, vec![0.06f32; 16_000 * 2]),
+            (1usize, vec![0.20f32; 16_000 * 2]),
+        ]);
+        let mut utts = vec![
+            utterance(0.2, 1.0, 0, vec![word("бета", 0.3, 0.8)]),
+            utterance(0.0, 2.0, 1, vec![word("альфа", 0.0, 0.5)]),
+        ];
+        let changed = dedupe_words(&mut utts, &audio, &ev, None);
+        assert_eq!(changed, 1, "{utts:?}");
+        assert_eq!(utts.len(), 1, "{utts:?}");
+        assert_eq!(utts[0].channel, Some(1));
+
+        let mut without_sys = vec![
+            utterance(0.2, 1.0, 0, vec![word("бета", 0.3, 0.8)]),
+            utterance(0.0, 2.0, 1, vec![word("альфа", 0.0, 0.5)]),
+        ];
+        let mic_only = HashMap::from([(0usize, vec![0.06f32; 16_000 * 2])]);
+        assert_eq!(dedupe_words(&mut without_sys, &mic_only, &ev, None), 0);
+        assert_eq!(without_sys.len(), 2);
+    }
+
+    #[test]
+    fn true_double_talk_with_local_only_is_preserved() {
+        let mut ev = evidence(
+            &[
+                (0.0, 0.75, FrameClass::EchoOnly, 0.05),
+                (0.75, 1.0, FrameClass::LocalOnly, 0.05),
+            ],
+            2.0,
+        );
+        ev.prominence = 50.0;
+        ev.gain = 0.15;
+        let audio = HashMap::from([
+            (0usize, vec![0.06f32; 16_000 * 2]),
+            (1usize, vec![0.20f32; 16_000 * 2]),
+        ]);
+        let mut utts = vec![
+            utterance(0.0, 1.0, 0, vec![word("бета", 0.0, 1.0)]),
+            utterance(0.0, 1.0, 1, vec![word("альфа", 0.0, 0.5)]),
+        ];
+        let changed = dedupe_words(&mut utts, &audio, &ev, None);
+        assert_eq!(changed, 0, "{utts:?}");
+        assert_eq!(utts.len(), 2);
+        assert_eq!(utts[0].text, "бета");
     }
 }

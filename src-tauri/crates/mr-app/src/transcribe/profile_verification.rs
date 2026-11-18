@@ -155,11 +155,15 @@ fn verification_chunk(
     samples: &[f32],
     support: SpeechSupport<'_>,
     echo: Option<&EchoEvidence>,
+    channel: usize,
     start: f64,
     end: f64,
 ) -> Option<Vec<f32>> {
     const SR: f64 = 16000.0;
-    let (start, end) = match echo {
+    // EchoEvidence описывает эхо в микрофонном канале (ch=0); системный канал —
+    // источник речи собеседников, и фильтрация по ch0 вырезала бы их голоса.
+    let ch_echo = (channel == 0).then_some(echo).flatten();
+    let (start, end) = match ch_echo {
         // Кадры «только эхо» — голос источника, а не владельца карточки:
         // без локальной речи верифицировать нечем, имя остаётся как есть.
         Some(evidence) => local_region(evidence, start, end, MIN_LOCAL_EMBED_SEC)?,
@@ -239,9 +243,14 @@ pub(super) fn run(
             vad_probs: audio.vad.get(&channel).map(Vec::as_slice),
             segmentation: audio.segmentations.get(&channel),
         };
-        let Some(chunk) =
-            verification_chunk(samples, support, audio.echo, utterance.start, utterance.end)
-        else {
+        let Some(chunk) = verification_chunk(
+            samples,
+            support,
+            audio.echo,
+            channel,
+            utterance.start,
+            utterance.end,
+        ) else {
             continue;
         };
         let duration = chunk.len() as f64 / 16000.0;
@@ -386,14 +395,7 @@ pub(super) fn run(
             info.matched_pack_name = None;
         }
     }
-    super::diarize::dedupe_cross_channel(utterances, infos, channels);
-    for info in infos.iter_mut() {
-        let members: Vec<&Utterance> = utterances
-            .iter()
-            .filter(|utterance| utterance.speaker == info.name)
-            .collect();
-        info.samples = pick_samples(&members, 3);
-    }
+    finalize_verified_utterances(utterances, infos, channels);
     log::debug!(
         target: "diar",
         reassigned = reassigned,
@@ -402,6 +404,25 @@ pub(super) fn run(
         failures = failures;
         "ev=diar.verify_profiles"
     );
+}
+
+fn finalize_verified_utterances(
+    utterances: &mut Vec<Utterance>,
+    infos: &mut [SpeakerInfo],
+    channels: &HashMap<usize, Vec<f32>>,
+) {
+    super::diarize::dedupe_cross_channel(utterances, infos, channels);
+    // Переназначенные и открытые после отсева эха фрагменты одного голоса
+    // на одном канале должны собраться обратно в цельные реплики.
+    utterances.sort_by(|a, b| a.start.total_cmp(&b.start).then(a.speaker.cmp(&b.speaker)));
+    *utterances = super::diarize::merge_utterances(std::mem::take(utterances));
+    for info in infos.iter_mut() {
+        let members: Vec<&Utterance> = utterances
+            .iter()
+            .filter(|utterance| utterance.speaker == info.name)
+            .collect();
+        info.samples = pick_samples(&members, 3);
+    }
 }
 
 #[cfg(test)]
@@ -604,7 +625,7 @@ mod tests {
     }
 
     #[test]
-    fn echo_only_region_is_not_verified() {
+    fn echo_only_region_is_not_verified_on_mic_but_kept_on_system() {
         use crate::transcribe::echo::FrameClass;
         let win = mr_ml::onnx::vad::VAD_WINDOW as f64 / 16000.0;
         let evidence = echo_evidence(vec![FrameClass::EchoOnly; (4.0 / win).ceil() as usize]);
@@ -614,12 +635,23 @@ mod tests {
                 &samples,
                 SpeechSupport::default(),
                 Some(&evidence),
+                0,
                 0.0,
                 4.0
             )
             .is_none(),
             "чужой голос из эха не должен спорить с карточкой"
         );
+        let ch1 = verification_chunk(
+            &samples,
+            SpeechSupport::default(),
+            Some(&evidence),
+            1,
+            0.0,
+            4.0,
+        )
+        .expect("речь системного канала не режется маской эха микрофона");
+        assert_eq!(ch1.len(), 16000 * 4);
     }
 
     #[test]
@@ -635,12 +667,53 @@ mod tests {
             vad_probs: Some(&probs),
             segmentation: None,
         };
-        let chunk = verification_chunk(&samples, support, None, 0.0, 4.0).expect("речь есть");
+        let chunk = verification_chunk(&samples, support, None, 0, 0.0, 4.0).expect("речь есть");
         assert!(
             (chunk.len() as f64 / 16000.0 - 2.0).abs() < 0.1,
             "{}",
             chunk.len() as f64 / 16000.0
         );
+    }
+
+    #[test]
+    fn finalize_merges_reassigned_same_channel_fragments_after_dedupe() {
+        let mut u1 = utterance(0.0, 2.0, "Спикер A");
+        u1.channel = Some(1);
+        u1.text = "альфа бета".to_string();
+        let mut echo = utterance(0.2, 2.2, "Спикер B");
+        echo.channel = Some(0);
+        echo.text = "альфа бета".to_string();
+        let mut u2 = utterance(2.5, 4.5, "Спикер A");
+        u2.channel = Some(1);
+        u2.text = "гамма дельта".to_string();
+        let mut delayed_echo = utterance(2.7, 5.1, "Спикер A");
+        delayed_echo.channel = Some(0);
+        delayed_echo.text = "гамма дельта".to_string();
+        let mut next = utterance(4.7, 6.0, "Спикер B");
+        next.channel = Some(1);
+        next.text = "эпсилон".to_string();
+
+        let mut utterances = vec![u1, echo, u2, delayed_echo, next];
+        let mut infos = vec![
+            info("Спикер A", true, vec![1.0, 0.0]),
+            info("Спикер B", true, vec![0.0, 1.0]),
+        ];
+        infos[0].channel = Some(1);
+        let channels = HashMap::from([
+            (0usize, vec![0.05f32; 16000 * 7]),
+            (1usize, vec![0.3f32; 16000 * 7]),
+        ]);
+
+        finalize_verified_utterances(&mut utterances, &mut infos, &channels);
+        assert_eq!(utterances.len(), 2, "{utterances:?}");
+        assert_eq!(utterances[0].speaker, "Спикер A");
+        assert_eq!(utterances[0].channel, Some(1));
+        assert_eq!(utterances[0].text, "альфа бета гамма дельта");
+        assert_eq!(utterances[0].start, 0.0);
+        assert_eq!(utterances[0].end, 4.5);
+        assert!(utterances[0].end <= utterances[1].start);
+        assert_eq!(infos[0].samples.len(), 1);
+        assert_eq!(infos[0].samples[0].end, 4.5);
     }
 
     #[test]
