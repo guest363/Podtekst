@@ -99,12 +99,12 @@ pub(crate) fn dedupe_words(
             dropped_words += utterance.words.len() - local.len();
             continue;
         }
-        let Some(first) = local.first() else {
-            continue;
+        let mut timed = local.iter().filter(|w| w.end_sec > w.start_sec);
+        let (start, end) = match (timed.next(), timed.next_back()) {
+            (Some(first), Some(last)) => (first.start_sec, last.end_sec),
+            (Some(only), None) => (only.start_sec, only.end_sec),
+            (None, _) => (utterance.start, utterance.end),
         };
-        let last = local.last().unwrap_or(first);
-        let start = first.start_sec;
-        let end = last.end_sec;
         let text = local
             .iter()
             .map(|w| w.w.as_str())
@@ -659,5 +659,50 @@ mod tests {
         assert_eq!(changed, 0, "{utts:?}");
         assert_eq!(utts.len(), 2);
         assert_eq!(utts[0].text, "бета");
+    }
+
+    #[test]
+    fn untimed_boundary_tokens_do_not_reset_kept_utterance_bounds() {
+        let mut utts = vec![
+            utterance(
+                0.0,
+                2.0,
+                0,
+                vec![
+                    word("—", 0.0, 0.0),
+                    word("альфа", 0.1, 0.45),
+                    word("Бета", 0.6, 0.9),
+                    word("Дельта", 0.95, 1.2),
+                    word("…", 0.0, 0.0),
+                ],
+            ),
+            utterance(0.0, 2.0, 1, vec![word("альфа", 0.1, 0.45)]),
+        ];
+        let changed = dedupe_words(&mut utts, &samples(), &mixed_evidence(), None);
+        assert_eq!(changed, 1, "{utts:?}");
+        assert_eq!(utts.len(), 2, "{utts:?}");
+        assert_eq!(utts[0].text, "— Бета Дельта …");
+        assert!((utts[0].start - 0.6).abs() < 1e-9, "{:?}", utts[0]);
+        assert!((utts[0].end - 1.2).abs() < 1e-9, "{:?}", utts[0]);
+
+        let mut single_timed = vec![
+            utterance(
+                0.0,
+                2.0,
+                0,
+                vec![
+                    word("—", 0.0, 0.0),
+                    word("альфа", 0.1, 0.45),
+                    word("Бета", 0.6, 1.2),
+                    word("…", 0.0, 0.0),
+                ],
+            ),
+            utterance(0.0, 2.0, 1, vec![word("альфа", 0.1, 0.45)]),
+        ];
+        let changed_single = dedupe_words(&mut single_timed, &samples(), &mixed_evidence(), None);
+        assert_eq!(changed_single, 1, "{single_timed:?}");
+        assert_eq!(single_timed[0].text, "— Бета …");
+        assert!((single_timed[0].start - 0.6).abs() < 1e-9);
+        assert!((single_timed[0].end - 1.2).abs() < 1e-9);
     }
 }

@@ -176,7 +176,7 @@ pub(super) fn word_boundaries(
                 let cut_t = if mid_r - mid_l > 0.012 {
                     raw_cut.clamp(mid_l + 0.006, mid_r - 0.006)
                 } else {
-                    raw_cut.clamp(mid_l, mid_r)
+                    raw_cut.clamp(mid_l.min(mid_r), mid_l.max(mid_r))
                 };
                 let mut l = k;
                 while l > 0 && !is_timed(l) && is_punct_only(l) {
@@ -405,5 +405,48 @@ mod tests {
             ],
         );
         assert_eq!(split_by_word_pauses(&[quoted_dash], 0.8).len(), 1);
+    }
+
+    #[test]
+    fn overlapping_timed_words_around_untimed_dash_do_not_panic() {
+        let overlapping = utterance(
+            0.0,
+            3.2,
+            vec![
+                word("слово1", 0.2, 0.9),
+                word("слово2.", 1.0, 1.55),
+                word("—", 0.0, 0.0),
+                word("слово3", 1.45, 1.55),
+                word("слово4", 1.6, 3.0),
+            ],
+        );
+        let boundaries = word_boundaries(&overlapping.words, overlapping.start, overlapping.end);
+        assert_eq!(boundaries.len(), 4);
+        assert!(boundaries
+            .iter()
+            .all(|b| b.cut_t.is_finite() && b.cut_t >= 0.0 && b.cut_t <= 3.2));
+        let split = split_by_word_pauses(&[overlapping], 0.8);
+        assert_eq!(split.len(), 2, "{split:?}");
+        assert!(split.iter().all(|u| u.start < u.end), "{split:?}");
+
+        let earlier_than_utt = utterance(
+            1.0,
+            4.2,
+            vec![
+                word("—", 0.0, 0.0),
+                word("слово1.", 0.8, 1.2),
+                word("—", 0.0, 0.0),
+                word("слово2", 1.15, 2.5),
+                word("слово3", 2.6, 4.0),
+            ],
+        );
+        let early_bounds = word_boundaries(
+            &earlier_than_utt.words,
+            earlier_than_utt.start,
+            earlier_than_utt.end,
+        );
+        assert!(early_bounds.iter().all(|b| b.cut_t.is_finite()));
+        let early_split = split_by_word_pauses(&[earlier_than_utt], 0.8);
+        assert!(!early_split.is_empty());
     }
 }

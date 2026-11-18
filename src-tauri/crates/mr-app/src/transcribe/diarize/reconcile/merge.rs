@@ -140,9 +140,9 @@ pub(crate) fn merge_utterances(utterances: Vec<Utterance>) -> Vec<Utterance> {
                         // у ch=1 интервал перекроет следующую реплику того же канала.
                         last.start = u.start;
                         last.end = u.end;
-                        last.text = u.text.clone();
+                        last.text.clone_from(&u.text);
                         last.channel = u.channel;
-                        last.words = u.words.clone();
+                        last.words.clone_from(&u.words);
                         last.ctc_used = u.ctc_used;
                     }
                     last.silhouette = combined_silhouette;

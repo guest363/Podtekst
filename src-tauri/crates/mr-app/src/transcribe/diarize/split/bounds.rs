@@ -1,5 +1,34 @@
 use crate::transcribe::{Utterance, WordConf};
 
+pub(super) fn resolved_word_conf(
+    existing: Option<&WordConf>,
+    text: &str,
+    resolved: (f64, f64),
+    clamp_range: (f64, f64),
+) -> WordConf {
+    let round_ms = |t: f64| (t * 1000.0).round() / 1000.0;
+    let lo = clamp_range.0.min(clamp_range.1);
+    let hi = clamp_range.0.max(clamp_range.1);
+    let start_sec = round_ms(resolved.0.clamp(lo, hi));
+    let end_sec = round_ms(resolved.1.clamp(lo, hi)).max(start_sec);
+    match existing.cloned() {
+        Some(mut word) => {
+            if word.end_sec <= word.start_sec {
+                word.start_sec = start_sec;
+                word.end_sec = end_sec;
+            }
+            word
+        }
+        None => WordConf {
+            w: text.to_string(),
+            conf: 1.0,
+            needs_review: false,
+            start_sec,
+            end_sec,
+        },
+    }
+}
+
 pub(crate) fn split_utterance_by_bounds(u: &Utterance, bounds: &[f64]) -> Vec<Utterance> {
     if bounds.len() < 2 {
         return vec![u.clone()];
@@ -25,7 +54,7 @@ pub(crate) fn split_utterance_by_bounds(u: &Utterance, bounds: &[f64]) -> Vec<Ut
         let mut seg_words: Vec<Vec<WordConf>> = vec![Vec::new(); n_segs];
         for (i, &w_text) in words.iter().enumerate() {
             let (s, e) = word_bounds[i];
-            let mid = (s + e) / 2.0;
+            let mid = f64::midpoint(s, e);
             let mut seg_idx = n_segs - 1;
             for (idx, w) in bounds.windows(2).enumerate() {
                 if mid < w[1] || idx == n_segs - 1 {
@@ -33,21 +62,9 @@ pub(crate) fn split_utterance_by_bounds(u: &Utterance, bounds: &[f64]) -> Vec<Ut
                     break;
                 }
             }
-            let wc = if let Some(mut w) = u.words.get(i).cloned() {
-                if w.end_sec <= w.start_sec {
-                    w.start_sec = (s * 1000.0).round() / 1000.0;
-                    w.end_sec = (e * 1000.0).round() / 1000.0;
-                }
-                w
-            } else {
-                WordConf {
-                    w: w_text.to_string(),
-                    conf: 1.0,
-                    needs_review: false,
-                    start_sec: (s * 1000.0).round() / 1000.0,
-                    end_sec: (e * 1000.0).round() / 1000.0,
-                }
-            };
+            let seg_lo = (bounds[seg_idx] * 100.0).round() / 100.0;
+            let seg_hi = (bounds[seg_idx + 1] * 100.0).round() / 100.0;
+            let wc = resolved_word_conf(u.words.get(i), w_text, (s, e), (seg_lo, seg_hi));
             seg_words[seg_idx].push(wc);
         }
 

@@ -5,7 +5,7 @@ use crate::transcribe::echo::FrameClass;
 use crate::transcribe::{SpeakerInfo, Utterance, WordConf};
 
 use super::constraint_links::cannot_link_units;
-use super::core::{refine_ch1_utterances, short_name_allowed};
+use super::core::short_name_allowed;
 use super::coverage::restore_protected;
 use super::profiles::{eligible_clusters, pick_samples, reassign_short_replies};
 use super::reconcile::{
@@ -16,6 +16,7 @@ use super::segments::{
     merge_quiet_short_with_evidence, merge_tiny_clusters, promote_unmatched_utterances,
     promoted_utterances, short_join_threshold, smooth_labels_mono, switch_penalty,
 };
+use super::split::refine_ch1_utterances;
 use super::split::{
     local_region, speaker_change_cuts, split_at_pauses, split_by_word_pauses,
     split_utterance_by_bounds, split_window_region,
@@ -2150,4 +2151,43 @@ fn ch1_refinement_requires_both_edges_aligned_for_interior_insertion() {
         &HashMap::new(),
     );
     assert_eq!(unaligned_end.len(), 1, "{unaligned_end:?}");
+}
+
+#[test]
+fn ch1_refinement_clamps_untimed_dash_in_large_gap_to_part_bounds() {
+    let mut u = utt(0.0, 8.5, "Собеседник 1", 1, "альфа бета. — гамма дельта");
+    u.words = vec![
+        word("альфа", 0.2, 1.0),
+        word("бета.", 1.1, 2.0),
+        word("—", 0.0, 0.0),
+        word("гамма", 4.0, 6.0),
+        word("дельта", 6.1, 8.2),
+    ];
+    u.ctc_used = true;
+    let voice_timeline = vec![
+        utt(0.0, 2.0, "Собеседник 1", 1, ""),
+        utt(3.2, 8.5, "Собеседник 2", 1, ""),
+    ];
+    let mut utterances = vec![u];
+    refine_ch1_utterances(
+        &mut utterances,
+        &voice_timeline,
+        &HashMap::new(),
+        &HashMap::new(),
+    );
+    assert_eq!(utterances.len(), 2, "{utterances:?}");
+    assert_eq!(utterances[0].text, "альфа бета.");
+    assert_eq!(utterances[1].text, "— гамма дельта");
+    let dash = &utterances[1].words[0];
+    assert_eq!(dash.w, "—");
+    assert!(
+        dash.start_sec >= utterances[1].start && dash.end_sec <= utterances[1].end,
+        "dash bounds {:?}..{:?} must stay inside part {:?}..{:?}",
+        dash.start_sec,
+        dash.end_sec,
+        utterances[1].start,
+        utterances[1].end
+    );
+    assert!(dash.start_sec >= utterances[1].start - 0.5 && dash.end_sec <= utterances[1].end + 0.5);
+    assert!(dash.start_sec <= dash.end_sec);
 }
