@@ -108,7 +108,9 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
             None
         };
         let paused_utts = diarize::split_by_word_pauses(&source_utts, 0.8);
-        let mut diar_utts = if is_stereo {
+        // Микрофон (ch=0) не делим по паузам, чтобы не дробить остаточное эхо;
+        // системный канал (ch=1) и моно несут несколько удалённых голосов.
+        let mut diar_utts = if is_stereo && *ch == 0 {
             paused_utts
         } else {
             on_event(80, "Делю речь на паузы для спикеров…");
@@ -188,12 +190,16 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
     }
     if let Some(evidence) = echo.as_ref() {
         let before = all_utts.len();
+        let pre_sec_by_speaker = ch0_speech_sec(&all_utts);
         let changed = word_dedupe::dedupe_words(
             &mut all_utts,
             channel_samples,
             evidence,
             channel_trees.get(&0),
         );
+        if changed > 0 && evidence.is_strong() {
+            clear_echo_poisoned_cards(&mut speakers_info, &all_utts, &pre_sec_by_speaker);
+        }
         log::debug!(
             target: "diar",
             changed = changed,
@@ -280,6 +286,39 @@ fn document_utterances(
         .collect()
 }
 
+fn ch0_speech_sec(utterances: &[Utterance]) -> HashMap<String, f64> {
+    let mut totals = HashMap::new();
+    for utterance in utterances.iter().filter(|u| u.channel == Some(0)) {
+        *totals.entry(utterance.speaker.clone()).or_insert(0.0) +=
+            (utterance.end - utterance.start).max(0.0);
+    }
+    totals
+}
+
+/// Когда >50% речи незаматченной карточки `ch=0` ушло в эхо, её додедупный
+/// центроид и кандидаты построены по чужим голосам из динамиков и ложно
+/// приклеивают `ch=0` к удалённому спикеру при сверке каналов.
+fn clear_echo_poisoned_cards(
+    infos: &mut [SpeakerInfo],
+    utterances: &[Utterance],
+    pre_sec: &HashMap<String, f64>,
+) {
+    let post_sec = ch0_speech_sec(utterances);
+    for info in infos.iter_mut() {
+        if info.channel != Some(0) || info.matched {
+            continue;
+        }
+        let before = pre_sec.get(&info.name).copied().unwrap_or(0.0);
+        let after = post_sec.get(&info.name).copied().unwrap_or(0.0);
+        if before > 0.0 && after < before * 0.5 {
+            info.embedding = None;
+            info.candidates.clear();
+            info.similarity = 0.0;
+            info.silhouette = 0.0;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,5 +348,43 @@ mod tests {
         let doc_utts = document_utterances(&source, &tree);
         assert!(!doc_utts.is_empty());
         assert!(doc_utts.iter().all(|u| !u.text.is_empty()));
+    }
+
+    #[test]
+    fn echo_poisoned_ch0_centroid_is_cleared_after_dedupe() {
+        let mut utts = vec![
+            utterance(0.0, 10.0, "эхо"),
+            utterance(10.0, 20.0, "эхо"),
+            utterance(30.0, 31.5, "местная речь"),
+        ];
+        for u in &mut utts {
+            u.speaker = "Я".to_string();
+        }
+        let pre = ch0_speech_sec(&utts);
+        utts.clear();
+        let mut remaining = utterance(30.0, 31.5, "местная речь");
+        remaining.speaker = "Я".to_string();
+        utts.push(remaining);
+
+        let mut infos = vec![SpeakerInfo {
+            id: "spk_0".to_string(),
+            name: "Я".to_string(),
+            channel: Some(0),
+            matched: false,
+            matched_name: None,
+            matched_pack_id: None,
+            matched_pack_name: None,
+            similarity: 0.65,
+            silhouette: 0.4,
+            candidates: vec![("Спикер 1".to_string(), 0.65)],
+            embedding: Some(vec![1.0, 0.0]),
+            samples: Vec::new(),
+            utterances_count: 3,
+            total_speech_sec: 21.5,
+        }];
+        clear_echo_poisoned_cards(&mut infos, &utts, &pre);
+        assert!(infos[0].embedding.is_none());
+        assert!(infos[0].candidates.is_empty());
+        assert_eq!(infos[0].similarity, 0.0);
     }
 }

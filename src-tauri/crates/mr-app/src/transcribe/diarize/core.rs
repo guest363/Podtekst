@@ -62,6 +62,8 @@ pub(crate) fn diarize_channel(
     use mr_ml::cluster::{agglomerative_gap, agglomerative_weighted, merge_by_centroid_cosine};
     use mr_ml::cosine_similarity;
     let experiment = experiment::current();
+    // EchoEvidence описывает пролезание системы в микрофон (ch=0); к другим каналам неприменим.
+    let echo = echo.filter(|_| channel_idx == Some(0));
     let support = SpeechSupport {
         vad_probs,
         segmentation,
@@ -404,10 +406,16 @@ pub(crate) fn diarize_channel(
         .copied()
         .max()
         .map_or(0, |label| label + 1);
-    let promoted: HashSet<usize> =
-        promote_unmatched_utterances(&units, &mut unit_label, &mut next_label, auto_max, support)
-            .into_iter()
-            .collect();
+    let promoted: HashSet<usize> = promote_unmatched_utterances(
+        &units,
+        &mut unit_label,
+        &mut next_label,
+        auto_max,
+        support,
+        echo,
+    )
+    .into_iter()
+    .collect();
     if !promoted.is_empty() {
         log::debug!(
             target: "diar",
@@ -514,13 +522,17 @@ pub(crate) fn diarize_channel(
 
     // Одиночный шумный кусок не должен рвать монолог на два голоса.
     // При явно заданном минимуме спикеров не сглаживаем: метки важнее.
-    if channel_idx.is_none() && min_speakers == 0 {
+    if channel_idx != Some(0) && min_speakers == 0 {
         smooth_labels_mono(utterances, &embs, &durs, &quals, &mut label_of);
+        // На ch=1 одиночные реплики неизвестного собеседника не должны
+        // поглощаться соседом: дальнейшее уточнение делает speaker_assignment.
+        if channel_idx == Some(1) {
+            coverage::restore_protected(&mut label_of, &promoted_utts);
+        }
     }
     let after_smooth = label_of.values().copied().collect::<HashSet<_>>().len();
     diagnostics::turns("smoothing", ch, utterances, &label_of, support);
     coverage::restore_protected(&mut label_of, &protected);
-    let mut spans = Vec::new();
     let mut voice_runs: Vec<crate::transcribe::speaker_assignment::SpeakerSpan> = Vec::new();
     let promoted_keys: HashSet<usize> = promoted_utts.keys().copied().collect();
     if let Some(segmentation) = segmentation {
@@ -534,7 +546,8 @@ pub(crate) fn diarize_channel(
             &promoted_keys,
             max_speakers,
         );
-        spans = outcome.spans;
+        // Поле spans нужно для unit-тестов speaker_assignment; доразбиение опирается на voice_runs.
+        let _ = outcome.spans;
         voice_runs = outcome.voice_runs;
     }
     let after_assignment = label_of.values().copied().collect::<HashSet<_>>().len();
@@ -819,48 +832,30 @@ pub(crate) fn diarize_channel(
         u.diarized = true;
         u.silhouette = silhouettes[i];
     }
-    // shortcut: кадры PyAnnote уточняют только длинные монологи (≥20 с): на коротких
-    // репликах шум локальных меток рвёт связный текст на фрагменты.
-    let spans_to_timeline = |spans: &[crate::transcribe::speaker_assignment::SpeakerSpan]| {
-        spans
-            .iter()
-            .filter_map(|span| {
-                cluster_name.get(&span.label).map(|name| Utterance {
-                    start: span.start,
-                    end: span.end,
-                    speaker: name.clone(),
-                    channel: channel_idx,
-                    text: String::new(),
-                    diarized: true,
-                    silhouette: 0.0,
-                    words: Vec::new(),
-                    ctc_used: false,
-                })
+    let voice_timeline: Vec<Utterance> = voice_runs
+        .iter()
+        .filter_map(|span| {
+            cluster_name.get(&span.label).map(|name| Utterance {
+                start: span.start,
+                end: span.end,
+                speaker: name.clone(),
+                channel: channel_idx,
+                text: String::new(),
+                diarized: true,
+                silhouette: 0.0,
+                words: Vec::new(),
+                ctc_used: false,
             })
-            .collect::<Vec<Utterance>>()
-    };
-    let timeline = spans_to_timeline(&spans);
-    let voice_timeline = spans_to_timeline(&voice_runs);
-    if !timeline.is_empty() && utterances.iter().any(|u| u.end - u.start >= 20.0) {
-        let tree = crate::transcribe::word_speakers::DiarIntervalTree::new(&timeline);
-        let mut refined = Vec::with_capacity(utterances.len());
-        for (index, utterance) in utterances.iter().enumerate() {
-            // Неизвестный голос мог быть размечен соседом в spans:
-            // дробление по словам вернуло бы реплику соседу.
-            if utterance.end - utterance.start >= 20.0
-                && !protected.contains_key(&index)
-                && !promoted_utts.contains_key(&index)
-            {
-                refined.extend(
-                    crate::transcribe::word_speakers::split_utterance_by_word_speakers(
-                        utterance, &tree,
-                    ),
-                );
-            } else {
-                refined.push(utterance.clone());
-            }
-        }
-        *utterances = refined;
+        })
+        .collect();
+    // Консервативное доразбиение только для ch=1: моно и микрофон сохраняют прежнюю геометрию.
+    if channel_idx == Some(1) {
+        super::split::refine_ch1_utterances(
+            utterances,
+            &voice_timeline,
+            &protected,
+            &promoted_utts,
+        );
     }
     if cfg!(debug_assertions) {
         // Контракт бенчмарка: харнесс считает DER по отрезкам диаризации независимо от ASR-текста.

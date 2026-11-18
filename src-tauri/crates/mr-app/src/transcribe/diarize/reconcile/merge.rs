@@ -133,21 +133,23 @@ pub(crate) fn merge_utterances(utterances: Vec<Utterance>) -> Vec<Utterance> {
                                 .extend(u.words.get(k..).unwrap_or(&[]).iter().cloned());
                         }
                         last.ctc_used = last.ctc_used || u.ctc_used;
+                        last.start = last.start.min(u.start);
+                        last.end = last.end.max(u.end);
                     } else if better_utterance(&u, last) {
-                        last.text = u.text.clone();
+                        // Нельзя тянуть границы победителя задержкой отброшенного эха:
+                        // у ch=1 интервал перекроет следующую реплику того же канала.
+                        last.start = u.start;
+                        last.end = u.end;
+                        last.text.clone_from(&u.text);
                         last.channel = u.channel;
-                        last.words = u.words.clone();
+                        last.words.clone_from(&u.words);
                         last.ctc_used = u.ctc_used;
                     }
-                    last.start = last.start.min(u.start);
-                    last.end = last.end.max(u.end);
                     last.silhouette = combined_silhouette;
                     continue;
                 }
                 if u.start - last.end <= 1.0 {
-                    // В одном канале соседние куски — это разные слова, даже если второй целиком повторяет
-                    // слова первого; вложенность отсекается только для эха между разными каналами.
-                    if u.channel == last.channel || !words_contained(&u.text, &last.text) {
+                    if u.channel == last.channel {
                         last.text = format!("{} {}", last.text, u.text).trim().to_string();
                         if last.words.is_empty() || u.words.is_empty() {
                             last.words.clear();
@@ -155,10 +157,15 @@ pub(crate) fn merge_utterances(utterances: Vec<Utterance>) -> Vec<Utterance> {
                             last.words.extend(u.words.iter().cloned());
                         }
                         last.ctc_used = last.ctc_used || u.ctc_used;
+                        last.end = last.end.max(u.end);
+                        last.silhouette = combined_silhouette;
+                        continue;
                     }
-                    last.end = last.end.max(u.end);
-                    last.silhouette = combined_silhouette;
-                    continue;
+                    // Сквозь каналы не склеиваем и границы `last` не растягиваем;
+                    // отбрасываем лишь вложенный хвост эха в другом канале.
+                    if words_contained(&u.text, &last.text) {
+                        continue;
+                    }
                 }
             }
         }
@@ -204,5 +211,75 @@ pub(crate) fn refresh_speaker_stats(infos: &mut Vec<SpeakerInfo>, utterances: &[
             matched = info.matched;
             "ev=diar.stats"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn utt(start: f64, end: f64, speaker: &str, ch: i32, text: &str) -> Utterance {
+        Utterance {
+            start,
+            end,
+            speaker: speaker.to_string(),
+            channel: Some(ch),
+            text: text.to_string(),
+            diarized: true,
+            silhouette: 0.5,
+            words: Vec::new(),
+            ctc_used: false,
+        }
+    }
+
+    #[test]
+    fn cross_channel_overlap_does_not_stretch_winner_into_next_same_channel_turn() {
+        let utts = vec![
+            utt(10.0, 12.0, "Спикер A", 1, "альфа бета гамма"),
+            utt(10.2, 12.6, "Спикер A", 0, "альфа бета гамма"),
+            utt(12.1, 14.0, "Спикер B", 1, "дельта эпсилон"),
+        ];
+        let merged = merge_utterances(utts);
+        assert_eq!(merged.len(), 2, "{merged:?}");
+        assert_eq!(merged[0].channel, Some(1));
+        assert_eq!(merged[0].start, 10.0);
+        assert_eq!(merged[0].end, 12.0);
+        assert!(merged[0].end <= merged[1].start, "{merged:?}");
+    }
+
+    #[test]
+    fn cross_channel_winner_keeps_its_own_bounds() {
+        let utts = vec![
+            utt(9.8, 12.0, "Спикер A", 0, "альфа бета"),
+            utt(10.0, 12.3, "Спикер A", 1, "альфа бета гамма"),
+        ];
+        let merged = merge_utterances(utts);
+        assert_eq!(merged.len(), 1, "{merged:?}");
+        assert_eq!(merged[0].channel, Some(1));
+        assert_eq!(merged[0].start, 10.0);
+        assert_eq!(merged[0].end, 12.3);
+        assert_eq!(merged[0].text, "альфа бета гамма");
+    }
+
+    #[test]
+    fn cross_channel_gap_never_joins_or_stretches_bounds() {
+        let with_tail_echo = vec![
+            utt(10.0, 12.0, "Спикер A", 1, "альфа бета гамма"),
+            utt(12.1, 12.7, "Спикер A", 0, "гамма"),
+            utt(12.2, 14.0, "Спикер B", 1, "дельта эпсилон"),
+        ];
+        let merged = merge_utterances(with_tail_echo);
+        assert_eq!(merged.len(), 2, "{merged:?}");
+        assert_eq!(merged[0].end, 12.0);
+        assert!(merged[0].end <= merged[1].start);
+
+        let distinct_other_channel = vec![
+            utt(10.0, 12.0, "Спикер A", 1, "альфа бета"),
+            utt(12.1, 12.7, "Спикер A", 0, "дельта"),
+        ];
+        let kept = merge_utterances(distinct_other_channel);
+        assert_eq!(kept.len(), 2, "{kept:?}");
+        assert_eq!(kept[0].end, 12.0);
+        assert_eq!(kept[1].channel, Some(0));
     }
 }

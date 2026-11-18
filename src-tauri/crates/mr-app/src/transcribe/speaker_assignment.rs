@@ -13,6 +13,12 @@ use super::Utterance;
 /// получивших собственный кластер как неизвестный голос: иначе решение окна
 /// перебивает решение кластеризации.
 const PROMOTED_OVERRIDE_MIN_SIM: f64 = 0.30;
+/// Длинная неконфликтная реплика (≥ 1.5 с) с устойчивым сходством к своему
+/// кластеру AHC не должна перетираться голосованием 10-секундных окон `PyAnnote`.
+const SELF_CLUSTER_MIN_DUR: f64 = 1.5;
+const SELF_CLUSTER_MIN_SIM: f64 = 0.45;
+const SELF_CLUSTER_MIN_MARGIN: f64 = 0.12;
+const COOCCUR_CONFLICT_MIN_OVERLAP: f64 = 0.5;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct SpeakerSpan {
@@ -218,7 +224,7 @@ pub(super) fn apply(
         }
     }
 
-    let labels = resolve_label_conflicts(
+    let (labels, conflict_moved) = resolve_label_conflicts(
         &votes,
         &cooccur,
         &starts,
@@ -226,7 +232,46 @@ pub(super) fn apply(
         &globals,
         &mut next_label,
     );
-    for (index, label) in labels {
+    apply_resolved_labels(
+        &labels,
+        &conflict_moved,
+        &cooccur,
+        embs,
+        durs,
+        &globals,
+        protected,
+        label_of,
+    );
+    Outcome {
+        spans: aggregate_spans(&spans),
+        voice_runs: aggregate_spans(&voice_runs),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_resolved_labels(
+    labels: &HashMap<usize, usize>,
+    conflict_moved: &HashSet<usize>,
+    cooccur: &HashMap<(usize, usize), f64>,
+    embs: &[Option<Vec<f64>>],
+    durs: &[f64],
+    globals: &HashMap<usize, Vec<f64>>,
+    protected: &HashSet<usize>,
+    label_of: &mut HashMap<usize, usize>,
+) {
+    let mut conflict_peers: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (&(i, j), &overlap) in cooccur {
+        if overlap > COOCCUR_CONFLICT_MIN_OVERLAP {
+            conflict_peers.entry(i).or_default().push(j);
+            conflict_peers.entry(j).or_default().push(i);
+        }
+    }
+    let mut indices: Vec<usize> = labels.keys().copied().collect();
+    indices.sort_unstable();
+    let mut planned = labels.clone();
+    let mut deferred = Vec::new();
+    for index in indices {
+        let label = labels[&index];
         if protected.contains(&index) {
             let supported = embs
                 .get(index)
@@ -236,15 +281,60 @@ pub(super) fn apply(
                     cosine_similarity(embedding, global) >= PROMOTED_OVERRIDE_MIN_SIM
                 });
             if !supported {
+                if let Some(&old_label) = label_of.get(&index) {
+                    planned.insert(index, old_label);
+                }
                 continue;
             }
+        } else if !conflict_moved.contains(&index)
+            && durs.get(index).copied().unwrap_or(0.0) >= SELF_CLUSTER_MIN_DUR
+        {
+            deferred.push((index, label));
+            continue;
         }
         label_of.insert(index, label);
     }
-    Outcome {
-        spans: aggregate_spans(&spans),
-        voice_runs: aggregate_spans(&voice_runs),
+    for (index, label) in deferred {
+        let keep_old = label_of.get(&index).is_some_and(|&old_label| {
+            let conflict = conflict_peers.get(&index).is_some_and(|peers| {
+                peers.iter().any(|peer| {
+                    planned
+                        .get(peer)
+                        .or_else(|| label_of.get(peer))
+                        .is_some_and(|&peer_label| peer_label == old_label)
+                })
+            });
+            old_label != label
+                && !conflict
+                && should_keep_self_cluster(
+                    embs.get(index).and_then(Option::as_deref),
+                    globals.get(&old_label).map(Vec::as_slice),
+                    globals.get(&label).map(Vec::as_slice),
+                )
+        });
+        if keep_old {
+            if let Some(&old_label) = label_of.get(&index) {
+                planned.insert(index, old_label);
+            }
+            continue;
+        }
+        label_of.insert(index, label);
     }
+}
+
+fn should_keep_self_cluster(
+    embedding: Option<&[f64]>,
+    old_centroid: Option<&[f64]>,
+    new_centroid: Option<&[f64]>,
+) -> bool {
+    let (Some(embedding), Some(old_centroid), Some(new_centroid)) =
+        (embedding, old_centroid, new_centroid)
+    else {
+        return false;
+    };
+    let old_sim = cosine_similarity(embedding, old_centroid);
+    let new_sim = cosine_similarity(embedding, new_centroid);
+    old_sim >= SELF_CLUSTER_MIN_SIM && old_sim - new_sim >= SELF_CLUSTER_MIN_MARGIN
 }
 
 /// Окна перекрываются, а локальные метки шумят. Голосуем покадрово и
@@ -426,8 +516,9 @@ fn resolve_label_conflicts(
     max_speakers: usize,
     globals: &HashMap<usize, Vec<f64>>,
     next_label: &mut usize,
-) -> HashMap<usize, usize> {
+) -> (HashMap<usize, usize>, HashSet<usize>) {
     let mut labels: HashMap<usize, usize> = HashMap::new();
+    let mut conflict_moved: HashSet<usize> = HashSet::new();
     for (&index, scores) in votes {
         if let Some((&label, _)) = scores
             .iter()
@@ -442,7 +533,7 @@ fn resolve_label_conflicts(
     taken.extend(labels.values().copied());
     let mut conflicts: Vec<((usize, usize), f64)> = cooccur
         .iter()
-        .filter(|(_, &overlap)| overlap > 0.5)
+        .filter(|(_, &overlap)| overlap > COOCCUR_CONFLICT_MIN_OVERLAP)
         .map(|(&pair, &overlap)| (pair, overlap))
         .collect();
     conflicts.sort_by(|a, b| b.1.total_cmp(&a.1));
@@ -470,10 +561,11 @@ fn resolve_label_conflicts(
         });
         if let Some(label) = target {
             labels.insert(moved, label);
+            conflict_moved.insert(moved);
             taken.insert(label);
         }
     }
-    labels
+    (labels, conflict_moved)
 }
 
 #[cfg(test)]
@@ -730,7 +822,7 @@ mod tests {
         ]);
         let cooccur = HashMap::from([((0, 1), 2.0)]);
         let mut next = 12;
-        let labels =
+        let (labels, _) =
             resolve_label_conflicts(&votes, &cooccur, &[0.0, 4.0], 0, &HashMap::new(), &mut next);
         assert_eq!(labels[&0], 10);
         assert_eq!(labels[&1], 11);
@@ -744,7 +836,7 @@ mod tests {
         ]);
         let cooccur = HashMap::from([((0, 1), 1.0)]);
         let mut next = 20;
-        let labels =
+        let (labels, _) =
             resolve_label_conflicts(&votes, &cooccur, &[0.0, 4.0], 0, &HashMap::new(), &mut next);
         assert_eq!(labels[&0], 10);
         assert_eq!(labels[&1], 20);
@@ -759,7 +851,7 @@ mod tests {
         ]);
         let cooccur = HashMap::from([((0, 1), 0.4)]);
         let mut next = 20;
-        let labels =
+        let (labels, _) =
             resolve_label_conflicts(&votes, &cooccur, &[0.0, 4.0], 0, &HashMap::new(), &mut next);
         assert_eq!(labels[&0], 10);
         assert_eq!(labels[&1], 10);
@@ -774,7 +866,7 @@ mod tests {
         ]);
         let cooccur = HashMap::from([((0, 1), 1.0), ((0, 2), 1.0)]);
         let mut next = 11;
-        let labels = resolve_label_conflicts(
+        let (labels, _) = resolve_label_conflicts(
             &votes,
             &cooccur,
             &[0.0, 4.0, 8.0],
@@ -795,7 +887,8 @@ mod tests {
         let cooccur = HashMap::from([((0, 1), 1.0)]);
         let globals = HashMap::from([(10, vec![1.0, 0.0]), (11, vec![0.0, 1.0])]);
         let mut next = 12;
-        let labels = resolve_label_conflicts(&votes, &cooccur, &[0.0, 4.0], 2, &globals, &mut next);
+        let (labels, _) =
+            resolve_label_conflicts(&votes, &cooccur, &[0.0, 4.0], 2, &globals, &mut next);
         assert_eq!(labels[&0], 10);
         assert_eq!(labels[&1], 10);
         assert_eq!(next, 12);
@@ -865,5 +958,168 @@ mod tests {
             0,
         );
         assert_eq!(labels[&2], 0, "подтверждённый голос должен следовать окну");
+    }
+
+    #[test]
+    fn window_vote_keeps_clean_utterance_with_strong_self_cluster() {
+        let segmentation = Segmentation {
+            frames: vec![],
+            windows: vec![SegmentationWindow {
+                start_sample: 0,
+                classes: vec![1; 350],
+            }],
+        };
+        let utterances = vec![
+            utterance(0.0, 2.5),
+            utterance(2.5, 5.0),
+            utterance(5.0, 7.0),
+            utterance(12.0, 14.5),
+        ];
+        let embs = vec![
+            Some(vec![1.0, 0.0, 0.0]),
+            Some(vec![1.0, 0.0, 0.0]),
+            Some(vec![0.1, 0.995, 0.0]),
+            Some(vec![0.0, 1.0, 0.0]),
+        ];
+        let mut labels = HashMap::from([(0usize, 0usize), (1, 0), (2, 1), (3, 1)]);
+        apply(
+            &segmentation,
+            &utterances,
+            &embs,
+            &[2.5, 2.5, 2.0, 2.5],
+            &[1.0; 4],
+            &mut labels,
+            &HashSet::new(),
+            0,
+        );
+        assert_eq!(labels[&2], 1);
+    }
+
+    #[test]
+    fn window_vote_updates_short_weak_and_conflicting_utterances() {
+        let segmentation = Segmentation {
+            frames: vec![],
+            windows: vec![SegmentationWindow {
+                start_sample: 0,
+                classes: vec![1; 550],
+            }],
+        };
+        let utterances = vec![
+            utterance(0.0, 2.5),
+            utterance(2.5, 5.0),
+            utterance(5.0, 6.2),
+            utterance(6.2, 8.2),
+            utterance(8.2, 10.2),
+            utterance(15.0, 23.0),
+        ];
+        let embs = vec![
+            Some(vec![1.0, 0.0, 0.0]),
+            Some(vec![1.0, 0.0, 0.0]),
+            Some(vec![0.0, 1.0, 0.0]),
+            Some(vec![0.1, 0.2, 0.975]),
+            Some(vec![0.73, 0.68, 0.0]),
+            Some(vec![0.0, 1.0, 0.0]),
+        ];
+        let mut labels = HashMap::from([(0usize, 0usize), (1, 0), (2, 1), (3, 1), (4, 1), (5, 1)]);
+        apply(
+            &segmentation,
+            &utterances,
+            &embs,
+            &[2.5, 2.5, 1.2, 2.0, 2.0, 8.0],
+            &[1.0; 6],
+            &mut labels,
+            &HashSet::new(),
+            0,
+        );
+        assert_eq!(labels[&2], 0);
+        assert_eq!(labels[&3], 0);
+        assert_eq!(labels[&4], 0);
+
+        let mut w0 = vec![1u8; 296];
+        w0.extend(vec![2u8; 293]);
+        let conflict_seg = Segmentation {
+            frames: vec![],
+            windows: vec![
+                SegmentationWindow {
+                    start_sample: 0,
+                    classes: w0,
+                },
+                SegmentationWindow {
+                    start_sample: 16000 * 6,
+                    classes: vec![1u8; 590],
+                },
+            ],
+        };
+        let conflict_utts = vec![
+            utterance(0.0, 5.0),
+            utterance(4.0, 11.0),
+            utterance(20.0, 25.0),
+        ];
+        let conflict_embs = vec![
+            Some(vec![1.0, 0.0]),
+            Some(vec![0.9, 0.436]),
+            Some(vec![0.4, 0.916]),
+        ];
+        let mut conflict_labels = HashMap::from([(0usize, 0usize), (1, 0), (2, 1)]);
+        apply(
+            &conflict_seg,
+            &conflict_utts,
+            &conflict_embs,
+            &[5.0, 7.0, 5.0],
+            &[1.0; 3],
+            &mut conflict_labels,
+            &HashSet::new(),
+            0,
+        );
+        assert_ne!(conflict_labels[&0], conflict_labels[&1]);
+    }
+
+    #[test]
+    fn self_cluster_retention_does_not_rejoin_cooccurring_conflict_neighbor() {
+        let mut w0 = vec![1u8; 255];
+        w0.extend(vec![2u8; 335]);
+        let segmentation = Segmentation {
+            frames: vec![],
+            windows: vec![
+                SegmentationWindow {
+                    start_sample: 0,
+                    classes: w0,
+                },
+                SegmentationWindow {
+                    start_sample: 16000 * 4,
+                    classes: vec![1u8; 590],
+                },
+            ],
+        };
+        let utterances = vec![
+            utterance(2.5, 5.0),
+            utterance(4.0, 7.0),
+            utterance(25.0, 33.0),
+            utterance(0.0, 4.0),
+            utterance(10.0, 14.0),
+            utterance(35.0, 43.0),
+        ];
+        let embs = vec![
+            Some(vec![0.2, 0.98]),
+            Some(vec![0.8, 0.6]),
+            Some(vec![0.0, 1.0]),
+            Some(vec![1.0, 0.0]),
+            Some(vec![1.0, 0.0]),
+            Some(vec![1.0, 0.0]),
+        ];
+        let mut labels = HashMap::from([(0usize, 1usize), (1, 0), (2, 1), (3, 0), (4, 0), (5, 0)]);
+        apply(
+            &segmentation,
+            &utterances,
+            &embs,
+            &[2.5, 3.0, 8.0, 8.0, 7.0, 8.0],
+            &[1.0; 6],
+            &mut labels,
+            &HashSet::new(),
+            0,
+        );
+        assert_eq!(labels[&1], 1);
+        assert_eq!(labels[&0], 0);
+        assert_ne!(labels[&0], labels[&1]);
     }
 }

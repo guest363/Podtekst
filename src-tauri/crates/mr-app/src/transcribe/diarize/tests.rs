@@ -6,6 +6,7 @@ use crate::transcribe::{SpeakerInfo, Utterance, WordConf};
 
 use super::constraint_links::cannot_link_units;
 use super::core::short_name_allowed;
+use super::coverage::restore_protected;
 use super::profiles::{eligible_clusters, pick_samples, reassign_short_replies};
 use super::reconcile::{
     dedupe_cross_channel, merge_utterances, reconcile_channels, refresh_speaker_stats,
@@ -15,6 +16,7 @@ use super::segments::{
     merge_quiet_short_with_evidence, merge_tiny_clusters, promote_unmatched_utterances,
     promoted_utterances, short_join_threshold, smooth_labels_mono, switch_penalty,
 };
+use super::split::refine_ch1_utterances;
 use super::split::{
     local_region, speaker_change_cuts, split_at_pauses, split_by_word_pauses,
     split_utterance_by_bounds, split_window_region,
@@ -851,8 +853,14 @@ fn unmatched_utterance_becomes_its_own_speaker() {
     ];
     let mut labels = std::collections::HashMap::from([(0usize, 0usize)]);
     let mut next = 1usize;
-    let promoted =
-        promote_unmatched_utterances(&units, &mut labels, &mut next, 0, SpeechSupport::default());
+    let promoted = promote_unmatched_utterances(
+        &units,
+        &mut labels,
+        &mut next,
+        0,
+        SpeechSupport::default(),
+        None,
+    );
     assert_eq!(promoted, vec![1]);
     assert_eq!(labels.get(&1), Some(&1));
     assert!(!labels.contains_key(&2));
@@ -881,8 +889,14 @@ fn unmatched_utterance_touching_previous_is_its_continuation() {
     ];
     let mut labels = std::collections::HashMap::from([(0usize, 0usize)]);
     let mut next = 1usize;
-    let promoted =
-        promote_unmatched_utterances(&units, &mut labels, &mut next, 0, SpeechSupport::default());
+    let promoted = promote_unmatched_utterances(
+        &units,
+        &mut labels,
+        &mut next,
+        0,
+        SpeechSupport::default(),
+        None,
+    );
     assert!(promoted.is_empty());
     assert!(!labels.contains_key(&1));
 }
@@ -917,8 +931,14 @@ fn unmatched_utterances_of_one_voice_share_a_label() {
     ];
     let mut labels = std::collections::HashMap::from([(0usize, 0usize)]);
     let mut next = 1usize;
-    let promoted =
-        promote_unmatched_utterances(&units, &mut labels, &mut next, 0, SpeechSupport::default());
+    let promoted = promote_unmatched_utterances(
+        &units,
+        &mut labels,
+        &mut next,
+        0,
+        SpeechSupport::default(),
+        None,
+    );
     assert_eq!(promoted, vec![1]);
     assert_eq!(labels.get(&1), Some(&1));
     assert_eq!(labels.get(&2), Some(&1));
@@ -946,8 +966,14 @@ fn unmatched_utterance_respects_speaker_limit() {
     ];
     let mut labels = std::collections::HashMap::from([(0usize, 0usize)]);
     let mut next = 1usize;
-    let promoted =
-        promote_unmatched_utterances(&units, &mut labels, &mut next, 1, SpeechSupport::default());
+    let promoted = promote_unmatched_utterances(
+        &units,
+        &mut labels,
+        &mut next,
+        1,
+        SpeechSupport::default(),
+        None,
+    );
     assert!(promoted.is_empty());
     assert!(!labels.contains_key(&1));
 }
@@ -982,8 +1008,14 @@ fn overlapping_units_do_not_inflate_promotion_duration() {
     ];
     let mut labels = HashMap::from([(0usize, 0usize)]);
     let mut next = 1usize;
-    let promoted =
-        promote_unmatched_utterances(&units, &mut labels, &mut next, 0, SpeechSupport::default());
+    let promoted = promote_unmatched_utterances(
+        &units,
+        &mut labels,
+        &mut next,
+        0,
+        SpeechSupport::default(),
+        None,
+    );
     assert!(promoted.is_empty());
     assert!(!labels.contains_key(&1));
     assert!(!labels.contains_key(&2));
@@ -1839,4 +1871,323 @@ fn short_reply_with_different_neighbors_stays() {
     let mut label_of: HashMap<usize, usize> = HashMap::from([(0, 0), (1, 2), (2, 1), (3, 2)]);
     reassign_short_replies(&utterances, &embs, &durs, &quals, &mut label_of);
     assert_eq!(label_of[&1], 2, "{label_of:?}");
+}
+
+#[test]
+fn strong_echo_suppresses_promotion_unless_local_speech_is_present() {
+    let units = vec![
+        AcoustUnit {
+            utterance: 0,
+            start: 0.0,
+            end: 2.0,
+            dur: 2.0,
+            quality: 1.0,
+            embedding: vec![1.0, 0.0],
+        },
+        AcoustUnit {
+            utterance: 1,
+            start: 4.0,
+            end: 5.5,
+            dur: 1.5,
+            quality: 1.0,
+            embedding: vec![0.0, 1.0],
+        },
+        AcoustUnit {
+            utterance: 2,
+            start: 8.0,
+            end: 9.5,
+            dur: 1.5,
+            quality: 1.0,
+            embedding: vec![-1.0, 0.0],
+        },
+    ];
+    let mut ev = echo_evidence(
+        10.0,
+        &[
+            (0.0, 2.0, FrameClass::LocalOnly),
+            (4.0, 5.2, FrameClass::Uncertain),
+            (5.2, 5.5, FrameClass::LocalOnly),
+            (8.0, 8.6, FrameClass::LocalOnly),
+            (8.6, 9.5, FrameClass::EchoOnly),
+        ],
+    );
+    ev.prominence = crate::transcribe::echo::STRONG_PROMINENCE + 10.0;
+
+    let mut labels = HashMap::from([(0usize, 0usize)]);
+    let mut next = 1usize;
+    let promoted = promote_unmatched_utterances(
+        &units,
+        &mut labels,
+        &mut next,
+        0,
+        SpeechSupport::default(),
+        Some(&ev),
+    );
+    assert_eq!(promoted, vec![1]);
+    assert!(
+        !labels.contains_key(&1),
+        "остаточное эхо не должно выдвигаться"
+    );
+    assert_eq!(
+        labels.get(&2),
+        Some(&1),
+        "локальная речь ≥0.25 должна оставаться"
+    );
+
+    ev.prominence = 12.0;
+    let mut weak_labels = HashMap::from([(0usize, 0usize)]);
+    let mut weak_next = 1usize;
+    let weak_promoted = promote_unmatched_utterances(
+        &units,
+        &mut weak_labels,
+        &mut weak_next,
+        0,
+        SpeechSupport::default(),
+        Some(&ev),
+    );
+    assert_eq!(weak_promoted.len(), 2);
+}
+
+#[test]
+fn promoted_single_utterance_survives_viterbi_smoothing_when_restored() {
+    let utterances = vec![
+        utt(0.0, 3.0, "Собеседник 1", 1, "альфа"),
+        utt(3.1, 4.3, "Собеседник 2", 1, "бета"),
+        utt(4.4, 8.0, "Собеседник 1", 1, "гамма"),
+    ];
+    let a = vec![1.0, 0.0];
+    let b = vec![0.75, (1.0f64 - 0.75 * 0.75).sqrt()];
+    let embs = vec![Some(a.clone()), Some(b), Some(a)];
+    let durs = vec![3.0, 1.2, 3.6];
+    let quals = vec![1.0; 3];
+    let mut label_of = HashMap::from([(0usize, 0usize), (1, 1), (2, 0)]);
+    let promoted_utts = promoted_utterances(&label_of, &HashSet::from([1usize]));
+    smooth_labels_mono(&utterances, &embs, &durs, &quals, &mut label_of);
+    assert_eq!(
+        label_of[&1], 0,
+        "сглаживание без восстановления подавляет одиночную реплику"
+    );
+    restore_protected(&mut label_of, &promoted_utts);
+    assert_eq!(label_of[&1], 1);
+}
+
+#[test]
+fn ch1_refinement_splits_at_aligned_pause_and_assigns_voice_run_speaker() {
+    let mut u = utt(
+        0.0,
+        8.0,
+        "Собеседник 1",
+        1,
+        "альфа бета гамма дельта эпсилон дзета",
+    );
+    u.words = vec![
+        word("альфа", 0.2, 1.2),
+        word("бета", 1.3, 2.5),
+        word("гамма", 2.6, 3.9),
+        word("дельта", 4.15, 5.2),
+        word("эпсилон", 5.3, 6.5),
+        word("дзета", 6.6, 7.8),
+    ];
+    u.ctc_used = true;
+    let voice_timeline = vec![
+        utt(0.0, 3.9, "Собеседник 1", 1, ""),
+        utt(4.2, 8.0, "Собеседник 2", 1, ""),
+    ];
+    let mut utterances = vec![u];
+    refine_ch1_utterances(
+        &mut utterances,
+        &voice_timeline,
+        &HashMap::new(),
+        &HashMap::new(),
+    );
+    assert_eq!(utterances.len(), 2, "{utterances:?}");
+    assert_eq!(utterances[0].speaker, "Собеседник 1");
+    assert_eq!(utterances[0].text, "альфа бета гамма");
+    assert!((utterances[0].end - 4.03).abs() < 0.02, "{utterances:?}");
+    assert_eq!(utterances[1].speaker, "Собеседник 2");
+    assert_eq!(utterances[1].text, "дельта эпсилон дзета");
+    assert_eq!(utterances[1].start, utterances[0].end);
+}
+
+#[test]
+fn ch1_refinement_splits_at_lexical_boundary_with_turn_dash() {
+    let mut u = utt(
+        0.0,
+        7.5,
+        "Собеседник 1",
+        1,
+        "альфа бета гамма. — дельта эпсилон",
+    );
+    u.words = vec![
+        word("альфа", 0.3, 1.1),
+        word("бета", 1.2, 2.0),
+        word("гамма.", 2.1, 3.2),
+        word("—", 0.0, 0.0),
+        word("дельта", 3.3, 5.0),
+        word("эпсилон", 5.1, 7.2),
+    ];
+    u.ctc_used = true;
+    let voice_timeline = vec![
+        utt(0.0, 3.1, "Собеседник 1", 1, ""),
+        utt(3.4, 7.5, "Собеседник 2", 1, ""),
+    ];
+    let mut utterances = vec![u];
+    refine_ch1_utterances(
+        &mut utterances,
+        &voice_timeline,
+        &HashMap::new(),
+        &HashMap::new(),
+    );
+    assert_eq!(utterances.len(), 2, "{utterances:?}");
+    assert_eq!(utterances[0].text, "альфа бета гамма.");
+    assert_eq!(utterances[1].text, "— дельта эпсилон");
+    assert_eq!(utterances[0].speaker, "Собеседник 1");
+    assert_eq!(utterances[1].speaker, "Собеседник 2");
+}
+
+#[test]
+fn ch1_refinement_skips_short_unaligned_and_boundary_runs() {
+    let mut short = utt(0.0, 5.9, "Собеседник 1", 1, "альфа бета. гамма дельта");
+    short.words = vec![
+        word("альфа", 0.2, 1.2),
+        word("бета.", 1.3, 2.8),
+        word("гамма", 3.0, 4.2),
+        word("дельта", 4.3, 5.8),
+    ];
+    let mut unaligned = utt(
+        10.0,
+        17.0,
+        "Собеседник 1",
+        1,
+        "альфа бета гамма дельта эпсилон дзета",
+    );
+    unaligned.words = vec![
+        word("альфа", 10.2, 11.2),
+        word("бета", 11.24, 12.4),
+        word("гамма", 12.44, 13.5),
+        word("дельта", 13.54, 14.6),
+        word("эпсилон", 14.64, 15.8),
+        word("дзета", 15.84, 16.8),
+    ];
+    let mut near_edge = utt(20.0, 27.0, "Собеседник 1", 1, "альфа бета. гамма дельта");
+    near_edge.words = vec![
+        word("альфа", 20.2, 23.0),
+        word("бета.", 23.1, 26.05),
+        word("гамма", 26.25, 26.6),
+        word("дельта", 26.65, 26.9),
+    ];
+    let voice_timeline = vec![
+        utt(2.9, 5.9, "Собеседник 2", 1, ""),
+        utt(13.5, 17.0, "Собеседник 2", 1, ""),
+        utt(26.1, 27.0, "Собеседник 2", 1, ""),
+    ];
+    let mut utterances = vec![short, unaligned, near_edge];
+    refine_ch1_utterances(
+        &mut utterances,
+        &voice_timeline,
+        &HashMap::new(),
+        &HashMap::new(),
+    );
+    assert_eq!(utterances.len(), 3, "{utterances:?}");
+}
+
+#[test]
+fn ch1_refinement_requires_both_edges_aligned_for_interior_insertion() {
+    let make_utt = |mid_punct: &str| {
+        let mut u = utt(
+            0.0,
+            9.0,
+            "Собеседник 1",
+            1,
+            &format!("альфа бета. гамма {mid_punct} эпсилон дзета"),
+        );
+        u.words = vec![
+            word("альфа", 0.2, 1.4),
+            word("бета.", 1.5, 2.9),
+            word("гамма", 3.1, 4.3),
+            word(mid_punct, 4.4, 5.6),
+            word("эпсилон", 5.8, 7.2),
+            word("дзета", 7.3, 8.8),
+        ];
+        u
+    };
+    let voice_timeline = vec![
+        utt(0.0, 2.9, "Собеседник 1", 1, ""),
+        utt(3.05, 5.7, "Собеседник 2", 1, ""),
+        utt(5.8, 9.0, "Собеседник 1", 1, ""),
+    ];
+    let mut aligned = vec![make_utt("дельта?")];
+    refine_ch1_utterances(
+        &mut aligned,
+        &voice_timeline,
+        &HashMap::new(),
+        &HashMap::new(),
+    );
+    assert_eq!(aligned.len(), 3, "{aligned:?}");
+    assert_eq!(aligned[0].speaker, "Собеседник 1");
+    assert_eq!(aligned[1].speaker, "Собеседник 2");
+    assert_eq!(aligned[1].text, "гамма дельта?");
+    assert_eq!(aligned[2].speaker, "Собеседник 1");
+
+    let mut unaligned_end = vec![utt(
+        0.0,
+        9.0,
+        "Собеседник 1",
+        1,
+        "альфа бета. гамма дельта эпсилон дзета",
+    )];
+    unaligned_end[0].words = vec![
+        word("альфа", 0.2, 1.4),
+        word("бета.", 1.5, 2.9),
+        word("гамма", 3.1, 4.3),
+        word("дельта", 4.4, 5.6),
+        word("эпсилон", 5.64, 7.2),
+        word("дзета", 7.25, 8.8),
+    ];
+    refine_ch1_utterances(
+        &mut unaligned_end,
+        &voice_timeline,
+        &HashMap::new(),
+        &HashMap::new(),
+    );
+    assert_eq!(unaligned_end.len(), 1, "{unaligned_end:?}");
+}
+
+#[test]
+fn ch1_refinement_clamps_untimed_dash_in_large_gap_to_part_bounds() {
+    let mut u = utt(0.0, 8.5, "Собеседник 1", 1, "альфа бета. — гамма дельта");
+    u.words = vec![
+        word("альфа", 0.2, 1.0),
+        word("бета.", 1.1, 2.0),
+        word("—", 0.0, 0.0),
+        word("гамма", 4.0, 6.0),
+        word("дельта", 6.1, 8.2),
+    ];
+    u.ctc_used = true;
+    let voice_timeline = vec![
+        utt(0.0, 2.0, "Собеседник 1", 1, ""),
+        utt(3.2, 8.5, "Собеседник 2", 1, ""),
+    ];
+    let mut utterances = vec![u];
+    refine_ch1_utterances(
+        &mut utterances,
+        &voice_timeline,
+        &HashMap::new(),
+        &HashMap::new(),
+    );
+    assert_eq!(utterances.len(), 2, "{utterances:?}");
+    assert_eq!(utterances[0].text, "альфа бета.");
+    assert_eq!(utterances[1].text, "— гамма дельта");
+    let dash = &utterances[1].words[0];
+    assert_eq!(dash.w, "—");
+    assert!(
+        dash.start_sec >= utterances[1].start && dash.end_sec <= utterances[1].end,
+        "dash bounds {:?}..{:?} must stay inside part {:?}..{:?}",
+        dash.start_sec,
+        dash.end_sec,
+        utterances[1].start,
+        utterances[1].end
+    );
+    assert!(dash.start_sec >= utterances[1].start - 0.5 && dash.end_sec <= utterances[1].end + 0.5);
+    assert!(dash.start_sec <= dash.end_sec);
 }

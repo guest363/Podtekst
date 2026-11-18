@@ -5,14 +5,19 @@ use crate::transcribe::echo::{self, EchoEvidence};
 use crate::transcribe::{Utterance, WordConf};
 
 use super::bounds::split_utterance_by_bounds;
-use super::pauses::{split_step, SPLIT_MIN_DUR, SPLIT_WINDOW_SEC};
+use super::pauses::{split_step, word_boundaries, SPLIT_MIN_DUR, SPLIT_WINDOW_SEC};
 
-/// Веса выбора разреза: тишина решает, длинная пауза перевешивает смещение
-/// от середины, а кадру без длительности паузы смещение стоит дешевле.
+/// Веса выбора разреза: тишина решает, длинная пауза и конец предложения / тире
+/// реплики перевешивают смещение от середины, а внутрифразный зазор < 120 мс
+/// штрафуется, чтобы разрез не попадал на случайную смычку внутри фразы.
 const CUT_SCORE_RMS: f64 = 10.0;
 const CUT_SCORE_PAUSE: f64 = 2.0;
 const CUT_SCORE_WORD_DIST: f64 = 1.5;
 const CUT_SCORE_FRAME_DIST: f64 = 0.5;
+const CUT_SCORE_SENTENCE_END: f64 = 0.85;
+const CUT_SCORE_TURN_DASH: f64 = 1.0;
+const CUT_SCORE_MID_PHRASE_TINY_GAP: f64 = 0.65;
+const TINY_MID_PHRASE_GAP_SEC: f64 = 0.12;
 
 fn find_speaker_cut_point(
     samples: &[f32],
@@ -25,12 +30,6 @@ fn find_speaker_cut_point(
     let search_lo = (w_start_a - 0.2).max(start);
     let search_hi = (w_start_b + SPLIT_WINDOW_SEC + 0.2).min(end);
     let mid_expected = (w_start_a + w_start_b + SPLIT_WINDOW_SEC) / 2.0;
-
-    let timed: Vec<(f64, f64)> = words
-        .iter()
-        .filter(|w| w.end_sec > w.start_sec)
-        .map(|w| (w.start_sec, w.end_sec))
-        .collect();
 
     let sr = 16000.0;
     let frame_len = (0.05 * sr) as usize;
@@ -51,23 +50,29 @@ fn find_speaker_cut_point(
         (sum_sq / slice.len() as f64).sqrt()
     };
 
-    if !timed.is_empty() {
+    let boundaries = word_boundaries(words, start, end);
+    if !boundaries.is_empty() {
         let mut best_cut = None;
         let mut best_score = f64::MAX;
 
-        for w in timed.windows(2) {
-            let gap_start = w[0].1;
-            let gap_end = w[1].0;
-            let cut_t = (gap_start + gap_end) / 2.0;
-            if cut_t >= search_lo && cut_t <= search_hi {
-                let rms = rms_at(cut_t);
-                let pause = (gap_end - gap_start).max(0.0);
-                let dist = (cut_t - mid_expected).abs();
-                let score =
-                    rms * CUT_SCORE_RMS - pause * CUT_SCORE_PAUSE + dist * CUT_SCORE_WORD_DIST;
+        for b in boundaries {
+            if b.cut_t >= search_lo && b.cut_t <= search_hi {
+                let rms = rms_at(b.cut_t);
+                let dist = (b.cut_t - mid_expected).abs();
+                let mut score =
+                    rms * CUT_SCORE_RMS - b.pause * CUT_SCORE_PAUSE + dist * CUT_SCORE_WORD_DIST;
+                if b.ends_sentence {
+                    score -= CUT_SCORE_SENTENCE_END;
+                }
+                if b.starts_turn_dash {
+                    score -= CUT_SCORE_TURN_DASH;
+                }
+                if !b.ends_sentence && !b.starts_turn_dash && b.pause < TINY_MID_PHRASE_GAP_SEC {
+                    score += CUT_SCORE_MID_PHRASE_TINY_GAP;
+                }
                 if score < best_score {
                     best_score = score;
-                    best_cut = Some(cut_t);
+                    best_cut = Some(b.cut_t);
                 }
             }
         }
@@ -298,4 +303,86 @@ pub(crate) fn split_long_by_speaker_change(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn word(w: &str, start_sec: f64, end_sec: f64) -> WordConf {
+        WordConf {
+            w: w.to_string(),
+            conf: 0.98,
+            needs_review: false,
+            start_sec,
+            end_sec,
+        }
+    }
+
+    #[test]
+    fn sentence_boundary_and_turn_dash_win_over_closer_mid_phrase_gap() {
+        let a = vec![1.0, 0.0];
+        let b = vec![0.0, 1.0];
+        let wins = vec![(0.0, a.clone()), (1.0, a), (2.0, b.clone()), (3.0, b)];
+        let samples = vec![0.01f32; 16000 * 5];
+
+        let sentence_words = vec![
+            word("слово1", 0.3, 2.28),
+            word("слово2?", 2.32, 2.86),
+            word("слово3", 2.94, 4.6),
+        ];
+        let cuts_sentence = speaker_change_cuts(&samples, 0.0, 5.0, &wins, &sentence_words);
+        assert_eq!(cuts_sentence, vec![2.9]);
+
+        let dash_words = vec![
+            word("слово1", 0.3, 2.28),
+            word("слово2.", 2.32, 2.86),
+            word("—", 2.90, 2.95),
+            word("слово3", 3.00, 4.6),
+        ];
+        let cuts_dash = speaker_change_cuts(&samples, 0.0, 5.0, &wins, &dash_words);
+        assert_eq!(cuts_dash, vec![2.88]);
+    }
+
+    #[test]
+    fn standalone_dash_after_ellipsis_and_prefixed_dash_stay_in_right_half() {
+        let a = vec![1.0, 0.0];
+        let b = vec![0.0, 1.0];
+        let wins = vec![(0.0, a.clone()), (1.0, a), (2.0, b.clone()), (3.0, b)];
+        let samples = vec![0.01f32; 16000 * 5];
+
+        let words_untimed = vec![
+            word("слово1", 0.3, 1.8),
+            word("...", 0.0, 0.0),
+            word("—", 0.0, 0.0),
+            word("слово2", 2.0, 2.28),
+            word("слово3", 2.32, 4.6),
+        ];
+        let cuts = speaker_change_cuts(&samples, 0.0, 5.0, &wins, &words_untimed);
+        assert_eq!(cuts.len(), 1);
+        let utt = Utterance {
+            start: 0.0,
+            end: 5.0,
+            speaker: "X".to_string(),
+            channel: Some(1),
+            text: "слово1 ... — слово2 слово3".to_string(),
+            diarized: false,
+            silhouette: 0.0,
+            words: words_untimed,
+            ctc_used: true,
+        };
+        let parts = split_utterance_by_bounds(&utt, &[0.0, cuts[0], 5.0]);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].text, "слово1 ...");
+        assert_eq!(parts[1].text, "— слово2 слово3");
+
+        let words_prefixed = vec![
+            word("слово1", 0.3, 2.28),
+            word("слово2.", 2.32, 2.86),
+            word("—...", 2.92, 3.05),
+            word("слово3", 3.10, 4.6),
+        ];
+        let cuts_prefixed = speaker_change_cuts(&samples, 0.0, 5.0, &wins, &words_prefixed);
+        assert_eq!(cuts_prefixed, vec![2.89]);
+    }
 }
