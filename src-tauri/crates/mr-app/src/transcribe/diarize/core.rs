@@ -31,10 +31,6 @@ pub(super) fn short_name_allowed(candidate: &ClusterMatch) -> bool {
 /// Верхняя граница auto-k, если пользователь не задал max_speakers: защита от
 /// дробления шума на десятки «голосов». shortcut: 12 без размеченного набора.
 const AUTO_K_MAX_SPEAKERS: usize = 12;
-/// Калибровка слияния центроидов (ERes2NetV2): разные дикторы ≤ 0.22,
-/// один голос ≥ 0.48 на фрагментах. Порог 0.70 предотвращает ложное
-/// слияние разных собеседников с похожей акустикой комнаты.
-const CENTROID_MERGE_SIM: f64 = 0.70;
 
 /// Замер 2026-11-13 (runs/crosslink-diag2, crosslink-esc2): пары схлопывающихся
 /// синтетических сценариев — sim 0.55–0.68, пары main-набора — 0.13–0.33.
@@ -90,7 +86,9 @@ pub(crate) fn diarize_channel(
     max_speakers: usize,
     on_event: &dyn Fn(u8, &str),
 ) -> (Vec<SpeakerInfo>, Vec<Utterance>) {
-    use mr_ml::cluster::{agglomerative_gap, agglomerative_weighted, merge_by_centroid_cosine};
+    use mr_ml::cluster::{
+        agglomerative_gap, agglomerative_weighted, merge_by_centroid_cosine, CENTROID_MERGE_SIM,
+    };
     use mr_ml::cosine_similarity;
     let experiment = experiment::current();
     // EchoEvidence описывает пролезание системы в микрофон (ch=0); к другим каналам неприменим.
