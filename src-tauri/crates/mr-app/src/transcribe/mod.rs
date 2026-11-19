@@ -90,6 +90,26 @@ pub struct Sample {
     pub channel: Option<i32>,
 }
 
+pub(crate) const MAX_SPEAKERS_LIMIT: usize = 32;
+
+/// Единая валидация границ числа спикеров для CLI и HTTP API (P1).
+pub(crate) fn validate_speaker_bounds(
+    min_speakers: usize,
+    max_speakers: usize,
+) -> Result<(), String> {
+    if min_speakers > MAX_SPEAKERS_LIMIT || max_speakers > MAX_SPEAKERS_LIMIT {
+        return Err(format!(
+            "Число спикеров не может превышать {MAX_SPEAKERS_LIMIT}"
+        ));
+    }
+    if min_speakers > 0 && max_speakers > 0 && min_speakers > max_speakers {
+        return Err(format!(
+            "--min-speakers ({min_speakers}) не может быть больше --max-speakers ({max_speakers})"
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 pub struct TranscribeOptions {
     pub speaker_left: String,
@@ -134,7 +154,7 @@ pub struct TranscribeReport {
 
 #[cfg(test)]
 mod tests {
-    use super::Utterance;
+    use super::{validate_speaker_bounds, Utterance, MAX_SPEAKERS_LIMIT};
 
     #[test]
     fn old_transcript_without_words_parses() {
@@ -146,5 +166,15 @@ mod tests {
         .unwrap();
         assert!(u.words.is_empty());
         assert!(!u.ctc_used);
+    }
+
+    #[test]
+    fn validate_speaker_bounds_rejects_inverted_and_excessive_limits() {
+        assert!(validate_speaker_bounds(0, 0).is_ok());
+        assert!(validate_speaker_bounds(2, 5).is_ok());
+        assert!(validate_speaker_bounds(3, 3).is_ok());
+        assert!(validate_speaker_bounds(5, 2).is_err());
+        assert!(validate_speaker_bounds(MAX_SPEAKERS_LIMIT + 1, 0).is_err());
+        assert!(validate_speaker_bounds(0, MAX_SPEAKERS_LIMIT + 1).is_err());
     }
 }

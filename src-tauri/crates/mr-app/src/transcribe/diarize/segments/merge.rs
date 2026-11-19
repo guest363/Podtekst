@@ -318,12 +318,13 @@ pub(crate) fn smooth_labels_mono(
         let centroids: Vec<Vec<f64>> = ids
             .iter()
             .map(|&l| {
-                let members: Vec<usize> = label_of
+                let mut members: Vec<usize> = label_of
                     .iter()
                     .filter(|(_, &x)| x == l)
                     .map(|(&i, _)| i)
                     .filter(|&i| embs[i].is_some())
                     .collect();
+                members.sort_unstable();
                 let vs: Vec<Vec<f64>> = members.iter().map(|&i| embs[i].clone().unwrap()).collect();
                 let ws: Vec<f64> = members
                     .iter()

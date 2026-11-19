@@ -237,8 +237,8 @@ pub(super) fn empty_match() -> ClusterMatch {
 }
 
 /// Индексы в `raw_clusters` с объёмом чистой (локальной) речи. Нижняя граница
-/// здесь — 1.5 с; кластеры короче 2 с получают имя только при почти точном
-/// совпадении с профилем (проверка в `diarize_channel`).
+/// здесь — 0.9 с (`MIN_SHORT_NAME_SEC`); кластеры короче 2 с получают имя только
+/// при почти точном совпадении с профилем (проверка в `diarize_channel`).
 pub(super) fn eligible_clusters(
     raw_clusters: &[usize],
     label_of: &HashMap<usize, usize>,

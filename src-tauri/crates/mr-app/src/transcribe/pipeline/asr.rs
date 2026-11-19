@@ -26,6 +26,16 @@ pub(super) fn run(
     let mut seg_index = 0usize;
     let mut ctc_used_any = false;
     let mut channel_utts: HashMap<usize, Vec<Utterance>> = HashMap::new();
+    let ctc_available = use_gigaam && opts.ctc_enabled && models.ctc.is_some();
+    if !ctc_available && total_segs > 0 {
+        log::info!(
+            target: "asr",
+            gigaam = use_gigaam,
+            ctc_enabled = opts.ctc_enabled,
+            ctc_loaded = models.ctc.is_some();
+            "ev=asr.word_timestamps_unavailable"
+        );
+    }
     let asr_stage = Instant::now();
     stage_begin("asr");
     for (ch, label) in chan_list.iter() {

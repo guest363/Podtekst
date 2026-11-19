@@ -221,6 +221,15 @@ pub fn move_person_pack(
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
+        if !to_space.is_empty() && !source.space.is_empty() && to_space != source.space {
+            return Err(PacksError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "несовместимые пространства отпечатков: {} vs {}",
+                    source.space, to_space
+                ),
+            )));
+        }
         if to_space.is_empty() {
             to_space = source.space.clone();
         }
@@ -400,5 +409,37 @@ mod tests {
         let pf2 = app.join("packs").join(&p2.id).join("people.json");
         let t2 = fs::read_to_string(&pf2).unwrap();
         assert!(t2.contains("Инженер 1"));
+    }
+
+    #[test]
+    fn move_rejects_mismatched_embedding_spaces() {
+        let (_g, app) = tmp_app("move-space-mismatch");
+        let p1 = create_pack(&app, "Пакет 1", "").unwrap();
+        let p2 = create_pack(&app, "Пакет 2", "").unwrap();
+        add_person_to_pack(&app, &p1.id, json!({"name": "Спикер 1"})).unwrap();
+        fs::write(
+            app.join("packs").join(&p1.id).join("voiceprints.json"),
+            serde_json::to_string(&json!({
+                "version": 3,
+                "embedding_space": "space-a",
+                "profiles": [{"name": "Спикер 1", "embedding": [1.0]}]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            app.join("packs").join(&p2.id).join("voiceprints.json"),
+            serde_json::to_string(&json!({
+                "version": 3,
+                "embedding_space": "space-b",
+                "profiles": []
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(move_person_pack(&app, "Спикер 1", &p1.id, &p2.id).is_err());
+        let src_people =
+            fs::read_to_string(app.join("packs").join(&p1.id).join("people.json")).unwrap();
+        assert!(src_people.contains("Спикер 1"));
     }
 }

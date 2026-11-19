@@ -553,3 +553,105 @@ fn rename_without_source_keeps_transcript() {
     assert_eq!(std::fs::read_to_string(&json_p).expect("json"), before);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn failed_move_in_update_people_preserves_person_in_source_pack() {
+    let _guard = crate::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let dir = std::env::temp_dir().join(format!(
+        "mr-move-fail-preserve-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let prev = std::env::var("MEETING_RECORDER_DATA_DIR").ok();
+    std::env::set_var("MEETING_RECORDER_DATA_DIR", &dir);
+
+    let p1 = packs::create_pack(&dir, "Пакет 1", "").expect("пакет 1");
+    let p2 = packs::create_pack(&dir, "Пакет 2", "").expect("пакет 2");
+    ensure_person_in_pack("Спикер 1", Some("Участник"), &p1.id);
+    // Битый целевой people.json провоцирует сбой move_person_pack.
+    std::fs::write(
+        dir.join("packs").join(&p2.id).join("people.json"),
+        "{not-json",
+    )
+    .expect("битый json");
+
+    let ok = update_people("Спикер 1", "Спикер 1", None, Some(&p2.id), Some(&p1.id));
+    assert!(!ok, "неудачный перенос обязан вернуть false");
+    let still_there =
+        std::fs::read_to_string(dir.join("packs").join(&p1.id).join("people.json")).expect("p1");
+    assert!(
+        still_there.contains("Спикер 1"),
+        "контакт не должен пропасть из исходного пакета: {still_there}"
+    );
+
+    if let Some(p) = prev {
+        std::env::set_var("MEETING_RECORDER_DATA_DIR", p);
+    } else {
+        std::env::remove_var("MEETING_RECORDER_DATA_DIR");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn rename_voiceprint_preserves_foreign_space_and_skips_collision() {
+    let _guard = crate::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let dir = std::env::temp_dir().join(format!(
+        "mr-vp-rename-space-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let prev = std::env::var("MEETING_RECORDER_DATA_DIR").ok();
+    std::env::set_var("MEETING_RECORDER_DATA_DIR", &dir);
+
+    let pack = packs::create_pack(&dir, "Пакет 1", "").expect("пакет");
+    let vp_path = dir.join("packs").join(&pack.id).join("voiceprints.json");
+    std::fs::write(
+        &vp_path,
+        serde_json::to_string(&json!({
+            "version": 3,
+            "embedding_space": "foreign-space-v0",
+            "profiles": [
+                {"name": "Спикер 1", "embedding": vec![0.1; EMBEDDING_DIM]},
+                {"name": "Занято", "embedding": vec![0.2; EMBEDDING_DIM]}
+            ]
+        }))
+        .unwrap(),
+    )
+    .expect("запись");
+
+    // Коллизия не создаёт дубль.
+    assert!(!super::transcript_names::rename_voiceprint_names(
+        "Спикер 1",
+        "Занято"
+    ));
+    // Валидное переименование сохраняет исходное embedding_space.
+    assert!(super::transcript_names::rename_voiceprint_names(
+        "Спикер 1",
+        "Спикер 2"
+    ));
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&vp_path).unwrap()).unwrap();
+    assert_eq!(saved["embedding_space"], "foreign-space-v0");
+    assert!(saved["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["name"] == "Спикер 2"));
+
+    if let Some(p) = prev {
+        std::env::set_var("MEETING_RECORDER_DATA_DIR", p);
+    } else {
+        std::env::remove_var("MEETING_RECORDER_DATA_DIR");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

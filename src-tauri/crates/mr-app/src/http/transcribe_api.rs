@@ -248,21 +248,27 @@ pub(super) fn handle_transcribe_start(request: tiny_http::Request, body: serde_j
         );
         return;
     }
+    let min_speakers = body
+        .get("min_speakers")
+        .and_then(|v| v.as_u64())
+        .and_then(|v| usize::try_from(v).ok())
+        .unwrap_or(0);
+    let max_speakers = body
+        .get("max_speakers")
+        .and_then(|v| v.as_u64())
+        .and_then(|v| usize::try_from(v).ok())
+        .unwrap_or(0);
+    if let Err(error) = crate::transcribe::validate_speaker_bounds(min_speakers, max_speakers) {
+        json_response(request, json!({"ok": false, "error": error}), 400);
+        return;
+    }
     let opts = crate::transcribe::TranscribeOptions {
         speaker_left: my_name,
         speaker_right: "Собеседник".to_string(),
         engine,
         language,
-        min_speakers: body
-            .get("min_speakers")
-            .and_then(|v| v.as_u64())
-            .and_then(|v| usize::try_from(v).ok())
-            .unwrap_or(0),
-        max_speakers: body
-            .get("max_speakers")
-            .and_then(|v| v.as_u64())
-            .and_then(|v| usize::try_from(v).ok())
-            .unwrap_or(0),
+        min_speakers,
+        max_speakers,
         hotwords: hotwords_from_body(&body),
         ctc_enabled: body
             .get("ctc_enabled")

@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use mr_packs as packs;
 use serde_json::json;
 
-use super::super::lock_people;
 use super::super::transcript_names::rename_voiceprint_names;
+use super::super::{lock_people, lock_voiceprints};
 use super::packs::{people_json_files, resolve_target_pack};
 use crate::config::app_data_dir;
 use crate::fsutil::write_atomic;
@@ -108,10 +108,16 @@ pub(crate) fn update_people(
             .map(|s| s.to_string())
             .unwrap_or_else(|| resolve_target_pack(old, None));
         if from_pack != target_id {
-            if let Err(e) = packs::move_person_pack(&app_data_dir(), old, &from_pack, target_id) {
+            let move_res = {
+                let _vp = lock_voiceprints();
+                packs::move_person_pack(&app_data_dir(), old, &from_pack, target_id)
+            };
+            if let Err(e) = move_res {
                 crate::note!(
                     "[warn] move_person_pack {old} from {from_pack} to {target_id}: {e:?}"
                 );
+                // Ошибка переноса прерывает операцию: иначе очистка дублей ниже удалит контакт везде.
+                return false;
             }
             // Гарантируем отсутствие дублей в остальных пакетах
             if let Ok(all_packs) = packs::list_packs(&app_data_dir()) {

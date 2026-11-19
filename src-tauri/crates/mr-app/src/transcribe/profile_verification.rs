@@ -206,7 +206,10 @@ fn match_verified_embedding(
     verified: &HashMap<String, Vec<(Vec<f64>, f64)>>,
 ) -> ClusterMatch {
     let mut result = match_single_embedding(embedding, profiles);
+    // Fallback снимает только отсев по глобальному cohort z-score (работает с 4 профилей),
+    // чтобы не обходить усиленные пороги для 1–3 профилей.
     if result.matched
+        || profiles.len() < 4
         || result.similarity < mr_ml::DEFAULT_MATCH_THRESHOLD
         || result.margin < mr_ml::DEFAULT_MIN_MARGIN
     {

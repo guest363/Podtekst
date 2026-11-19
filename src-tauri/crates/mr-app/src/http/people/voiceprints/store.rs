@@ -24,7 +24,17 @@ pub(crate) fn parse_profiles(v: &serde_json::Value) -> Vec<serde_json::Value> {
 }
 
 pub(crate) fn vp_v3(profiles: Vec<serde_json::Value>) -> serde_json::Value {
-    json!({"version": 3, "embedding_space": EMBEDDING_SPACE, "profiles": profiles})
+    vp_v3_with_space(profiles, Some(EMBEDDING_SPACE))
+}
+
+/// Сохраняет исходное `embedding_space` файла, чтобы удаление или переименование
+/// не перемаркировали чужое векторное пространство как текущее.
+pub(crate) fn vp_v3_with_space(
+    profiles: Vec<serde_json::Value>,
+    space: Option<&str>,
+) -> serde_json::Value {
+    let space = space.filter(|s| !s.is_empty()).unwrap_or(EMBEDDING_SPACE);
+    json!({"version": 3, "embedding_space": space, "profiles": profiles})
 }
 
 /// Профиль пригоден для текущего embedding-пространства: есть центроид или
@@ -277,12 +287,15 @@ pub(crate) fn store_voiceprint(
             }],
         }));
     }
-    let _ = write_atomic(
-        &vp_file,
-        serde_json::to_string_pretty(&vp_v3(profiles))
-            .unwrap_or_default()
-            .as_bytes(),
-    );
+    let payload = serde_json::to_string_pretty(&vp_v3(profiles))
+        .map_err(|e| format!("Не удалось сериализовать голосовые отпечатки: {e}"))?;
+    if let Err(error) = write_atomic(&vp_file, payload.as_bytes()) {
+        drop(_guard);
+        if let (Some(rel), Some(parent)) = (snippet_rel.as_deref(), vp_file.parent()) {
+            remove_snippet(parent, rel);
+        }
+        return Err(format!("Не удалось сохранить голосовые отпечатки: {error}"));
+    }
     drop(_guard);
     // Дубликат не попал в профиль — сниппет ему не нужен.
     if duplicate {
@@ -351,9 +364,10 @@ pub(crate) fn delete_voiceprint_files(name: &str, files: Vec<std::path::PathBuf>
             .collect();
         if kept.len() != before {
             found = true;
+            let space = v.get("embedding_space").and_then(|x| x.as_str());
             let _ = write_atomic(
                 &vp_file,
-                serde_json::to_string_pretty(&vp_v3(kept))
+                serde_json::to_string_pretty(&vp_v3_with_space(kept, space))
                     .unwrap_or_default()
                     .as_bytes(),
             );

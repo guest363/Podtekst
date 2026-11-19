@@ -40,6 +40,9 @@ pub(crate) fn move_boundary_words(utterances: &mut Vec<Utterance>) {
             .collect::<Vec<_>>()
             .join(" ");
         let next = &mut utterances[i + 1];
+        if let Some(first) = moved.first() {
+            next.start = next.start.min(first.start_sec);
+        }
         next.end = next.end.max(moved.last().map_or(0.0, |w| w.end_sec));
         next.words.splice(0..0, moved);
         next.text = if next.text.is_empty() {

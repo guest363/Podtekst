@@ -246,6 +246,7 @@ pub(crate) fn handle_people_add(request: tiny_http::Request, body: serde_json::V
         );
         return;
     }
+    let _people = lock_people();
     match packs::add_person_to_pack(
         &app_data_dir(),
         &pack_id,
@@ -283,6 +284,8 @@ pub(crate) fn handle_people_move(request: tiny_http::Request, body: serde_json::
         );
         return;
     }
+    let _people = lock_people();
+    let _vp = lock_voiceprints();
     let from_pack = if from_pack.is_empty() {
         resolve_target_pack(&name, None)
     } else {

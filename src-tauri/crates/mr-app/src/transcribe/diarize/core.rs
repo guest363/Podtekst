@@ -28,6 +28,23 @@ pub(super) fn short_name_allowed(candidate: &ClusterMatch) -> bool {
         && candidate.margin >= SHORT_NAME_MIN_MARGIN
 }
 
+fn short_unrounded_margin_ok(embedding: &[f64], profiles: &[SpeakerProfile]) -> bool {
+    if profiles.len() <= 1 {
+        return true;
+    }
+    let (mut best, mut second) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for profile in profiles {
+        let score = mr_ml::score_speaker_similarity(embedding, profile);
+        if score > best {
+            second = best;
+            best = score;
+        } else if score > second {
+            second = score;
+        }
+    }
+    best - second >= SHORT_NAME_MIN_MARGIN
+}
+
 /// Верхняя граница auto-k, если пользователь не задал max_speakers: защита от
 /// дробления шума на десятки «голосов». shortcut: 12 без размеченного набора.
 const AUTO_K_MAX_SPEAKERS: usize = 12;
@@ -183,11 +200,15 @@ pub(crate) fn diarize_channel(
         .enumerate()
         .map(|(position, &index)| (index, position))
         .collect();
-    let pairs = cannot_link_units(&units, &core_pos, support, &core_vecs);
-    let auto_max = if max_speakers > 0 {
-        max_speakers
+    let pairs = if max_speakers == 1 {
+        Vec::new()
     } else {
-        AUTO_K_MAX_SPEAKERS
+        cannot_link_units(&units, &core_pos, support, &core_vecs)
+    };
+    let auto_max = if max_speakers > 0 {
+        max_speakers.max(min_auto)
+    } else {
+        AUTO_K_MAX_SPEAKERS.max(min_auto)
     };
     let cluster_core =
         |core_vecs: &[Vec<f64>], core_weights: &[f64], constraints: &[(usize, usize)]| {
@@ -378,7 +399,8 @@ pub(crate) fn diarize_channel(
         }
         groups
             .into_iter()
-            .map(|(label, members)| {
+            .map(|(label, mut members)| {
+                members.sort_unstable();
                 let vecs: Vec<Vec<f64>> = members
                     .iter()
                     .map(|&index| units[index].embedding.clone())
@@ -646,12 +668,14 @@ pub(crate) fn diarize_channel(
     let matched_short = match_voiceprints_matrix(
         &short_centroids,
         profiles,
-        mr_ml::DEFAULT_MATCH_THRESHOLD,
-        mr_ml::DEFAULT_MIN_MARGIN,
+        SHORT_NAME_MIN_SIM,
+        SHORT_NAME_MIN_MARGIN,
     );
     for (slot, &(k, _)) in short.iter().enumerate() {
         let candidate = &matched_short[slot];
-        if short_name_allowed(candidate) {
+        if short_name_allowed(candidate)
+            && short_unrounded_margin_ok(&short_centroids[slot], profiles)
+        {
             matches[k] = candidate.clone();
         }
     }
@@ -676,21 +700,16 @@ pub(crate) fn diarize_channel(
     unmatched.sort_by(|&a, &b| {
         let ca = label_of.values().filter(|&&l| l == a).count();
         let cb = label_of.values().filter(|&&l| l == b).count();
-        cb.cmp(&ca).then(
+        let first_start = |cluster: usize| {
             label_of
                 .iter()
-                .filter(|(_, &l)| l == b)
+                .filter(|(_, &l)| l == cluster)
                 .map(|(&i, _)| utterances[i].start)
                 .fold(f64::INFINITY, f64::min)
-                .partial_cmp(
-                    &label_of
-                        .iter()
-                        .filter(|(_, &l)| l == a)
-                        .map(|(&i, _)| utterances[i].start)
-                        .fold(f64::INFINITY, f64::min),
-                )
-                .unwrap_or(std::cmp::Ordering::Equal),
-        )
+        };
+        cb.cmp(&ca)
+            .then_with(|| first_start(a).total_cmp(&first_start(b)))
+            .then_with(|| a.cmp(&b))
     });
     let generic = [
         "Собеседник",

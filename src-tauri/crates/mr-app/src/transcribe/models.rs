@@ -220,7 +220,15 @@ pub(crate) fn extract_utterance_embedding(
     }
     let mut models = ModelsGuard::take(None, false)?;
     models.ensure_diar();
+    // Тот же AGC-фронтенд, что и при диаризации/верификации: иначе эталон
+    // на сыром тихом канале расходится с центроидами.
+    let raw_rms =
+        (samples.iter().map(|&x| (x * x) as f64).sum::<f64>() / samples.len().max(1) as f64).sqrt();
     let mut clean_samples = samples;
+    let (agc_plan, agc_stats) = mr_audio::dsp::agc_analysis_16k(&clean_samples);
+    if agc_stats.amplified_fraction > 0.0 {
+        mr_audio::dsp::agc_apply_16k(&mut clean_samples, &agc_plan);
+    }
     if let Some(segmentation) = models.segmentation.as_mut() {
         if let Ok(seg) = segmentation.segment(&clean_samples) {
             let clean_len = seg.exclude_overlap(&mut clean_samples, 0);
@@ -242,11 +250,8 @@ pub(crate) fn extract_utterance_embedding(
         .embed(&clean_samples)?;
     let emb = emb.ok_or_else(|| "Голос не извлечь: тишина или шум".to_string())?;
     let clean_dur = clean_samples.len() as f64 / 16000.0;
-    let rms = (clean_samples.iter().map(|&x| (x * x) as f64).sum::<f64>()
-        / clean_samples.len().max(1) as f64)
-        .sqrt();
     let quality =
-        ((rms / 0.05).clamp(0.3, 1.2) * (clean_dur / (end - start).max(0.4)).min(1.0) * 1000.0)
+        ((raw_rms / 0.05).clamp(0.3, 1.2) * (clean_dur / (end - start).max(0.4)).min(1.0) * 1000.0)
             .round()
             / 1000.0;
     Ok((emb, clean_dur, quality))

@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::lists::{people_json_files, same_name};
 use super::lock_voiceprints;
-use super::voiceprints::{parse_profiles, vp_v3};
+use super::voiceprints::{parse_profiles, vp_v3_with_space};
 use crate::config::{app_data_dir, save_dir};
 use crate::fsutil::write_atomic;
 use crate::http::media::inside_save_dir;
@@ -24,6 +24,16 @@ pub(super) fn rename_voiceprint_names(old: &str, new: &str) -> bool {
         if let Ok(text) = std::fs::read_to_string(&file) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
                 let mut profiles = parse_profiles(&v);
+                // Коллизия с уже существующим профилем в том же файле породила бы дубль.
+                let target_exists = !same_name(old, new)
+                    && profiles.iter().any(|p| {
+                        p.get("name")
+                            .and_then(|x| x.as_str())
+                            .is_some_and(|n| same_name(n, new))
+                    });
+                if target_exists {
+                    continue;
+                }
                 let mut changed = false;
                 for p in &mut profiles {
                     if p.get("name")
@@ -37,9 +47,10 @@ pub(super) fn rename_voiceprint_names(old: &str, new: &str) -> bool {
                     }
                 }
                 if changed {
+                    let space = v.get("embedding_space").and_then(|x| x.as_str());
                     let _ = write_atomic(
                         &file,
-                        serde_json::to_string_pretty(&vp_v3(profiles))
+                        serde_json::to_string_pretty(&vp_v3_with_space(profiles, space))
                             .unwrap_or_default()
                             .as_bytes(),
                     );

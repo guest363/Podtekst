@@ -2229,3 +2229,77 @@ fn ch1_refinement_verifier_rejects_unconfirmed_split_and_allows_confirmed() {
     assert_eq!(confirmed[0].speaker, "Собеседник 1");
     assert_eq!(confirmed[1].speaker, "Собеседник 2");
 }
+
+#[test]
+fn reconcile_channels_blocks_transitive_merge_of_two_ch1_speakers_via_ch0_echo() {
+    // Два безымянных кластера ch1 (разные голоса) и общий эхо-кластер ch0:
+    // DSU не должен склеивать обоих удалённых участников в одного через ch0.
+    let mut infos = vec![
+        info("Собеседник 1", 1, vec![1.0, 0.0, 0.0], 5, 10.0),
+        info("Собеседник 2", 1, vec![0.0, 1.0, 0.0], 5, 10.0),
+        info("Участник 2", 0, vec![0.8, 0.6, 0.0], 2, 3.0),
+    ];
+    let mut utts = vec![
+        utt(0.0, 2.0, "Собеседник 1", 1, "первая фраза эхо"),
+        utt(0.1, 2.0, "Участник 2", 0, "первая фраза эхо"),
+        utt(5.0, 7.0, "Собеседник 2", 1, "вторая фраза эхо"),
+        utt(5.1, 7.0, "Участник 2", 0, "вторая фраза эхо"),
+    ];
+    reconcile_channels(&mut infos, &mut utts);
+    assert_eq!(infos.len(), 2, "{infos:?}");
+    assert_ne!(utts[0].speaker, utts[2].speaker);
+    // Более близкий по косинусу (0.8 vs 0.6) забирает эхо-кластер.
+    assert_eq!(utts[1].speaker, "Собеседник 1");
+}
+
+#[test]
+fn reconcile_channels_short_rule_never_renames_large_mic_cluster_to_short_remote() {
+    let mut infos = vec![
+        info("Я", 0, vec![1.0, 0.0], 10, 20.0),
+        info("Собеседник 1", 1, vec![0.0, 1.0], 1, 2.0),
+    ];
+    let mut utts = vec![
+        utt(0.0, 2.0, "Я", 0, "короткая общая фраза"),
+        utt(0.1, 2.0, "Собеседник 1", 1, "короткая общая фраза"),
+    ];
+    reconcile_channels(&mut infos, &mut utts);
+    assert_eq!(infos.len(), 2, "{infos:?}");
+    assert_eq!(utts[0].speaker, "Я");
+    assert_eq!(utts[1].speaker, "Собеседник 1");
+}
+
+#[test]
+fn move_boundary_words_updates_next_start() {
+    let mut u1 = utt(0.0, 2.0, "A", 0, "раз два три");
+    u1.words = vec![
+        word("раз", 0.2, 0.6),
+        word("два", 0.7, 1.2),
+        word("три", 1.96, 2.0),
+    ];
+    let mut u2 = utt(2.1, 3.0, "A", 0, "четыре");
+    u2.words = vec![word("четыре", 2.15, 2.8)];
+    let mut utts = vec![u1, u2];
+    move_boundary_words(&mut utts);
+    assert_eq!(utts.len(), 2);
+    assert!(utts[1].start <= utts[1].words[0].start_sec);
+}
+
+#[test]
+fn split_at_pauses_finds_pauses_in_mostly_silent_channel() {
+    // 90% канала — тишина, но внутри 4-секундной реплики есть пауза 0.4 с:
+    // квантили считаются по репликам, а не по тишине всего канала.
+    let mut samples = vec![0.0f32; 16_000 * 40];
+    let fill_tone = |buf: &mut [f32], start_s: f64, end_s: f64| {
+        let lo = (start_s * 16_000.0) as usize;
+        let hi = (end_s * 16_000.0) as usize;
+        for (i, slot) in buf[lo..hi].iter_mut().enumerate() {
+            *slot = 0.2 * (std::f32::consts::TAU * 300.0 * i as f32 / 16_000.0).sin();
+        }
+    };
+    fill_tone(&mut samples, 10.0, 11.8);
+    fill_tone(&mut samples, 12.2, 14.0);
+    let utts = vec![utt(10.0, 14.0, "Собеседник 1", 1, "первая вторая")];
+    let split = split_at_pauses(&samples, &utts);
+    assert_eq!(split.len(), 2, "{split:?}");
+    assert!((split[0].end - 12.0).abs() < 0.35, "{split:?}");
+}

@@ -77,6 +77,15 @@ pub(crate) fn reconcile_channels(infos: &mut Vec<SpeakerInfo>, utterances: &mut 
         .filter(|(_, info)| !info.matched && info.candidates.is_empty())
         .map(|(index, _)| index)
         .collect();
+    // Каналы безымянных кластеров в компоненте: мешает транзитивному слиянию
+    // двух разных собеседников ch1 через общий кластер эха в ch0.
+    let mut unmatched_channels: HashMap<usize, HashSet<Option<i32>>> = infos
+        .iter()
+        .enumerate()
+        .filter(|(_, info)| !info.matched)
+        .map(|(index, info)| (index, HashSet::from([info.channel])))
+        .collect();
+    let mut candidates: Vec<(bool, f64, f64, usize, usize)> = Vec::new();
     for i in 0..n {
         for j in (i + 1)..n {
             let sim = match (&infos[i].embedding, &infos[j].embedding) {
@@ -96,7 +105,10 @@ pub(crate) fn reconcile_channels(infos: &mut Vec<SpeakerInfo>, utterances: &mut 
                 }
             }
             let (overlap, echo) = pair_evidence(&by_name, &infos[i].name, &infos[j].name);
-            let short = infos[i].utterances_count <= 2 || infos[j].utterances_count <= 2;
+            // Короткий эхо-кластер возможен только со стороны микрофона (ch=0):
+            // иначе короткая реплика собеседника (ch=1) переименует весь кластер «Я».
+            let short_mic_echo = (infos[i].channel == Some(0) && infos[i].utterances_count <= 2)
+                || (infos[j].channel == Some(0) && infos[j].utterances_count <= 2);
             let same_name = infos[i].name == infos[j].name;
 
             let should_merge =
@@ -124,34 +136,65 @@ pub(crate) fn reconcile_channels(infos: &mut Vec<SpeakerInfo>, utterances: &mut 
                     same_name
                         || (sim >= 0.55 && overlap >= 0.3)
                         || (echo && sim >= 0.45 && overlap >= 0.3)
-                        || (echo && short && overlap >= 0.8)
+                        || (echo && short_mic_echo && overlap >= 0.8)
                 };
 
             if should_merge {
-                let ri = dsu.find(i);
-                let rj = dsu.find(j);
-                if let (Some(&name_i), Some(&name_j)) =
-                    (matched_root.get(&ri), matched_root.get(&rj))
-                {
-                    if name_i != name_j {
-                        continue; // Разные профили уже в этих компонентах — слияние строго запрещено!
-                    }
-                }
-                if (matched_root.contains_key(&ri) && unnamed_roots.contains(&rj))
-                    || (matched_root.contains_key(&rj) && unnamed_roots.contains(&ri))
-                {
-                    continue;
-                }
-                let unnamed = unnamed_roots.contains(&ri) || unnamed_roots.contains(&rj);
-                dsu.union(i, j);
-                let nr = dsu.find(i);
-                if unnamed {
-                    unnamed_roots.insert(nr);
-                }
-                if let Some(&name) = matched_root.get(&ri).or_else(|| matched_root.get(&rj)) {
-                    matched_root.insert(nr, name);
-                }
+                candidates.push((same_name, sim, overlap, i, j));
             }
+        }
+    }
+    candidates.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| b.1.total_cmp(&a.1))
+            .then_with(|| b.2.total_cmp(&a.2))
+            .then_with(|| a.3.cmp(&b.3))
+            .then_with(|| a.4.cmp(&b.4))
+    });
+    for (_, _, _, i, j) in candidates {
+        let ri = dsu.find(i);
+        let rj = dsu.find(j);
+        if ri == rj {
+            continue;
+        }
+        if let (Some(&name_i), Some(&name_j)) = (matched_root.get(&ri), matched_root.get(&rj)) {
+            if name_i != name_j {
+                continue; // Разные профили уже в этих компонентах — слияние строго запрещено!
+            }
+        }
+        if (matched_root.contains_key(&ri) && unnamed_roots.contains(&rj))
+            || (matched_root.contains_key(&rj) && unnamed_roots.contains(&ri))
+        {
+            continue;
+        }
+        if !matched_root.contains_key(&ri) && !matched_root.contains_key(&rj) {
+            let clash = unmatched_channels
+                .get(&ri)
+                .zip(unmatched_channels.get(&rj))
+                .is_some_and(|(ci, cj)| !ci.is_disjoint(cj));
+            if clash {
+                continue;
+            }
+        }
+        let unnamed = unnamed_roots.contains(&ri) || unnamed_roots.contains(&rj);
+        let mut merged_ch = unmatched_channels.remove(&ri).unwrap_or_default();
+        if let Some(other_ch) = unmatched_channels.remove(&rj) {
+            merged_ch.extend(other_ch);
+        }
+        let matched_name = matched_root
+            .get(&ri)
+            .or_else(|| matched_root.get(&rj))
+            .copied();
+        dsu.union(i, j);
+        let nr = dsu.find(i);
+        if !merged_ch.is_empty() {
+            unmatched_channels.insert(nr, merged_ch);
+        }
+        if unnamed {
+            unnamed_roots.insert(nr);
+        }
+        if let Some(name) = matched_name {
+            matched_root.insert(nr, name);
         }
     }
 
