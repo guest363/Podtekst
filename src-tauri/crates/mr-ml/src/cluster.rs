@@ -58,6 +58,14 @@ const CANNOT_LINK_DISTANCE: f64 = 10.0;
 /// значение; замера именно по разрыву в репозитории нет, нужен прогон
 /// tools/diar_eval на размеченном наборе.
 const MIN_AUTO_K_GAP: f64 = 0.04;
+/// Калибровка слияния центроидов (ERes2NetV2): разные дикторы ≤ 0.22,
+/// один голос ≥ 0.48 на фрагментах. Порог 0.70 предотвращает ложное
+/// слияние разных собеседников с похожей акустикой комнаты.
+pub const CENTROID_MERGE_SIM: f64 = 0.70;
+/// Нижняя граница высоты слияния для автовыбора k (1 - CENTROID_MERGE_SIM):
+/// скачки ниже этого уровня происходят внутри одного голоса и не должны
+/// дробить кластер на десяток подкластеров.
+const MIN_GAP_MERGE_DIST: f64 = 1.0 - CENTROID_MERGE_SIM;
 
 pub fn agglomerative(
     embeddings: &[Vec<f64>],
@@ -254,20 +262,23 @@ pub fn agglomerative_gap(
     // разрыв в дереве; иначе искусственная высота cannot-link и шумовая пара
     // тянут k вниз, вплоть до одного кластера после слияний.
     let gap_floor = if min_k <= 1 { 2 } else { min_k };
+    let min_gap_height = MIN_GAP_MERGE_DIST.min(distance_threshold);
     let mut best: Option<(f64, usize)> = None;
-    for i in 0..merges.len().saturating_sub(1) {
-        let k = n - (i + 1);
-        if k < gap_floor || k > max_k {
-            continue;
-        }
-        // shortcut: слияния >= 2.0 вызваны искусственным CANNOT_LINK_DISTANCE (10.0),
-        // искусственный скачок не является акустическим разрывом в дендрограмме.
-        if merges[i + 1].0 >= 2.0 {
-            continue;
-        }
-        let gap = merges[i + 1].0 - merges[i].0;
-        if best.is_none_or(|(best_gap, _)| gap > best_gap) {
-            best = Some((gap, k));
+    if distance_threshold > 0.0 {
+        for i in 0..merges.len().saturating_sub(1) {
+            let k = n - (i + 1);
+            if k < gap_floor || k > max_k {
+                continue;
+            }
+            // shortcut: слияния >= 2.0 вызваны искусственным CANNOT_LINK_DISTANCE (10.0),
+            // а ниже min_gap_height — лежат внутри одного голоса или ниже порога слияния.
+            if merges[i + 1].0 >= 2.0 || merges[i + 1].0 < min_gap_height {
+                continue;
+            }
+            let gap = merges[i + 1].0 - merges[i].0;
+            if best.is_none_or(|(best_gap, _)| gap > best_gap) {
+                best = Some((gap, k));
+            }
         }
     }
     if let Some((gap, k)) = best.filter(|(gap, _)| *gap >= MIN_AUTO_K_GAP) {
@@ -670,6 +681,45 @@ mod tests {
         let embs = vec![at(-1.0), at(1.0), at(64.0), at(66.0), at(179.0), at(181.0)];
         let labels = agglomerative_gap(&embs, &[1.0; 6], &[], 0.52, 1, 2);
         assert_eq!(unique_labels(&labels), 2);
+    }
+
+    #[test]
+    fn gap_ignores_intra_voice_jumps_below_centroid_merge_distance() {
+        let ax = 0.9_f64.sqrt();
+        let ay = 0.1_f64.sqrt();
+        let a1 = vec![ax, 0.0, ay, 0.0];
+        let a2 = vec![ax, 0.0, -ay, 0.0];
+        let p = 0.835_f64.sqrt();
+        let q = 0.165_f64.sqrt();
+        let b1 = vec![0.6 * p, 0.8 * p, 0.0, q];
+        let b2 = vec![0.6 * p, 0.8 * p, 0.0, -q];
+        let embs = vec![a1.clone(), a1, a2.clone(), a2, b1, b2];
+        let labels = agglomerative_gap(&embs, &[1.0; 6], &[], 0.52, 1, 6);
+        assert_eq!(unique_labels(&labels), 2);
+        assert_eq!(labels[0], labels[1]);
+        assert_eq!(labels[0], labels[2]);
+        assert_eq!(labels[0], labels[3]);
+        assert_eq!(labels[4], labels[5]);
+        assert_ne!(labels[0], labels[4]);
+    }
+
+    #[test]
+    fn gap_falls_back_to_one_cluster_for_intra_voice_jump() {
+        let ax = 0.9_f64.sqrt();
+        let ay = 0.1_f64.sqrt();
+        let a1 = vec![ax, 0.0, ay, 0.0];
+        let a2 = vec![ax, 0.0, -ay, 0.0];
+        let embs = vec![a1.clone(), a1, a2.clone(), a2];
+        let labels = agglomerative_gap(&embs, &[1.0; 4], &[], 0.52, 1, 4);
+        assert_eq!(unique_labels(&labels), 1);
+    }
+
+    #[test]
+    fn gap_bypasses_search_when_threshold_non_positive() {
+        let at = |deg: f64| vec![deg.to_radians().cos(), deg.to_radians().sin()];
+        let embs = vec![at(0.0), at(10.0), at(40.0), at(50.0)];
+        let labels = agglomerative_gap(&embs, &[1.0; 4], &[], 0.0, 1, 4);
+        assert_eq!(unique_labels(&labels), 4);
     }
 
     #[test]
