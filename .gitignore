@@ -57,6 +57,9 @@ Thumbs.db
 *.log
 logs/
 
+# Локальные замеры скорости рядом с расшифровкой (baseline не игнорируется)
+*.perf.json
+
 # Build artifacts
 build/
 dist/

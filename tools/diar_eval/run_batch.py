@@ -33,6 +33,13 @@ if __package__:
         speaker_count,
         wer_details,
     )
+    from .perf import (
+        STAGE_NAMES,
+        filter_by_ids,
+        perf_path_for_transcript,
+        record_id,
+        requested_id_for,
+    )
     from .transcript_to_rttm import convert_transcript, write_rttm
 else:
     from evaluate import compute_der
@@ -45,6 +52,13 @@ else:
         segments_text,
         speaker_count,
         wer_details,
+    )
+    from perf import (
+        STAGE_NAMES,
+        filter_by_ids,
+        perf_path_for_transcript,
+        record_id,
+        requested_id_for,
     )
     from transcript_to_rttm import convert_transcript, write_rttm
 
@@ -131,6 +145,22 @@ COLUMNS = [
     "dev_run",
     "dev_run_warning",
     "MAE",
+    "perf_ms",
+    "calib_ms",
+    "rtf_perf",
+    "rtf_norm",
+    *[f"{name}_ms" for name in STAGE_NAMES],
+    "other_ms",
+    "peak_rss_inproc_kb",
+    "input_channels",
+    "calib_version",
+    "calib_dim",
+    "calib_profile",
+    "requested_id",
+    "audio_sec",
+    "processed_channels",
+    "perf_engine",
+    "perf_ctc",
 ]
 
 
@@ -232,7 +262,12 @@ def _terminate(process: subprocess.Popen) -> None:
         process.kill()
 
 
-def _run_process(command: list[str], timeout: float, time_bin: str | None) -> dict:
+def _run_process(
+    command: list[str],
+    timeout: float,
+    time_bin: str | None,
+    extra_env: dict[str, str] | None = None,
+) -> dict:
     time_file: Path | None = None
     wrapped = list(command)
     if time_bin:
@@ -248,10 +283,12 @@ def _run_process(command: list[str], timeout: float, time_bin: str | None) -> di
         "encoding": "utf-8",
         "errors": "replace",
     }
-    if time_bin:
-        # GNU time локализует подписи; фиксируем C, иначе peak RSS не разобрать.
+    if time_bin or extra_env:
         environment = os.environ.copy()
+        # GNU time локализует подписи; фиксируем C, иначе peak RSS не разобрать.
         environment["LC_ALL"] = "C"
+        if extra_env:
+            environment.update(extra_env)
         kwargs["env"] = environment
     if os.name != "nt":
         kwargs["start_new_session"] = True
@@ -346,6 +383,40 @@ def _write_failure(out: Path, safe: str, command: list[str], run: dict, stderr: 
     (log_dir / f"{safe}.log").write_text(body, encoding="utf-8")
 
 
+def _read_perf_sidecar(transcript: Path) -> dict:
+    """Читает свежий `<stem>.perf.json`; отсутствие, порча или старость не ломают прогон."""
+    path = perf_path_for_transcript(transcript)
+    if path is None or not path.is_file():
+        return {}
+    try:
+        if path.stat().st_mtime_ns < transcript.stat().st_mtime_ns:
+            return {}
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(doc, dict):
+        return {}
+    stages = doc.get("stages_ms") if isinstance(doc.get("stages_ms"), dict) else {}
+    calib = doc.get("calib") if isinstance(doc.get("calib"), dict) else {}
+    values: dict[str, object] = {
+        "perf_ms": doc.get("total_ms"),
+        "calib_ms": calib.get("ms"),
+        "calib_version": calib.get("version"),
+        "calib_dim": calib.get("dim"),
+        "calib_profile": calib.get("profile"),
+        "audio_sec": doc.get("audio_sec"),
+        "processed_channels": doc.get("processed_channels"),
+        "perf_engine": doc.get("engine"),
+        "perf_ctc": doc.get("ctc"),
+        "other_ms": doc.get("other_ms"),
+        "peak_rss_inproc_kb": doc.get("peak_rss_kb"),
+        "input_channels": doc.get("input_channels"),
+    }
+    for name in STAGE_NAMES:
+        values[f"{name}_ms"] = stages.get(name)
+    return values
+
+
 def _run_record(
     record: dict,
     index: int,
@@ -356,12 +427,10 @@ def _run_record(
     app: Path,
     time_bin: str | None,
 ) -> dict:
-    file_id = str(record.get("id") or "")
+    file_id = record_id(record)
+    requested_id = requested_id_for(record, getattr(options, "ids", None))
     dataset = str(record.get("dataset") or "unknown")
     subset = str(record.get("subset") or "")
-    if not file_id:
-        stem = Path(str(record.get("audio") or "file")).stem
-        file_id = f"{dataset}/{subset}/{stem}".strip("/")
     safe = _safe_id(file_id)
     engine = options.engine or str(record.get("engine") or "auto")
     language = options.language or str(record.get("language") or "auto")
@@ -402,6 +471,22 @@ def _run_record(
         "words_hyp": None,
         "transcript": "",
         "MAE": math.nan,
+        "perf_ms": None,
+        "calib_ms": None,
+        "rtf_perf": None,
+        "rtf_norm": None,
+        **{f"{name}_ms": None for name in STAGE_NAMES},
+        "other_ms": None,
+        "peak_rss_inproc_kb": None,
+        "input_channels": None,
+        "calib_version": None,
+        "calib_dim": None,
+        "calib_profile": None,
+        "requested_id": requested_id,
+        "audio_sec": None,
+        "processed_channels": None,
+        "perf_engine": None,
+        "perf_ctc": None,
     }
 
     audio = _resolve(data_root, record.get("audio"))
@@ -437,8 +522,9 @@ def _run_record(
         command += ["--ctc", options.ctc]
     dev_directory = getattr(options, "dev_runs_dir", None)
     before = set(Path(dev_directory).glob("*/manifest.json")) if dev_directory else set()
+    extra_env = {"MR_PERF": "1"} if getattr(options, "perf", False) else None
     try:
-        run = _run_process(command, options.timeout, time_bin)
+        run = _run_process(command, options.timeout, time_bin, extra_env)
     except OSError as exc:
         errors.append(f"не удалось запустить приложение: {exc}")
         row["error"] = _error_text(errors)
@@ -492,6 +578,8 @@ def _run_record(
             _write_failure(out, safe, command, run, run["stderr"])
             print(f"[{index}/{total}] {file_id}: ошибка (stale)", file=sys.stderr, flush=True)
             return row
+    if getattr(options, "perf", False):
+        row.update(_read_perf_sidecar(transcript))
 
     try:
         transcript_bytes = transcript.read_bytes()
@@ -607,6 +695,14 @@ def _run_record(
 
     if math.isfinite(row["duration"]) and row["duration"] > 0:
         row["rtf"] = run["wall_sec"] / row["duration"]
+        perf_ms = _float_or_none(row.get("perf_ms"))
+        calib_ms = _float_or_none(row.get("calib_ms"))
+        audio_sec = _float_or_none(row.get("audio_sec"))
+        rtf_duration = audio_sec if audio_sec and audio_sec > 0 else row["duration"]
+        if perf_ms is not None:
+            row["rtf_perf"] = perf_ms / 1000.0 / rtf_duration
+            if calib_ms:
+                row["rtf_norm"] = (perf_ms / calib_ms) / rtf_duration
 
     row["error"] = _error_text(errors)
     status = "ok" if not row["error"] else "ошибка"
@@ -650,6 +746,8 @@ def _write_run_manifest(
         "engine_override": engine_override or "from manifest",
         "language": options.language or "from manifest",
         "ctc": options.ctc or "auto",
+        "perf": bool(getattr(options, "perf", False)),
+        "ids": getattr(options, "ids", None),
         "collar": options.collar,
         "skip_overlap": bool(options.skip_overlap),
         "timeout_sec": options.timeout,
@@ -670,6 +768,7 @@ def run_batch(options: argparse.Namespace) -> dict:
     records = load_manifest(manifest)
     if options.dataset:
         records = [record for record in records if record.get("dataset") in options.dataset]
+    records = filter_by_ids(records, getattr(options, "ids", None))
     if options.limit is not None:
         if options.limit < 0:
             raise ValueError("--limit не может быть отрицательным")
@@ -899,6 +998,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--collar", type=float, default=0.0)
     parser.add_argument("--skip-overlap", action="store_true")
     parser.add_argument("--dataset", action="append")
+    parser.add_argument("--ids", help="фильтр по вычисленным file_id через запятую")
+    parser.add_argument("--perf", action="store_true", help="включить MR_PERF=1 для дочернего процесса")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
 

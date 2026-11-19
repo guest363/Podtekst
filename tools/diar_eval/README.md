@@ -158,6 +158,46 @@ micro-агрегатов, `transcript` - путь к JSON для отладки.
 Код возврата `run_batch.py`: `0` - ошибок нет, `1` - есть строки с `error`,
 `2` - не найден манифест/бинарник или сломан вход.
 
+### Скорость и A/B
+
+`--perf` выставляет дочернему процессу `MR_PERF=1`: рядом с транскриптом
+появляется `<stem>.perf.json`, а в конец `metrics.csv` добавляются `perf_ms`,
+`calib_ms`, `rtf_perf`, `rtf_norm`, стадии (`decode_ms` … `json_ms`),
+`other_ms`, `peak_rss_inproc_kb`, `input_channels`, `calib_version`,
+`calib_dim`, `calib_profile`. Колонка `rtf` не меняется. `rtf_perf`/`rtf_norm`
+считаются от `audio_sec` sidecar, иначе от `duration`.
+`--ids` сначала ищет точное совпадение с `file_id`, затем однозначный суффикс
+пути аудио (`<id>.wav`); неизвестный id или неоднозначность — ошибка.
+
+Набор `suites/perf.json` — три файла (ASR RU, ASR EN, встреча RU). Команды:
+
+```bash
+$PY tools/diar_eval/perf.py capture --suite perf --reps 3 \
+  --app src-tauri/target/release/podtekst \
+  --out "$ROOT/runs/perf-baseline" \
+  --baseline tools/diar_eval/perf-baseline.json
+
+$PY tools/diar_eval/perf.py check \
+  --run "$ROOT/runs/perf-baseline" \
+  --baseline tools/diar_eval/perf-baseline.json
+
+$PY tools/diar_eval/perf_ab.py --a old/podtekst --b new/podtekst \
+  --suite perf --reps 5 --warmup 1 --out "$ROOT/runs/perf-ab"
+```
+
+`capture --overwrite` чистит `rep-*` в `--out`; baseline с другим `suite` для
+той же машины не перезаписывается. `check --run` принимает каталог с
+`rep-*/metrics.csv` или несколько CSV и медианит их. Ключ baseline —
+`requested_id` набора, `file_id` — запасной ключ для старых прогонов.
+
+`check` блокирует медианный рост total `rtf_norm` больше +5% (по файлам и
+агрегату) и рост стадии больше +10% при вкладе больше 20 мс (по агрегату;
+стадии по файлам видны в таблице). `perf_ab.py` чередует порядок A/B, отбрасывает
+первый повтор, считает парные отношения и бутстрэп-CI 95%; exit 1 при
+медианном total > 1.05. Сырой RTF сравнивается только на одной машине; между
+машинами — `rtf_norm` (1/с), окончательное решение — только по A/B. Схема sidecar,
+калибровка и политика baseline — `docs/testing/PERF.md`.
+
 ## 6. Метрики
 
 ```bash

@@ -93,6 +93,7 @@ SCA (speaker count accuracy, точность числа спикеров) - д�
 - Отдельно фиксируем время загрузки моделей, VAD, ASR, диаризации и записи JSON.
 - Peak RSS (пиковое потребление памяти) снимаем через `/usr/bin/time -v` или аналог для macOS и Windows.
 - Эталонная машина: 8 виртуальных ядер, 16 ГБ памяти, SSD, без графического ускорения. Для GPU-провайдеров - отдельная строка отчёта.
+- Детальные стадии, `calib_ms`, `rtf_norm` и локальный A/B: `MR_PERF=1` и [PERF.md](PERF.md). В CI перф-гейт не ставится.
 
 ### 3.5. Устойчивость
 
@@ -373,11 +374,16 @@ runs/<name>/
   failures/              логи только для упавших файлов
 ```
 
+При `MR_PERF=1` рядом с транскриптом появляется `<stem>.perf.json` (схема и
+определения — [PERF.md](PERF.md)); в `metrics.csv` он разворачивается в колонки
+`perf_ms`, `calib_ms`, `rtf_perf`, `rtf_norm` и стадии.
+
 В git коммитим:
 
 - `tools/diar_eval/datasets.yaml`;
 - `tools/diar_eval/proof-fleurs-regression.json`;
 - `tools/diar_eval/baseline.json`;
+- `tools/diar_eval/perf-baseline.json`;
 - скрипты и `requirements-eval.txt`.
 
 Не коммитим: аудио, эталонные RTTM, полные транскрипты, логи с путями и текстом.

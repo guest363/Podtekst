@@ -9,6 +9,7 @@ use super::super::diag::{
 };
 use super::super::diarize;
 use super::super::models::ModelSet;
+use super::super::perf;
 use super::super::{TranscribeOptions, Utterance, WordConf};
 use super::quiet_blank_penalty;
 
@@ -37,6 +38,7 @@ pub(super) fn run(
         );
     }
     let asr_stage = Instant::now();
+    let _perf = perf::stage("asr");
     stage_begin("asr");
     for (ch, label) in chan_list.iter() {
         let samples = &channel_samples[ch];

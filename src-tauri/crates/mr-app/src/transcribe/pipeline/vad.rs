@@ -11,6 +11,7 @@ use super::super::diag::{
 };
 use super::super::diarize;
 use super::super::echo::{self, EchoEvidence};
+use super::super::perf;
 use super::{MAX_SEGMENT_SEC, SEGMENT_GAP_SEC};
 
 /// Сегмент выбрасывается, только если эхо в нём почти без локальной речи:
@@ -97,6 +98,7 @@ pub(super) fn run(
     let mut channel_vad_stats: HashMap<usize, VadRunStats> = HashMap::new();
     let channel_count = chan_list.len().max(1) as f64;
     let vad_stage = Instant::now();
+    let _perf = perf::stage("vad");
     stage_begin("vad");
     for (ch_i, (ch, label)) in chan_list.iter().enumerate() {
         let samples = &channel_samples[ch];

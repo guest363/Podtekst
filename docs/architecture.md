@@ -35,6 +35,7 @@
 | Протокол со спикерами | `mr_app::transcribe::Transcript` | `<storage>/<name>.md` | Markdown с таймкодами и именами |
 | Текст для нейросетей | `String` (чистый текст) | `<storage>/<name>.txt` | Без разметки, для отправки в LLM |
 | Структура расшифровки | `mr_app::transcribe::TranscriptJson` | `<storage>/<name>.transcript.json` | JSON с таймкодами, словами, эмбеддингами и additive-полями `silhouette` |
+| Замер скорости | `mr_app::transcribe::perf` | `<storage>/<name>.perf.json` | Стадии, калибровка и peak RSS; только при `MR_PERF=1` |
 | Каталог участников | `mr_packs::PeopleManifest` | `<app_data>/packs/<id>/people.json` | Участники и привязка к сэмплам |
 | База голосовых векторов | `mr_packs::VoiceprintsV3` | `<app_data>/packs/<id>/voiceprints.json` | 192-мерные векторы, формат v3 |
 | Каталог ИИ-моделей | `mr_models::Manifest` | `models-manifest.json` в коде | Ссылки, SHA-256 и размеры |
