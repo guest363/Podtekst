@@ -27,6 +27,10 @@ def record(rtf_norm=1.0, duration=10.0, **stages):
         "calib_version": 1,
         "calib_dim": 448,
         "calib_profile": "release",
+        "perf_engine": "gigaam",
+        "perf_ctc": "True",
+        "audio_sec": duration,
+        "processed_channels": 1,
         "duration": duration,
     }
     for name in perf.STAGE_NAMES:
@@ -41,8 +45,9 @@ def dataset(**kwargs):
 
 def write_metrics(path: Path, rows: list[dict]) -> None:
     fieldnames = [
-        "file_id", "requested_id", "duration", "perf_ms", "calib_ms",
-        *perf.STAGE_COLUMNS,
+        "file_id", "requested_id", "duration", "audio_sec", "perf_ms", "calib_ms",
+        "calib_version", "calib_dim", "calib_profile", "perf_engine", "perf_ctc",
+        "processed_channels", *perf.STAGE_COLUMNS,
     ]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -73,6 +78,28 @@ class PerfHelpersTest(unittest.TestCase):
         summary = perf.summarize_rows(rows)
         self.assertAlmostEqual(summary["rtf_perf"], 0.2)
         self.assertAlmostEqual(summary["rtf_norm"], 10.0)
+
+    def test_audio_sec_is_preferred_over_duration(self):
+        rows = [{"perf_ms": "1000", "calib_ms": "50", "duration": "10",
+                 "audio_sec": "5", "rtf_norm": "1"}]
+        summary = perf.summarize_rows(rows)
+        self.assertAlmostEqual(summary["rtf_perf"], 0.2)
+        self.assertAlmostEqual(summary["rtf_norm"], 4.0)
+
+    def test_identity_mismatch_between_reps_is_rejected(self):
+        rows = [record(), {**record(), "perf_engine": "whisper"}]
+        with self.assertRaises(ValueError):
+            perf.summarize_rows(rows)
+
+    def test_identity_issues_for_engine_ctc_and_missing_identity(self):
+        baseline = {"a": record()}
+        changed = {"a": {**record(), "perf_engine": "whisper", "perf_ctc": "False"}}
+        issues = perf.identity_issues(baseline, changed)
+        self.assertTrue(any("engine" in issue for issue in issues))
+        self.assertTrue(any("ctc" in issue for issue in issues))
+        missing = {"a": {"file_id": "a", "perf_ms": "1", "calib_ms": "1"}}
+        self.assertTrue(any("identity отсутствует" in issue
+                            for issue in perf.identity_issues(baseline, missing)))
 
     def test_machine_id_is_stable_and_uses_bench_id(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(
@@ -246,6 +273,48 @@ class CheckThresholdTest(unittest.TestCase):
         self.assertEqual(profiles, {"release"})
 
 
+class BenchIdTest(unittest.TestCase):
+    def test_check_with_explicit_bench_id_needs_no_machine_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            csv_path = root / "metrics.csv"
+            write_metrics(csv_path, [{
+                "file_id": "a", "requested_id": "", "duration": 10, "audio_sec": 10,
+                "perf_ms": 1000, "calib_ms": 50, "calib_version": 1,
+                "calib_dim": 448, "calib_profile": "release",
+                "perf_engine": "gigaam", "perf_ctc": "True",
+                "processed_channels": 1, **{c: 100 for c in perf.STAGE_COLUMNS},
+            }])
+            records, _ = perf.summarize_runs([csv_path])
+            fingerprint = perf.machine_fingerprint(root, "deadbeefcafe")
+            baseline = {
+                "schema": 1,
+                "machines": {
+                    fingerprint["machine_id"]: {
+                        "bench_id": "deadbeefcafe",
+                        "calib_version": 1,
+                        "calib_dim": 448,
+                        "calib_profile": "release",
+                        "suite": "perf",
+                        "records": records,
+                        "aggregate": perf.aggregate_records(records),
+                    }
+                },
+            }
+            baseline_path = root / "baseline.json"
+            baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+            args = argparse.Namespace(
+                run=[csv_path], baseline=baseline_path, root=root,
+                bench_id="deadbeefcafe",
+            )
+            self.assertEqual(perf.check(args), 0)
+            self.assertFalse((root / "machine-id").exists())
+
+            baseline["machines"][fingerprint["machine_id"]]["records"]["a"]["engine"] = "whisper"
+            baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+            self.assertEqual(perf.check(args), 2)
+
+
 class CapturePolicyTest(unittest.TestCase):
     def test_merge_keeps_other_machines_and_rejects_other_suite(self):
         baseline = {"schema": 1, "machines": {"other": {"suite": "perf", "x": 1}}}
@@ -302,6 +371,9 @@ class PerfSidecarReadTest(unittest.TestCase):
                             "other_ms": 7.0,
                             "peak_rss_kb": 123456,
                             "input_channels": 2,
+                            "processed_channels": 1,
+                            "engine": "gigaam",
+                            "ctc": True,
                             "stages_ms": {"decode": 10.0, "asr": 4000.0},
                             "calib": {
                                 "version": 1, "ms": 50.0, "dim": 448,
@@ -326,6 +398,10 @@ class PerfSidecarReadTest(unittest.TestCase):
             self.assertEqual(row["input_channels"], 2)
             self.assertEqual(row["calib_dim"], 448)
             self.assertEqual(row["calib_profile"], "release")
+            self.assertEqual(row["perf_engine"], "gigaam")
+            self.assertIs(row["perf_ctc"], True)
+            self.assertEqual(row["processed_channels"], 1)
+            self.assertEqual(row["audio_sec"], 5.0)
             self.assertEqual(row["file_id"], "legacy/test/input")
             self.assertEqual(row["requested_id"], "fleurs/ru_ru/input")
             self.assertAlmostEqual(row["rtf_perf"], 1.0)
@@ -361,6 +437,11 @@ class AbTest(unittest.TestCase):
                 row = {
                     "rtf_norm": value,
                     "perf_ms": "1000",
+                    "perf_engine": "gigaam",
+                    "perf_ctc": "True",
+                    "calib_version": "1",
+                    "calib_dim": "448",
+                    "calib_profile": "release",
                     "error": "",
                     **{column: "100" for column in perf.STAGE_COLUMNS},
                 }
@@ -384,6 +465,8 @@ class AbTest(unittest.TestCase):
             self.assertTrue(all(item["reps"] == 1 for item in report["files"].values()))
             self.assertEqual(report["binaries"]["a"]["commit"], "commit-a")
             self.assertEqual(report["binaries"]["b"]["commit"], "commit-b")
+            self.assertEqual(report["metric"], "rtf_norm")
+            self.assertEqual(report["stages"]["asr_ms"]["n"], 3)
 
             with patch("perf_ab._run_one", side_effect=fake), contextlib.redirect_stdout(
                 io.StringIO()
@@ -394,6 +477,76 @@ class AbTest(unittest.TestCase):
                     "--out", str(out),
                 ])
             self.assertEqual(repeated, 1)
+
+    def test_old_binary_falls_back_to_wall_rtf(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            app_a = root / "old"
+            app_b = root / "new"
+            app_a.write_text("old", encoding="utf-8")
+            app_b.write_text("new", encoding="utf-8")
+            out = root / "ab"
+
+            def fake(app, manifest, data_root, file_id, run_out, timeout):
+                variant = "a" if app.name == "old" else "b"
+                if variant == "a":
+                    row = {"rtf": "0.5", "error": ""}
+                else:
+                    row = {
+                        "rtf": "1.0", "perf_ms": "1000", "rtf_norm": "1",
+                        "perf_engine": "gigaam", "perf_ctc": "True",
+                        "calib_version": "1", "calib_dim": "448",
+                        "calib_profile": "release", "error": "",
+                    }
+                return row, {"commit": f"commit-{variant}", "engine": "gigaam"}
+
+            with patch("perf_ab._run_one", side_effect=fake), contextlib.redirect_stdout(
+                io.StringIO()
+            ):
+                code = perf_ab.main([
+                    "--a", str(app_a), "--b", str(app_b), "--suite", "perf",
+                    "--reps", "1", "--warmup", "0", "--root", str(root),
+                    "--out", str(out),
+                ])
+            self.assertEqual(code, 1)
+            report = json.loads((out / "ab.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["metric"], "rtf")
+            self.assertFalse(report["normalized"])
+            self.assertFalse(report["stages_compared"])
+            self.assertEqual(report["total"]["median"], 2.0)
+
+    def test_identity_mismatch_and_missing_identity_are_incomparable(self):
+        for b_row in (
+            {"perf_engine": "whisper"},
+            {"perf_engine": None},
+        ):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                app_a = root / "old"
+                app_b = root / "new"
+                app_a.write_text("old", encoding="utf-8")
+                app_b.write_text("new", encoding="utf-8")
+
+                def fake(app, manifest, data_root, file_id, run_out, timeout):
+                    row = {
+                        "rtf_norm": "1", "perf_ms": "1000",
+                        "perf_engine": "gigaam", "perf_ctc": "True",
+                        "calib_version": "1", "calib_dim": "448",
+                        "calib_profile": "release", "error": "",
+                    }
+                    if app.name == "new":
+                        row.update(b_row)
+                    return row, {}
+
+                with patch("perf_ab._run_one", side_effect=fake), contextlib.redirect_stdout(
+                    io.StringIO()
+                ):
+                    code = perf_ab.main([
+                        "--a", str(app_a), "--b", str(app_b), "--suite", "perf",
+                        "--reps", "1", "--warmup", "0", "--root", str(root),
+                        "--out", str(root / "ab"),
+                    ])
+                self.assertEqual(code, 2)
 
 
 if __name__ == "__main__":

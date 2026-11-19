@@ -20,6 +20,7 @@ from perf import (
     STAGE_REGRESSION,
     TOTAL_REGRESSION,
     bootstrap_ci,
+    identity,
     median,
     perf_path_for_transcript,
     read_metrics,
@@ -74,9 +75,33 @@ def _run_one(
         raise RuntimeError(f"{file_id}: строка не найдена в metrics.csv")
     if row.get("error"):
         raise RuntimeError(f"{file_id}: {row['error']}")
-    if not row.get("perf_ms"):
-        raise RuntimeError(f"{file_id}: нет perf sidecar")
     return row, _sidecar_meta(row)
+
+
+def _has(row: dict, column: str) -> bool:
+    return bool(str(row.get(column) or "").strip())
+
+
+def pair_mode(a: dict, b: dict) -> str | None:
+    if all(_has(row, "perf_ms") and _has(row, "rtf_norm") for row in (a, b)):
+        return "norm"
+    if all(_has(row, "rtf") for row in (a, b)):
+        return "rtf"
+    return None
+
+
+def identity_diffs(a: dict, b: dict) -> list[str]:
+    left = identity(a)
+    right = identity(b)
+    if any(value is None for value in left.values()) or any(
+        value is None for value in right.values()
+    ):
+        return ["identity отсутствует"]
+    return [
+        f"{field} {left[field]!r} != {right[field]!r}"
+        for field in left
+        if left[field] != right[field]
+    ]
 
 
 def _ratio(a: dict, b: dict, column: str) -> float | None:
@@ -132,6 +157,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--timeout", type=float, default=3600)
+    parser.add_argument("--bench-id", default=os.environ.get("MR_BENCH_ID"))
     args = parser.parse_args(argv)
     if args.reps <= 0 or args.warmup < 0:
         print("ошибка: --reps > 0, --warmup >= 0", file=sys.stderr)
@@ -156,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ошибка: бинарник не найден: {app}", file=sys.stderr)
             return 2
 
-    out = args.out
+    out = args.out.expanduser().resolve()
     runs_dir = out / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
     session = Path(tempfile.mkdtemp(prefix="session-", dir=runs_dir))
@@ -165,6 +191,8 @@ def main(argv: list[str] | None = None) -> int:
         file_id: {"a": [], "b": []} for file_id, _, _ in cases
     }
     binaries: dict[str, dict] = {"a": {}, "b": {}}
+    modes: set[str] = set()
+    identity_errors: list[str] = []
     for rep in range(total_runs):
         for file_id, manifest, data_root in cases:
             safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in file_id)[:120]
@@ -179,6 +207,27 @@ def main(argv: list[str] | None = None) -> int:
                 if rep >= args.warmup:
                     samples[file_id][variant].append(row)
 
+    for file_id, variants in samples.items():
+        for a, b in zip(variants["a"], variants["b"]):
+            mode = pair_mode(a, b)
+            if mode is None:
+                identity_errors.append(f"{file_id}: нет perf_ms/rtf_norm и rtf")
+                continue
+            modes.add(mode)
+            if mode == "norm":
+                identity_errors.extend(
+                    f"{file_id}: {diff}" for diff in identity_diffs(a, b)
+                )
+    if identity_errors:
+        for error in identity_errors:
+            print(f"ошибка: несравнимые замеры: {error}", file=sys.stderr)
+        return 2
+    if len(modes) != 1:
+        print(f"ошибка: смешанные метрики A/B: {sorted(modes)}", file=sys.stderr)
+        return 2
+    normalized = "norm" in modes
+    metric = "rtf_norm" if normalized else "rtf"
+
     files: dict[str, dict] = {}
     all_total: list[float] = []
     stage_pairs: dict[str, list[tuple[float, float]]] = {
@@ -189,22 +238,23 @@ def main(argv: list[str] | None = None) -> int:
         b_rows = variants["b"]
         total = [
             ratio
-            for ratio in (_ratio(a, b, "rtf_norm") for a, b in zip(a_rows, b_rows))
+            for ratio in (_ratio(a, b, metric) for a, b in zip(a_rows, b_rows))
             if ratio is not None
         ]
         all_total.extend(total)
         stages: dict[str, dict] = {}
-        for column in STAGE_COLUMNS:
-            pairs = []
-            for a, b in zip(a_rows, b_rows):
-                ratio = _ratio(a, b, column)
-                absolute = _abs_diff(a, b, column)
-                if ratio is not None and absolute is not None:
-                    pairs.append((ratio, absolute))
-            stage_pairs[column].extend(pairs)
-            summary = _summary([ratio for ratio, _ in pairs])
-            summary["abs_ms"] = median([absolute for _, absolute in pairs])
-            stages[column] = summary
+        if normalized:
+            for column in STAGE_COLUMNS:
+                pairs = []
+                for a, b in zip(a_rows, b_rows):
+                    ratio = _ratio(a, b, column)
+                    absolute = _abs_diff(a, b, column)
+                    if ratio is not None and absolute is not None:
+                        pairs.append((ratio, absolute))
+                stage_pairs[column].extend(pairs)
+                summary = _summary([ratio for ratio, _ in pairs])
+                summary["abs_ms"] = median([absolute for _, absolute in pairs])
+                stages[column] = summary
         files[file_id] = {
             "reps": len(a_rows),
             "total": _summary(total),
@@ -212,21 +262,28 @@ def main(argv: list[str] | None = None) -> int:
         }
 
     stage_summary: dict[str, dict] = {}
-    for column in STAGE_COLUMNS:
-        summary = _summary([ratio for ratio, _ in stage_pairs[column]])
-        summary["abs_ms"] = median([absolute for _, absolute in stage_pairs[column]])
-        stage_summary[column] = summary
+    if normalized:
+        for column in STAGE_COLUMNS:
+            summary = _summary([ratio for ratio, _ in stage_pairs[column]])
+            summary["abs_ms"] = median([absolute for _, absolute in stage_pairs[column]])
+            stage_summary[column] = summary
     total_summary = _summary(all_total)
     if total_summary["median"] is None:
-        print("ошибка: нет парных данных rtf_norm", file=sys.stderr)
+        print("ошибка: нет парных данных для A/B", file=sys.stderr)
         return 2
+    expected_pairs = args.reps * len(cases)
     warnings = [
+        f"{column}: n={summary['n']} < {expected_pairs}"
+        for column, summary in stage_summary.items()
+        if summary["n"] < expected_pairs
+    ]
+    warnings.extend(
         f"{column}: +{(summary['median'] - 1) * 100:.1f}% и {summary['abs_ms']:.1f} мс"
         for column, summary in stage_summary.items()
         if summary["median"] is not None
         and summary["median"] > 1 + STAGE_REGRESSION
         and (summary["abs_ms"] or 0) > STAGE_ABS_MS
-    ]
+    )
     regressed = total_summary["median"] is not None and total_summary["median"] > 1 + TOTAL_REGRESSION
 
     report = {
@@ -236,6 +293,10 @@ def main(argv: list[str] | None = None) -> int:
         "warmup": args.warmup,
         "a": str(app_a),
         "b": str(app_b),
+        "bench_id": args.bench_id,
+        "metric": metric,
+        "normalized": normalized,
+        "stages_compared": normalized,
         "binaries": binaries,
         "total": total_summary,
         "stages": stage_summary,
@@ -251,6 +312,7 @@ def main(argv: list[str] | None = None) -> int:
         "# A/B скорости",
         "",
         f"Набор: `{args.suite}`, повторов: {args.reps}, прогрев: {args.warmup}.",
+        f"Метрика: `{metric}`" + ("" if normalized else " (wall/duration, без нормализации)") + ".",
         f"A: `{app_a}`",
         f"B: `{app_b}`",
         "",
@@ -268,16 +330,26 @@ def main(argv: list[str] | None = None) -> int:
         f"| **aggregate** | **{_fmt(total_summary['median'])}** | "
         f"{_fmt(low)}–{_fmt(high)} |",
         "",
-        "| стадия | B/A | абсолют, мс |",
-        "|---|---|---|",
     ]
-    for column, summary in stage_summary.items():
-        lines.append(
-            f"| {column} | {_fmt(summary['median'])} | {_fmt(summary['abs_ms'])} |"
-        )
-    lines.append("")
+    if normalized:
+        lines += [
+            "| стадия | B/A | абсолют, мс | n |",
+            "|---|---|---|---|",
+        ]
+        for column, summary in stage_summary.items():
+            lines.append(
+                f"| {column} | {_fmt(summary['median'])} | "
+                f"{_fmt(summary['abs_ms'])} | {summary['n']} |"
+            )
+        lines.append("")
+    else:
+        lines += [
+            "Стадии пропущены: у одного из бинарников нет perf sidecar.",
+            "Fallback по `rtf` (wall/duration): оба бинарника должны быть на одной машине.",
+            "",
+        ]
     if warnings:
-        lines.append("Предупреждения по стадиям:")
+        lines.append("Предупреждения:")
         lines.extend(f"- {warning}" for warning in warnings)
     lines.append(
         "Итог: регресс total > +5%" if regressed else "Итог: регресса total нет"

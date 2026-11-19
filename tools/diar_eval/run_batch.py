@@ -157,6 +157,10 @@ COLUMNS = [
     "calib_dim",
     "calib_profile",
     "requested_id",
+    "audio_sec",
+    "processed_channels",
+    "perf_engine",
+    "perf_ctc",
 ]
 
 
@@ -401,6 +405,9 @@ def _read_perf_sidecar(transcript: Path) -> dict:
         "calib_dim": calib.get("dim"),
         "calib_profile": calib.get("profile"),
         "audio_sec": doc.get("audio_sec"),
+        "processed_channels": doc.get("processed_channels"),
+        "perf_engine": doc.get("engine"),
+        "perf_ctc": doc.get("ctc"),
         "other_ms": doc.get("other_ms"),
         "peak_rss_inproc_kb": doc.get("peak_rss_kb"),
         "input_channels": doc.get("input_channels"),
@@ -476,6 +483,10 @@ def _run_record(
         "calib_dim": None,
         "calib_profile": None,
         "requested_id": requested_id,
+        "audio_sec": None,
+        "processed_channels": None,
+        "perf_engine": None,
+        "perf_ctc": None,
     }
 
     audio = _resolve(data_root, record.get("audio"))

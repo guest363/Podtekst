@@ -141,7 +141,7 @@ fn peak_mb_impl(pid: u32) -> Option<f64> {
     parse_vm_hwm_kb(&text).map(|kb| kb as f64 / 1024.0)
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[cfg(target_os = "macos")]
 fn peak_mb_impl(pid: u32) -> Option<f64> {
     let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
     // SAFETY: proc_pid_rusage заполняет структуру известного размера.
@@ -176,7 +176,7 @@ fn peak_mb_impl(pid: u32) -> Option<f64> {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "ios", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn peak_mb_impl(_pid: u32) -> Option<f64> {
     None
 }

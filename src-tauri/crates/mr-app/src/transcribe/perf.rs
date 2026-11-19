@@ -6,6 +6,8 @@
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::time::Instant;
 
@@ -18,7 +20,10 @@ const CALIB_REPS: usize = 5;
 // сравниваются только между release-сборками на одной машине.
 const CALIB_DIM: usize = if cfg!(debug_assertions) { 96 } else { 448 };
 
+#[cfg(not(test))]
 static ENABLED: OnceLock<bool> = OnceLock::new();
+#[cfg(test)]
+static TEST_ENABLED: AtomicBool = AtomicBool::new(false);
 static CALIB: OnceLock<Calibration> = OnceLock::new();
 
 struct State {
@@ -110,14 +115,26 @@ struct PerfDoc {
 }
 
 fn enabled() -> bool {
-    *ENABLED.get_or_init(|| {
-        std::env::var("MR_PERF")
-            .map(|value| {
-                let value = value.trim();
-                value == "1" || value.eq_ignore_ascii_case("true")
-            })
-            .unwrap_or(false)
-    })
+    #[cfg(test)]
+    {
+        TEST_ENABLED.load(Ordering::Relaxed)
+    }
+    #[cfg(not(test))]
+    {
+        *ENABLED.get_or_init(|| {
+            std::env::var("MR_PERF")
+                .map(|value| {
+                    let value = value.trim();
+                    value == "1" || value.eq_ignore_ascii_case("true")
+                })
+                .unwrap_or(false)
+        })
+    }
+}
+
+#[cfg(test)]
+fn set_test_enabled(value: bool) {
+    TEST_ENABLED.store(value, Ordering::Relaxed);
 }
 
 /// Замер одного файла; `Drop` владельца очищает лист при раннем выходе.
@@ -255,6 +272,13 @@ impl Drop for Stage {
 
 /// RAII-таймер стадии: только верхний уровень пишет в лист.
 pub(super) fn stage(name: &'static str) -> Option<Stage> {
+    debug_assert!(
+        matches!(
+            name,
+            "decode" | "models" | "vad_model" | "vad" | "asr" | "diar" | "diar_models" | "json"
+        ),
+        "неизвестная стадия: {name}"
+    );
     if !enabled() {
         return None;
     }
@@ -404,13 +428,10 @@ mod tests {
         assert_eq!(other_ms(10.0, &stages), 0.0);
     }
 
-    use std::sync::Once;
     use std::time::Duration;
 
-    static ENABLE: Once = Once::new();
-
     fn enable() {
-        ENABLE.call_once(|| std::env::set_var("MR_PERF", "1"));
+        set_test_enabled(true);
     }
 
     fn temp_dir(name: &str) -> PathBuf {

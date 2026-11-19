@@ -64,11 +64,12 @@ sidecar не ломает расшифровку.
 | `audio_sec` | длительность декодированного аудио |
 | `input_channels` | каналов после декодирования, до downmix/дедупликации |
 | `processed_channels` | каналов после `channel_mix` |
-| `peak_rss_kb` | пиковый RSS процесса: Linux `VmHWM`, macOS/iOS `rusage_info_v4.ri_lifetime_max_phys_footprint`, Windows `GetProcessMemoryInfo`; остальные платформы — пусто |
+| `peak_rss_kb` | пиковый RSS процесса: Linux `VmHWM`, macOS `rusage_info_v4.ri_lifetime_max_phys_footprint`, Windows `GetProcessMemoryInfo`; остальные платформы — пусто |
 
 Стадии измеряются RAII-таймером: длительность учитывается и при раннем `?`,
 но `perf.json` пишется только после успешной записи артефактов; при ошибке
-sidecar не остаётся. Время по каналам суммируется. Debug-события
+новый sidecar не пишется, а старый отсекается по mtime. Время по каналам
+суммируется. Debug-события
 `stage.start`/`stage.end` остаются как были. Ошибка записи sidecar не ломает
 расшифровку: причина уходит в stderr без путей.
 
@@ -92,14 +93,18 @@ sidecar не остаётся. Время по каналам суммирует
 `PROCESSOR_IDENTIFIER`). `bench_id` — локальный `secrets.token_hex(6)` из
 `<root>/machine-id` (создаётся с правами 0600): он различает одинаковые CPU.
 Если файл недоступен, печатается предупреждение и используется прежний хеш.
-Baseline хранится в `tools/diar_eval/perf-baseline.json`:
+Для нового root `--bench-id <hex>` (или `MR_BENCH_ID`) берёт id из baseline и
+не требует файла `machine-id`.
+Baseline машинно-зависим: запись соответствует `machine_id`/`bench_id` из файла;
+на другом CPU её не сравнивать. Baseline хранится в `tools/diar_eval/perf-baseline.json`:
 
 ```json
 {"schema": 1, "machines": {"<machine_id>": {
   "cpu": "...", "os": "Linux", "arch": "x86_64", "logical_cpus": 20,
   "bench_id": "...", "calib_version": 1, "calib_dim": 448,
   "calib_profile": "release", "suite": "perf", "reps": 3,
-  "records": {"<requested_id>": {"perf_ms": 1.0, "calib_ms": 1.0, "rtf_norm": 1.0}},
+  "records": {"<requested_id>": {"perf_ms": 1.0, "calib_ms": 1.0, "rtf_norm": 1.0,
+                                 "engine": "gigaam", "ctc": true}},
   "aggregate": {"perf_ms": 1.0, "calib_ms": 1.0, "rtf_norm": 1.0}
 }}}
 ```
@@ -162,6 +167,10 @@ python3 tools/diar_eval/perf_ab.py --a old/podtekst --b new/podtekst \
 `ab.json` (в нём `commit`/`engine` обоих бинарников); exit 1 при медианном
 total > 1.05. Предупреждения по стадиям (`> +10%` и `> 20 мс`) не меняют код
 возврата; пары `(ratio, abs)` считаются по одним и тем же повторам.
+Если у старого бинарника нет `MR_PERF`/sidecar, A/B падает на `rtf`
+(wall/duration): `metric=rtf`, `normalized=false`, стадии пропускаются —
+оба бинарника должны быть на одной машине. Для нормализованного A/B оба
+бинарника должны быть собраны с `MR_PERF`.
 
 ## 7. Ограничения
 
@@ -169,8 +178,8 @@ total > 1.05. Предупреждения по стадиям (`> +10%` и `> 2
   поэтому порог стадий требует абсолютного вклада.
 - `rtf_norm` имеет размерность 1/с: это калиброванный RTF, а не безразмерная
   величина и не `rtf`.
-- `peak_rss_kb` — пик всего процесса, а не отдельной стадии; на macOS/iOS это
-  `ri_lifetime_max_phys_footprint`, на Android пик не читается.
+- `peak_rss_kb` — пик всего процесса, а не отдельной стадии; на macOS это
+  `ri_lifetime_max_phys_footprint`, на iOS/Android пик не читается.
 - `perf.py check` принимает несколько прогонов и берёт медианы по файлам;
   единичный выброс не должен менять вывод. Total блокирует по файлам и
   агрегату, стадии — только по агрегату (медиана по файлам): регресс стадии

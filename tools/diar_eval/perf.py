@@ -35,9 +35,12 @@ METRIC_COLUMNS = (
     "other_ms",
     "peak_rss_inproc_kb",
     "input_channels",
+    "audio_sec",
     "calib_version",
     "calib_dim",
 )
+
+IDENTITY_FIELDS = ("engine", "ctc", "calib_version", "calib_dim", "calib_profile")
 
 # Сырой RTF шумит от загрузки машины, поэтому регресс решает медиана rtf_norm,
 # а стадии проверяются только при заметном вкладе — иначе ловим дрожание таймера.
@@ -156,25 +159,75 @@ def read_metrics(path: Path | str) -> dict[str, dict]:
     return rows
 
 
+def _bool_value(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    if text in {"1", "true"}:
+        return True
+    if text in {"0", "false"}:
+        return False
+    return None
+
+
+def identity(row: dict) -> dict:
+    """Сравнимая identity замера: движок, CTC и калибровка."""
+    version = _number(row.get("calib_version"))
+    dim = _number(row.get("calib_dim"))
+    ctc = row.get("perf_ctc")
+    if ctc is None or str(ctc).strip() == "":
+        ctc = row.get("ctc")
+    return {
+        "engine": str(row.get("perf_engine") or row.get("engine") or "").strip() or None,
+        "ctc": _bool_value(ctc),
+        "calib_version": int(version) if version is not None else None,
+        "calib_dim": int(dim) if dim is not None else None,
+        "calib_profile": str(row.get("calib_profile") or "").strip() or None,
+    }
+
+
+def identity_issues(baseline: dict[str, dict], current: dict[str, dict]) -> list[str]:
+    issues: list[str] = []
+    for file_id in sorted(set(baseline) & set(current)):
+        left = identity(baseline[file_id])
+        right = identity(current[file_id])
+        known = {field: value for field, value in left.items() if value is not None}
+        if not known:
+            continue
+        if all(value is None for value in right.values()):
+            issues.append(f"{file_id}: identity отсутствует в прогоне")
+            continue
+        diffs = [
+            f"{field} {left[field]!r} != {right[field]!r}"
+            for field in IDENTITY_FIELDS
+            if left[field] is not None and left[field] != right[field]
+        ]
+        if diffs:
+            issues.append(f"{file_id}: " + ", ".join(diffs))
+    return issues
+
+
 def summarize_rows(rows: list[dict]) -> dict:
     """Медианы по повторам; rtf_norm считается из медиан, а не из отношений."""
     summary = {
         column: median([_number(row.get(column)) for row in rows])
         for column in METRIC_COLUMNS
     }
-    duration = median([_number(row.get("duration")) for row in rows])
+    duration = median([_number(row.get("audio_sec")) for row in rows])
+    if duration is None:
+        duration = median([_number(row.get("duration")) for row in rows])
     perf_ms = summary.get("perf_ms")
     calib_ms = summary.get("calib_ms")
     if duration and duration > 0 and perf_ms is not None:
         summary["rtf_perf"] = perf_ms / 1000.0 / duration
         if calib_ms:
             summary["rtf_norm"] = (perf_ms / calib_ms) / duration
-    profiles = {
-        str(row.get("calib_profile") or "").strip()
-        for row in rows
-        if str(row.get("calib_profile") or "").strip()
+    identities = {
+        tuple(identity(row).items()) for row in rows if any(identity(row).values())
     }
-    summary["calib_profile"] = profiles.pop() if len(profiles) == 1 else None
+    if len(identities) > 1:
+        raise ValueError(f"identity меняется между повторами: {sorted(identities)}")
+    summary.update(identity(rows[0]) if rows else identity({}))
     return summary
 
 
@@ -293,9 +346,10 @@ def _bench_id(root: Path) -> str | None:
         return None
 
 
-def machine_fingerprint(root: Path | None = None) -> dict:
+def machine_fingerprint(root: Path | None = None, bench_id: str | None = None) -> dict:
     root = Path(root).expanduser() if root else bench_root()
-    bench_id = _bench_id(root)
+    if bench_id is None:
+        bench_id = _bench_id(root)
     cpu = cpu_model()
     system = platform.system()
     arch = platform.machine()
@@ -413,25 +467,35 @@ def _print_table(records: dict[str, dict]) -> None:
         print(f"{file_id:48} {cells[0]:>10} {cells[1]:>9} {cells[2]:>9} {cells[3]:>10}")
 
 
+def write_json_atomic(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
 def capture(args: argparse.Namespace) -> int:
     suite = json.loads((HERE / "suites" / f"{args.suite}.json").read_text(encoding="utf-8"))
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    if args.overwrite:
-        clean_reps(out)
     baseline_path = Path(args.baseline)
     baseline: dict = {"schema": 1, "machines": {}}
     if baseline_path.is_file():
         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
         baseline.setdefault("schema", 1)
         baseline.setdefault("machines", {})
-    fingerprint = machine_fingerprint(args.root)
+    fingerprint = machine_fingerprint(args.root, getattr(args, "bench_id", None))
     existing = (baseline.get("machines") or {}).get(fingerprint["machine_id"])
     if existing and existing.get("suite") not in (None, suite["name"]):
         raise ValueError(
             f"машина {fingerprint['machine_id']}: baseline снят на suite="
             f"{existing.get('suite')}, текущий {suite['name']}"
         )
+    if args.overwrite:
+        clean_reps(out)
     app = Path(args.app).resolve()
     reps: list[dict[str, dict]] = []
     for rep in range(1, args.reps + 1):
@@ -469,15 +533,24 @@ def capture(args: argparse.Namespace) -> int:
         file_id: summarize_rows([rows[file_id] for rows in reps])
         for file_id in file_ids
     }
+    for file_id, record in records.items():
+        if _number(record.get("rtf_norm")) is None:
+            raise ValueError(f"{file_id}: нет rtf_norm для baseline")
+        if _number(record.get("calib_version")) is None or _number(record.get("calib_dim")) is None:
+            raise ValueError(f"{file_id}: нет calib_version/calib_dim для baseline")
     aggregate = aggregate_records(records)
+    version = _number(aggregate.get("calib_version"))
+    dim = _number(aggregate.get("calib_dim"))
+    if version is None or dim is None:
+        raise ValueError("нет calib_version/calib_dim для baseline")
     machine = {
         "cpu": fingerprint["cpu"],
         "os": fingerprint["os"],
         "arch": fingerprint["arch"],
         "logical_cpus": fingerprint["logical_cpus"],
         "bench_id": fingerprint["bench_id"],
-        "calib_version": int(aggregate.get("calib_version") or 1),
-        "calib_dim": int(aggregate["calib_dim"]) if aggregate.get("calib_dim") else None,
+        "calib_version": int(version),
+        "calib_dim": int(dim),
         "calib_profile": "release",
         "suite": suite["name"],
         "reps": args.reps,
@@ -486,10 +559,7 @@ def capture(args: argparse.Namespace) -> int:
     }
 
     merge_baseline(baseline, fingerprint["machine_id"], machine, suite["name"])
-    baseline_path.parent.mkdir(parents=True, exist_ok=True)
-    baseline_path.write_text(
-        json.dumps(baseline, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    write_json_atomic(baseline_path, baseline)
 
     _print_table(records)
     print(
@@ -526,12 +596,21 @@ def check(args: argparse.Namespace) -> int:
         print(f"ошибка: baseline не найден: {baseline_path}", file=sys.stderr)
         return 2
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-    fingerprint = machine_fingerprint(args.root)
-    machine = (baseline.get("machines") or {}).get(fingerprint["machine_id"])
+    fingerprint = machine_fingerprint(args.root, getattr(args, "bench_id", None))
+    machines = baseline.get("machines") or {}
+    machine = machines.get(fingerprint["machine_id"])
     if machine is None:
-        known = ", ".join(sorted((baseline.get("machines") or {}))) or "нет"
+        known = ", ".join(
+            f"{machine_id}(bench_id={entry.get('bench_id') or 'нет'})"
+            for machine_id, entry in sorted(machines.items())
+        ) or "нет"
+        hint = next(
+            (entry.get("bench_id") for entry in machines.values() if entry.get("bench_id")),
+            None,
+        )
         print(
-            f"ошибка: машина {fingerprint['machine_id']} отсутствует в baseline; есть: {known}",
+            f"ошибка: машина {fingerprint['machine_id']} отсутствует в baseline; есть: {known}. "
+            f"Подсказка: --bench-id {hint or '<bench_id из baseline>'}",
             file=sys.stderr,
         )
         return 2
@@ -552,10 +631,20 @@ def check(args: argparse.Namespace) -> int:
     if profiles and profiles != {"release"}:
         print(f"ошибка: check только для release, профили: {sorted(profiles)}", file=sys.stderr)
         return 2
-    current = {"records": records, "aggregate": aggregate_records(records)}
+    expected_records = machine.get("records") or {}
+    identity_diff = identity_issues(expected_records, records)
+    if identity_diff:
+        for issue in identity_diff:
+            print(f"ошибка: несравнимые замеры: {issue}", file=sys.stderr)
+        return 2
+    common = set(expected_records) & set(records)
+    current = {
+        "records": records,
+        "aggregate": aggregate_records({key: records[key] for key in common}),
+    }
     expected = {
-        "records": machine.get("records") or {},
-        "aggregate": machine.get("aggregate") or {},
+        "records": expected_records,
+        "aggregate": aggregate_records({key: expected_records[key] for key in common}),
     }
     errors, table = compare_perf(expected, current)
     header = f"{'file_id':44} {'field':20} {'baseline':>12} {'current':>12} {'diff':>9}"
@@ -588,12 +677,14 @@ def main(argv: list[str] | None = None) -> int:
     capture_parser.add_argument("--out", type=Path, required=True)
     capture_parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     capture_parser.add_argument("--overwrite", action="store_true")
+    capture_parser.add_argument("--bench-id", default=os.environ.get("MR_BENCH_ID"))
     capture_parser.set_defaults(func=capture)
 
     check_parser = sub.add_parser("check", help="сверить metrics.csv с baseline")
     check_parser.add_argument("--run", type=Path, nargs="+", required=True)
     check_parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     check_parser.add_argument("--root", type=Path, default=bench_root())
+    check_parser.add_argument("--bench-id", default=os.environ.get("MR_BENCH_ID"))
     check_parser.set_defaults(func=check)
 
     args = parser.parse_args(argv)
