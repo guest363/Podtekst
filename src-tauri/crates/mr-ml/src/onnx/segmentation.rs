@@ -333,7 +333,12 @@ fn frame_class(scores: &[f32; POWERSET_CLASSES], overlap: f32, count: u32) -> u8
     if overlap / count as f32 >= OVERLAP_THRESHOLD {
         return 4;
     }
-    argmax(&scores[..4])
+    // Классы 1..=3 перестановочны между окнами, тишина (0) — нет: сравниваем с их суммой.
+    let speech = scores[1] + scores[2] + scores[3];
+    if scores[0] >= speech {
+        return 0;
+    }
+    1 + argmax(&scores[1..4])
 }
 
 fn argmax(scores: &[f32]) -> u8 {
@@ -412,5 +417,7 @@ mod tests {
         // Без оверлапа выбирается только одиночный класс, а не «хвост» оверлапа.
         assert_eq!(frame_class(&scores, 0.2, 1), 1);
         assert_eq!(frame_class(&[0.0; POWERSET_CLASSES], 0.0, 0), 0);
+        // Перестановка речи между окнами (1.2 + 1.2 + 0.6 > тишина 2.0) остаётся речью.
+        assert_ne!(frame_class(&[2.0, 1.2, 1.2, 0.6, 0.0, 0.0, 0.0], 0.0, 5), 0);
     }
 }

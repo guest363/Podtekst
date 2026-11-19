@@ -92,10 +92,22 @@ impl SileroVad {
             .get("output")
             .and_then(|(_, d)| d.first().copied())
             .unwrap_or(0.0);
-        if let Some((_, s)) = out.get("stateN") {
-            if s.len() == self.state.len() {
-                self.state.copy_from_slice(s);
-            }
+        let state_ok = out
+            .get("stateN")
+            .filter(|(_, s)| s.len() == self.state.len())
+            .map(|(_, s)| {
+                if s.iter().all(|x| x.is_finite()) {
+                    self.state.copy_from_slice(s);
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(true);
+        // Нефинитное состояние отравляет LSTM до конца канала.
+        if !prob.is_finite() || !state_ok {
+            self.reset();
+            return Ok(f32::NAN);
         }
         Ok(prob)
     }
@@ -152,10 +164,12 @@ impl SileroVad {
             } else {
                 silent_run = 0;
                 let probability = self.process_window(chunk)?;
-                if !probability.is_finite() {
+                if probability.is_finite() {
+                    probs.push(probability);
+                } else {
                     stats.non_finite += 1;
+                    probs.push(0.0);
                 }
-                probs.push(probability);
             }
             if i % 256 == 0 || i + 1 == total {
                 progress(i + 1, total);

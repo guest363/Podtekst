@@ -177,15 +177,21 @@ fn transcribe_file_inner(
     );
     stage_end("decode", decode_stage);
     let downmixed_video = video && !crate::media_registry::load_registry().is_owned(audio_path);
+    // Файлы с >2 каналами (5.1 и т.п.) не несут сплита «микрофон/система»:
+    // без сведения в моно центральный канал с диалогом отбрасывался.
+    let downmix_to_mono = downmixed_video || channels.len() > 2;
     let mut source_channels: Vec<Option<i32>> =
         (0..channels.len()).map(|ch| Some(ch as i32)).collect();
-    let mut channels = if downmixed_video {
+    let mut channels = if downmix_to_mono {
         source_channels = vec![None];
         let n = channels.iter().map(|c| c.len()).max().unwrap_or(0);
         let mut mono = vec![0.0f32; n];
+        let scale = 1.0 / channels.len() as f32;
         for ch in &channels {
             for (i, &x) in ch.iter().enumerate() {
-                mono[i] += x / channels.len() as f32;
+                if x.is_finite() {
+                    mono[i] += x * scale;
+                }
             }
         }
         vec![mono]

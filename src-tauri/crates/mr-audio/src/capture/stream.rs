@@ -112,14 +112,62 @@ pub fn s16le_to_f32(bytes: &[u8]) -> Vec<f32> {
         .collect()
 }
 
+const SINC_HALF_LOBES: usize = 4;
+const SINC_SUBSTEPS: usize = 256;
+const SINC_TABLE_LEN: usize = SINC_HALF_LOBES * SINC_SUBSTEPS + 1;
+
+fn sinc_hann_table() -> &'static [f32; SINC_TABLE_LEN] {
+    static TABLE: std::sync::OnceLock<[f32; SINC_TABLE_LEN]> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut table = [0.0f32; SINC_TABLE_LEN];
+        table[0] = 1.0;
+        for (k, slot) in table.iter_mut().enumerate().skip(1) {
+            let u = k as f64 / SINC_SUBSTEPS as f64;
+            let sinc = (std::f64::consts::PI * u).sin() / (std::f64::consts::PI * u);
+            let window = 0.5 * (1.0 + (std::f64::consts::PI * u / SINC_HALF_LOBES as f64).cos());
+            *slot = (sinc * window) as f32;
+        }
+        table
+    })
+}
+
 pub fn resample_to(samples: &[f32], from: u32, to: u32) -> Vec<f32> {
     if samples.is_empty() || from == to || from == 0 || to == 0 {
         return samples.to_vec();
     }
     let target_len = (samples.len() as u64 * to as u64 / from as u64).max(1) as usize;
+    let step = samples.len() as f64 / target_len as f64;
     let mut out = Vec::with_capacity(target_len);
+    if from > to {
+        // Понижение частоты без ФНЧ заворачивает полосу выше Nyquist в речевую.
+        let table = sinc_hann_table();
+        let cutoff = 0.9 * (to as f64 / from as f64);
+        let radius = (SINC_HALF_LOBES as f64 / cutoff).ceil() as isize;
+        let last = samples.len() as isize - 1;
+        for i in 0..target_len {
+            let center = i as f64 * step;
+            let lo = (center.floor() as isize - radius).max(0) as usize;
+            let hi = (center.ceil() as isize + radius).min(last) as usize;
+            let mut acc = 0.0f32;
+            let mut wsum = 0.0f32;
+            for (j, &sample) in samples.iter().enumerate().take(hi + 1).skip(lo) {
+                let u = (j as f64 - center).abs() * cutoff;
+                let scaled = u * SINC_SUBSTEPS as f64;
+                let idx = scaled as usize;
+                if idx + 1 >= SINC_TABLE_LEN {
+                    continue;
+                }
+                let frac = (scaled - idx as f64) as f32;
+                let w = table[idx] + (table[idx + 1] - table[idx]) * frac;
+                acc += sample * w;
+                wsum += w;
+            }
+            out.push(if wsum.abs() > 1e-6 { acc / wsum } else { 0.0 });
+        }
+        return out;
+    }
     for i in 0..target_len {
-        let pos = i as f64 * (samples.len() as f64 / target_len as f64);
+        let pos = i as f64 * step;
         let lo = pos.floor() as usize;
         let hi = (lo + 1).min(samples.len() - 1);
         let frac = (pos - lo as f64) as f32;
@@ -235,6 +283,28 @@ mod tests {
         // Нулевые частоты (битый заголовок) не паникуют — возвращаем как есть.
         assert_eq!(resample_to(&s, 0, 16000).len(), s.len());
         assert_eq!(resample_to(&s, 48000, 0).len(), s.len());
+    }
+
+    #[test]
+    fn resample_downsampling_attenuates_aliasing_above_nyquist() {
+        let high: Vec<f32> = (0..48_000)
+            .map(|i| (std::f32::consts::TAU * 12_000.0 * i as f32 / 48_000.0).sin())
+            .collect();
+        let down_high = resample_to(&high, 48_000, 16_000);
+        let mid_high = &down_high[200..down_high.len() - 200];
+        let peak_high = mid_high.iter().map(|x| x.abs()).fold(0.0f32, f32::max);
+        assert!(peak_high < 0.03, "алиасинг 12 кГц не подавлен: {peak_high}");
+
+        let voice: Vec<f32> = (0..48_000)
+            .map(|i| (std::f32::consts::TAU * 1_000.0 * i as f32 / 48_000.0).sin())
+            .collect();
+        let down_voice = resample_to(&voice, 48_000, 16_000);
+        let mid_voice = &down_voice[200..down_voice.len() - 200];
+        let peak_voice = mid_voice.iter().map(|x| x.abs()).fold(0.0f32, f32::max);
+        assert!(
+            peak_voice > 0.95,
+            "полезный тон 1 кГц ослаблен: {peak_voice}"
+        );
     }
 
     #[test]

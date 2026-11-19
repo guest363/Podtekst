@@ -34,11 +34,29 @@ pub(crate) fn split_at_pauses(samples: &[f32], utterances: &[Utterance]) -> Vec<
         .collect();
     let mut sorted = rms.clone();
     sorted.sort_by(f64::total_cmp);
-    let median = sorted[sorted.len() / 2];
     // Пауза заметно тише обычной речи. Порог — от медианы и шумового пола,
     // а не в абсолютных единицах: тихая и громкая записи режутся одинаково.
     let noise_floor = sorted[sorted.len() / 20];
-    let speech_level = sorted[sorted.len() * 3 / 4];
+    let mut median = sorted[sorted.len() / 2];
+    let mut speech_level = sorted[sorted.len() * 3 / 4];
+    // Если ≥75% канала занимает тишина, квантиль p75 проваливается в шумовой пол:
+    // только в этом случае берём уровни речи внутри реплик, иначе на записях с
+    // тихим собеседником (-18 dB) порог поднимается выше его речи и дробит её.
+    if speech_level <= (noise_floor * 3.0).max(1e-6) {
+        let mut speech_rms: Vec<f64> = utterances
+            .iter()
+            .flat_map(|u| {
+                let lo = ((u.start.max(0.0) / FRAME_SEC).floor() as usize).min(rms.len());
+                let hi = ((u.end.max(u.start) / FRAME_SEC).ceil() as usize).min(rms.len());
+                rms[lo..hi].iter().copied()
+            })
+            .collect();
+        if speech_rms.len() >= 3 {
+            speech_rms.sort_by(f64::total_cmp);
+            median = speech_rms[speech_rms.len() / 2];
+            speech_level = speech_rms[speech_rms.len() * 3 / 4];
+        }
+    }
     // Порог ниже обычной речи, но выше шумового пола: иначе на ровном
     // сигнале «паузой» станет сама речь и реплика рассыплется на куски.
     let quiet = (median * 0.35)

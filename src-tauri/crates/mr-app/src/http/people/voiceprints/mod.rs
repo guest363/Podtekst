@@ -11,7 +11,7 @@ pub(crate) use samples::{handle_voiceprint_sample_delete, serve_voiceprint_detai
 pub(crate) use snippets::load_all_voiceprints;
 pub(super) use store::{
     delete_voiceprint_files, pack_voiceprint_file, parse_profiles, prototypes_centroid,
-    store_voiceprint, vp_v3, PrototypeSample,
+    store_voiceprint, vp_v3, vp_v3_with_space, PrototypeSample,
 };
 
 #[cfg(test)]

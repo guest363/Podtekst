@@ -388,8 +388,11 @@ pub const WESPEAKER_FRONTEND: FrontendParams = FrontendParams {
     kaldi_exact: false,
 };
 
-/// 3D-Speaker `FBank` (ERes2NetV2/CAM++): torchaudio kaldi-fbank с `window_type='hann'`,
+/// 3D-Speaker `FBank` (ERes2NetV2/CAM++): kaldi-fbank с `window_type='hann'`,
 /// преэмфазис 0.97 и remove_dc_offset покадрово, CMN поверх (`eres2netv2_fbank`).
+/// shortcut: 3D-Speaker по умолчанию использует povey (`hann^0.85`, на AMI/VoxConverse/Golos
+/// turn EER 3.99% против 4.19% при `cos=0.9939`), но при текущих порогах диаризации смена
+/// окна ухудшает `synth-ru-2spk-60s-ov0` на +0.010 DER; перевести на povey вместе с перекалибровкой.
 pub const ERES2NETV2_FRONTEND: FrontendParams = FrontendParams {
     win_length: 400,
     fft_size: 512,
@@ -563,7 +566,14 @@ pub fn log_mel_frames(samples: &[f32], p: FrontendParams) -> Vec<Vec<f32>> {
                 .map(|(w, q)| w * q)
                 .sum();
             mel[m] = if p.natural_log {
-                (e.max(1e-9)).ln() as f32
+                // Kaldi использует FLT_EPSILON: на цифровой тишине пол 1e-9 уводил
+                // кадры ниже и смещал среднее CMN сильнее эталона.
+                let floor = if p.kaldi_exact {
+                    f64::from(f32::EPSILON)
+                } else {
+                    1e-9
+                };
+                (e.max(floor)).ln() as f32
             } else {
                 (e.max(1e-10)).log10() as f32
             };
@@ -818,6 +828,26 @@ mod tests {
         assert_eq!(hann(1), vec![1.0]);
         assert_eq!(hamming(0), Vec::<f64>::new());
         assert_eq!(hamming(1), vec![1.0]);
+    }
+
+    #[test]
+    fn eres2netv2_fbank_silence_floor_stays_finite_and_bounded() {
+        let mut mixed = vec![0.0f32; 8_000];
+        mixed.extend((0..8_000).map(|i| {
+            (2.0 * std::f64::consts::PI * 440.0 * i as f64 / 16_000.0).sin() as f32 * 0.1
+        }));
+        let frames = eres2netv2_fbank(&mixed);
+        assert!(!frames.is_empty());
+        assert!(frames.iter().all(|r| r.iter().all(|x| x.is_finite())));
+        let min = frames
+            .iter()
+            .flatten()
+            .copied()
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            min > -20.0,
+            "пол логарифма утянул тишину слишком низко: {min}"
+        );
     }
 
     /// БПФ должно совпадать с прямым ДПФ для всех используемых размеров кадра.

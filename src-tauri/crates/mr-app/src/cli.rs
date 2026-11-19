@@ -67,13 +67,7 @@ pub(crate) struct Cli {
 
 impl Cli {
     pub(crate) fn validate_speakers(&self) -> Result<(), String> {
-        if self.min_speakers > 0 && self.max_speakers > 0 && self.min_speakers > self.max_speakers {
-            return Err(format!(
-                "--min-speakers ({}) не может быть больше --max-speakers ({})",
-                self.min_speakers, self.max_speakers
-            ));
-        }
-        Ok(())
+        crate::transcribe::validate_speaker_bounds(self.min_speakers, self.max_speakers)
     }
 
     /// Опции конвейера собираются в одном месте: иначе новый флаг легко потерять

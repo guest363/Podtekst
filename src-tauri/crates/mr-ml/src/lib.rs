@@ -33,6 +33,13 @@ const COHORT_TOP_K: usize = 5;
 /// shortcut: 0.015 — эмпирический пол по живому кейсу margin 0.019; перепроверить
 /// на размеченном наборе при смене модели.
 const MIN_MATCH_MARGIN_FLOOR: f64 = 0.015;
+/// Без второго профиля margin и cohort z-score не работают: на замере
+/// AMI/VoxConverse/Golos/FLEURS (29 дикторов + 80 дистракторов) порог 0.55
+/// снижает FAR с 2.99% до 0.51% при FRR=0.0% на кластерах (от 2 реплик).
+pub const SINGLE_PROFILE_THRESHOLD: f64 = 0.55;
+/// При 2–3 профилях cohort z-score ещё выключен (включается с 4): порог 0.50
+/// снижает FAR вдвое (4.82%→2.30% и 7.96%→3.78%) при FRR=0.0% на кластерах.
+const SMALL_COHORT_THRESHOLD: f64 = 0.50;
 pub const HIGH_CONFIDENCE_THRESHOLD: f64 = 0.78;
 pub const SAME_SPEAKER_MERGE_SIM: f64 = 0.55;
 pub const MAX_PROTOTYPES: usize = 10;
@@ -178,7 +185,7 @@ pub struct ClusterMatch {
 
 pub fn l2_normalize(v: &[f64]) -> Vec<f64> {
     let norm = v.iter().map(|x| x * x).sum::<f64>().sqrt();
-    if norm < 1e-12 {
+    if !norm.is_finite() || norm < 1e-12 {
         return vec![0.0; v.len()];
     }
     v.iter().map(|x| x / norm).collect()
@@ -191,10 +198,10 @@ pub fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
     let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let na = a.iter().map(|x| x * x).sum::<f64>().sqrt();
     let nb = b.iter().map(|x| x * x).sum::<f64>().sqrt();
-    if na < 1e-12 || nb < 1e-12 {
+    if !dot.is_finite() || !na.is_finite() || !nb.is_finite() || na < 1e-12 || nb < 1e-12 {
         return 0.0;
     }
-    dot / (na * nb)
+    (dot / (na * nb)).clamp(-1.0, 1.0)
 }
 
 pub fn interval_gap(a_start: f64, a_end: f64, b_start: f64, b_end: f64) -> f64 {
@@ -209,16 +216,16 @@ pub fn weighted_centroid(vecs: &[Vec<f64>], weights: &[f64]) -> Vec<f64> {
     let mut acc = vec![0.0; dim];
     let mut total = 0.0;
     for (v, w) in vecs.iter().zip(weights.iter()) {
-        if v.len() != dim {
+        if v.len() != dim || v.iter().any(|x| !x.is_finite()) {
             continue;
         }
-        let ww = w.max(1e-6);
+        let ww = if w.is_finite() { w.max(1e-6) } else { 1e-6 };
         for (i, val) in v.iter().enumerate() {
             acc[i] += val * ww;
         }
         total += ww;
     }
-    if total <= 1e-12 {
+    if !total.is_finite() || total <= 1e-12 {
         return vecs[0].clone();
     }
     let mean: Vec<f64> = acc.iter().map(|x| x / total).collect();
@@ -380,6 +387,48 @@ fn cohort_z_score(row: &[f64], candidate: usize, score: f64) -> f64 {
     (score - mean) / variance.sqrt().max(MIN_COHORT_SIGMA)
 }
 
+fn pair_eligible(row: &[f64], col: usize, threshold: f64, min_margin: f64) -> Option<(f64, f64)> {
+    let s = row[col];
+    let n_profiles = row.len();
+    let min_sim = match n_profiles {
+        1 => threshold.max(SINGLE_PROFILE_THRESHOLD),
+        2 | 3 => threshold.max(SMALL_COHORT_THRESHOLD),
+        _ => threshold,
+    };
+    if !s.is_finite() || s < min_sim {
+        return None;
+    }
+    let other_max = if n_profiles > 1 {
+        row.iter()
+            .enumerate()
+            .filter(|&(idx, _)| idx != col)
+            .map(|(_, &val)| val)
+            .fold(f64::NEG_INFINITY, f64::max)
+    } else {
+        0.0
+    };
+    let margin = s - other_max;
+    if n_profiles > 1
+        && (margin < MIN_MATCH_MARGIN_FLOOR
+            || (margin < min_margin && s < HIGH_CONFIDENCE_THRESHOLD))
+    {
+        return None;
+    }
+    if n_profiles >= 4 && cohort_z_score(row, col, s) < MIN_COHORT_Z {
+        return None;
+    }
+    Some((s, margin.max(0.0)))
+}
+
+fn apply_cluster_match(slot: &mut ClusterMatch, profile: &SpeakerProfile, sim: f64, margin: f64) {
+    slot.matched = true;
+    slot.name = Some(profile.name.clone());
+    slot.pack_id = (!profile.pack_id.is_empty()).then(|| profile.pack_id.clone());
+    slot.pack_name = (!profile.pack_name.is_empty()).then(|| profile.pack_name.clone());
+    slot.similarity = (sim * 1000.0).round() / 1000.0;
+    slot.margin = (margin.max(0.0) * 1000.0).round() / 1000.0;
+}
+
 pub fn match_voiceprints_matrix(
     cluster_embeddings: &[Vec<f64>],
     profiles: &[SpeakerProfile],
@@ -429,86 +478,36 @@ pub fn match_voiceprints_matrix(
             })
             .collect();
     }
-    for (r, c) in linear_sum_assignment_max(&sim) {
-        let s = sim[r][c];
-        if s < threshold {
-            continue;
-        }
-        let other_max = sim[r]
-            .iter()
-            .enumerate()
-            .filter(|&(idx, _)| idx != c)
-            .map(|(_, &val)| val)
-            .fold(f64::NEG_INFINITY, f64::max);
-        let margin = s - other_max;
-        if profiles.len() > 1
-            && (margin < MIN_MATCH_MARGIN_FLOOR
-                || (margin < min_margin && s < HIGH_CONFIDENCE_THRESHOLD))
-        {
-            continue;
-        }
-        if profiles.len() >= 4 && cohort_z_score(&sim[r], c, s) < MIN_COHORT_Z {
-            continue;
-        }
-        results[r].matched = true;
-        results[r].name = Some(profiles[c].name.clone());
-        results[r].pack_id = if profiles[c].pack_id.is_empty() {
-            None
-        } else {
-            Some(profiles[c].pack_id.clone())
-        };
-        results[r].pack_name = if profiles[c].pack_name.is_empty() {
-            None
-        } else {
-            Some(profiles[c].pack_name.clone())
-        };
-        results[r].similarity = (s * 1000.0).round() / 1000.0;
-        results[r].margin = (margin.max(0.0) * 1000.0).round() / 1000.0;
-    }
-    let mut assigned: std::collections::HashMap<usize, usize> = results
+    // Пары ниже порога/margin обнуляются до венгерского алгоритма: иначе сумма
+    // с неподходящей парой способна отдать имя чужому кластеру.
+    let eligible_sim: Vec<Vec<f64>> = sim
         .iter()
-        .enumerate()
-        .filter(|(_, x)| x.matched)
-        .filter_map(|(ri, x)| {
-            profiles
-                .iter()
-                .position(|p| Some(&p.name) == x.name.as_ref())
-                .map(|pi| (pi, ri))
+        .map(|row| {
+            (0..profiles.len())
+                .map(|col| pair_eligible(row, col, threshold, min_margin).map_or(0.0, |(s, _)| s))
+                .collect()
         })
         .collect();
+    let mut assigned: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for (r, c) in linear_sum_assignment_max(&eligible_sim) {
+        let Some((s, margin)) = pair_eligible(&sim[r], c, threshold, min_margin) else {
+            continue;
+        };
+        assigned.insert(c, r);
+        apply_cluster_match(&mut results[r], &profiles[c], s, margin);
+    }
     let mut candidates: Vec<(usize, usize, f64, f64)> = Vec::new();
     for i in 0..n {
         if results[i].matched {
             continue;
         }
-        let mut best_pi = None;
-        let mut best_s = 0.0;
-        for (pi, _s) in sim[i].iter().enumerate() {
-            if *_s > best_s {
-                best_s = *_s;
-                best_pi = Some(pi);
-            }
-        }
-        if let Some(pi) = best_pi {
-            if best_s >= threshold {
-                let other_max = sim[i]
-                    .iter()
-                    .enumerate()
-                    .filter(|&(idx, _)| idx != pi)
-                    .map(|(_, &val)| val)
-                    .fold(f64::NEG_INFINITY, f64::max);
-                let margin = best_s - other_max;
-                if profiles.len() > 1
-                    && (margin < MIN_MATCH_MARGIN_FLOOR
-                        || (margin < min_margin && best_s < HIGH_CONFIDENCE_THRESHOLD))
-                {
-                    continue;
-                }
-                if profiles.len() >= 4 && cohort_z_score(&sim[i], pi, best_s) < MIN_COHORT_Z {
-                    continue;
-                }
-                candidates.push((i, pi, best_s, margin));
-            }
+        let best = (0..profiles.len())
+            .filter_map(|pi| {
+                pair_eligible(&sim[i], pi, threshold, min_margin).map(|(s, m)| (pi, s, m))
+            })
+            .max_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((pi, best_s, margin)) = best {
+            candidates.push((i, pi, best_s, margin));
         }
     }
     candidates.sort_by(|a, b| b.2.total_cmp(&a.2));
@@ -525,20 +524,7 @@ pub fn match_voiceprints_matrix(
         };
         if can_assign {
             assigned.entry(pi).or_insert(i);
-            results[i].matched = true;
-            results[i].name = Some(profiles[pi].name.clone());
-            results[i].pack_id = if profiles[pi].pack_id.is_empty() {
-                None
-            } else {
-                Some(profiles[pi].pack_id.clone())
-            };
-            results[i].pack_name = if profiles[pi].pack_name.is_empty() {
-                None
-            } else {
-                Some(profiles[pi].pack_name.clone())
-            };
-            results[i].similarity = (best_s * 1000.0).round() / 1000.0;
-            results[i].margin = (margin.max(0.0) * 1000.0).round() / 1000.0;
+            apply_cluster_match(&mut results[i], &profiles[pi], best_s, margin);
         }
     }
     results
@@ -858,5 +844,63 @@ mod tests {
         let json_str = r#"{"name":"Тест","embedding":[0.1],"samples_count":1,"updated_at":"2026-10-28T16:00:00Z","prototypes":[]}"#;
         let profile_str: SpeakerProfile = serde_json::from_str(json_str).unwrap();
         assert_eq!(profile_str.updated_at, "2026-10-28T16:00:00Z");
+    }
+
+    #[test]
+    fn hungarian_masks_sub_threshold_pairs_before_assignment() {
+        let p_x = profile("X", unit(4, 0));
+        let p_y = profile("Y", unit(4, 1));
+        // A: X=0.6, Y=0.0; B: X=0.7, Y=0.3. Без маски A→X + B→Y = 0.9 побеждало B→X = 0.7.
+        let a = l2(vec![0.6, 0.0, 0.8, 0.0]);
+        let b = l2(vec![0.7, 0.3, 0.0, (1.0f64 - 0.49 - 0.09).sqrt()]);
+        let res = match_voiceprints_matrix(&[a, b], &[p_x, p_y], 0.45, 0.015);
+        assert!(res[1].matched, "B должен получить X: {res:?}");
+        assert_eq!(res[1].name.as_deref(), Some("X"));
+        assert!(!res[0].matched, "чужой A не должен перехватить X: {res:?}");
+    }
+
+    #[test]
+    fn single_and_small_profile_sets_reject_weak_strangers_with_finite_margin() {
+        let solo = vec![profile("Один", unit(4, 0))];
+        let weak = l2(vec![0.48, (1.0f64 - 0.48 * 0.48).sqrt(), 0.0, 0.0]);
+        let res = match_voiceprints_matrix(&[weak], &solo, 0.45, 0.015);
+        assert!(
+            !res[0].matched,
+            "слабое совпадение на одном профиле: {res:?}"
+        );
+        assert!(res[0].margin.is_finite());
+
+        let strong = l2(vec![0.65, (1.0f64 - 0.65 * 0.65).sqrt(), 0.0, 0.0]);
+        let res = match_voiceprints_matrix(&[strong], &solo, 0.45, 0.015);
+        assert!(res[0].matched);
+        assert!(res[0].margin.is_finite());
+
+        let pair = vec![profile("A", unit(4, 0)), profile("B", unit(4, 1))];
+        let weak_two = l2(vec![0.47, 0.40, (1.0f64 - 0.47 * 0.47 - 0.16).sqrt(), 0.0]);
+        let res = match_voiceprints_matrix(&[weak_two], &pair, 0.45, 0.015);
+        assert!(!res[0].matched);
+    }
+
+    #[test]
+    fn non_finite_embeddings_never_match_or_produce_nan() {
+        let profiles = vec![profile("A", unit(4, 0))];
+        let bad = vec![f64::NAN, 1.0, 0.0, 0.0];
+        assert_eq!(cosine_similarity(&bad, &unit(4, 0)), 0.0);
+        assert!(l2_normalize(&bad).iter().all(|x| *x == 0.0));
+        let res = match_voiceprints_matrix(&[bad], &profiles, 0.45, 0.015);
+        assert!(!res[0].matched);
+        assert!(res[0].similarity.is_finite() && res[0].margin.is_finite());
+    }
+
+    #[test]
+    fn homonym_profiles_track_ownership_by_index() {
+        let mut p1 = profile("Тёзка", unit(4, 0));
+        p1.pack_id = "pack-a".to_string();
+        let mut p2 = profile("Тёзка", unit(4, 1));
+        p2.pack_id = "pack-b".to_string();
+        let c1 = l2(vec![0.0, 0.8, 0.6, 0.0]);
+        let c2 = l2(vec![0.0, 0.8, -0.6, 0.0]);
+        let res = match_voiceprints_matrix(&[c1, c2], &[p1, p2], 0.45, 0.015);
+        assert_eq!(res.iter().filter(|r| r.matched).count(), 1);
     }
 }

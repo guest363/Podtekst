@@ -296,7 +296,9 @@ fn best_bleed_probe(mic: &[f32], system: &[f32]) -> Option<(usize, f32)> {
         if let Some((delay, prominence)) =
             mr_audio::echo::delay::estimate(&mic[start..end], &system[start..end], 8000)
         {
-            if best.is_none_or(|(_, best_prominence)| prominence > best_prominence) {
+            if prominence.is_finite()
+                && best.is_none_or(|(_, best_prominence)| prominence > best_prominence)
+            {
                 best = Some((delay, prominence));
             }
         }
@@ -323,7 +325,7 @@ pub(crate) fn suppress_mic_bleed_with_stats(
     };
     stats.delay = delay;
     stats.prominence = prominence;
-    if prominence < 8.0 {
+    if !prominence.is_finite() || prominence < 8.0 {
         return stats;
     }
     let mic_env = vad_envelope(mic);

@@ -19,6 +19,8 @@ impl DistanceMatrix {
             for j in (i + 1)..n {
                 let index = Self::index(n, i, j);
                 let similarity = if embeddings[i].len() != embeddings[j].len()
+                    || !norms[i].is_finite()
+                    || !norms[j].is_finite()
                     || norms[i] < 1e-12
                     || norms[j] < 1e-12
                 {
@@ -29,7 +31,11 @@ impl DistanceMatrix {
                         .zip(&embeddings[j])
                         .map(|(a, b)| a * b)
                         .sum();
-                    dot / (norms[i] * norms[j])
+                    if dot.is_finite() {
+                        (dot / (norms[i] * norms[j])).clamp(-1.0, 1.0)
+                    } else {
+                        0.0
+                    }
                 };
                 values[index] = 1.0 - similarity;
             }
@@ -90,7 +96,14 @@ fn chain_merges(
     let mut distances = DistanceMatrix::new(embeddings);
     let mut active = vec![true; n];
     let mut sizes: Vec<f64> = (0..n)
-        .map(|i| weights.get(i).copied().unwrap_or(1.0).max(1e-6))
+        .map(|i| {
+            let w = weights.get(i).copied().unwrap_or(1.0);
+            if w.is_finite() {
+                w.max(1e-6)
+            } else {
+                1.0
+            }
+        })
         .collect();
     // n×n bool — до сотен мегабайт на длинных встречах; без ограничений
     // матрица не нужна вовсе.
@@ -258,6 +271,11 @@ pub fn agglomerative_gap(
     );
     let min_k = min_clusters.clamp(1, n);
     let max_k = max_clusters.clamp(min_k, n);
+    let threshold_labels = labels_with_limit(n, &merges, min_k, distance_threshold);
+    let mut threshold_clusters = threshold_labels.clone();
+    threshold_clusters.sort_unstable();
+    threshold_clusters.dedup();
+    let threshold_k = threshold_clusters.len();
     // k=1 — это «один голос», его даёт fallback по порогу расстояния, а не
     // разрыв в дереве; иначе искусственная высота cannot-link и шумовая пара
     // тянут k вниз, вплоть до одного кластера после слияний.
@@ -288,22 +306,18 @@ pub fn agglomerative_gap(
         // голоса запрещает ровно одно следующее слияние — берём разбиение на
         // кластер мельче. Больше одного кластера не добавляем: иначе шумная
         // дендрограмма снова раздувает число спикеров (там же: EN2002b 4→9).
-        let threshold_labels = labels_with_limit(n, &merges, min_k, distance_threshold);
-        let mut threshold_clusters = threshold_labels.clone();
-        threshold_clusters.sort_unstable();
-        threshold_clusters.dedup();
         log::debug!(
             target: "cluster",
             k = k,
             gap = gap,
-            threshold_k = threshold_clusters.len();
+            threshold_k = threshold_k;
             "ev=cluster.auto_k"
         );
-        if threshold_clusters.len() == k + 1 && k < max_k {
+        if threshold_k == k + 1 && k < max_k {
             log::debug!(
                 target: "cluster",
                 k = k,
-                threshold_k = threshold_clusters.len();
+                threshold_k = threshold_k;
                 "ev=cluster.auto_k_threshold"
             );
             return threshold_labels;
@@ -317,14 +331,10 @@ pub fn agglomerative_gap(
         max_k = max_k;
         "ev=cluster.auto_k_fallback"
     );
-    let labels = labels_with_limit(n, &merges, min_k, distance_threshold);
-    let mut unique: Vec<usize> = labels.clone();
-    unique.sort_unstable();
-    unique.dedup();
-    if unique.len() > max_k {
+    if threshold_k > max_k {
         labels_with_limit(n, &merges, max_k, f64::INFINITY)
     } else {
-        labels
+        threshold_labels
     }
 }
 
@@ -751,5 +761,33 @@ mod tests {
         let mut labels = vec![0, 0, 1, 1, 2];
         merge_by_centroid_cosine(&embs, &[1.0; 5], &mut labels, &[], 0.9, 3);
         assert_eq!(unique_labels(&labels), 3);
+    }
+
+    #[test]
+    fn monologue_with_intra_voice_spread_merges_back_via_centroids() {
+        // Три шумных подкластера одного голоса (попарные слияния ≤ 0.42 < 0.51):
+        // центроидное слияние (0.70) схлопывает монолог в один кластер без запрета
+        // на выделение выбросов перекрытия (`ov15`).
+        let base = vec![
+            vec![1.0, 0.0, 0.0, 0.0],
+            vec![0.98, 0.2, 0.0, 0.0],
+            vec![0.98, -0.2, 0.0, 0.0],
+            vec![0.85, 0.0, 0.52, 0.0],
+            vec![0.85, 0.0, -0.52, 0.0],
+            vec![0.82, 0.0, 0.0, 0.57],
+            vec![0.82, 0.0, 0.0, -0.57],
+        ];
+        let mut labels = agglomerative_gap(&base, &[1.0; 7], &[], 0.51, 1, 7);
+        merge_by_centroid_cosine(&base, &[1.0; 7], &mut labels, &[], CENTROID_MERGE_SIM, 1);
+        assert_eq!(unique_labels(&labels), 1, "{labels:?}");
+    }
+
+    #[test]
+    fn clustering_handles_nan_embeddings_and_infinite_weights() {
+        let embs = vec![vec![f64::NAN, 1.0], vec![1.0, 0.0], vec![1.0, 0.0]];
+        let labels = agglomerative_weighted(&embs, &[f64::INFINITY, 1.0, 1.0], &[], 0.5, None);
+        assert_eq!(labels.len(), 3);
+        assert_eq!(labels[1], labels[2]);
+        assert_ne!(labels[0], labels[1]);
     }
 }

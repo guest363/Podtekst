@@ -131,6 +131,8 @@ pub fn get_active_packs(app_data: &Path) -> Result<Vec<std::path::PathBuf>> {
             out.push(dir);
         }
     }
+    // Детерминированный порядок: read_dir зависит от ФС и меняет приоритет тёзок.
+    out.sort();
     Ok(out)
 }
 

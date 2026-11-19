@@ -16,6 +16,14 @@ const MAX_RATE: u32 = 384_000;
 pub const MAX_CHANNELS: usize = 8;
 
 /// Контракт формата: моно-дорожки 16 кГц `[-1, 1]`. В стерео: [0] = микрофон, [1] = система.
+fn sanitize_sample(sample: f32) -> f32 {
+    if sample.is_finite() {
+        sample.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
 pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
     let file = std::fs::File::open(path).map_err(AudioError::Io)?;
     let mss = symphonia::core::io::MediaSourceStream::new(Box::new(file), Default::default());
@@ -110,7 +118,7 @@ pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
             pre_skip -= skip;
             for frame in pcm.chunks(n_ch).take(frames).skip(skip) {
                 for (c, ch) in chans.iter_mut().enumerate() {
-                    ch.push(frame.get(c % n_ch).copied().unwrap_or(0.0).clamp(-1.0, 1.0));
+                    ch.push(sanitize_sample(frame.get(c % n_ch).copied().unwrap_or(0.0)));
                 }
             }
             continue;
@@ -139,7 +147,7 @@ pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
         pre_skip -= skip;
         for frame in buf.samples().chunks(got).skip(skip) {
             for (c, ch) in chans.iter_mut().enumerate() {
-                ch.push(frame.get(c % got).copied().unwrap_or(0.0).clamp(-1.0, 1.0));
+                ch.push(sanitize_sample(frame.get(c % got).copied().unwrap_or(0.0)));
             }
         }
     }
@@ -188,7 +196,7 @@ pub fn decode_wav_range_16k(
             for (index, sample) in reader.samples::<f32>().take(need).enumerate() {
                 let sample = sample.map_err(|e| AudioError::Other(format!("wav: {e}")))?;
                 if index % channels == target {
-                    out.push(sample.clamp(-1.0, 1.0));
+                    out.push(sanitize_sample(sample));
                 }
             }
         }
@@ -742,6 +750,42 @@ mod tests {
             let err = decode_to_channels_16k_auto(&no_audio_mp4).unwrap_err();
             assert_eq!(err.to_string(), "Файл не содержит аудиодорожки");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn float_wav_sanitizes_non_finite_samples() {
+        let dir = std::env::temp_dir().join(format!(
+            "mr-decode-nan-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let wav = dir.join("nan.wav");
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16_000,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let mut writer = hound::WavWriter::create(&wav, spec).unwrap();
+        for s in [0.25f32, f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.5] {
+            writer.write_sample(s).unwrap();
+        }
+        writer.finalize().unwrap();
+
+        let full = decode_to_channels_16k(&wav).unwrap();
+        assert!(full[0].iter().all(|s| s.is_finite()));
+        assert_eq!(full[0][1], 0.0);
+        assert_eq!(full[0][2], 0.0);
+
+        let range = decode_wav_range_16k(&wav, 0.0, 0.01, Some(0)).unwrap();
+        assert!(range.iter().all(|s| s.is_finite()));
+        assert_eq!(range[1], 0.0);
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

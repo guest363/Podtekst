@@ -51,11 +51,15 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
             (*ch, samples)
         })
         .collect();
+    let both_active = is_stereo
+        && chan_list
+            .iter()
+            .all(|(ch, _)| channel_utts.get(ch).is_some_and(|u| !u.is_empty()));
     let mut speakers_info: Vec<SpeakerInfo> = vec![];
     let mut all_utts: Vec<Utterance> = vec![];
     let mut channel_trees: HashMap<usize, word_speakers::DiarIntervalTree> = HashMap::new();
     let mut segmentations = HashMap::new();
-    for (ch, _label) in chan_list.iter() {
+    for (ch, label) in chan_list.iter() {
         let samples: &[f32] = verify_samples[ch];
         log::debug!(
             target: "diar",
@@ -139,25 +143,27 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
         } else {
             ("Собеседник", None)
         };
-        let default_name = if *ch == 0 {
-            opts.speaker_left.clone()
-        } else {
-            opts.speaker_right.clone()
-        };
+        let (ch_min_speakers, ch_max_speakers) = channel_speaker_bounds(
+            is_stereo,
+            both_active,
+            *ch,
+            opts.min_speakers,
+            opts.max_speakers,
+        );
         super::geometry::write("pre-cluster", *ch, &diar_utts);
         let (infos, voice_runs) = diarize::diarize_channel(
             samples,
             &mut diar_utts,
             ch_idx,
-            &default_name,
+            label,
             prefix,
             &mut models.embed,
             segmentation.as_ref(),
             channel_vad.get(ch).map(Vec::as_slice),
             ch_echo,
             &profiles,
-            opts.min_speakers,
-            opts.max_speakers,
+            ch_min_speakers,
+            ch_max_speakers,
             &|pct, msg| on_event(pct, msg),
         );
         super::geometry::write("acoustic", *ch, &diar_utts);
@@ -319,6 +325,31 @@ fn clear_echo_poisoned_cards(
     }
 }
 
+/// Пользователь задаёт число спикеров на всю встречу, а не на каждый канал:
+/// в активном стерео ch0 (микрофон) не дробится принудительно, а ch1 получает остаток.
+fn channel_speaker_bounds(
+    is_stereo: bool,
+    both_active: bool,
+    ch: usize,
+    min_speakers: usize,
+    max_speakers: usize,
+) -> (usize, usize) {
+    if !is_stereo || !both_active {
+        return (min_speakers, max_speakers);
+    }
+    if ch == 0 {
+        (0, max_speakers)
+    } else {
+        let min = min_speakers.saturating_sub(1);
+        let max = if max_speakers > 1 {
+            max_speakers - 1
+        } else {
+            max_speakers
+        };
+        (min, max)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -386,5 +417,17 @@ mod tests {
         assert!(infos[0].embedding.is_none());
         assert!(infos[0].candidates.is_empty());
         assert_eq!(infos[0].similarity, 0.0);
+    }
+
+    #[test]
+    fn stereo_speaker_bounds_reserve_mic_without_splitting_user() {
+        assert_eq!(channel_speaker_bounds(true, true, 0, 3, 3), (0, 3));
+        assert_eq!(channel_speaker_bounds(true, true, 1, 3, 3), (2, 2));
+        assert_eq!(channel_speaker_bounds(true, true, 0, 2, 2), (0, 2));
+        assert_eq!(channel_speaker_bounds(true, true, 1, 2, 2), (1, 1));
+        assert_eq!(channel_speaker_bounds(true, true, 0, 0, 0), (0, 0));
+        assert_eq!(channel_speaker_bounds(true, true, 1, 0, 0), (0, 0));
+        assert_eq!(channel_speaker_bounds(true, false, 1, 3, 3), (3, 3));
+        assert_eq!(channel_speaker_bounds(false, false, 0, 3, 3), (3, 3));
     }
 }
