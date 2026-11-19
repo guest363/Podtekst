@@ -197,6 +197,59 @@ fn match_single_embedding(embedding: &[f64], profiles: &[SpeakerProfile]) -> Clu
     .remove(0)
 }
 
+// Подтверждённая локальная карточка этой записи снимает ложный отсев по глобальному cohort z-score без ослабления порогов.
+fn match_verified_embedding(
+    embedding: &[f64],
+    profiles: &[SpeakerProfile],
+    infos: &[SpeakerInfo],
+    changed: &HashSet<String>,
+    verified: &HashMap<String, Vec<(Vec<f64>, f64)>>,
+) -> ClusterMatch {
+    let mut result = match_single_embedding(embedding, profiles);
+    if result.matched
+        || result.similarity < mr_ml::DEFAULT_MATCH_THRESHOLD
+        || result.margin < mr_ml::DEFAULT_MIN_MARGIN
+    {
+        return result;
+    }
+    let (mut best, mut second) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    let mut best_profile: Option<&SpeakerProfile> = None;
+    for profile in profiles {
+        let score = score_speaker_similarity(embedding, profile);
+        if score > best {
+            second = best;
+            best = score;
+            best_profile = Some(profile);
+        } else if score > second {
+            second = score;
+        }
+    }
+    let Some(candidate) = best_profile else {
+        return result;
+    };
+    if best < mr_ml::DEFAULT_MATCH_THRESHOLD
+        || (profiles.len() > 1 && best - second < mr_ml::DEFAULT_MIN_MARGIN)
+    {
+        return result;
+    }
+    let confirmed = infos
+        .iter()
+        .filter(|info| {
+            info.matched
+                && info.name == candidate.name
+                && (!changed.contains(&info.name) || verified.contains_key(&info.name))
+        })
+        .filter_map(|info| info.embedding.as_deref())
+        .any(|local| cosine_similarity(embedding, local) >= mr_ml::SAME_SPEAKER_MERGE_SIM);
+    if confirmed {
+        result.matched = true;
+        result.name = Some(candidate.name.clone());
+        result.pack_id = (!candidate.pack_id.is_empty()).then(|| candidate.pack_id.clone());
+        result.pack_name = (!candidate.pack_name.is_empty()).then(|| candidate.pack_name.clone());
+    }
+    result
+}
+
 fn profile_scores(
     embedding: &[f64],
     assigned: &str,
@@ -353,6 +406,7 @@ fn verify_matched_card(
     infos: &mut Vec<SpeakerInfo>,
     names: &mut HashSet<String>,
     changed: &mut HashSet<String>,
+    verified: &HashMap<String, Vec<(Vec<f64>, f64)>>,
     next_unknown: &mut usize,
     embedding: &[f64],
     duration: f64,
@@ -366,7 +420,7 @@ fn verify_matched_card(
     if !contradicts(embedding, &utterance.speaker, profiles, flip_margin) {
         return false;
     }
-    let result = match_single_embedding(embedding, profiles);
+    let result = match_verified_embedding(embedding, profiles, infos, changed, verified);
     if !should_split_matched_card(
         embedding,
         &utterance.speaker,
@@ -412,6 +466,7 @@ fn verify_unmatched_utterance(
     infos: &mut Vec<SpeakerInfo>,
     names: &mut HashSet<String>,
     changed: &mut HashSet<String>,
+    verified: &HashMap<String, Vec<(Vec<f64>, f64)>>,
     chain_prev: Option<&ChannelNeighbor>,
     verify_unmatched_remote: bool,
     embedding: &[f64],
@@ -422,7 +477,7 @@ fn verify_unmatched_utterance(
 ) -> bool {
     let mut direct_matched = false;
     if verify_unmatched_remote && may_claim_name(duration) {
-        let result = match_single_embedding(embedding, profiles);
+        let result = match_verified_embedding(embedding, profiles, infos, changed, verified);
         if result.matched {
             if let Some(name) = result.name.clone() {
                 direct_matched = true;
@@ -576,6 +631,7 @@ fn run_with_embedder(
                 infos,
                 &mut names,
                 &mut changed,
+                &verified,
                 &mut next_unknown,
                 &embedding,
                 duration,
@@ -590,6 +646,7 @@ fn run_with_embedder(
                 infos,
                 &mut names,
                 &mut changed,
+                &verified,
                 chain_prev,
                 verify_unmatched_remote,
                 &embedding,
@@ -1448,5 +1505,250 @@ mod tests {
             utterances[2].speaker, "B",
             "короткая < 2 с продолжает наследовать ближайшего соседа"
         );
+    }
+
+    fn axis_vec(first: f64, dim: usize) -> Vec<f64> {
+        let mut v = vec![0.0; 8];
+        v[0] = first;
+        if dim != 0 {
+            v[dim] = (1.0 - first * first).sqrt();
+        }
+        v
+    }
+
+    fn axis_profile(name: &str, first: f64, dim: usize) -> SpeakerProfile {
+        SpeakerProfile {
+            name: name.to_string(),
+            pack_id: String::new(),
+            pack_name: String::new(),
+            embedding: axis_vec(first, dim),
+            samples_count: 1,
+            updated_at: String::new(),
+            prototypes: vec![],
+        }
+    }
+
+    fn cohort_rejected_profiles() -> Vec<SpeakerProfile> {
+        let mut a = axis_profile("A", 0.58, 1);
+        a.pack_id = "pack-1".to_string();
+        a.pack_name = "Пакет 1".to_string();
+        vec![
+            a,
+            axis_profile("B", 0.56, 2),
+            axis_profile("C", 0.53, 3),
+            axis_profile("D", 0.52, 4),
+            axis_profile("E", 0.51, 5),
+        ]
+    }
+
+    fn match_verified(
+        embedding: &[f64],
+        profiles: &[SpeakerProfile],
+        infos: &[SpeakerInfo],
+    ) -> ClusterMatch {
+        match_verified_embedding(embedding, profiles, infos, &HashSet::new(), &HashMap::new())
+    }
+
+    #[test]
+    fn cohort_rejected_candidate_is_confirmed_by_local_matched_card() {
+        let profiles = cohort_rejected_profiles();
+        let query = axis_vec(1.0, 0);
+        let global = match_single_embedding(&query, &profiles);
+        assert!(
+            !global.matched,
+            "глобальный матчер обязан отсеять по cohort z"
+        );
+
+        let local_a = axis_vec(0.71, 1);
+        let infos = vec![info("A", true, local_a)];
+        let fallback = match_verified(&query, &profiles, &infos);
+        assert!(fallback.matched);
+        assert_eq!(fallback.name.as_deref(), Some("A"));
+        assert_eq!(fallback.pack_id.as_deref(), Some("pack-1"));
+        assert_eq!(fallback.pack_name.as_deref(), Some("Пакет 1"));
+    }
+
+    #[test]
+    fn cohort_rejected_fallback_requires_confirmed_local_card_and_cosine() {
+        let profiles = cohort_rejected_profiles();
+        let query = axis_vec(1.0, 0);
+
+        let low_sim = vec![info("A", true, axis_vec(0.50, 1))];
+        assert!(!match_verified(&query, &profiles, &low_sim).matched);
+
+        let other_profile = vec![info("B", true, query.clone())];
+        assert!(!match_verified(&query, &profiles, &other_profile).matched);
+
+        let unmatched = vec![info("A", false, query.clone())];
+        assert!(!match_verified(&query, &profiles, &unmatched).matched);
+
+        let mut no_emb = info("A", true, query.clone());
+        no_emb.embedding = None;
+        assert!(!match_verified(&query, &profiles, &[no_emb]).matched);
+
+        assert!(!match_verified(&query, &profiles, &[]).matched);
+    }
+
+    #[test]
+    fn local_card_fallback_never_bypasses_similarity_or_margin() {
+        let query = axis_vec(1.0, 0);
+        let infos = vec![info("A", true, query.clone())];
+
+        let below_thresh = vec![axis_profile("A", 0.44, 1)];
+        assert!(!match_verified(&query, &below_thresh, &infos).matched);
+
+        let rounded_thresh = vec![axis_profile("A", 0.4496, 1)];
+        assert!(!match_verified(&query, &rounded_thresh, &infos).matched);
+
+        let below_margin = vec![axis_profile("A", 0.55, 1), axis_profile("B", 0.54, 2)];
+        assert!(!match_verified(&query, &below_margin, &infos).matched);
+
+        let rounded_margin = vec![
+            axis_profile("A", 0.55, 1),
+            axis_profile("B", 0.5354, 2),
+            axis_profile("C", 0.53, 3),
+            axis_profile("D", 0.52, 4),
+            axis_profile("E", 0.51, 5),
+        ];
+        assert!(!match_verified(&query, &rounded_margin, &infos).matched);
+    }
+
+    #[test]
+    fn abandoned_matched_card_cannot_confirm_cohort_rejected_fallback() {
+        let profiles = cohort_rejected_profiles();
+        let query = axis_vec(1.0, 0);
+        let a_local = axis_vec(0.71, 1);
+
+        let changed = HashSet::from(["A".to_string()]);
+        let empty_verified = HashMap::new();
+        let infos = vec![info("A", true, a_local.clone())];
+        assert!(
+            !match_verified_embedding(&query, &profiles, &infos, &changed, &empty_verified).matched
+        );
+
+        let active_verified = HashMap::from([("A".to_string(), vec![(a_local.clone(), 3.0)])]);
+        assert!(
+            match_verified_embedding(&query, &profiles, &infos, &changed, &active_verified).matched
+        );
+
+        let mut u_abandoned = utterance(0.0, 3.0, "A");
+        u_abandoned.channel = Some(1);
+        let mut u_unmatched = utterance(5.0, 9.0, "Собеседник 1");
+        u_unmatched.channel = Some(1);
+        let mut utterances = vec![u_abandoned, u_unmatched];
+
+        let mut card_a = info("A", true, a_local);
+        card_a.channel = Some(1);
+        let mut card_b = info("B", true, axis_vec(0.0, 2));
+        card_b.channel = Some(1);
+        let mut card_u = info("Собеседник 1", false, axis_vec(0.5, 6));
+        card_u.channel = Some(1);
+        let mut run_infos = vec![card_a, card_b, card_u];
+
+        let mut samples = vec![0.2f32; 16000 * 10];
+        samples[16000 * 4..].fill(-0.2);
+        let channels = HashMap::from([(1usize, samples)]);
+        let views: HashMap<usize, &[f32]> = channels
+            .iter()
+            .map(|(ch, buf)| (*ch, buf.as_slice()))
+            .collect();
+        let no_vad = HashMap::new();
+        run_with_embedder(
+            &mut utterances,
+            &mut run_infos,
+            &channels,
+            VerificationInput {
+                samples: &views,
+                vad: &no_vad,
+                segmentations: &HashMap::new(),
+                echo: None,
+            },
+            &profiles,
+            move |chunk| {
+                if chunk[0] > 0.0 {
+                    Some(axis_vec(0.0, 2))
+                } else {
+                    Some(query.clone())
+                }
+            },
+        );
+
+        assert_eq!(utterances[0].speaker, "B");
+        assert_eq!(utterances[1].speaker, "Собеседник 1");
+        assert!(!run_infos.iter().any(|i| i.name == "A" && i.matched));
+    }
+
+    #[test]
+    fn both_verification_branches_use_local_card_fallback() {
+        let profiles = cohort_rejected_profiles();
+        let query = axis_vec(1.0, 0);
+        let a_local = axis_vec(0.71, 1);
+
+        let mut u_keep = utterance(0.0, 3.0, "A");
+        u_keep.channel = Some(1);
+        let mut u_split = utterance(5.0, 9.0, "B");
+        u_split.channel = Some(1);
+        let mut u_unmatched = utterance(11.0, 15.0, "Собеседник 1");
+        u_unmatched.channel = Some(1);
+        let mut utterances = vec![u_keep, u_split, u_unmatched];
+
+        let mut card_a = info("A", true, a_local.clone());
+        card_a.channel = Some(1);
+        let mut card_b = info("B", true, axis_vec(0.0, 2));
+        card_b.channel = Some(1);
+        let mut card_u = info("Собеседник 1", false, axis_vec(0.5, 6));
+        card_u.channel = Some(1);
+        let mut infos = vec![card_a, card_b, card_u];
+
+        let mut samples = vec![0.2f32; 16000 * 16];
+        samples[16000 * 4..].fill(-0.2);
+        let channels = HashMap::from([(1usize, samples)]);
+        let views: HashMap<usize, &[f32]> = channels
+            .iter()
+            .map(|(ch, buf)| (*ch, buf.as_slice()))
+            .collect();
+        let no_vad = HashMap::new();
+        run_with_embedder(
+            &mut utterances,
+            &mut infos,
+            &channels,
+            VerificationInput {
+                samples: &views,
+                vad: &no_vad,
+                segmentations: &HashMap::new(),
+                echo: None,
+            },
+            &profiles,
+            move |chunk| {
+                if chunk[0] > 0.0 {
+                    Some(a_local.clone())
+                } else {
+                    Some(query.clone())
+                }
+            },
+        );
+
+        assert_eq!(utterances.len(), 3);
+        assert_eq!(utterances[0].speaker, "A");
+        assert_eq!(
+            utterances[1].speaker, "A",
+            "ветка verify_matched_card должна подтверждать кандидата через локальную карточку"
+        );
+        assert_eq!(
+            utterances[2].speaker, "A",
+            "ветка verify_unmatched_utterance должна подтверждать кандидата через локальную карточку"
+        );
+        assert!(infos
+            .iter()
+            .find(|i| i.name == "A")
+            .is_some_and(|i| i.matched));
+        assert!(infos
+            .iter()
+            .find(|i| i.name == "B")
+            .is_some_and(|i| !i.matched && i.embedding.is_none()));
+        assert!(infos
+            .iter()
+            .find(|i| i.name == "Собеседник 1")
+            .is_some_and(|i| !i.matched && i.embedding.is_none()));
     }
 }
