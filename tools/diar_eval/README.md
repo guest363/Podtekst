@@ -128,6 +128,11 @@ $PY tools/diar_eval/run_batch.py \
 - stderr упавших файлов, команда и tail stdout складываются в
   `failures/<id>.log`.
 - `--out` по умолчанию `runs/<дата>-<короткий commit>`.
+- `--data-dir` задаёт `MEETING_RECORDER_DATA_DIR`: без него приложение читает
+  личные `voiceprints.json` и `hotwords` из профиля пользователя, и метрики
+  перестают быть воспроизводимыми. Для чистого прогона укажите каталог, где
+  `models` ссылается на скачанные модели, а `voiceprints.json` и `config.json`
+  отсутствуют. Тот же флаг есть у `run_suite.py`.
 
 Для набора из нескольких манифестов:
 
