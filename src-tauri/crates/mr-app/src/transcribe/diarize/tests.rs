@@ -2303,3 +2303,29 @@ fn split_at_pauses_finds_pauses_in_mostly_silent_channel() {
     assert_eq!(split.len(), 2, "{split:?}");
     assert!((split[0].end - 12.0).abs() < 0.35, "{split:?}");
 }
+
+#[test]
+fn split_at_pauses_preserves_quiet_speaker_in_dense_channel() {
+    // Плотный канал с двумя уровнями речи (0 dB и -18 dB) и паузами:
+    // тихий диктор не должен рассыпаться на куски как «тишина».
+    let mut samples = vec![0.0f32; 16_000 * 16];
+    let fill = |buf: &mut [f32], start_s: f64, end_s: f64, amp: f32| {
+        let lo = (start_s * 16_000.0) as usize;
+        let hi = (end_s * 16_000.0) as usize;
+        for (i, slot) in buf[lo..hi].iter_mut().enumerate() {
+            *slot = amp * (std::f32::consts::TAU * 300.0 * i as f32 / 16_000.0).sin();
+        }
+    };
+    fill(&mut samples, 0.5, 5.5, 0.2);
+    fill(&mut samples, 8.0, 12.0, 0.2 * 0.125);
+    let utts = vec![
+        utt(0.5, 5.5, "Собеседник 1", 1, "громкая реплика"),
+        utt(8.0, 12.0, "Собеседник 2", 1, "тихая реплика"),
+    ];
+    let split = split_at_pauses(&samples, &utts);
+    let quiet_parts = split.iter().filter(|u| u.start >= 7.5).count();
+    assert_eq!(
+        quiet_parts, 1,
+        "тихая реплика не должна дробиться: {split:?}"
+    );
+}

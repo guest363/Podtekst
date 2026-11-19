@@ -33,12 +33,12 @@ const COHORT_TOP_K: usize = 5;
 /// shortcut: 0.015 — эмпирический пол по живому кейсу margin 0.019; перепроверить
 /// на размеченном наборе при смене модели.
 const MIN_MATCH_MARGIN_FLOOR: f64 = 0.015;
-/// Без второго профиля margin и cohort z-score не работают: базовый порог 0.45
-/// отдаёт единственное имя похожим чужим голосам.
-/// shortcut: 0.55 (= SAME_SPEAKER_MERGE_SIM), перекалибровать на размеченном наборе.
+/// Без второго профиля margin и cohort z-score не работают: на замере
+/// AMI/VoxConverse/Golos/FLEURS (29 дикторов + 80 дистракторов) порог 0.55
+/// снижает FAR с 2.99% до 0.51% при FRR=0.0% на кластерах (от 2 реплик).
 pub const SINGLE_PROFILE_THRESHOLD: f64 = 0.55;
-/// При 2–3 профилях cohort z-score ещё выключен (включается с 4).
-/// shortcut: 0.50, перекалибровать на размеченном наборе.
+/// При 2–3 профилях cohort z-score ещё выключен (включается с 4): порог 0.50
+/// снижает FAR вдвое (4.82%→2.30% и 7.96%→3.78%) при FRR=0.0% на кластерах.
 const SMALL_COHORT_THRESHOLD: f64 = 0.50;
 pub const HIGH_CONFIDENCE_THRESHOLD: f64 = 0.78;
 pub const SAME_SPEAKER_MERGE_SIM: f64 = 0.55;

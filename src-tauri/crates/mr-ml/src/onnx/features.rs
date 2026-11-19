@@ -390,9 +390,9 @@ pub const WESPEAKER_FRONTEND: FrontendParams = FrontendParams {
 
 /// 3D-Speaker `FBank` (ERes2NetV2/CAM++): kaldi-fbank с `window_type='hann'`,
 /// преэмфазис 0.97 и remove_dc_offset покадрово, CMN поверх (`eres2netv2_fbank`).
-/// shortcut: 3D-Speaker по умолчанию использует povey (`hann^0.85`), но смена окна
-/// сдвигает эмбеддинги (`cos=0.9966`) и ухудшает `synth-ru-2spk-60s-ov0` на `small`
-/// без перекалибровки порогов; перевести на povey вместе с перекалибровкой и `EMBEDDING_SPACE`.
+/// shortcut: 3D-Speaker по умолчанию использует povey (`hann^0.85`, на AMI/VoxConverse/Golos
+/// turn EER 3.99% против 4.19% при `cos=0.9939`), но при текущих порогах диаризации смена
+/// окна ухудшает `synth-ru-2spk-60s-ov0` на +0.010 DER; перевести на povey вместе с перекалибровкой.
 pub const ERES2NETV2_FRONTEND: FrontendParams = FrontendParams {
     win_length: 400,
     fft_size: 512,

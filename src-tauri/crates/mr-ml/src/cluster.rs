@@ -280,14 +280,12 @@ pub fn agglomerative_gap(
     // разрыв в дереве; иначе искусственная высота cannot-link и шумовая пара
     // тянут k вниз, вплоть до одного кластера после слияний.
     let gap_floor = if min_k <= 1 { 2 } else { min_k };
-    // Скачки ниже distance_threshold не должны дробить монолог глубже threshold_k + 1.
-    let gap_ceil = max_k.min(threshold_k.saturating_add(1));
     let min_gap_height = MIN_GAP_MERGE_DIST.min(distance_threshold);
     let mut best: Option<(f64, usize)> = None;
     if distance_threshold > 0.0 {
         for i in 0..merges.len().saturating_sub(1) {
             let k = n - (i + 1);
-            if k < gap_floor || k > gap_ceil {
+            if k < gap_floor || k > max_k {
                 continue;
             }
             // shortcut: слияния >= 2.0 вызваны искусственным CANNOT_LINK_DISTANCE (10.0),
@@ -766,19 +764,22 @@ mod tests {
     }
 
     #[test]
-    fn gap_caps_clusters_above_threshold_on_noisy_monologue() {
-        // Три подкластера внутри одного порога (все слияния ≤ 0.42 < 0.51):
-        // скачок на 0.33 не должен дробить монолог на 3 спикера.
+    fn monologue_with_intra_voice_spread_merges_back_via_centroids() {
+        // Три шумных подкластера одного голоса (попарные слияния ≤ 0.42 < 0.51):
+        // центроидное слияние (0.70) схлопывает монолог в один кластер без запрета
+        // на выделение выбросов перекрытия (`ov15`).
         let base = vec![
             vec![1.0, 0.0, 0.0, 0.0],
-            vec![1.0, 0.0, 0.0, 0.0],
-            vec![0.67, (1.0f64 - 0.67 * 0.67).sqrt(), 0.0, 0.0],
-            vec![0.67, (1.0f64 - 0.67 * 0.67).sqrt(), 0.0, 0.0],
-            vec![0.60, 0.25, (1.0f64 - 0.36 - 0.0625).sqrt(), 0.0],
-            vec![0.60, 0.25, (1.0f64 - 0.36 - 0.0625).sqrt(), 0.0],
+            vec![0.98, 0.2, 0.0, 0.0],
+            vec![0.98, -0.2, 0.0, 0.0],
+            vec![0.85, 0.0, 0.52, 0.0],
+            vec![0.85, 0.0, -0.52, 0.0],
+            vec![0.82, 0.0, 0.0, 0.57],
+            vec![0.82, 0.0, 0.0, -0.57],
         ];
-        let labels = agglomerative_gap(&base, &[1.0; 6], &[], 0.51, 1, 6);
-        assert!(unique_labels(&labels) <= 2, "{labels:?}");
+        let mut labels = agglomerative_gap(&base, &[1.0; 7], &[], 0.51, 1, 7);
+        merge_by_centroid_cosine(&base, &[1.0; 7], &mut labels, &[], CENTROID_MERGE_SIM, 1);
+        assert_eq!(unique_labels(&labels), 1, "{labels:?}");
     }
 
     #[test]
