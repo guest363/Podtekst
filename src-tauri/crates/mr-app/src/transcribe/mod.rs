@@ -17,6 +17,7 @@ mod word_speakers;
 use std::path::PathBuf;
 
 mod models;
+mod perf;
 mod pipeline;
 mod profile_verification;
 

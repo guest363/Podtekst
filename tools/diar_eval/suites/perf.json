@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "name": "perf",
+  "description": "Быстрый замер скорости: ASR RU, ASR EN, встреча RU.",
+  "manifests": [
+    {"name": "asr-ru-short", "path": "data/manifest-run.json", "ids": ["fleurs/ru_ru/12245409147618250890"]},
+    {"name": "asr-en-short", "path": "data/manifest-run.json", "ids": ["fleurs/en_us/12190760535244332971"]},
+    {"name": "meeting-ru", "path": "regression-verified/manifest.json", "ids": ["synth-ru-2spk-60s-ov0"]}
+  ]
+}

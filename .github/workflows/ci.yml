@@ -75,7 +75,7 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
-          python3 -m unittest -v test_check test_report_versions test_run_preservation test_run_suite test_text_metrics
+          python3 -m unittest -v test_check test_perf test_report_versions test_run_preservation test_run_suite test_text_metrics
         working-directory: tools/diar_eval
 
   rust:

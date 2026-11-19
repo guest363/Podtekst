@@ -13,6 +13,7 @@ use super::document::{unique_speech_sec, Meta, Stats, TranscriptDoc};
 use super::events;
 use super::memory;
 use super::models::ModelsGuard;
+use super::perf;
 use super::report;
 use super::{TranscribeOptions, TranscribeReport};
 
@@ -98,6 +99,8 @@ fn transcribe_file_inner(
     opts: &TranscribeOptions,
     on_event: &dyn Fn(u8, &str),
 ) -> Result<TranscribeReport, String> {
+    // Калибровка не должна попадать в total_ms: её цена — свойство машины, не файла.
+    let perf_started = perf::begin();
     // Предел по памяти, а не по часам: весь файл лежит в памяти f32 16 кГц,
     // поэтому отказ выдаём до декодирования, пока память ещё не занята.
     memory::check(audio_path)?;
@@ -112,6 +115,7 @@ fn transcribe_file_inner(
         on_event(1, "Извлекаю звук из видео…");
     }
     let decode_stage = Instant::now();
+    let perf_decode = perf::stage("decode");
     stage_begin("decode");
     log::debug!(
         target: "audio",
@@ -125,6 +129,8 @@ fn transcribe_file_inner(
         return Err("Файл не содержит аудиодорожки".to_string());
     }
     let duration_sec = channels.iter().map(|c| c.len()).max().unwrap_or(0) as f64 / 16000.0;
+    let input_channels = channels.len();
+    perf::set_audio(duration_sec, input_channels);
     let channel_stats: Vec<AudioStats> = if cfg!(debug_assertions) {
         channels.iter().map(|c| audio_stats(c)).collect()
     } else {
@@ -176,6 +182,7 @@ fn transcribe_file_inner(
         "ev=audio.decode"
     );
     stage_end("decode", decode_stage);
+    drop(perf_decode);
     let downmixed_video = video && !crate::media_registry::load_registry().is_owned(audio_path);
     // Файлы с >2 каналами (5.1 и т.п.) не несут сплита «микрофон/система»:
     // без сведения в моно центральный канал с диалогом отбрасывался.
@@ -223,8 +230,10 @@ fn transcribe_file_inner(
         let chosen = channels.remove(pick);
         channels = vec![chosen];
     }
+    perf::set_processed_channels(channels.len());
     let is_stereo = channels.len() >= 2;
     let models_stage = Instant::now();
+    let perf_models = perf::stage("models");
     stage_begin("models");
     events::emit_stage(2, "Загружаю модели…");
     let mut engine = pick_asr_engine(
@@ -286,6 +295,7 @@ fn transcribe_file_inner(
         }
     }
     stage_end("models", models_stage);
+    drop(perf_models);
 
     let (chan_list, speaker_method) = if is_stereo {
         (
@@ -312,7 +322,10 @@ fn transcribe_file_inner(
         .collect();
 
     let diarization_samples = level::diarization_channels(&channel_samples);
-    let vad = models.ensure_vad()?;
+    let vad = {
+        let _perf = perf::stage("vad_model");
+        models.ensure_vad()?
+    };
     let vad_output = vad::run(
         &diarization_samples,
         &channel_samples,
@@ -434,6 +447,17 @@ fn transcribe_file_inner(
     crate::fsutil::write_atomic(&txt_path, report::build_text(&doc.utterances).as_bytes())
         .map_err(|e| e.to_string())?;
     report::record_stats(duration_sec);
+    perf::set_results(
+        doc.utterances.len(),
+        words,
+        speakers.len(),
+        speech_sec,
+        engine.id(),
+        ctc_used_any,
+    );
+    if let Some(run) = perf_started {
+        run.finish(&json_path);
+    }
     Ok(TranscribeReport {
         md_path,
         txt_path,

@@ -7,6 +7,7 @@ use super::super::diarize;
 use super::super::echo::EchoEvidence;
 use super::super::experiment::{self, Embedding};
 use super::super::models::ModelSet;
+use super::super::perf;
 use super::super::word_dedupe;
 use super::super::word_speakers;
 use super::super::{SpeakerInfo, TranscribeOptions, Utterance};
@@ -38,8 +39,12 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
         on_event,
     } = input;
     let diar_stage = Instant::now();
+    let _perf = perf::stage("diar");
     stage_begin("diar");
-    models.ensure_diar();
+    {
+        let _perf_models = perf::stage("diar_models");
+        models.ensure_diar();
+    }
     let profiles = diarize::load_profiles();
     let verify_samples: HashMap<usize, &[f32]> = chan_list
         .iter()

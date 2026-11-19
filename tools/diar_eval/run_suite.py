@@ -16,7 +16,9 @@ COMPARE = ("language", "dataset", "subset", "speakers_ref", "speakers_hyp",
            "WER", "CER", "DER", "SCA", "cpWER", "attribution")
 
 
-def _run(entry: dict, root: Path, app: Path, out: Path, timeout: float) -> int:
+def _run(
+    entry: dict, root: Path, app: Path, out: Path, timeout: float, perf: bool, overwrite: bool
+) -> int:
     command = [
         sys.executable,
         str(HERE / "run_batch.py"),
@@ -29,6 +31,12 @@ def _run(entry: dict, root: Path, app: Path, out: Path, timeout: float) -> int:
         command += ["--data-root", str(root / data_root)]
     for dataset in entry.get("datasets", []):
         command += ["--dataset", dataset]
+    if ids := entry.get("ids"):
+        command += ["--ids", ",".join(ids)]
+    if perf:
+        command += ["--perf"]
+    if overwrite:
+        command += ["--overwrite"]
     print("+", " ".join(command), flush=True)
     return subprocess.run(command, check=False).returncode
 
@@ -63,16 +71,19 @@ def _combine(out: Path, names: list[str]) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--suite", choices=("small", "full"), required=True)
+    parser.add_argument("--suite", choices=("small", "full", "perf"), required=True)
     parser.add_argument("--root", type=Path, default=Path(os.environ.get("MR_DIAR_BENCH_ROOT", "~/.cache/podtekst-bench")).expanduser())
     parser.add_argument("--app", type=Path, default=Path("src-tauri/target/release/podtekst"))
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--timeout", type=float, default=900)
+    parser.add_argument("--perf", action="store_true", help="включить MR_PERF=1")
+    parser.add_argument("--overwrite", action="store_true", help="разрешить замену результатов")
     args = parser.parse_args()
 
     suite = json.loads((HERE / "suites" / f"{args.suite}.json").read_text(encoding="utf-8"))
     args.out.mkdir(parents=True, exist_ok=True)
-    codes = [_run(entry, args.root, args.app.resolve(), args.out.resolve(), args.timeout)
+    codes = [_run(entry, args.root, args.app.resolve(), args.out.resolve(), args.timeout,
+                  args.perf, args.overwrite)
              for entry in suite["manifests"]]
     combined = _combine(args.out, [entry["name"] for entry in suite["manifests"]])
     print(f"suite={args.suite} metrics={combined}")

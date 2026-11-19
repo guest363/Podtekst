@@ -8,12 +8,13 @@ use super::media::{
 };
 use crate::config::save_dir;
 
-const SIDECAR_SUFFIXES: [&str; 5] = [
+const SIDECAR_SUFFIXES: [&str; 6] = [
     ".transcript.json",
     ".md",
     ".txt",
     ".summary.json",
     ".summary.md",
+    ".perf.json",
 ];
 
 /// Тот же stem у другого медиафайла означает общие sidecar-файлы: удалять или

@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use super::diag::{model_files, stage_begin, stage_end, AudioStats};
 use super::document::{read_transcript, validate, TranscriptDoc};
+use super::perf;
 use super::TranscribeOptions;
 
 pub(super) fn write_run_manifest(
@@ -86,6 +87,7 @@ pub(super) fn write_run_manifest(
 
 pub(super) fn write_transcript_doc(path: &Path, doc: &TranscriptDoc) -> Result<(), String> {
     let json_stage = Instant::now();
+    let _perf = perf::stage("json");
     stage_begin("json");
     if cfg!(debug_assertions) {
         let meta_keys = serde_json::to_value(&doc.meta)
