@@ -513,7 +513,10 @@ fn update_verified_cards(
     verified: &mut HashMap<String, Vec<(Vec<f64>, f64)>>,
     changed: &HashSet<String>,
     profiles: &[SpeakerProfile],
+    utterances: &[Utterance],
 ) {
+    let mut kept = 0usize;
+    let mut cleared = 0usize;
     for info in infos.iter_mut() {
         if let Some(points) = verified.remove(&info.name) {
             let (vectors, weights): (Vec<_>, Vec<_>) = points.into_iter().unzip();
@@ -531,16 +534,31 @@ fn update_verified_cards(
                 .collect();
             info.embedding = Some(embedding);
         } else if changed.contains(&info.name) {
-            // Карточка потеряла свой эмбеддинг: «узнан · 0.00» без вектора — ложное состояние.
-            info.embedding = None;
+            // Оставшаяся речь держит центроид: иначе карточка выпадает из
+            // консолидации и её фрагменты остаются отдельным спикером.
             info.similarity = 0.0;
             info.candidates.clear();
             info.matched = false;
             info.matched_name = None;
             info.matched_pack_id = None;
             info.matched_pack_name = None;
+            if utterances
+                .iter()
+                .any(|utterance| utterance.speaker == info.name)
+            {
+                kept += 1;
+            } else {
+                info.embedding = None;
+                cleared += 1;
+            }
         }
     }
+    log::debug!(
+        target: "diar",
+        kept = kept,
+        cleared = cleared;
+        "ev=diar.verify_cards"
+    );
 }
 
 pub(super) fn run(
@@ -679,7 +697,13 @@ fn run_with_embedder(
         );
     }
     let adopted = adopt_short_between_matched_neighbors(utterances, infos, &changed);
-    update_verified_cards(infos, &mut verified, &changed, profiles);
+    update_verified_cards(
+        infos,
+        &mut verified,
+        &changed,
+        profiles,
+        utterances.as_slice(),
+    );
     finalize_verified_utterances(utterances, infos, channels);
     log::debug!(
         target: "diar",
@@ -691,7 +715,7 @@ fn run_with_embedder(
     );
 }
 
-fn finalize_verified_utterances(
+pub(super) fn finalize_verified_utterances(
     utterances: &mut Vec<Utterance>,
     infos: &mut [SpeakerInfo],
     channels: &HashMap<usize, Vec<f32>>,
@@ -812,6 +836,43 @@ mod tests {
             utterances_count: 1,
             total_speech_sec: 1.0,
         }
+    }
+
+    #[test]
+    fn changed_card_with_remaining_speech_keeps_embedding_and_clears_match() {
+        let mut infos = vec![info("A", true, vec![1.0, 0.0])];
+        infos[0].matched_name = Some("A".to_string());
+        infos[0].matched_pack_id = Some("pack".to_string());
+        infos[0].matched_pack_name = Some("Pack".to_string());
+        infos[0].similarity = 0.9;
+        infos[0].candidates = vec![("A".to_string(), 0.9)];
+        let utterances = vec![utterance(0.0, 10.0, "A")];
+        let mut verified = HashMap::new();
+        let changed = HashSet::from(["A".to_string()]);
+
+        update_verified_cards(&mut infos, &mut verified, &changed, &[], &utterances);
+
+        let card = &infos[0];
+        assert_eq!(card.embedding, Some(vec![1.0, 0.0]));
+        assert!(!card.matched);
+        assert!(card.matched_name.is_none());
+        assert!(card.matched_pack_id.is_none());
+        assert!(card.matched_pack_name.is_none());
+        assert_eq!(card.similarity, 0.0);
+        assert!(card.candidates.is_empty());
+    }
+
+    #[test]
+    fn changed_card_without_remaining_speech_clears_embedding() {
+        let mut infos = vec![info("A", true, vec![1.0, 0.0])];
+        let utterances = vec![utterance(0.0, 10.0, "B")];
+        let mut verified = HashMap::new();
+        let changed = HashSet::from(["A".to_string()]);
+
+        update_verified_cards(&mut infos, &mut verified, &changed, &[], &utterances);
+
+        assert!(infos[0].embedding.is_none());
+        assert!(!infos[0].matched);
     }
 
     #[test]

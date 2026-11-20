@@ -240,8 +240,14 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
         &mut models.embed,
         &profiles,
     );
-    if opts.min_speakers == 0 {
-        diarize::merge_verified_cards(&mut speakers_info, &mut merged, is_stereo);
+    if opts.min_speakers == 0
+        && diarize::merge_verified_cards(&mut speakers_info, &mut merged, is_stereo)
+    {
+        super::super::profile_verification::finalize_verified_utterances(
+            &mut merged,
+            &mut speakers_info,
+            channel_samples,
+        );
     }
     stage_end("diar", diar_stage);
     diarize::refresh_speaker_stats(&mut speakers_info, &merged);
