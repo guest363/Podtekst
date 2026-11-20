@@ -112,7 +112,9 @@ jobs:
         if: matrix.os == 'ubuntu-24.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf gstreamer1.0-plugins-good gstreamer1.0-alsa
+          # libav обязателен: AppImage несёт свой GStreamer, а без H.264/AAC
+          # декодера записанное приложением MP4 не воспроизводится в окне.
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf gstreamer1.0-plugins-good gstreamer1.0-libav gstreamer1.0-tools gstreamer1.0-alsa
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           toolchain: "1.99" # закреплён rust-toolchain.toml; MSRV по lock-файлу — 1.92 (ort)
@@ -558,6 +560,20 @@ jobs:
             echo "::error::в AppImage нет runtime/$runtime"; exit 1; }
           test -d squashfs-root/usr/lib/gstreamer-1.0 || {
             echo "::error::в AppImage нет gstreamer-1.0 плагинов"; exit 1; }
+          # Записанное видео — H.264/AAC MP4; без этих плагинов окно не играет его.
+          plugins="$PWD/squashfs-root/usr/lib/gstreamer-1.0"
+          for need in libgstlibav.so libgstisomp4.so libgstaudioparsers.so libgstplayback.so libgstvideoconvertscale.so; do
+            test -f "$plugins/$need" || {
+              echo "::error::в AppImage нет $need: видео не воспроизведётся"; exit 1; }
+          done
+          test -n "$(find squashfs-root -name 'libavcodec.so*' -print -quit)" || {
+            echo "::error::в AppImage нет libavcodec: H.264/AAC не декодируются"; exit 1; }
+          export GST_REGISTRY="$RUNNER_TEMP/gst-registry.bin"
+          for decoder in avdec_h264 avdec_aac; do
+            GST_PLUGIN_SYSTEM_PATH_1_0="$plugins" GST_PLUGIN_PATH_1_0="$plugins" \
+              gst-inspect-1.0 "$decoder" >/dev/null || {
+              echo "::error::в AppImage не загружается $decoder"; exit 1; }
+          done
           if [ -n "$(find squashfs-root -name '*.gguf' -print -quit)" ]; then
             echo "::error::в AppImage попали веса модели"; exit 1
           fi
