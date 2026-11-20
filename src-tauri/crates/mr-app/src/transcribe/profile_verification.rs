@@ -542,9 +542,10 @@ fn update_verified_cards(
             info.matched_name = None;
             info.matched_pack_id = None;
             info.matched_pack_name = None;
-            if utterances
-                .iter()
-                .any(|utterance| utterance.speaker == info.name)
+            if info.embedding.is_some()
+                && utterances
+                    .iter()
+                    .any(|utterance| utterance.speaker == info.name)
             {
                 kept += 1;
             } else {

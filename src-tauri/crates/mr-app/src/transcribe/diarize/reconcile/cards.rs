@@ -23,9 +23,10 @@ struct Target {
 }
 
 /// После сверки реплик один голос бывает раздроблен на карточки с разными
-/// слабыми профилями; хвост ≤25% речи группы крепим по косинусу с её
-/// крупнейшей карточкой, а более крупные — только по полной связи, иначе
-/// промежуточный вектор сшивает два разных голоса.
+/// слабыми профилями; хвост ≤10% речи группы крепим по косинусу с её
+/// крупнейшей карточкой только для слабого кандидата, а более крупные и
+/// уверенные — по полной связи. Анонимную группу без профиля не склеиваем,
+/// иначе два равных незнакомых голоса сливаются.
 pub(crate) fn merge_verified_cards(
     infos: &mut Vec<SpeakerInfo>,
     utterances: &mut [Utterance],
@@ -34,19 +35,32 @@ pub(crate) fn merge_verified_cards(
     if infos.len() < 2 {
         return false;
     }
-    let unique: HashSet<&str> = infos.iter().map(|info| info.name.as_str()).collect();
-    if unique.len() != infos.len() {
+    let before = infos.len();
+    let stats = card_stats(infos, utterances);
+    let mut participating: HashSet<&str> = HashSet::new();
+    let mut eligible_count = 0usize;
+    for (index, info) in infos.iter().enumerate() {
+        if info.embedding.is_some() && stats[index].speech >= MIN_CARD_SPEECH_SEC {
+            eligible_count += 1;
+            participating.insert(info.name.as_str());
+        }
+    }
+    if participating.len() != eligible_count {
         log::debug!(
             target: "diar",
             reason = "skipped_duplicate_names",
             cards = infos.len(),
-            duplicates = infos.len() - unique.len();
+            duplicates = eligible_count - participating.len();
             "ev=diar.merge_cards"
         );
         return false;
     }
-    let before = infos.len();
-    let stats = card_stats(infos, utterances);
+    let skipped_no_embedding = infos.iter().filter(|info| info.embedding.is_none()).count();
+    let skipped_short = (0..infos.len())
+        .filter(|&index| {
+            infos[index].embedding.is_some() && stats[index].speech < MIN_CARD_SPEECH_SEC
+        })
+        .count();
     let mut order: Vec<usize> = (0..infos.len())
         .filter(|&index| {
             infos[index].embedding.is_some() && stats[index].speech >= MIN_CARD_SPEECH_SEC
@@ -60,8 +74,14 @@ pub(crate) fn merge_verified_cards(
     });
     let mut absorbed = Vec::new();
     let mut merged_groups = 0usize;
+    let mut skipped_anonymous_groups = 0usize;
     let mut moved = 0usize;
     for group in group_cards(infos, &stats, &order) {
+        let has_matched = group.iter().any(|&index| infos[index].matched);
+        if !has_matched {
+            skipped_anonymous_groups += 1;
+            continue;
+        }
         let Some(target) = resolve_target(infos, &stats, &group, is_stereo) else {
             log::debug!(
                 target: "diar",
@@ -71,6 +91,22 @@ pub(crate) fn merge_verified_cards(
             );
             continue;
         };
+        if target.matched {
+            let collision = infos.iter().enumerate().any(|(index, info)| {
+                !group.contains(&index)
+                    && (info.name == target.name
+                        || info.matched_name.as_deref() == Some(target.name.as_str()))
+            });
+            if collision {
+                log::debug!(
+                    target: "diar",
+                    reason = "named_target_collision",
+                    cards = group.len();
+                    "ev=diar.merge_cards"
+                );
+                continue;
+            }
+        }
         moved += apply_group(infos, utterances, &stats, &group, &target);
         merged_groups += 1;
         absorbed.extend(group.iter().copied().filter(|&index| index != target.index));
@@ -85,6 +121,9 @@ pub(crate) fn merge_verified_cards(
         cards_before = before,
         cards_after = infos.len(),
         groups_merged = merged_groups,
+        skipped_anonymous_groups = skipped_anonymous_groups,
+        skipped_no_embedding = skipped_no_embedding,
+        skipped_short = skipped_short,
         utterances_moved = moved;
         "ev=diar.merge_cards"
     );
@@ -92,18 +131,22 @@ pub(crate) fn merge_verified_cards(
 }
 
 fn card_stats(infos: &[SpeakerInfo], utterances: &[Utterance]) -> Vec<CardStats> {
-    let index: HashMap<&str, usize> = infos
-        .iter()
-        .enumerate()
-        .map(|(index, info)| (info.name.as_str(), index))
-        .collect();
+    let index: HashMap<&str, Vec<usize>> = {
+        let mut index: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (card, info) in infos.iter().enumerate() {
+            index.entry(info.name.as_str()).or_default().push(card);
+        }
+        index
+    };
     let mut channels: Vec<HashMap<Option<i32>, f64>> = vec![HashMap::new(); infos.len()];
     for utterance in utterances {
-        let Some(&card) = index.get(utterance.speaker.as_str()) else {
+        let Some(cards) = index.get(utterance.speaker.as_str()) else {
             continue;
         };
-        *channels[card].entry(utterance.channel).or_insert(0.0) +=
-            (utterance.end - utterance.start).max(0.0);
+        for &card in cards {
+            *channels[card].entry(utterance.channel).or_insert(0.0) +=
+                (utterance.end - utterance.start).max(0.0);
+        }
     }
     channels
         .into_iter()
@@ -155,7 +198,9 @@ fn group_cards(infos: &[SpeakerInfo], stats: &[CardStats], order: &[usize]) -> V
                 return false;
             }
             let group_speech: f64 = group.iter().map(|&member| stats[member].speech).sum();
-            stats[index].speech <= 0.25 * group_speech
+            let weak_tail =
+                !infos[index].matched || infos[index].similarity < HIGH_CONFIDENCE_THRESHOLD;
+            (weak_tail && stats[index].speech <= 0.10 * group_speech)
                 || group.iter().all(|&member| {
                     infos[member].embedding.as_deref().is_some_and(|other| {
                         cosine_similarity(embedding, other) >= CENTROID_MERGE_SIM
@@ -275,6 +320,7 @@ fn anonymous_target(
             .iter()
             .flat_map(|info| info.candidates.iter().map(|(name, _)| name.as_str())),
     );
+    used.extend(infos.iter().filter_map(|info| info.matched_name.as_deref()));
     let index = group
         .iter()
         .copied()
@@ -461,7 +507,7 @@ mod tests {
         assert_eq!(info.similarity, 0.0);
         assert_eq!(info.name, "Собеседник 1");
         assert!(utterances.iter().all(|u| u.speaker == "Собеседник 1"));
-        assert!((1..=3).contains(&info.samples.len()));
+        assert_eq!(info.samples.len(), 3);
         assert_eq!(info.candidates.len(), 4);
     }
 
@@ -570,7 +616,7 @@ mod tests {
     #[test]
     fn bridge_card_does_not_join_two_voices() {
         let mut infos = vec![
-            card("a", "Собеседник 1", vec![1.0, 0.0], false, 0.0, 0.5),
+            card("a", "Собеседник 1", vec![1.0, 0.0], true, 0.80, 0.5),
             card("b", "Собеседник 2", vec![0.766, 0.643], false, 0.0, 0.5),
             card("c", "Собеседник 3", vec![0.4, 0.9165], false, 0.0, 0.5),
         ];
@@ -586,7 +632,7 @@ mod tests {
     #[test]
     fn largest_bridge_card_does_not_join_two_voices() {
         let mut infos = vec![
-            card("a", "Собеседник 1", vec![1.0, 0.0], false, 0.0, 0.5),
+            card("a", "Собеседник 1", vec![1.0, 0.0], true, 0.80, 0.5),
             card("b", "Собеседник 2", vec![0.766, 0.643], false, 0.0, 0.5),
             card("c", "Собеседник 3", vec![0.4, 0.9165], false, 0.0, 0.5),
         ];
@@ -604,11 +650,31 @@ mod tests {
     }
 
     #[test]
+    fn true_bridge_largest_does_not_merge_outers() {
+        let mut infos = vec![
+            card("a", "Собеседник 1", vec![1.0, 0.0], false, 0.0, 0.5),
+            card("b", "Собеседник 2", vec![0.766, 0.643], true, 0.80, 0.5),
+            card("c", "Собеседник 3", vec![0.4, 0.9165], false, 0.0, 0.5),
+        ];
+        let mut utterances = vec![
+            utterance(0.0, 7.0, "Собеседник 1", 1),
+            utterance(7.0, 37.0, "Собеседник 2", 1),
+            utterance(37.0, 44.0, "Собеседник 3", 1),
+        ];
+
+        merge_verified_cards(&mut infos, &mut utterances, false);
+
+        assert_eq!(infos.len(), 2);
+        assert_eq!(utterances[0].speaker, utterances[1].speaker);
+        assert_ne!(utterances[2].speaker, utterances[0].speaker);
+    }
+
+    #[test]
     fn small_fragment_attaches_through_largest_representative() {
         let mut infos = vec![
             card("a", "Собеседник 1", vec![1.0, 0.0], false, 0.0, 0.5),
             card("b", "Собеседник 2", vec![0.8, -0.6], false, 0.0, 0.5),
-            card("c", "Собеседник 3", vec![0.7, 0.714], false, 0.0, 0.5),
+            card("c", "Собеседник 3", vec![0.7, 0.714], true, 0.48, 0.5),
         ];
         let mut utterances = vec![
             utterance(0.0, 100.0, "Собеседник 1", 1),
@@ -622,6 +688,142 @@ mod tests {
         assert_eq!(infos[0].name, "Собеседник 1");
         assert_eq!(utterances.len(), 3);
         assert!(utterances.iter().all(|u| u.speaker == "Собеседник 1"));
+    }
+
+    #[test]
+    fn high_confidence_tail_does_not_join_anonymous_group() {
+        let mut infos = vec![
+            card("a", "Собеседник 1", vec![1.0, 0.0], false, 0.0, 0.5),
+            card("b", "A", vec![0.8, -0.6], true, 0.48, 0.5),
+            card("c", "B", vec![0.7, 0.714], true, 0.80, 0.5),
+        ];
+        let mut utterances = vec![
+            utterance(0.0, 100.0, "Собеседник 1", 1),
+            utterance(100.0, 110.0, "A", 1),
+            utterance(110.0, 117.0, "B", 1),
+        ];
+
+        merge_verified_cards(&mut infos, &mut utterances, false);
+
+        assert_eq!(infos.len(), 2);
+        let merged = infos
+            .iter()
+            .find(|info| info.name == "Собеседник 1")
+            .expect("анонимная пара должна остаться");
+        assert!(!merged.matched);
+        assert_eq!(utterances[0].speaker, "Собеседник 1");
+        assert_eq!(utterances[1].speaker, "Собеседник 1");
+        assert_eq!(utterances[2].speaker, "B");
+    }
+
+    #[test]
+    fn anonymous_comparable_cards_are_not_merged() {
+        let mut infos = vec![
+            card("a", "Собеседник 1", vec![1.0, 0.0], false, 0.0, 0.5),
+            card(
+                "b",
+                "Собеседник 2",
+                vec![0.9, (1.0f64 - 0.81).sqrt()],
+                false,
+                0.0,
+                0.5,
+            ),
+        ];
+        let mut utterances = utts_for(&infos, 1);
+
+        let merged = merge_verified_cards(&mut infos, &mut utterances, false);
+
+        assert!(!merged);
+        assert_eq!(infos.len(), 2);
+        assert_eq!(infos[0].name, "Собеседник 1");
+        assert_eq!(infos[1].name, "Собеседник 2");
+        assert_eq!(utterances[0].speaker, "Собеседник 1");
+        assert_eq!(utterances[1].speaker, "Собеседник 2");
+    }
+
+    #[test]
+    fn anonymous_tail_is_not_merged() {
+        let mut infos = vec![
+            card("a", "Собеседник 1", vec![1.0, 0.0], false, 0.0, 0.5),
+            card(
+                "b",
+                "Собеседник 2",
+                vec![0.9, (1.0f64 - 0.81).sqrt()],
+                false,
+                0.0,
+                0.5,
+            ),
+        ];
+        let mut utterances = vec![
+            utterance(0.0, 100.0, "Собеседник 1", 1),
+            utterance(100.0, 104.0, "Собеседник 2", 1),
+        ];
+
+        let merged = merge_verified_cards(&mut infos, &mut utterances, false);
+
+        assert!(!merged);
+        assert_eq!(infos.len(), 2);
+        assert_eq!(infos[0].name, "Собеседник 1");
+        assert_eq!(infos[1].name, "Собеседник 2");
+        assert_eq!(utterances[0].speaker, "Собеседник 1");
+        assert_eq!(utterances[1].speaker, "Собеседник 2");
+    }
+
+    #[test]
+    fn anonymous_group_with_two_small_tails_is_not_merged() {
+        let mut infos = vec![
+            card("a", "Собеседник 1", vec![1.0, 0.0], false, 0.0, 0.5),
+            card("b", "Собеседник 2", vec![0.9, 0.435_889_9], false, 0.0, 0.5),
+            card("c", "Собеседник 3", vec![0.9, 0.435_889_9], false, 0.0, 0.5),
+        ];
+        let mut utterances = vec![
+            utterance(0.0, 100.0, "Собеседник 1", 1),
+            utterance(100.0, 103.0, "Собеседник 2", 1),
+            utterance(103.0, 105.0, "Собеседник 3", 1),
+        ];
+
+        let merged = merge_verified_cards(&mut infos, &mut utterances, false);
+
+        assert!(!merged);
+        assert_eq!(infos.len(), 3);
+    }
+
+    #[test]
+    fn anonymous_group_with_three_min_tails_is_not_merged() {
+        let mut infos = vec![
+            card("a", "Собеседник 1", vec![1.0, 0.0], false, 0.0, 0.5),
+            card("b", "Собеседник 2", vec![0.9, 0.435_889_9], false, 0.0, 0.5),
+            card("c", "Собеседник 3", vec![0.9, 0.435_889_9], false, 0.0, 0.5),
+            card("d", "Собеседник 4", vec![0.9, 0.435_889_9], false, 0.0, 0.5),
+        ];
+        let mut utterances = vec![
+            utterance(0.0, 100.0, "Собеседник 1", 1),
+            utterance(100.0, 101.5, "Собеседник 2", 1),
+            utterance(101.5, 103.0, "Собеседник 3", 1),
+            utterance(103.0, 104.5, "Собеседник 4", 1),
+        ];
+
+        let merged = merge_verified_cards(&mut infos, &mut utterances, false);
+
+        assert!(!merged);
+        assert_eq!(infos.len(), 4);
+    }
+
+    #[test]
+    fn anonymous_group_with_five_second_tail_is_not_merged() {
+        let mut infos = vec![
+            card("a", "Собеседник 1", vec![1.0, 0.0], false, 0.0, 0.5),
+            card("b", "Собеседник 2", vec![0.9, 0.435_889_9], false, 0.0, 0.5),
+        ];
+        let mut utterances = vec![
+            utterance(0.0, 100.0, "Собеседник 1", 1),
+            utterance(100.0, 105.0, "Собеседник 2", 1),
+        ];
+
+        let merged = merge_verified_cards(&mut infos, &mut utterances, false);
+
+        assert!(!merged);
+        assert_eq!(infos.len(), 2);
     }
 
     #[test]
@@ -803,12 +1005,79 @@ mod tests {
     }
 
     #[test]
+    fn fresh_name_excludes_matched_names() {
+        let mut first = card("a", "B", vec![1.0, 0.0], true, 0.51, 0.5);
+        first.matched_name = Some("Собеседник 1".to_string());
+        first.candidates.clear();
+        let mut second = card("b", "D", vec![0.8, 0.6], true, 0.51, 0.5);
+        second.matched_name = Some("Собеседник 2".to_string());
+        second.candidates.clear();
+        let mut infos = vec![first, second];
+        let mut utterances = utts_for(&infos, 1);
+
+        merge_verified_cards(&mut infos, &mut utterances, false);
+
+        assert_eq!(infos.len(), 1);
+        let info = &infos[0];
+        assert!(!info.matched);
+        assert_eq!(info.name, "Собеседник 3");
+        assert!(utterances.iter().all(|u| u.speaker == "Собеседник 3"));
+        assert_eq!(info.samples.len(), 2);
+    }
+
+    #[test]
+    fn named_target_collision_with_outside_card_skips_group() {
+        let mut infos = vec![
+            card("a", "A", vec![0.0, 1.0], false, 0.0, 0.5),
+            card("b", "B", vec![1.0, 0.0], true, 0.80, 0.5),
+            card("c", "C", vec![1.0, 0.0], true, 0.80, 0.5),
+        ];
+        infos[1].matched_name = Some("A".to_string());
+        infos[2].matched_name = Some("A".to_string());
+        let mut utterances = utts_for(&infos, 1);
+
+        let merged = merge_verified_cards(&mut infos, &mut utterances, false);
+
+        assert!(!merged);
+        assert_eq!(infos.len(), 3);
+        assert_eq!(infos[0].name, "A");
+        assert_eq!(infos[1].name, "B");
+        assert_eq!(infos[2].name, "C");
+        assert_eq!(utterances[0].speaker, "A");
+        assert_eq!(utterances[1].speaker, "B");
+        assert_eq!(utterances[2].speaker, "C");
+    }
+
+    #[test]
+    fn ineligible_duplicate_name_does_not_block_merge() {
+        let eligible = card("a", "Собеседник 1", vec![1.0, 0.0], false, 0.0, 0.5);
+        let mut missing = card("b", "Собеседник 1", vec![1.0, 0.0], false, 0.0, 0.5);
+        missing.embedding = None;
+        let mut infos = vec![
+            eligible,
+            missing,
+            card("c", "A", vec![1.0, 0.0], true, 0.80, 0.5),
+        ];
+        let mut utterances = vec![
+            utterance(0.0, 10.0, "Собеседник 1", 1),
+            utterance(10.0, 20.0, "A", 1),
+        ];
+
+        let merged = merge_verified_cards(&mut infos, &mut utterances, false);
+
+        assert!(merged);
+        assert_eq!(infos.len(), 2);
+        assert_eq!(utterances[0].speaker, "A");
+        assert_eq!(utterances[1].speaker, "A");
+    }
+
+    #[test]
     fn multiple_groups_and_middle_removal() {
         let mut infos = vec![
-            card("a", "Собеседник 1", vec![1.0, 0.0, 0.0], false, 0.0, 0.5),
+            card("a", "A", vec![1.0, 0.0, 0.0], true, 0.80, 0.5),
             card("b", "Собеседник 2", vec![1.0, 0.0, 0.0], false, 0.0, 0.5),
             card("c", "Собеседник 3", vec![0.0, 1.0, 0.0], false, 0.0, 0.5),
-            card("d", "Собеседник 4", vec![0.0, 0.0, 1.0], false, 0.0, 0.5),
+            card("d", "B", vec![0.0, 0.0, 1.0], true, 0.80, 0.5),
             card("e", "Собеседник 5", vec![0.0, 0.0, 1.0], false, 0.0, 0.5),
         ];
         let mut utterances = utts_for(&infos, 1);
@@ -822,13 +1091,13 @@ mod tests {
                 .iter()
                 .map(|info| info.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Собеседник 1", "Собеседник 3", "Собеседник 4"]
+            vec!["A", "Собеседник 3", "B"]
         );
-        assert_eq!(utterances[0].speaker, "Собеседник 1");
-        assert_eq!(utterances[1].speaker, "Собеседник 1");
+        assert_eq!(utterances[0].speaker, "A");
+        assert_eq!(utterances[1].speaker, "A");
         assert_eq!(utterances[2].speaker, "Собеседник 3");
-        assert_eq!(utterances[3].speaker, "Собеседник 4");
-        assert_eq!(utterances[4].speaker, "Собеседник 4");
+        assert_eq!(utterances[3].speaker, "B");
+        assert_eq!(utterances[4].speaker, "B");
     }
 
     #[test]
@@ -950,5 +1219,35 @@ mod tests {
         assert_eq!(info.name, "Собеседник 1");
         assert_eq!(utterances.len(), 2);
         assert!(utterances.iter().all(|u| u.speaker == info.name));
+    }
+
+    #[test]
+    fn merge_then_finalize_and_refresh_has_no_ghost_speaker() {
+        let mut infos = vec![
+            card("a", "A", vec![1.0, 0.0], true, 0.80, 0.5),
+            card("b", "Собеседник 1", vec![0.8, 0.6], false, 0.0, 0.5),
+        ];
+        let mut utterances = vec![
+            utterance(0.0, 10.0, "A", 1),
+            utterance(10.0, 20.0, "Собеседник 1", 1),
+        ];
+        assert!(merge_verified_cards(&mut infos, &mut utterances, false));
+
+        let channels = HashMap::new();
+        crate::transcribe::profile_verification::finalize_verified_utterances(
+            &mut utterances,
+            &mut infos,
+            &channels,
+        );
+        super::super::refresh_speaker_stats(&mut infos, &utterances);
+
+        assert_eq!(infos.len(), 1);
+        assert_eq!(infos[0].name, "A");
+        assert_eq!(infos[0].utterances_count, utterances.len());
+        assert!(!infos[0].samples.is_empty());
+        assert!(utterances.iter().all(|u| u.speaker == "A"));
+        assert!(utterances
+            .iter()
+            .all(|u| infos.iter().any(|info| info.name == u.speaker)));
     }
 }
