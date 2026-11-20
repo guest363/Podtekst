@@ -89,6 +89,24 @@ fn boundary_words_move_to_next_utterance() {
 }
 
 #[test]
+fn boundary_word_already_transcribed_is_not_duplicated() {
+    let mut first = utt(0.0, 2.0, "A", 1, "один два три");
+    first.words = vec![
+        word("один", 0.1, 0.6),
+        word("два", 0.7, 1.2),
+        word("три", 2.1, 2.5),
+    ];
+    let mut second = utt(2.0, 4.0, "B", 1, "три четыре");
+    second.words = vec![word("три", 2.6, 3.0), word("четыре", 3.1, 3.6)];
+    let mut utts = vec![first, second];
+    move_boundary_words(&mut utts);
+    assert_eq!(utts.len(), 2);
+    assert_eq!(utts[0].text, "один два");
+    assert_eq!(utts[1].text, "три четыре");
+    assert_eq!(utts[1].words.len(), 2);
+}
+
+#[test]
 fn long_segments_cut_at_vad_minimum_in_second_half() {
     let mut probs = vec![0.9f32; 188];
     probs[31] = 0.0;
