@@ -34,13 +34,41 @@ pub(crate) fn serve_voiceprint_detail(request: tiny_http::Request, query: &str) 
             .find(|p| same_name(p.get("name").and_then(|x| x.as_str()).unwrap_or(""), &name));
         if let Some(p) = found {
             let pack_id = pack_id_of(&vp_file).unwrap_or_default();
-            let protos: Vec<serde_json::Value> = p
+            let raw_protos: Vec<serde_json::Value> = p
                 .get("prototypes")
                 .and_then(|x| x.as_array())
                 .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|x| {
+                .unwrap_or_default();
+            let mut embeddings = Vec::new();
+            let mut embedding_index = Vec::new();
+            for (index, proto) in raw_protos.iter().enumerate() {
+                if let Some(values) = proto
+                    .get("embedding")
+                    .and_then(|value| serde_json::from_value::<Vec<f64>>(value.clone()).ok())
+                {
+                    embeddings.push(values);
+                    embedding_index.push(index);
+                }
+            }
+            let (consistency, outliers) = crate::voiceprints::prototype_consistency(&embeddings);
+            let suspects: Vec<usize> = outliers
+                .iter()
+                .filter_map(|&index| embedding_index.get(index).copied())
+                .collect();
+            let outlier_ids: Vec<serde_json::Value> = suspects
+                .iter()
+                .filter_map(|&index| raw_protos.get(index).and_then(|x| x.get("id")).cloned())
+                .collect();
+            let status =
+                if consistency < crate::voiceprints::PROFILE_MIXED_SIM || !suspects.is_empty() {
+                    "mixed"
+                } else {
+                    "ok"
+                };
+            let protos: Vec<serde_json::Value> = raw_protos
+                .iter()
+                .enumerate()
+                .map(|(index, x)| {
                     let rel = x.get("snippet_relpath").and_then(|s| s.as_str());
                     let playable = rel.is_some_and(|r| {
                         let base = if pack_id.is_empty() {
@@ -56,6 +84,7 @@ pub(crate) fn serve_voiceprint_detail(request: tiny_http::Request, query: &str) 
                         "duration_sec": x.get("duration_sec"),
                         "quality": x.get("quality"),
                         "has_snippet": playable,
+                        "suspect": suspects.contains(&index),
                     })
                 })
                 .collect();
@@ -67,6 +96,11 @@ pub(crate) fn serve_voiceprint_detail(request: tiny_http::Request, query: &str) 
                     "pack_id": pack_id,
                     "samples_count": p.get("samples_count"),
                     "prototypes": protos,
+                    "consistency": {
+                        "score": (consistency * 1000.0).round() / 1000.0,
+                        "status": status,
+                        "outliers": outlier_ids,
+                    },
                 }),
                 200,
             );

@@ -340,6 +340,12 @@ const removePerson = async (name: string, packId: string): Promise<void> => {
               </button>
             {/if}
           </div>
+          {#if peopleState.voiceDetail?.consistency?.status === 'mixed'}
+            <div class="voice-consistency" role="status">
+              <span class="voice-consistency-dot" aria-hidden="true"></span>
+              <span>Образцы расходятся — проверьте, что все голоса принадлежат одному человеку.</span>
+            </div>
+          {/if}
           {#if !peopleState.voiceDetail}
             <div class="empty-note">Загружаю образцы…</div>
           {:else if !(peopleState.voiceDetail.prototypes?.length || 0)}
@@ -347,9 +353,9 @@ const removePerson = async (name: string, packId: string): Promise<void> => {
           {:else}
             {#each peopleState.voiceDetail.prototypes || [] as proto, i (proto.id || i)}
               {@const pid = String(proto.id || '')}
-              <div class="voice-row">
+              <div class="voice-row {proto.suspect ? 'suspect' : ''}">
                 <span class="voice-name">
-                  Голос {i + 1}{fmtVoiceDate(proto.created_at) ? ` · ${fmtVoiceDate(proto.created_at)}` : ''}{typeof proto.duration_sec === 'number' ? ` · ${proto.duration_sec.toFixed(1)} c` : ''}
+                  Голос {i + 1}{fmtVoiceDate(proto.created_at) ? ` · ${fmtVoiceDate(proto.created_at)}` : ''}{typeof proto.duration_sec === 'number' ? ` · ${proto.duration_sec.toFixed(1)} c` : ''}{#if proto.suspect}<span class="voice-flag">непохож</span>{/if}
                 </span>
                 <span class="voice-actions">
                   {#if proto.has_snippet && pid}
@@ -697,12 +703,40 @@ const removePerson = async (name: string, packId: string): Promise<void> => {
     font-weight: 800;
     color: var(--text-primary);
   }
+  .voice-consistency {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+    padding: 6px 8px;
+    border-left: 2px solid var(--accent-amber);
+    border-radius: 6px;
+    background: var(--accent-amber-bg);
+    font-size: 12px;
+    line-height: 1.35;
+    color: var(--text-secondary);
+  }
+  .voice-consistency-dot {
+    flex: 0 0 auto;
+    width: 6px;
+    height: 6px;
+    margin-top: 4px;
+    border-radius: 50%;
+    background: var(--accent-amber);
+  }
   .voice-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
     padding: 2px 0;
+  }
+  .voice-row.suspect .voice-name {
+    color: var(--accent-amber);
+  }
+  .voice-flag {
+    margin-left: 6px;
+    font-size: 11px;
+    color: var(--accent-amber);
   }
   .voice-name {
     font-size: 12.5px;

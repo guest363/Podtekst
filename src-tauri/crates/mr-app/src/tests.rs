@@ -957,6 +957,12 @@ mod live_api_tests {
                 .map(|a| a.len()),
             Some(2)
         );
+        assert!(v
+            .get("consistency")
+            .and_then(|c| c.get("status"))
+            .and_then(|x| x.as_str())
+            .is_some());
+        assert!(v["prototypes"][0].get("suspect").is_some());
         let (st, v) = json(http(
             port,
             "POST",
