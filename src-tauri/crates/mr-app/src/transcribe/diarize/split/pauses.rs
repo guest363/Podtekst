@@ -283,7 +283,7 @@ pub(crate) fn split_by_word_pauses(utterances: &[Utterance], min_gap_sec: f64) -
 pub(super) const SPLIT_MIN_DUR: f64 = 3.0;
 /// 5 окон хватает на три точки разреза; 8 на VoxConverse давали ложные
 /// смены голоса (DER 0.2902 → 0.2366 на трёх файлах).
-const SPLIT_MAX_WINDOWS: usize = 5;
+const SPLIT_MAX_WINDOWS: usize = 8;
 pub(super) const SPLIT_WINDOW_SEC: f64 = 1.6;
 
 /// Шаг скользящего окна: на коротких репликах 0.5 с, на длинных растягивается

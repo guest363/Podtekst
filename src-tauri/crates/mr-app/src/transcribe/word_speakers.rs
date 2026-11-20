@@ -325,7 +325,12 @@ pub(crate) fn split_utterance_by_word_speakers(
         if duration < 0.5 && start > 0 && assigned[start - 1].3 != speaker {
             let gap = assigned[start].1 - assigned[start - 1].2;
             let sentence_end = assigned[start - 1].0.ends_with(['.', '!', '?']);
-            if gap < 0.15 && !sentence_end {
+            // Пунктуация не должна удерживать остров, если соседи — один
+            // голос и оба стыка без паузы: это ошибка покадровой метки.
+            let next = assigned.get(i);
+            let next_gap = next.map_or(f64::INFINITY, |word| word.1 - assigned[i - 1].2);
+            let same_neighbours = next.is_some_and(|word| word.3 == assigned[start - 1].3);
+            if gap < 0.15 && (!sentence_end || (same_neighbours && next_gap < 0.15)) {
                 let previous = assigned[start - 1].3.clone();
                 for word in &mut assigned[start..i] {
                     word.3 = previous.clone();
@@ -599,6 +604,31 @@ mod tests {
                 .any(|u| u.speaker == "B" && u.text.contains("да")),
             "короткий ответ после паузы потерял спикера: {out:?}"
         );
+    }
+
+    #[test]
+    fn punctuated_one_word_island_between_same_speaker_is_reattached() {
+        let tree = DiarIntervalTree::new(&[
+            utt(0.0, 4.0, "A", "a"),
+            utt(4.0, 4.36, "B", "b"),
+            utt(4.36, 6.2, "A", "a"),
+        ]);
+        let mut source = utt(
+            0.0,
+            6.2,
+            "unknown",
+            "фраза контроля. Относительно маленький",
+        );
+        source.words = vec![
+            timed_word("фраза", 2.6, 3.0),
+            timed_word("контроля.", 3.5, 4.0),
+            timed_word("Относительно", 4.0, 4.36),
+            timed_word("маленький", 4.36, 5.0),
+        ];
+        let out = split_utterance_by_word_speakers(&source, &tree);
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert_eq!(out[0].speaker, "A");
+        assert!(out[0].text.contains("Относительно"), "{out:?}");
     }
 
     #[test]
