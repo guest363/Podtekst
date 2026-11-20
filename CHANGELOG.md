@@ -3,7 +3,7 @@
 Все заметные изменения проекта. Формат - [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии - [Semantic Versioning](https://semver.org/lang/ru/).
 
-## [0.9.9] - 2026-11-20
+## [0.9.0] - 2026-11-20
 
 ### Добавлено
 
