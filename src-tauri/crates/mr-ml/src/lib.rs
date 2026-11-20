@@ -44,6 +44,14 @@ pub const HIGH_CONFIDENCE_THRESHOLD: f64 = 0.78;
 pub const SAME_SPEAKER_MERGE_SIM: f64 = 0.55;
 pub const MAX_PROTOTYPES: usize = 10;
 
+/// Один сильный прототип не должен тонуть в среднем: на живом кейсе top=0.997,
+/// centroid=0.741, из-за чего короткий кластер не проходил порог 0.95.
+/// Fallback включается только при почти точном top-1 и большом разрыве с
+/// средним — иначе поведение остаётся прежним.
+const TOP_PROTOTYPE_MIN_SIM: f64 = 0.90;
+const TOP_PROTOTYPE_GAP: f64 = 0.15;
+const TOP_PROTOTYPE_PENALTY: f64 = 0.02;
+
 /// Нормализация меток времени в канонический формат RFC3339 (P1, P9).
 ///
 /// Десериализатор `updated_at`: принимает числовые epoch-секунды (нормализует в
@@ -267,7 +275,12 @@ pub fn score_speaker_similarity(query: &[f64], profile: &SpeakerProfile) -> f64 
         den += weight;
     }
     let weighted = if den > 0.0 { num / den } else { sims[0].0 };
-    weighted.max(c_sim)
+    let base = weighted.max(c_sim);
+    let top = sims[0].0;
+    if top >= TOP_PROTOTYPE_MIN_SIM && top - base >= TOP_PROTOTYPE_GAP {
+        return (top - TOP_PROTOTYPE_PENALTY).max(base);
+    }
+    base
 }
 
 pub fn linear_sum_assignment_max(score: &[Vec<f64>]) -> Vec<(usize, usize)> {
@@ -788,6 +801,79 @@ mod tests {
             score > 0.9,
             "качественный прототип должен доминировать: {score}"
         );
+    }
+
+    #[test]
+    fn heterogeneous_profile_uses_top_prototype() {
+        let query = l2(vec![1.0, 0.0, 0.0, 0.0]);
+        let strong = l2(vec![1.0, 0.0, 0.03, 0.0]);
+        let weak = l2(vec![0.4, 0.9165, 0.0, 0.0]);
+        let centroid = l2(vec![
+            (strong[0] + weak[0]) / 2.0,
+            (strong[1] + weak[1]) / 2.0,
+            strong[2] / 2.0,
+            0.0,
+        ]);
+        let proto = |id: &str, embedding: Vec<f64>, duration_sec: f64| Prototype {
+            id: id.to_string(),
+            embedding,
+            duration_sec,
+            quality: 1.0,
+            created_at: String::new(),
+            snippet_relpath: None,
+        };
+        let profile = SpeakerProfile {
+            name: "A".to_string(),
+            pack_id: String::new(),
+            pack_name: String::new(),
+            embedding: centroid,
+            samples_count: 2,
+            updated_at: String::new(),
+            prototypes: vec![proto("strong", strong, 1.5), proto("weak", weak, 4.0)],
+        };
+        let score = score_speaker_similarity(&query, &profile);
+        assert!(
+            score > 0.95,
+            "сильный прототип должен вытянуть score: {score}"
+        );
+    }
+
+    #[test]
+    fn top_prototype_fallback_needs_gap_and_minimum() {
+        let query = l2(vec![1.0, 0.0, 0.0, 0.0]);
+        let make = |strong: f64, weak: f64| {
+            let strong = l2(vec![strong, (1.0 - strong * strong).sqrt(), 0.0, 0.0]);
+            let weak = l2(vec![weak, (1.0 - weak * weak).sqrt(), 0.0, 0.0]);
+            let centroid = l2(vec![
+                (strong[0] + weak[0]) / 2.0,
+                (strong[1] + weak[1]) / 2.0,
+                0.0,
+                0.0,
+            ]);
+            let proto = |id: &str, embedding: Vec<f64>, duration_sec: f64| Prototype {
+                id: id.to_string(),
+                embedding,
+                duration_sec,
+                quality: 1.0,
+                created_at: String::new(),
+                snippet_relpath: None,
+            };
+            SpeakerProfile {
+                name: "A".to_string(),
+                pack_id: String::new(),
+                pack_name: String::new(),
+                embedding: centroid,
+                samples_count: 2,
+                updated_at: String::new(),
+                prototypes: vec![proto("s", strong, 1.5), proto("w", weak, 4.0)],
+            }
+        };
+        // top 0.92 при base ~0.91: разрыв меньше 0.15, fallback не нужен.
+        let close = score_speaker_similarity(&query, &make(0.92, 0.90));
+        assert!(close < 0.92, "{close}");
+        // top ниже 0.90: fallback не включается даже при большом разрыве.
+        let low = score_speaker_similarity(&query, &make(0.88, 0.1));
+        assert!(low < 0.8, "{low}");
     }
 
     #[test]
