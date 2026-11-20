@@ -5,7 +5,7 @@
 # Подтекст (Podtekst)
 
 **Локальная запись звонков и расшифровка речи на вашем компьютере.**  
-Без облачных сервисов и платных подписок.
+Без облачных сервисов.  **Полностью бесплатно**, сейчас и навсегда.
 
 [![CI](https://github.com/guest363/podtekst/actions/workflows/ci.yml/badge.svg)](https://github.com/guest363/podtekst/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/guest363/podtekst)](https://github.com/guest363/podtekst/releases)
@@ -41,7 +41,6 @@
   При запросе локальных итогов языковая модель формирует:
   - `.summary.md` - структурированный конспект с решениями и задачами;
   - `.summary.json` - машиночитаемые итоги с разделами и таймкодами цитат.
-  - **Полностью бесплатно**. Сейчас и навсегда.
 
 ---
 
