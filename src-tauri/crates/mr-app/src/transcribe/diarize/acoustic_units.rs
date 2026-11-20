@@ -123,6 +123,20 @@ fn ensure_anchor(units: &mut Units, utterance: usize) {
     }
 }
 
+/// Якорь и акустическое окно короткой реплики (≤2.4 с) — один и тот же срез:
+/// второй инференс дал бы тот же вектор, поэтому он переиспользуется.
+fn duplicate_sources(prepared: &[PreparedUnit]) -> Vec<Option<usize>> {
+    let mut source = vec![None; prepared.len()];
+    for (i, unit) in prepared.iter().enumerate().skip(1) {
+        source[i] = (0..i).find(|&j| {
+            prepared[j].start == unit.start
+                && prepared[j].end == unit.end
+                && prepared[j].chunk == unit.chunk
+        });
+    }
+    source
+}
+
 /// Окна из нескольких реплик уходят в один батч: `embed_batch` группирует
 /// только одинаковые длины, и батч на одну реплику почти всегда вырождается
 /// в одиночные вызовы.
@@ -136,28 +150,44 @@ fn flush_batch(
         return;
     }
     let started = std::time::Instant::now();
-    let refs: Vec<&[f32]> = prepared.iter().map(|unit| unit.chunk.as_slice()).collect();
-    let embeddings = match extractor.embed_batch(&refs) {
+    let source = duplicate_sources(prepared);
+    let unique: Vec<usize> = (0..prepared.len())
+        .filter(|&index| source[index].is_none())
+        .collect();
+    let refs: Vec<&[f32]> = unique
+        .iter()
+        .map(|&index| prepared[index].chunk.as_slice())
+        .collect();
+    let mut embeddings = match extractor.embed_batch(&refs) {
         Ok(embeddings) => embeddings,
         Err(error) => {
             log::warn!(
                 target: "diar",
-                windows = prepared.len(),
+                windows = unique.len(),
                 error = error.to_string();
                 "ev=diar.embed_error"
             );
-            prepared
+            unique
                 .iter()
-                .map(|unit| extractor.embed(&unit.chunk).ok().flatten())
+                .map(|&index| extractor.embed(&prepared[index].chunk).ok().flatten())
                 .collect()
         }
     };
     let windows = refs.len();
     drop(refs);
+    let mut resolved: Vec<Option<Vec<f64>>> = vec![None; prepared.len()];
+    for (slot, &index) in unique.iter().enumerate() {
+        resolved[index] = embeddings[slot].take();
+    }
+    for (index, &source) in source.iter().enumerate() {
+        if let Some(source) = source {
+            resolved[index] = resolved[source].clone();
+        }
+    }
     let mut utterances: Vec<usize> = prepared.iter().map(|unit| unit.utterance).collect();
     utterances.sort_unstable();
     utterances.dedup();
-    for (prepared, embedding) in prepared.drain(..).zip(embeddings) {
+    for (prepared, embedding) in prepared.drain(..).zip(resolved) {
         if let Some(embedding) = embedding {
             if prepared.anchor {
                 units.anchors.push(units.items.len());
@@ -269,6 +299,27 @@ mod tests {
         let mut silence = vec![0.0f32; 16_000];
         normalize_unit_rms(&mut silence);
         assert!(silence.iter().all(|&x| x == 0.0));
+    }
+
+    #[test]
+    fn duplicate_anchor_and_window_chunk_is_embedded_once() {
+        let unit = |start: f64, end: f64, chunk: Vec<f32>| PreparedUnit {
+            utterance: 0,
+            start,
+            end,
+            dur: end - start,
+            quality: 1.0,
+            chunk,
+            anchor: false,
+        };
+        let prepared = vec![
+            unit(0.0, 1.5, vec![0.1; 24_000]),
+            unit(0.0, 1.5, vec![0.1; 24_000]),
+            unit(0.0, 2.0, vec![0.1; 32_000]),
+            unit(2.0, 4.0, vec![0.1; 32_000]),
+        ];
+        let source = duplicate_sources(&prepared);
+        assert_eq!(source, vec![None, Some(0), None, None]);
     }
 
     #[test]

@@ -8,6 +8,8 @@
 - [../../tools/diar_eval/baseline.json](../../tools/diar_eval/baseline.json) - текущие метрики и известные разрывы.
 - [EXTERNAL-BENCHMARKS.md](EXTERNAL-BENCHMARKS.md) - внешние ориентиры.
 - [experiments/2026-11-quality-perf.md](experiments/2026-11-quality-perf.md) - локальный эксперимент по качеству и скорости.
+- [experiments/2026-11-quality-perf-r2.md](experiments/2026-11-quality-perf-r2.md) - раунд 2: auto-k по пороговому разбиению (DER/cpWER на 3 спикерах), дедупликация эмбеддингов и разбор WER.
+- [experiments/2026-11-asr-wer-diagnosis.md](experiments/2026-11-asr-wer-diagnosis.md) - почему сырой WER на Golos выше публикации: формат чисел, а не потеря речи.
 - [../tools/diar_eval/README.md](../../tools/diar_eval/README.md) - команды инструментов.
 
 ## Локальный корень данных

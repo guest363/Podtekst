@@ -64,6 +64,11 @@ const CANNOT_LINK_DISTANCE: f64 = 10.0;
 /// значение; замера именно по разрыву в репозитории нет, нужен прогон
 /// tools/diar_eval на размеченном наборе.
 const MIN_AUTO_K_GAP: f64 = 0.04;
+/// Сколько кластеров сверх выбранного разрывом может подтвердить порог
+/// «один голос», прежде чем мы доверяем пороговому разбиению. Замер на
+/// synth-3spk-120: разрыв даёт k=2, порог — k=4 (три голоса + шумный обрывок),
+/// после кластеризации остаются верные 3.
+const MAX_THRESHOLD_EXTRA: usize = 2;
 /// Калибровка слияния центроидов (ERes2NetV2): разные дикторы ≤ 0.22,
 /// один голос ≥ 0.48 на фрагментах. Порог 0.70 предотвращает ложное
 /// слияние разных собеседников с похожей акустикой комнаты.
@@ -313,7 +318,11 @@ pub fn agglomerative_gap(
             threshold_k = threshold_k;
             "ev=cluster.auto_k"
         );
-        if threshold_k == k + 1 && k < max_k {
+        // Разрыв может перепрыгнуть не через один, а через два кластера,
+        // подтверждённых порогом «один голос»: на synth-3spk-120 k=2 при
+        // threshold_k=4, и оба лишних кластера — реальные голоса. Больше двух
+        // не добавляем: шумная дендрограмма иначе снова раздувает счёт.
+        if threshold_partition_wins(k, threshold_k, max_k) {
             log::debug!(
                 target: "cluster",
                 k = k,
@@ -336,6 +345,10 @@ pub fn agglomerative_gap(
     } else {
         threshold_labels
     }
+}
+
+fn threshold_partition_wins(gap_k: usize, threshold_k: usize, max_k: usize) -> bool {
+    gap_k >= 2 && threshold_k > gap_k && threshold_k - gap_k <= MAX_THRESHOLD_EXTRA && gap_k < max_k
 }
 
 fn link_blocked(labels: &[usize], cannot_link: &[(usize, usize)], a: usize, b: usize) -> bool {
@@ -730,6 +743,16 @@ mod tests {
         let embs = vec![at(0.0), at(10.0), at(40.0), at(50.0)];
         let labels = agglomerative_gap(&embs, &[1.0; 4], &[], 0.0, 1, 4);
         assert_eq!(unique_labels(&labels), 4);
+    }
+
+    #[test]
+    fn threshold_partition_replaces_gap_only_up_to_two_extra_clusters() {
+        assert!(!threshold_partition_wins(2, 2, 12));
+        assert!(threshold_partition_wins(2, 3, 12));
+        assert!(threshold_partition_wins(2, 4, 12));
+        assert!(!threshold_partition_wins(2, 5, 12));
+        assert!(!threshold_partition_wins(2, 3, 2));
+        assert!(!threshold_partition_wins(1, 3, 12));
     }
 
     #[test]
