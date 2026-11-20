@@ -51,6 +51,8 @@ pub const MAX_PROTOTYPES: usize = 10;
 const TOP_PROTOTYPE_MIN_SIM: f64 = 0.90;
 const TOP_PROTOTYPE_GAP: f64 = 0.15;
 const TOP_PROTOTYPE_PENALTY: f64 = 0.02;
+/// Совсем короткий образец может дать случайный всплеск сходства.
+const TOP_PROTOTYPE_MIN_QUALITY: f64 = 1.0;
 
 /// Нормализация меток времени в канонический формат RFC3339 (P1, P9).
 ///
@@ -277,7 +279,10 @@ pub fn score_speaker_similarity(query: &[f64], profile: &SpeakerProfile) -> f64 
     let weighted = if den > 0.0 { num / den } else { sims[0].0 };
     let base = weighted.max(c_sim);
     let top = sims[0].0;
-    if top >= TOP_PROTOTYPE_MIN_SIM && top - base >= TOP_PROTOTYPE_GAP {
+    if top >= TOP_PROTOTYPE_MIN_SIM
+        && top - base >= TOP_PROTOTYPE_GAP
+        && sims[0].1 >= TOP_PROTOTYPE_MIN_QUALITY
+    {
         return (top - TOP_PROTOTYPE_PENALTY).max(base);
     }
     base
@@ -874,6 +879,11 @@ mod tests {
         // top ниже 0.90: fallback не включается даже при большом разрыве.
         let low = score_speaker_similarity(&query, &make(0.88, 0.1));
         assert!(low < 0.8, "{low}");
+        // Слишком короткий top-прототип не даёт fallback.
+        let mut tiny = make(0.99, 0.1);
+        tiny.prototypes[0].duration_sec = 0.5;
+        let tiny = score_speaker_similarity(&query, &tiny);
+        assert!(tiny < 0.9, "{tiny}");
     }
 
     #[test]
