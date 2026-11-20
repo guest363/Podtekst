@@ -34,8 +34,11 @@ pub(crate) fn move_boundary_words(utterances: &mut Vec<Utterance>) {
             .map(|w| w.w.as_str())
             .collect::<Vec<_>>()
             .join(" ");
+        let moved_start = moved.first().map(|w| w.start_sec);
+        let moved_end = moved.last().map(|w| w.end_sec);
         // Соседний сегмент с padding уже распознал эти слова: повторный
-        // перенос добавил бы дубль в текст и cpWER.
+        // перенос добавил бы дубль в текст и cpWER, но границы по времени
+        // всё равно расширяем — они точнее VAD и покрывают начало реплики.
         let next_words: Vec<String> = utterances[i + 1]
             .text
             .split_whitespace()
@@ -47,6 +50,13 @@ pub(crate) fn move_boundary_words(utterances: &mut Vec<Utterance>) {
             .take_while(|(word, next)| normalize_word(&word.w) == **next)
             .count();
         moved.drain(0..duplicate);
+        let next = &mut utterances[i + 1];
+        if let Some(start) = moved_start {
+            next.start = next.start.min(start);
+        }
+        if let Some(end) = moved_end {
+            next.end = next.end.max(end);
+        }
         if moved.is_empty() {
             i += 1;
             continue;
@@ -56,11 +66,6 @@ pub(crate) fn move_boundary_words(utterances: &mut Vec<Utterance>) {
             .map(|w| w.w.as_str())
             .collect::<Vec<_>>()
             .join(" ");
-        let next = &mut utterances[i + 1];
-        if let Some(first) = moved.first() {
-            next.start = next.start.min(first.start_sec);
-        }
-        next.end = next.end.max(moved.last().map_or(0.0, |w| w.end_sec));
         next.words.splice(0..0, moved);
         next.text = if next.text.is_empty() {
             moved_text
