@@ -103,6 +103,83 @@ fn unit_from(prepared: PreparedUnit, embedding: Vec<f64>) -> AcoustUnit {
     }
 }
 
+fn ensure_anchor(units: &mut Units, utterance: usize) {
+    if units
+        .anchors
+        .iter()
+        .any(|&index| units.items[index].utterance == utterance)
+    {
+        return;
+    }
+    if let Some(index) = units
+        .items
+        .iter()
+        .enumerate()
+        .filter(|(_, unit)| unit.utterance == utterance)
+        .max_by(|(_, a), (_, b)| a.dur.total_cmp(&b.dur))
+        .map(|(index, _)| index)
+    {
+        units.anchors.push(index);
+    }
+}
+
+/// Окна из нескольких реплик уходят в один батч: `embed_batch` группирует
+/// только одинаковые длины, и батч на одну реплику почти всегда вырождается
+/// в одиночные вызовы.
+fn flush_batch(
+    units: &mut Units,
+    extractor: &mut EmbeddingExtractor,
+    anchors_enabled: bool,
+    prepared: &mut Vec<PreparedUnit>,
+) {
+    if prepared.is_empty() {
+        return;
+    }
+    let started = std::time::Instant::now();
+    let refs: Vec<&[f32]> = prepared.iter().map(|unit| unit.chunk.as_slice()).collect();
+    let embeddings = match extractor.embed_batch(&refs) {
+        Ok(embeddings) => embeddings,
+        Err(error) => {
+            log::warn!(
+                target: "diar",
+                windows = prepared.len(),
+                error = error.to_string();
+                "ev=diar.embed_error"
+            );
+            prepared
+                .iter()
+                .map(|unit| extractor.embed(&unit.chunk).ok().flatten())
+                .collect()
+        }
+    };
+    let windows = refs.len();
+    drop(refs);
+    let mut utterances: Vec<usize> = prepared.iter().map(|unit| unit.utterance).collect();
+    utterances.sort_unstable();
+    utterances.dedup();
+    for (prepared, embedding) in prepared.drain(..).zip(embeddings) {
+        if let Some(embedding) = embedding {
+            if prepared.anchor {
+                units.anchors.push(units.items.len());
+            }
+            units.items.push(unit_from(prepared, embedding));
+        }
+    }
+    if anchors_enabled {
+        for utterance in utterances {
+            ensure_anchor(units, utterance);
+        }
+    }
+    if log::log_enabled!(target: "diar", log::Level::Trace) {
+        log::trace!(
+            target: "diar",
+            windows = windows,
+            elapsed_ms = started.elapsed().as_millis() as u64;
+            "ev=diar.embed_batch"
+        );
+    }
+}
+
 pub(super) fn build(
     samples: &[f32],
     utterances: &[Utterance],
@@ -120,10 +197,10 @@ pub(super) fn build(
     };
     let anchors_enabled = experiment::current().anchors == Anchors::Turns;
     let total = utterances.len();
+    const EMBED_PENDING: usize = 64;
+    let mut pending: Vec<PreparedUnit> = Vec::new();
     for (index, utterance) in utterances.iter().enumerate() {
         let (start, end) = (utterance.start, utterance.end);
-        let first = units.items.len();
-        let anchor_count = units.anchors.len();
         let mut prepared = Vec::new();
         if anchors_enabled {
             let region = match echo {
@@ -153,49 +230,9 @@ pub(super) fn build(
                 prepared.push(unit);
             }
         }
-        if !prepared.is_empty() {
-            let started = std::time::Instant::now();
-            let refs: Vec<&[f32]> = prepared.iter().map(|unit| unit.chunk.as_slice()).collect();
-            let embeddings = match extractor.embed_batch(&refs) {
-                Ok(embeddings) => embeddings,
-                Err(error) => {
-                    log::warn!(
-                        target: "diar",
-                        unit = index,
-                        windows = prepared.len(),
-                        error = error.to_string();
-                        "ev=diar.embed_error"
-                    );
-                    prepared
-                        .iter()
-                        .map(|unit| extractor.embed(&unit.chunk).ok().flatten())
-                        .collect()
-                }
-            };
-            if log::log_enabled!(target: "diar", log::Level::Trace) {
-                log::trace!(
-                    target: "diar",
-                    unit = index,
-                    windows = prepared.len(),
-                    elapsed_ms = started.elapsed().as_millis() as u64;
-                    "ev=diar.embed_batch"
-                );
-            }
-            for (prepared, embedding) in prepared.into_iter().zip(embeddings) {
-                if let Some(embedding) = embedding {
-                    if prepared.anchor {
-                        units.anchors.push(units.items.len());
-                    }
-                    units.items.push(unit_from(prepared, embedding));
-                }
-            }
-        }
-        if anchors_enabled && units.anchors.len() == anchor_count {
-            if let Some(index) = (first..units.items.len())
-                .max_by(|&a, &b| units.items[a].dur.total_cmp(&units.items[b].dur))
-            {
-                units.anchors.push(index);
-            }
+        pending.extend(prepared);
+        if pending.len() >= EMBED_PENDING {
+            flush_batch(&mut units, extractor, anchors_enabled, &mut pending);
         }
         if index % 20 == 0 || index + 1 == total {
             on_event(
@@ -204,6 +241,7 @@ pub(super) fn build(
             );
         }
     }
+    flush_batch(&mut units, extractor, anchors_enabled, &mut pending);
     units
 }
 
@@ -231,6 +269,27 @@ mod tests {
         let mut silence = vec![0.0f32; 16_000];
         normalize_unit_rms(&mut silence);
         assert!(silence.iter().all(|&x| x == 0.0));
+    }
+
+    #[test]
+    fn anchor_falls_back_to_longest_unit_per_utterance() {
+        let unit = |utterance: usize, dur: f64| AcoustUnit {
+            utterance,
+            start: 0.0,
+            end: dur,
+            dur,
+            quality: 1.0,
+            embedding: vec![],
+        };
+        let mut units = Units {
+            items: vec![unit(0, 1.0), unit(0, 2.5), unit(1, 3.0)],
+            anchors: vec![],
+        };
+        ensure_anchor(&mut units, 0);
+        assert_eq!(units.anchors, vec![1]);
+        units.anchors.push(2);
+        ensure_anchor(&mut units, 1);
+        assert_eq!(units.anchors, vec![1, 2]);
     }
 
     #[test]

@@ -281,6 +281,8 @@ pub(crate) fn split_by_word_pauses(utterances: &[Utterance], min_gap_sec: f64) -
 /// Эмбеддинг на ARM стоит сотни миллисекунд: короткие реплики не режем,
 /// число окон ограничиваем.
 pub(super) const SPLIT_MIN_DUR: f64 = 3.0;
+/// 8 окон: на MAX20 EN cpWER остаётся 0.761, Vox DER 0.237; 5 окон ломали
+/// EN cpWER (0.761 → 0.784).
 const SPLIT_MAX_WINDOWS: usize = 8;
 pub(super) const SPLIT_WINDOW_SEC: f64 = 1.6;
 

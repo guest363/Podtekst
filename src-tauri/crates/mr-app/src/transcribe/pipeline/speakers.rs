@@ -175,7 +175,8 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
         speakers_info.extend(infos);
         let tree = word_speakers::DiarIntervalTree::new(&diar_utts);
         let document = document_utterances(&source_utts, &tree);
-        let document = word_speakers::detach_overlap_words(document, &voice_runs);
+        let mut document = word_speakers::detach_overlap_words(document, &voice_runs);
+        extend_last_to_source_end(&mut document, &source_utts);
         if cfg!(debug_assertions) {
             let runs_dump: Vec<serde_json::Value> = voice_runs
                 .iter()
@@ -283,6 +284,25 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
         s
     };
     (speakers_info, merged, speakers)
+}
+
+/// Последнее CTC-слово может недокрыть ASR-сегмент; без этого хвост речи
+/// выпадает из RTTM и DER получает ложный miss.
+fn extend_last_to_source_end(document: &mut [Utterance], source_utts: &[Utterance]) {
+    let Some(source_end) = source_utts
+        .iter()
+        .filter(|utterance| !utterance.text.trim().is_empty())
+        .map(|utterance| utterance.end)
+        .max_by(f64::total_cmp)
+    else {
+        return;
+    };
+    let Some(last) = document.last_mut() else {
+        return;
+    };
+    if source_end > last.end && source_end - last.end <= f64::from(super::SEGMENT_GAP_SEC) {
+        last.end = source_end;
+    }
 }
 
 /// Пустые VAD-группы участвуют только в диаризации: в документ они не идут.
@@ -422,6 +442,22 @@ mod tests {
         assert!(infos[0].embedding.is_none());
         assert!(infos[0].candidates.is_empty());
         assert_eq!(infos[0].similarity, 0.0);
+    }
+
+    #[test]
+    fn last_document_utterance_extends_to_source_end() {
+        let mut document = vec![utterance(0.0, 59.8, "хвост")];
+        let source = vec![utterance(0.0, 60.0, "хвост")];
+        extend_last_to_source_end(&mut document, &source);
+        assert!((document[0].end - 60.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn last_document_utterance_does_not_jump_over_a_pause() {
+        let mut document = vec![utterance(0.0, 59.8, "хвост")];
+        let source = vec![utterance(0.0, 60.5, "хвост")];
+        extend_last_to_source_end(&mut document, &source);
+        assert!((document[0].end - 59.8).abs() < 1e-9);
     }
 
     #[test]

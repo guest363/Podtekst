@@ -23,7 +23,9 @@ mod level;
 mod speakers;
 mod vad;
 
-const MAX_SEGMENT_SEC: f32 = 12.0;
+// 20 с: FLEURS WER 5.31 -> 4.97%, VoxConverse DER 0.290 -> 0.237,
+// synth-встречи WER 5.86 -> 5.37%.
+const MAX_SEGMENT_SEC: f32 = 20.0;
 const SEGMENT_GAP_SEC: f32 = 0.4;
 
 pub(super) fn quiet_blank_penalty(duration_sec: f64, rms: f32) -> f32 {

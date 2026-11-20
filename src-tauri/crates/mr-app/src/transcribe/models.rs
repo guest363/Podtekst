@@ -259,42 +259,53 @@ pub(crate) fn extract_utterance_embedding(
 
 impl ModelSet {
     fn load(plan: LoadPlan) -> Result<Self, String> {
-        let gigaam = match plan.asr {
-            Some(AsrEngine::Gigaam) => {
-                let dir = models_root().join(GIGAAM_DIR);
-                match GigaAM::load(&dir) {
-                    Ok(model) => Some(model),
-                    Err(error) => {
-                        log::error!(
-                            target: "model",
-                            id = GIGAAM_DIR,
-                            dir = dir.display().to_string(),
-                            error = error;
-                            "ev=model.load_failed"
-                        );
-                        return Err(AsrEngine::Gigaam.missing_error());
-                    }
-                }
+        let gigaam_dir = models_root().join(GIGAAM_DIR);
+        let ctc_dir = models_root().join(CTC_DIR);
+        let load_gigaam = matches!(plan.asr, Some(AsrEngine::Gigaam));
+        // Два независимых файла по ~225 МБ: чтение и разбор идут параллельно.
+        let (gigaam, ctc) = std::thread::scope(|scope| {
+            let gigaam = load_gigaam.then(|| scope.spawn(|| GigaAM::load(&gigaam_dir)));
+            let ctc = plan.ctc.then(|| scope.spawn(|| GigaCTC::load(&ctc_dir)));
+            (
+                gigaam.map(|handle| {
+                    handle
+                        .join()
+                        .unwrap_or_else(|_| Err("GigaAM: загрузка упала".to_string()))
+                }),
+                ctc.map(|handle| {
+                    handle
+                        .join()
+                        .unwrap_or_else(|_| Err("CTC: загрузка упала".to_string()))
+                }),
+            )
+        });
+        let gigaam = match gigaam {
+            Some(Ok(model)) => Some(model),
+            Some(Err(error)) => {
+                log::error!(
+                    target: "model",
+                    id = GIGAAM_DIR,
+                    dir = gigaam_dir.display().to_string(),
+                    error = error;
+                    "ev=model.load_failed"
+                );
+                return Err(AsrEngine::Gigaam.missing_error());
             }
-            _ => None,
+            None => None,
         };
-        let ctc = if plan.ctc {
-            let dir = models_root().join(CTC_DIR);
-            match GigaCTC::load(&dir) {
-                Ok(model) => Some(model),
-                Err(error) => {
-                    log::warn!(
-                        target: "model",
-                        id = CTC_DIR,
-                        dir = dir.display().to_string(),
-                        error = error;
-                        "ev=model.load_failed"
-                    );
-                    None
-                }
+        let ctc = match ctc {
+            Some(Ok(model)) => Some(model),
+            Some(Err(error)) => {
+                log::warn!(
+                    target: "model",
+                    id = CTC_DIR,
+                    dir = ctc_dir.display().to_string(),
+                    error = error;
+                    "ev=model.load_failed"
+                );
+                None
             }
-        } else {
-            None
+            None => None,
         };
         let whisper = match plan.asr {
             Some(AsrEngine::Whisper) => {

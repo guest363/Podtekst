@@ -30,8 +30,18 @@ pub struct Whisper {
 
 impl Whisper {
     pub fn load(dir: &Path) -> Result<Self, String> {
-        let enc = OrtSession::load(&dir.join("whisper_enc_q.onnx"), 0)?;
-        let dec = OrtSession::load(&dir.join("whisper_dec_merged_q.onnx"), 0)?;
+        let (enc, dec) = std::thread::scope(|scope| {
+            let enc = scope.spawn(|| OrtSession::load(&dir.join("whisper_enc_q.onnx"), 0));
+            let dec = scope.spawn(|| OrtSession::load(&dir.join("whisper_dec_merged_q.onnx"), 0));
+            (
+                enc.join()
+                    .unwrap_or_else(|_| Err("Whisper: загрузка энкодера упала".to_string())),
+                dec.join()
+                    .unwrap_or_else(|_| Err("Whisper: загрузка декодера упала".to_string())),
+            )
+        });
+        let enc = enc?;
+        let dec = dec?;
         let enc_input = pick(
             &enc.input_names,
             &["input_features", "audio_features", "mel"],

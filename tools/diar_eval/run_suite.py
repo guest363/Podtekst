@@ -17,7 +17,8 @@ COMPARE = ("language", "dataset", "subset", "speakers_ref", "speakers_hyp",
 
 
 def _run(
-    entry: dict, root: Path, app: Path, out: Path, timeout: float, perf: bool, overwrite: bool
+    entry: dict, root: Path, app: Path, out: Path, timeout: float, perf: bool, overwrite: bool,
+    data_dir: Path | None,
 ) -> int:
     command = [
         sys.executable,
@@ -35,6 +36,8 @@ def _run(
         command += ["--ids", ",".join(ids)]
     if perf:
         command += ["--perf"]
+    if data_dir:
+        command += ["--data-dir", str(data_dir)]
     if overwrite:
         command += ["--overwrite"]
     print("+", " ".join(command), flush=True)
@@ -77,13 +80,14 @@ def main() -> int:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--timeout", type=float, default=900)
     parser.add_argument("--perf", action="store_true", help="включить MR_PERF=1")
+    parser.add_argument("--data-dir", type=Path, help="изолированный каталог данных приложения")
     parser.add_argument("--overwrite", action="store_true", help="разрешить замену результатов")
     args = parser.parse_args()
 
     suite = json.loads((HERE / "suites" / f"{args.suite}.json").read_text(encoding="utf-8"))
     args.out.mkdir(parents=True, exist_ok=True)
     codes = [_run(entry, args.root, args.app.resolve(), args.out.resolve(), args.timeout,
-                  args.perf, args.overwrite)
+                  args.perf, args.overwrite, args.data_dir)
              for entry in suite["manifests"]]
     combined = _combine(args.out, [entry["name"] for entry in suite["manifests"]])
     print(f"suite={args.suite} metrics={combined}")

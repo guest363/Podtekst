@@ -522,7 +522,13 @@ def _run_record(
         command += ["--ctc", options.ctc]
     dev_directory = getattr(options, "dev_runs_dir", None)
     before = set(Path(dev_directory).glob("*/manifest.json")) if dev_directory else set()
-    extra_env = {"MR_PERF": "1"} if getattr(options, "perf", False) else None
+    extra_env = {}
+    if getattr(options, "perf", False):
+        extra_env["MR_PERF"] = "1"
+    # Личные профили и хотворды делают метрики невоспроизводимыми.
+    if data_dir := getattr(options, "data_dir", None):
+        extra_env["MEETING_RECORDER_DATA_DIR"] = str(data_dir.resolve())
+    extra_env = extra_env or None
     try:
         run = _run_process(command, options.timeout, time_bin, extra_env)
     except OSError as exc:
@@ -989,6 +995,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--overwrite", action="store_true", help="явно разрешить замену результатов")
     parser.add_argument("--dev-runs-dir", type=Path, help="скопировать dev-артефакты каждого файла в результаты")
+    parser.add_argument("--data-dir", type=Path, help="каталог данных приложения (MEETING_RECORDER_DATA_DIR); изолирует профили и настройки")
     parser.add_argument("--app", type=Path, help="release-бинарник podtekst")
     parser.add_argument("--engine", choices=["auto", "gigaam", "whisper"])
     parser.add_argument("--language")

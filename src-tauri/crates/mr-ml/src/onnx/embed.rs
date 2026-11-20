@@ -16,6 +16,9 @@ const MIN_SAMPLES: usize = 6_400;
 /// Батч только для окон одинаковой длины: ERes2NetV2 чувствителен к нулевому
 /// паддингу, поэтому разнородные окна считаются по одному.
 pub const EMBED_BATCH: usize = 8;
+/// Окна квантуются вниз до 100 мс, чтобы окна одной реплики попадали в общий
+/// батч: потеря хвоста ≤100 мс, зато рабочих батчей заметно больше.
+const LENGTH_BUCKET: usize = 1_600;
 
 pub struct EmbeddingExtractor {
     session: OrtSession,
@@ -58,19 +61,25 @@ impl EmbeddingExtractor {
         Ok(self.embed_batch(&[samples_16k])?.pop().flatten())
     }
 
-    /// Батчевый инференс: окна одной длины идут одним тензором [N, T, 80],
-    /// паддинга нет. Невалидные окна остаются `None` и не сдвигают строки.
+    /// Батчевый инференс: окна квантуются вниз до 100 мс и идут одним
+    /// тензором [N, T, 80], паддинга нет. Невалидные окна остаются `None`.
     pub fn embed_batch(&mut self, chunks: &[&[f32]]) -> Result<Vec<Option<Vec<f64>>>, String> {
         let mut results = vec![None; chunks.len()];
         let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        let bucket = chunks.len() > 1;
         for (index, chunk) in chunks.iter().enumerate() {
             if chunk.len() >= MIN_SAMPLES {
-                groups.entry(chunk.len()).or_default().push(index);
+                let length = if bucket {
+                    (chunk.len() / LENGTH_BUCKET) * LENGTH_BUCKET
+                } else {
+                    chunk.len()
+                };
+                groups.entry(length).or_default().push(index);
             }
         }
-        for indices in groups.into_values() {
+        for (length, indices) in groups {
             for batch in indices.chunks(EMBED_BATCH) {
-                self.run_group(chunks, batch, &mut results)?;
+                self.run_group(chunks, length, batch, &mut results)?;
             }
         }
         Ok(results)
@@ -79,6 +88,7 @@ impl EmbeddingExtractor {
     fn run_group(
         &mut self,
         chunks: &[&[f32]],
+        length: usize,
         indices: &[usize],
         results: &mut [Option<Vec<f64>>],
     ) -> Result<(), String> {
@@ -88,7 +98,8 @@ impl EmbeddingExtractor {
         let mut rows: Vec<usize> = Vec::with_capacity(indices.len());
         let mut frames = 0usize;
         for &index in indices {
-            let fbank = eres2netv2_fbank(chunks[index]);
+            let samples = &chunks[index][..length.min(chunks[index].len())];
+            let fbank = eres2netv2_fbank(samples);
             if fbank.is_empty() || (frames != 0 && fbank.len() != frames) {
                 continue;
             }

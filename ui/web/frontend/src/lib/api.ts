@@ -395,6 +395,7 @@ export type VoicePrototype = {
   duration_sec?: number | null
   quality?: number | null
   has_snippet?: boolean
+  suspect?: boolean
 }
 
 export type VoiceDetail = {
@@ -402,6 +403,11 @@ export type VoiceDetail = {
   pack_id?: string
   samples_count?: number | null
   prototypes?: VoicePrototype[]
+  consistency?: {
+    score: number
+    status: 'ok' | 'mixed'
+    outliers?: string[]
+  }
 }
 
 export type SpeakerInfo = {
