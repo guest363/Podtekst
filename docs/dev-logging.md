@@ -76,7 +76,7 @@ jq -c 'select(.ev=="vad.summary")' dev.log
 | `diar` | `start`, `experiment`, `agc`, `embedding_frontend`, `units`, `segmentation`, `embed`, `cluster`, `clusters`, `fixed_k`, `cannot_link`, `cannot_link_pair`, `constraint_escalation`, `coverage_minimum`, `coverage_reject`, `merge_tiny`, `max_speakers`, `assign`, `split`, `short_reply`, `collapse`, `reconcile`, `dedupe`, `word_dedupe`, `merge_utts`, `overlap_detach`, `overlap_detach_word`, `profile.load`, `verify_profiles`, `stats` | почему столько спикеров и как распределены голоса |
 | `cluster` | `auto_k`, `auto_k_fallback`, `merges_tail`, `constraint_limit`, `merge_centroid` | выбор k по разрывам дерева слияний, хвост слияний и лимит cannot-link, финальное слияние близких центроидов |
 | `json` | `load`, `build`, `utt`, `check`, `invalid`, `roundtrip`, `write`, `edit`, `response` | чтение/запись `.transcript.json`, инварианты, правки UI |
-| `model` | `search`, `load`, `warmup`, `load_failed`, `infer_error`, `gpu_fallback` | что искали/загрузили, прогрев сессии, почему модели нет |
+| `model` | `accel`, `search`, `load`, `warmup`, `load_failed`, `infer_error`, `gpu_fallback` | доступный ускоритель, что искали/загрузили, прогрев сессии, почему модели нет |
 | `diag` | `init`, `dropped`, `artifact.truncated`, `artifact.error` | состояние самого dev-sink |
 
 Поля `p50/p95/p99`, `silhouette`, `margin` и `blank_ratio` — числа из самого

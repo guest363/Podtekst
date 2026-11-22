@@ -5,6 +5,8 @@ use std::sync::{Arc, OnceLock};
 use ort::environment::Environment;
 use ort::value::{DynTensor, Tensor, TensorRef};
 
+use super::accel::{detected_accel, AccelInfo, ExecutionProviderKind, SessionProfile};
+
 fn global_env() -> Result<Arc<Environment>, String> {
     static ENV: OnceLock<Result<Arc<Environment>, String>> = OnceLock::new();
     ENV.get_or_init(|| {
@@ -27,32 +29,90 @@ pub struct OrtSession {
     pub input_names: Vec<String>,
     pub output_names: Vec<String>,
     label: String,
+    provider: ExecutionProviderKind,
+    device_name: Option<String>,
+}
+
+pub(crate) fn outputs_are_finite(outputs: &NamedTensors) -> bool {
+    !outputs.is_empty()
+        && outputs
+            .values()
+            .all(|(_, data)| !data.is_empty() && data.iter().all(|x| x.is_finite()))
 }
 
 impl OrtSession {
-    /// Загружает `.onnx` с CPU-провайдером и `intra_threads` потоками (0 = авто).
-    /// При включённых cargo-фичах `ort-cuda`/`ort-directml`/`ort-coreml` сначала
-    /// пробует аппаратный ускоритель; недоступен драйвер или библиотека —
-    /// прозрачно возвращается к CPU.
     pub fn load(path: &Path, intra_threads: usize) -> Result<Self, String> {
+        Self::load_with_profile(path, intra_threads, SessionProfile::CpuOnly)
+    }
+
+    pub fn load_with_profile(
+        path: &Path,
+        intra_threads: usize,
+        profile: SessionProfile,
+    ) -> Result<Self, String> {
+        Self::load_with_probe(path, intra_threads, profile, |_| Ok(()))
+    }
+
+    pub fn load_with_probe<F>(
+        path: &Path,
+        intra_threads: usize,
+        profile: SessionProfile,
+        probe: F,
+    ) -> Result<Self, String>
+    where
+        F: Fn(&mut Self) -> Result<(), String>,
+    {
         let started = std::time::Instant::now();
         let env = global_env()?;
-        #[cfg(any(feature = "ort-cuda", feature = "ort-directml", feature = "ort-coreml"))]
-        match Self::accelerated(&env, path, intra_threads) {
-            Ok(session) => return Ok(session),
-            Err(e) => log::warn!(
-                target: "model",
-                file = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
-                error = e.to_string();
-                "ev=model.gpu_fallback"
-            ),
+        let accel = detected_accel();
+        let candidates = accel.candidates(profile);
+        let file_label = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let mut loaded: Option<Self> = None;
+        for provider in candidates {
+            match Self::try_provider(&env, path, intra_threads, provider, accel) {
+                Ok(mut session) => {
+                    if provider != ExecutionProviderKind::Cpu {
+                        if let Err(err) = probe(&mut session) {
+                            log::warn!(
+                                target: "model",
+                                file = file_label.as_str(),
+                                provider = provider.as_str(),
+                                stage = "probe",
+                                error = err.as_str();
+                                "ev=model.gpu_fallback"
+                            );
+                            continue;
+                        }
+                    }
+                    loaded = Some(session);
+                    break;
+                }
+                Err((stage, err)) => {
+                    if provider == ExecutionProviderKind::Cpu {
+                        return Err(err);
+                    }
+                    log::warn!(
+                        target: "model",
+                        file = file_label.as_str(),
+                        provider = provider.as_str(),
+                        stage = stage,
+                        error = err.as_str();
+                        "ev=model.gpu_fallback"
+                    );
+                }
+            }
         }
-        let mut builder = Self::base_builder(&env, intra_threads)?;
-        let session = builder.commit_from_file(path).map_err(|e| e.to_string())?;
-        let loaded = Self::from_session(session, path);
+
+        let loaded = loaded.ok_or_else(|| format!("не удалось загрузить {file_label}"))?;
         log::info!(
             target: "model",
             file = loaded.label.clone(),
+            provider = loaded.provider.as_str(),
+            device = loaded.device_name.as_deref().unwrap_or_else(|| loaded.provider.as_str()),
             bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
             elapsed_ms = started.elapsed().as_millis() as u64,
             inputs = format!("{:?}", loaded.input_names),
@@ -63,31 +123,132 @@ impl OrtSession {
         Ok(loaded)
     }
 
-    #[cfg(any(feature = "ort-cuda", feature = "ort-directml", feature = "ort-coreml"))]
-    fn accelerated(
+    pub fn provider(&self) -> ExecutionProviderKind {
+        self.provider
+    }
+
+    pub fn device_name(&self) -> Option<&str> {
+        self.device_name.as_deref()
+    }
+
+    fn try_provider(
         env: &Arc<Environment>,
         path: &Path,
         intra_threads: usize,
-    ) -> Result<Self, String> {
-        use ort::ep::ExecutionProviderDispatch;
-        let eps: Vec<ExecutionProviderDispatch> = vec![
-            #[cfg(feature = "ort-cuda")]
-            ort::ep::cuda::CUDA::default().into(),
-            #[cfg(feature = "ort-directml")]
-            ort::ep::directml::DirectML::default().into(),
-            #[cfg(feature = "ort-coreml")]
-            ort::ep::coreml::CoreML::default().into(),
-        ];
-        let mut builder = Self::base_builder(env, intra_threads)?
-            .with_execution_providers(eps)
-            .map_err(|e| e.to_string())?;
-        let session = builder.commit_from_file(path).map_err(|e| e.to_string())?;
-        Ok(Self::from_session(session, path))
+        provider: ExecutionProviderKind,
+        accel: &AccelInfo,
+    ) -> Result<Self, (&'static str, String)> {
+        // В DirectML memory pattern на динамических формах провоцирует утечки VRAM и сбои.
+        let memory_pattern = provider != ExecutionProviderKind::DirectMl;
+        let builder =
+            Self::base_builder(env, intra_threads, memory_pattern).map_err(|e| ("builder", e))?;
+        let (mut builder, device_name) =
+            Self::attach_provider(builder, provider, accel).map_err(|e| ("register", e))?;
+        let session = builder
+            .commit_from_file(path)
+            .map_err(|e| ("commit", e.to_string()))?;
+        Ok(Self::from_session(session, path, provider, device_name))
+    }
+
+    fn attach_provider(
+        builder: ort::session::builder::SessionBuilder,
+        provider: ExecutionProviderKind,
+        accel: &AccelInfo,
+    ) -> Result<(ort::session::builder::SessionBuilder, Option<String>), String> {
+        match provider {
+            ExecutionProviderKind::Cpu => Ok((builder, None)),
+            ExecutionProviderKind::Cuda => {
+                #[cfg(feature = "ort-cuda")]
+                {
+                    let mut cuda = ort::ep::cuda::CUDA::default()
+                        .with_device_id(accel.cuda_device_id.unwrap_or(0))
+                        .with_conv_algorithm_search(ort::ep::cuda::ConvAlgorithmSearch::Heuristic)
+                        .with_arena_extend_strategy(ort::ep::ArenaExtendStrategy::SameAsRequested);
+                    if let Some(limit) = super::accel::cuda_memory_limit(accel.cuda_vram_bytes) {
+                        cuda = cuda.with_memory_limit(limit);
+                    }
+                    let builder = builder
+                        .with_execution_providers([cuda.build().error_on_failure()])
+                        .map_err(|e| e.to_string())?;
+                    Ok((builder, accel.cuda_device_name.clone()))
+                }
+                #[cfg(not(feature = "ort-cuda"))]
+                {
+                    let _ = (builder, accel);
+                    Err("CUDA EP не включён в сборку".to_string())
+                }
+            }
+            ExecutionProviderKind::DirectMl => {
+                #[cfg(feature = "ort-directml")]
+                {
+                    let adapter = accel
+                        .dml_adapter
+                        .as_ref()
+                        .ok_or_else(|| "DirectML-адаптер не обнаружен".to_string())?;
+                    let ep = ort::ep::directml::DirectML::default()
+                        .with_device_id(adapter.device_id)
+                        .build()
+                        .error_on_failure();
+                    let builder = builder
+                        .with_execution_providers([ep])
+                        .map_err(|e| e.to_string())?;
+                    Ok((builder, Some(adapter.name.clone())))
+                }
+                #[cfg(not(feature = "ort-directml"))]
+                {
+                    let _ = (builder, accel);
+                    Err("DirectML EP не включён в сборку".to_string())
+                }
+            }
+            ExecutionProviderKind::CoreMl => {
+                #[cfg(feature = "ort-coreml")]
+                {
+                    use ort::ep::coreml::{
+                        ComputeUnits, CoreML, ModelFormat, SpecializationStrategy,
+                    };
+                    let _ = accel;
+                    let ep = CoreML::default()
+                        .with_model_format(ModelFormat::MLProgram)
+                        .with_compute_units(ComputeUnits::All)
+                        .with_specialization_strategy(SpecializationStrategy::FastPrediction)
+                        .build()
+                        .error_on_failure();
+                    let builder = builder
+                        .with_execution_providers([ep])
+                        .map_err(|e| e.to_string())?;
+                    Ok((builder, Some("Apple CoreML".to_string())))
+                }
+                #[cfg(not(feature = "ort-coreml"))]
+                {
+                    let _ = (builder, accel);
+                    Err("CoreML EP не включён в сборку".to_string())
+                }
+            }
+            ExecutionProviderKind::Nnapi => {
+                #[cfg(feature = "ort-nnapi")]
+                {
+                    let ep = ort::ep::nnapi::NNAPI::default()
+                        .with_disable_cpu(true)
+                        .build()
+                        .error_on_failure();
+                    let builder = builder
+                        .with_execution_providers([ep])
+                        .map_err(|e| e.to_string())?;
+                    Ok((builder, accel.nnapi_device_name.clone()))
+                }
+                #[cfg(not(feature = "ort-nnapi"))]
+                {
+                    let _ = (builder, accel);
+                    Err("NNAPI EP не включён в сборку".to_string())
+                }
+            }
+        }
     }
 
     fn base_builder(
         env: &Arc<Environment>,
         intra_threads: usize,
+        memory_pattern: bool,
     ) -> Result<ort::session::builder::SessionBuilder, String> {
         let mut builder = ort::session::Session::builder(env).map_err(|e| e.to_string())?;
         // Ограничение ORT: при 0 захватывает все ядра и на гибридных CPU
@@ -107,12 +268,19 @@ impl OrtSession {
             .map_err(|e| e.to_string())?
             .with_inter_threads(1)
             .map_err(|e| e.to_string())?
-            .with_memory_pattern(true)
+            .with_parallel_execution(false)
+            .map_err(|e| e.to_string())?
+            .with_memory_pattern(memory_pattern)
             .map_err(|e| e.to_string())?;
         Ok(builder)
     }
 
-    fn from_session(session: ort::session::Session, path: &Path) -> Self {
+    fn from_session(
+        session: ort::session::Session,
+        path: &Path,
+        provider: ExecutionProviderKind,
+        device_name: Option<String>,
+    ) -> Self {
         let input_names = session
             .inputs()
             .iter()
@@ -131,6 +299,8 @@ impl OrtSession {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default(),
+            provider,
+            device_name,
         }
     }
 
@@ -194,24 +364,7 @@ impl OrtSession {
     /// Вход передаётся по значению: данные уходят в рантайм без копирования
     /// (на шаге декодера это мегабайты состояний энкодера).
     pub fn run_f32(&mut self, inputs: NamedTensors) -> Result<NamedTensors, String> {
-        let mut names: Vec<String> = Vec::with_capacity(inputs.len());
-        let mut tensors: Vec<DynTensor> = Vec::with_capacity(inputs.len());
-        for (name, (shape, data)) in inputs {
-            tensors.push(Self::tensor_f32(shape, data)?);
-            names.push(name);
-        }
-        let map: HashMap<&str, DynTensor> = names.iter().map(|n| n.as_str()).zip(tensors).collect();
-        let outputs = self.session.run(map).map_err(|error| {
-            log::error!(
-                target: "model",
-                model = self.label,
-                inputs = format!("{names:?}"),
-                error = error.to_string();
-                "ev=model.infer_error"
-            );
-            error.to_string()
-        })?;
-        Self::collect_outputs(&self.output_names, outputs)
+        self.run_mixed_full(inputs, HashMap::new(), HashMap::new())
     }
 
     pub fn run_mixed(

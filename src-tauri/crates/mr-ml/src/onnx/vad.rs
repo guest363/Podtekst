@@ -1,3 +1,4 @@
+use super::accel::{ExecutionProviderKind, SessionProfile};
 use super::session::OrtSession;
 
 pub const VAD_WINDOW: usize = 512;
@@ -47,12 +48,16 @@ pub struct SileroVad {
 impl SileroVad {
     pub fn load(path: &std::path::Path) -> Result<Self, String> {
         Ok(Self {
-            session: OrtSession::load(path, 1)?,
+            session: OrtSession::load_with_profile(path, 1, SessionProfile::CpuOnly)?,
             state: vec![0.0; STATE_DIMS.iter().product()],
             context: vec![0.0; VAD_CONTEXT],
             input: vec![0.0; VAD_CONTEXT + VAD_WINDOW],
             sample_rate: 16000,
         })
+    }
+
+    pub fn provider(&self) -> ExecutionProviderKind {
+        self.session.provider()
     }
 
     pub fn reset(&mut self) {

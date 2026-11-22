@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use super::session::OrtSession;
+use super::accel::{ExecutionProviderKind, SessionProfile};
+use super::session::{outputs_are_finite, OrtSession};
 
 pub const WINDOW_SAMPLES: usize = 160_000;
 pub const STEP_SAMPLES: usize = 32_000;
@@ -68,15 +69,36 @@ pub struct SegmentationModel {
     output_name: String,
 }
 
+fn pick_segmentation_input(session: &OrtSession) -> Result<String, String> {
+    ["input_values", "input", "waveform"]
+        .iter()
+        .find(|name| session.has_input(name))
+        .map(|name| name.to_string())
+        .or_else(|| session.input_names.first().cloned())
+        .ok_or_else(|| "у segmentation-модели нет входов".to_string())
+}
+
 impl SegmentationModel {
     pub fn load(path: &std::path::Path) -> Result<Self, String> {
-        let session = OrtSession::load(path, 0)?;
-        let input_name = ["input_values", "input", "waveform"]
-            .iter()
-            .find(|name| session.has_input(name))
-            .map(|name| name.to_string())
-            .or_else(|| session.input_names.first().cloned())
-            .ok_or_else(|| "у segmentation-модели нет входов".to_string())?;
+        // Bi-LSTM в PyAnnote на DirectML медленнее CPU в ~44 раза; ускоряется только на CUDA.
+        let session =
+            OrtSession::load_with_probe(path, 0, SessionProfile::CudaPreferred, |session| {
+                let input_name = pick_segmentation_input(session)?;
+                let mut inputs = HashMap::new();
+                inputs.insert(
+                    input_name,
+                    (
+                        vec![1i64, 1, WINDOW_SAMPLES as i64],
+                        vec![0.0f32; WINDOW_SAMPLES],
+                    ),
+                );
+                let outputs = session.run_f32(inputs)?;
+                if !outputs_are_finite(&outputs) {
+                    return Err("segmentation probe: нечисловой выход".to_string());
+                }
+                Ok(())
+            })?;
+        let input_name = pick_segmentation_input(&session)?;
         let output_name = session
             .output_names
             .iter()
@@ -89,6 +111,10 @@ impl SegmentationModel {
             input_name,
             output_name,
         })
+    }
+
+    pub fn provider(&self) -> ExecutionProviderKind {
+        self.session.provider()
     }
 
     pub fn segment(&mut self, samples: &[f32]) -> Result<Segmentation, String> {

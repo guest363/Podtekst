@@ -5,8 +5,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use super::accel::{ExecutionProviderKind, SessionProfile};
 use super::features;
-use super::session::OrtSession;
+use super::session::{outputs_are_finite, OrtSession};
 use crate::hotwords::{normalize_term, normalize_word, parse_hotwords};
 
 pub use crate::hotwords::{DEFAULT_CONFIDENCE_THRESHOLD, MAX_HOTWORDS, MAX_HOTWORD_CHARS};
@@ -713,7 +714,39 @@ impl GigaCTC {
         }
         let onnx = onnx
             .ok_or_else(|| "нет CTC-модели: скачайте её в «Настройки» → «Модели ИИ»".to_string())?;
-        let sess = OrtSession::load(&onnx, 0)?;
+        // INT8-граф с динамической длиной на DirectML медленнее CPU и даёт численный дрейф.
+        let sess =
+            OrtSession::load_with_probe(&onnx, 0, SessionProfile::CudaPreferred, |session| {
+                let in_feat = if session.input_names.iter().any(|n| n == "features") {
+                    "features".to_string()
+                } else {
+                    session
+                        .input_names
+                        .first()
+                        .cloned()
+                        .ok_or_else(|| "у CTC нет входов".to_string())?
+                };
+                let in_len = ["feature_lengths", "length", "feat_lengths"]
+                    .iter()
+                    .find_map(|n| session.input_names.iter().find(|x| x == n).cloned());
+                let mut f32_in = HashMap::new();
+                f32_in.insert(
+                    in_feat,
+                    (
+                        vec![1i64, features::GIGAAM_MEL_BANDS as i64, 100],
+                        vec![0.0f32; features::GIGAAM_MEL_BANDS * 100],
+                    ),
+                );
+                let mut i64_in = HashMap::new();
+                if let Some(name) = in_len {
+                    i64_in.insert(name, (vec![1i64], vec![100i64]));
+                }
+                let out = session.run_mixed(f32_in, i64_in)?;
+                if !outputs_are_finite(&out) {
+                    return Err("gigaam_ctc probe: нечисловой выход".to_string());
+                }
+                Ok(())
+            })?;
         let in_feat = if sess.input_names.iter().any(|n| n == "features") {
             "features".to_string()
         } else {
@@ -766,6 +799,10 @@ impl GigaCTC {
             hw_cache_key: Vec::new(),
             hw_cache_ids: Vec::new(),
         })
+    }
+
+    pub fn provider(&self) -> ExecutionProviderKind {
+        self.sess.provider()
     }
 
     pub fn transcribe_segment(

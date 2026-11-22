@@ -1,3 +1,4 @@
+pub mod accel;
 pub mod ctc;
 pub mod embed;
 pub mod features;
@@ -7,6 +8,7 @@ pub mod session;
 pub mod vad;
 pub mod whisper;
 
+pub use accel::{AccelInfo, ExecutionProviderKind, SessionProfile};
 pub use session::OrtSession;
 
 fn is_digital_silence(samples: &[f32]) -> bool {

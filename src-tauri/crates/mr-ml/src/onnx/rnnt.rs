@@ -11,8 +11,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use super::accel::{ExecutionProviderKind, SessionProfile};
 use super::features;
-use super::session::{NamedTensors, OrtSession, ShapeDataI64};
+use super::session::{outputs_are_finite, NamedTensors, OrtSession, ShapeDataI64};
 
 pub const BLANK_ID: i64 = 1024;
 
@@ -39,11 +40,48 @@ pub struct GigaAM {
 
 impl GigaAM {
     pub fn load(dir: &Path) -> Result<Self, String> {
-        let enc = OrtSession::load(&dir.join("gigaam_enc_q.onnx"), 0)?;
+        // INT8-граф с динамической длиной на DirectML медленнее CPU и даёт численный дрейф.
+        let enc = OrtSession::load_with_probe(
+            &dir.join("gigaam_enc_q.onnx"),
+            0,
+            SessionProfile::CudaPreferred,
+            |session| {
+                let input_name = session
+                    .input_names
+                    .first()
+                    .cloned()
+                    .ok_or_else(|| "у encoder нет входов".to_string())?;
+                let mut f32_in = HashMap::new();
+                f32_in.insert(
+                    input_name,
+                    (
+                        vec![1i64, features::GIGAAM_MEL_BANDS as i64, 100],
+                        vec![0.0f32; features::GIGAAM_MEL_BANDS * 100],
+                    ),
+                );
+                let mut i64_in: HashMap<String, ShapeDataI64> = HashMap::new();
+                if session.has_input("length") {
+                    i64_in.insert("length".to_string(), (vec![1i64], vec![100i64]));
+                }
+                let out = session.run_mixed(f32_in, i64_in)?;
+                if !outputs_are_finite(&out) {
+                    return Err("gigaam_enc probe: нечисловой выход".to_string());
+                }
+                Ok(())
+            },
+        )?;
         // Декодер и joint — крошечные матрицы на один кадр/токен: на пуле
         // потоков синхронизация дороже вычислений, поэтому по одному потоку.
-        let dec = OrtSession::load(&dir.join("gigaam_dec_q.onnx"), 1)?;
-        let joint = OrtSession::load(&dir.join("gigaam_joint_q.onnx"), 1)?;
+        let dec = OrtSession::load_with_profile(
+            &dir.join("gigaam_dec_q.onnx"),
+            1,
+            SessionProfile::CpuOnly,
+        )?;
+        let joint = OrtSession::load_with_profile(
+            &dir.join("gigaam_joint_q.onnx"),
+            1,
+            SessionProfile::CpuOnly,
+        )?;
         let enc_input = enc
             .input_names
             .first()
@@ -80,6 +118,10 @@ impl GigaAM {
 
     pub fn last_stats(&self) -> DecodeStats {
         self.last_stats
+    }
+
+    pub fn provider(&self) -> ExecutionProviderKind {
+        self.enc.provider()
     }
 
     fn joint_logits(&mut self, enc_frame: &[f32], dec_vec: &[f32]) -> Result<Vec<f32>, String> {

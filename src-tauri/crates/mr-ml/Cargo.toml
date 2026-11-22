@@ -18,10 +18,17 @@ log.workspace = true
 default = []
 onnx = ["dep:ort"]
 # Аппаратные Execution Providers (опционально; при недоступности — CPU-fallback):
-# ort-cuda (Linux/Windows, NVIDIA), ort-directml (Windows, любой GPU), ort-coreml (macOS).
-ort-cuda = ["onnx", "ort/cuda"]
-ort-directml = ["onnx", "ort/directml"]
+# ort-cuda (Linux/Windows), ort-directml (Windows), ort-coreml (macOS), ort-nnapi (Android).
+ort-cuda = ["onnx", "ort/cuda", "ort/copy-dylibs"]
+ort-directml = ["onnx", "ort/directml", "ort/copy-dylibs"]
 ort-coreml = ["onnx", "ort/coreml"]
+ort-nnapi = ["onnx", "ort/nnapi"]
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", default-features = false, features = ["Win32_Foundation", "Win32_Graphics_Dxgi", "Win32_System_LibraryLoader"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+libc.workspace = true
 
 [dependencies.ort]
 version = "=2.0.0-rc.15"
