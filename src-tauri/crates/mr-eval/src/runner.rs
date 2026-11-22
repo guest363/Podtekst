@@ -77,6 +77,14 @@ struct ConfigGuard {
 
 impl ConfigGuard {
     fn apply(data_dir: &Path, hotwords: &[String], ctc_enabled: bool) -> Result<Self, String> {
+        for marker in ["people.json", "voiceprints.json"] {
+            if data_dir.join(marker).is_file() {
+                return Err(format!(
+                    "{}: это живой профиль приложения; укажите отдельный --data-dir",
+                    data_dir.display()
+                ));
+            }
+        }
         std::fs::create_dir_all(data_dir).map_err(|error| error.to_string())?;
         let path = data_dir.join("config.json");
         let previous = std::fs::read(&path).ok();
@@ -101,10 +109,16 @@ impl ConfigGuard {
 
 impl Drop for ConfigGuard {
     fn drop(&mut self) {
-        let _ = match &self.previous {
+        let restored = match &self.previous {
             Some(bytes) => write_atomic(&self.path, bytes),
             None => std::fs::remove_file(&self.path).map_err(|error| error.to_string()),
         };
+        if let Err(error) = restored {
+            eprintln!(
+                "mr-eval: не удалось восстановить {}: {error}; используйте отдельный --data-dir",
+                self.path.display()
+            );
+        }
     }
 }
 
@@ -382,9 +396,20 @@ mod tests {
         assert!(Variant::parse("nope", &vocabulary).is_err());
     }
 
+    fn temp_dir(prefix: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "mr-eval-{prefix}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
     #[test]
     fn config_merges_and_restores() {
-        let directory = std::env::temp_dir().join(format!("mr-eval-config-{}", std::process::id()));
+        let directory = temp_dir("config");
         std::fs::create_dir_all(&directory).unwrap();
         let path = directory.join("config.json");
         std::fs::write(&path, b"{\"record_mode\":\"split\"}").unwrap();
@@ -397,6 +422,15 @@ mod tests {
         let restored: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(restored["record_mode"], "split");
         assert!(restored.get("hotwords").is_none());
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn refuses_live_profile_data_dir() {
+        let directory = temp_dir("live");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("people.json"), b"{}").unwrap();
+        assert!(ConfigGuard::apply(&directory, &[], true).is_err());
         let _ = std::fs::remove_dir_all(directory);
     }
 }

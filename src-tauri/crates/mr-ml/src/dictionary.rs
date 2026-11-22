@@ -83,10 +83,11 @@ impl Dictionary {
                         .iter()
                         .zip(&alias.words)
                         .all(|(token, word)| token.word == *word)
-                    && (alias.words.len() == 1
-                        || text[tokens[index].end..tokens[end - 1].start]
+                    && (0..alias.words.len() - 1).all(|k| {
+                        text[tokens[index + k].end..tokens[index + k + 1].start]
                             .chars()
-                            .all(|character| !character.is_alphanumeric()))
+                            .all(char::is_whitespace)
+                    })
             }) else {
                 index += 1;
                 continue;
@@ -219,6 +220,23 @@ mod tests {
             "User Flow готов"
         );
         assert_eq!(corrected(&dictionary, "юзер-флоу готов"), "юзер-флоу готов");
+        assert_eq!(
+            corrected(&dictionary, "юзер, флоу готов"),
+            "юзер, флоу готов"
+        );
+        assert_eq!(
+            corrected(&dictionary, "юзер. флоу готов"),
+            "юзер. флоу готов"
+        );
+    }
+
+    #[test]
+    fn replaces_three_word_aliases() {
+        let dictionary = dictionary(&["юзер флоу готов => User Flow Ready"]);
+        assert_eq!(
+            corrected(&dictionary, "юзер флоу готов сейчас"),
+            "User Flow Ready сейчас"
+        );
     }
 
     #[test]

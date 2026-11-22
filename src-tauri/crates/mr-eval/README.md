@@ -48,7 +48,7 @@ cargo build --release -p mr-eval --manifest-path src-tauri/Cargo.toml
 
 ## Прогон
 
-Модели должны быть в `<data-dir>/models`, как у приложения. `data-dir` может быть отдельным каталогом с junction/symlink на модели; исходный `config.json` утилита сохраняет и восстанавливает, недостающие ключи не теряет.
+Модели должны быть в `<data-dir>/models`, как у приложения. `data-dir` — отдельный каталог с junction/symlink на модели: живой профиль приложения (с `people.json`/`voiceprints.json`) утилита не принимает. `config.json` сохраняется и восстанавливается при штатном завершении; Ctrl-C оставляет его изменённым, недостающие ключи не теряются.
 
 ```bash
 src-tauri/target/release/podtekst-eval hotwords run \

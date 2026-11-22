@@ -144,10 +144,16 @@ pub(super) fn handle_save_dialog(mut request: tiny_http::Request, query: &str) {
         }
     };
 
-    let filter = if name.ends_with(".docx") {
-        "*.docx"
-    } else {
-        "*.*"
+    let extension = name
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase())
+        .filter(|extension| !extension.is_empty());
+    let filter = match extension.as_deref() {
+        Some("docx") => "*.docx",
+        Some("srt") => "*.srt",
+        Some("vtt") => "*.vtt",
+        Some("md") => "*.md",
+        _ => "*.*",
     };
 
     let is_headless = std::env::var("DISPLAY").is_err()
@@ -161,8 +167,13 @@ pub(super) fn handle_save_dialog(mut request: tiny_http::Request, query: &str) {
 
     match pick_save_path(&name, filter) {
         Some(mut path) => {
-            if name.ends_with(".docx") && path.extension().is_none_or(|e| e != "docx") {
-                path.set_extension("docx");
+            if let Some(extension) = extension.as_deref() {
+                if path
+                    .extension()
+                    .is_none_or(|existing| !existing.eq_ignore_ascii_case(extension))
+                {
+                    path.set_extension(extension);
+                }
             }
             if let Err(e) = std::fs::write(&path, &body) {
                 json_response(
