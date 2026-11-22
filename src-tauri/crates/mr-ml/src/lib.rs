@@ -13,6 +13,7 @@ pub enum MlError {
 pub type Result<T> = std::result::Result<T, MlError>;
 
 pub mod cluster;
+pub mod dictionary;
 pub mod hotwords;
 
 pub const EMBEDDING_SPACE: &str = "eres2netv2-192-v1";

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use mr_audio::decode::{decode_to_channels_16k_auto, is_video_path};
-use mr_ml::hotwords::{sanitize_hotwords, DEFAULT_CONFIDENCE_THRESHOLD};
+use mr_ml::hotwords::{confidence_threshold, sanitize_hotwords};
 
 use super::artifacts::{write_run_manifest, write_transcript_doc};
 use super::asr_engine::{pick_asr_engine, AsrEngine};
@@ -277,23 +277,22 @@ fn transcribe_file_inner(
         "ev=asr.engine"
     );
     if use_gigaam && !opts.hotwords.is_empty() {
+        let dictionary = mr_ml::dictionary::Dictionary::new(&opts.hotwords);
+        let has_pairs = dictionary.alias_count() > 0;
         if !opts.ctc_enabled {
             log::warn!(
                 target: "asr",
                 reason = "ctc_disabled";
                 "ev=asr.ctc.skip"
             );
-            on_event(6, "Словарь терминов не применён: CTC-уточнение выключено");
+            on_event(6, ctc_unavailable_message(has_pairs, false));
         } else if models.ctc.is_none() {
             log::warn!(
                 target: "asr",
                 reason = "model_missing";
                 "ev=asr.ctc.skip"
             );
-            on_event(
-                6,
-                "CTC-модель не скачана — словарь не применён. Скачайте её во вкладке «Компоненты»",
-            );
+            on_event(6, ctc_unavailable_message(has_pairs, true));
         }
     }
     stage_end("models", models_stage);
@@ -407,9 +406,8 @@ fn transcribe_file_inner(
         speakers: speakers.clone(),
         speakers_info: speakers_info_json,
         hotwords_applied: hotwords_applied.clone(),
-        confidence: ctc_used_any.then(
-            || serde_json::json!({"engine": "ctc", "threshold": DEFAULT_CONFIDENCE_THRESHOLD}),
-        ),
+        confidence: ctc_used_any
+            .then(|| serde_json::json!({"engine": "ctc", "threshold": confidence_threshold()})),
     };
     let doc = TranscriptDoc {
         schema: super::document::SCHEMA_VERSION,
@@ -480,9 +478,26 @@ fn original_channel(channel: Option<i32>, sources: &[Option<i32>]) -> Option<i32
         .and_then(|ch| sources.get(ch).copied().flatten())
 }
 
+fn ctc_unavailable_message(has_pairs: bool, model_missing: bool) -> &'static str {
+    match (has_pairs, model_missing) {
+        (true, false) => "Замены из словаря работают; термины «на слух» не применены: CTC-уточнение выключено",
+        (false, false) => "Термины «на слух» не применены: CTC-уточнение выключено",
+        (true, true) => "Замены из словаря работают; термины «на слух» не применены: CTC-модель не скачана. Скачайте её во вкладке «Компоненты»",
+        (false, true) => "Термины «на слух» не применены: CTC-модель не скачана. Скачайте её во вкладке «Компоненты»",
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{original_channel, quiet_blank_penalty};
+    use super::{ctc_unavailable_message, original_channel, quiet_blank_penalty};
+
+    #[test]
+    fn ctc_warning_reflects_working_replacements() {
+        assert!(ctc_unavailable_message(true, false).contains("Замены"));
+        assert!(ctc_unavailable_message(true, true).contains("Замены"));
+        assert!(!ctc_unavailable_message(false, false).contains("Замены"));
+        assert!(!ctc_unavailable_message(false, true).contains("Замены"));
+    }
 
     #[test]
     fn selected_right_channel_keeps_original_index() {

@@ -9,7 +9,7 @@ import {
   pluralSpeakers,
   pluralUtterances,
 } from '../lib/api'
-import { exportDocx, printTranscript } from '../lib/export.ts'
+import { exportDocx, exportSubtitles, printTranscript } from '../lib/export.ts'
 import { peopleState } from '../lib/people.svelte.ts'
 import { isQueued } from '../lib/queue.svelte.ts'
 import { extractMp3 } from '../lib/recordings.svelte.ts'
@@ -31,6 +31,11 @@ import SlimPlayer from './slim-player.svelte'
 import SpeakersPane from './speakers-pane.svelte'
 import SummaryPanel from './summary-panel.svelte'
 import TranscriptDoc from './transcript-doc.svelte'
+
+const subtitleExports = [
+  { format: 'srt' as const, label: 'SRT', title: 'Скачать субтитры SRT' },
+  { format: 'vtt' as const, label: 'VTT', title: 'Скачать субтитры VTT' },
+]
 
 const initialSpeakersDrawer =
   typeof window !== 'undefined' && window.matchMedia('(max-width: 720px)').matches
@@ -504,11 +509,22 @@ const onWindowKey = (e: KeyboardEvent): void => {
         <button
           class="btn-secondary btn-sm"
           disabled={!transcript.utterances.length}
-          title={transcript.utterances.length ? '' : 'Экспорт появится после расшифровки'}
+          title={transcript.utterances.length ? '' : 'Сначала расшифруйте запись'}
           onclick={() => void exportDocx(baseName(ui.currentTranscriptPath), transcript.utterances, transcriptMeta)}
         >
           DOCX
         </button>
+        {#each subtitleExports as item}
+          <button
+            class="btn-secondary btn-sm"
+            disabled={!transcript.utterances.length}
+            title={transcript.utterances.length ? item.title : 'Сначала расшифруйте запись'}
+            aria-label={item.title}
+            onclick={() => void exportSubtitles(baseName(ui.currentTranscriptPath), transcript.utterances, item.format)}
+          >
+            {item.label}
+          </button>
+        {/each}
         <button class="btn-secondary btn-sm" onclick={printTranscript} title="Печать или сохранение в PDF">
           PDF
         </button>

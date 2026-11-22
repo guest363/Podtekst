@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use mr_ml::hotwords::DEFAULT_CONFIDENCE_THRESHOLD;
+use mr_ml::dictionary::Dictionary;
+use mr_ml::hotwords::confidence_threshold;
 use mr_ml::onnx::ctc::align_to_reference_timed;
 
 use super::super::diag::{
@@ -28,6 +29,9 @@ pub(super) fn run(
     let mut ctc_used_any = false;
     let mut channel_utts: HashMap<usize, Vec<Utterance>> = HashMap::new();
     let ctc_available = use_gigaam && opts.ctc_enabled && models.ctc.is_some();
+    let dictionary = Dictionary::new(&opts.hotwords);
+    let mut dictionary_utts = 0usize;
+    let mut dictionary_words = 0usize;
     if !ctc_available && total_segs > 0 {
         log::info!(
             target: "asr",
@@ -254,7 +258,7 @@ pub(super) fn run(
                                         &hyp,
                                         &times,
                                         &opts.hotwords,
-                                        DEFAULT_CONFIDENCE_THRESHOLD,
+                                        confidence_threshold(),
                                     );
                                     ctc_changed = aligned
                                         .iter()
@@ -324,6 +328,11 @@ pub(super) fn run(
                         conf_min = ctc_conf_min;
                         "ev=asr.ctc"
                     );
+                }
+                let replaced = apply_dictionary(&dictionary, ctc_used, &mut final_text);
+                if replaced > 0 {
+                    dictionary_utts += 1;
+                    dictionary_words += replaced;
                 }
             }
             // Калибровка диаризации: эмбеддинги шума без текста создают ложные кластеры дикторов.
@@ -409,6 +418,39 @@ pub(super) fn run(
         channel_utts.insert(*ch, utts);
     }
     stage_end("asr", asr_stage);
+    if dictionary.alias_count() > 0 {
+        log::debug!(
+            target: "asr",
+            aliases = dictionary.alias_count(),
+            terms = dictionary.term_count(),
+            utts = dictionary_utts,
+            words = dictionary_words;
+            "ev=asr.dict"
+        );
+    }
 
     Ok((channel_utts, ctc_used_any))
+}
+
+fn apply_dictionary(dictionary: &Dictionary, ctc_used: bool, text: &mut String) -> usize {
+    if ctc_used {
+        0
+    } else {
+        dictionary.apply(text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dictionary_is_skipped_after_ctc_and_applied_otherwise() {
+        let dictionary = Dictionary::new(&["мерши => merge".to_string()]);
+        let mut text = "мерши".to_string();
+        assert_eq!(apply_dictionary(&dictionary, true, &mut text), 0);
+        assert_eq!(text, "мерши");
+        assert_eq!(apply_dictionary(&dictionary, false, &mut text), 1);
+        assert_eq!(text, "merge");
+    }
 }

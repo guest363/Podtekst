@@ -25,6 +25,7 @@ fn package(version: &str, tools: &[&str]) -> pins::Package {
     }
 }
 
+#[cfg(unix)]
 fn write_zip(path: &Path, name: &str, body: &[u8]) {
     use zip::write::SimpleFileOptions;
     let mut writer = zip::ZipWriter::new(std::fs::File::create(path).unwrap());

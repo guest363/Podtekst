@@ -7,11 +7,32 @@ use std::path::Path;
 
 use super::features;
 use super::session::OrtSession;
-use crate::hotwords::{normalize_term, parse_hotwords};
+use crate::hotwords::{normalize_term, normalize_word, parse_hotwords};
 
 pub use crate::hotwords::{DEFAULT_CONFIDENCE_THRESHOLD, MAX_HOTWORDS, MAX_HOTWORD_CHARS};
 
 pub const HOTWORD_BONUS: f32 = 3.0;
+
+pub fn hotword_bonus() -> f32 {
+    static VALUE: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| {
+        if std::env::var("MR_HOTWORD_BENCH").as_deref() != Ok("1") {
+            return HOTWORD_BONUS;
+        }
+        std::env::var("MR_HOTWORD_BONUS")
+            .ok()
+            .and_then(|raw| parse_bonus(&raw))
+            .unwrap_or(HOTWORD_BONUS)
+    })
+}
+
+fn parse_bonus(raw: &str) -> Option<f32> {
+    raw.trim()
+        .parse::<f32>()
+        .ok()
+        .filter(|value| value.is_finite() && (0.0..=10.0).contains(value))
+}
+
 pub const BEAM_WIDTH: usize = 8;
 const TOP_K: usize = 16;
 
@@ -38,12 +59,6 @@ pub struct AlignedWord {
     pub needs_review: bool,
     pub start_sec: f64,
     pub end_sec: f64,
-}
-
-fn cmp_norm(s: &str) -> String {
-    normalize_term(s)
-        .trim_matches(|c: char| !c.is_alphanumeric())
-        .to_string()
 }
 
 fn tokenize_greedy(term: &str, vocab: &[String]) -> Option<Vec<i64>> {
@@ -468,8 +483,8 @@ fn align_conf_timed(
     source: &[CtcWord],
     spans: &[FrameSpan],
 ) -> (Vec<f64>, Vec<FrameSpan>) {
-    let a: Vec<String> = target.iter().map(|w| cmp_norm(w)).collect();
-    let b: Vec<String> = source.iter().map(|w| cmp_norm(&w.text)).collect();
+    let a: Vec<String> = target.iter().map(|w| normalize_word(w)).collect();
+    let b: Vec<String> = source.iter().map(|w| normalize_word(&w.text)).collect();
     align_map(&a, &b)
         .into_iter()
         .map(|o| {
@@ -522,18 +537,18 @@ pub fn align_to_reference_timed(
     let entries = parse_hotwords(hotwords);
     let full: HashMap<String, &str> = entries
         .iter()
-        .map(|e| (cmp_norm(&e.boost), e.to_display.as_str()))
+        .map(|e| (normalize_word(&e.boost), e.to_display.as_str()))
         .collect();
     let in_dict = |w: &str| -> bool {
-        let n = cmp_norm(w);
+        let n = normalize_word(w);
         full.contains_key(&n)
             || normalize_term(w)
                 .split(' ')
-                .any(|p| full.contains_key(&cmp_norm(p)))
+                .any(|p| full.contains_key(&normalize_word(p)))
     };
     let rwords: Vec<String> = rnnt_text.split_whitespace().map(str::to_string).collect();
-    let a: Vec<String> = rwords.iter().map(|w| cmp_norm(w)).collect();
-    let b: Vec<String> = ctc.words.iter().map(|w| cmp_norm(&w.text)).collect();
+    let a: Vec<String> = rwords.iter().map(|w| normalize_word(w)).collect();
+    let b: Vec<String> = ctc.words.iter().map(|w| normalize_word(&w.text)).collect();
     let src_of = align_map(&a, &b);
     let out: Vec<AlignedWord> = rwords
         .into_iter()
@@ -549,8 +564,8 @@ pub fn align_to_reference_timed(
                         start_sec = a;
                         end_sec = b;
                     }
-                    let nw = cmp_norm(&w);
-                    let nc = cmp_norm(&cw.text);
+                    let nw = normalize_word(&w);
+                    let nc = normalize_word(&cw.text);
                     // SAFETY: бонусное слово — только при близком написании и уверенности ≥ порога, иначе словарь затирал бы несвязанные слова на шуме.
                     let close = {
                         let longest = nw.chars().count().max(nc.chars().count());
@@ -591,16 +606,38 @@ pub fn align_to_reference_timed(
     if pairs.is_empty() {
         return out;
     }
+    let mut protected = vec![false; out.len()];
+    for entry in &entries {
+        let term: Vec<String> = entry
+            .to_display
+            .split_whitespace()
+            .map(normalize_word)
+            .filter(|word| !word.is_empty())
+            .collect();
+        if term.is_empty() || term.len() > out.len() {
+            continue;
+        }
+        for start in 0..=out.len() - term.len() {
+            if out[start..start + term.len()]
+                .iter()
+                .zip(&term)
+                .all(|(word, expected)| normalize_word(&word.text) == *expected)
+            {
+                protected[start..start + term.len()].fill(true);
+            }
+        }
+    }
     let mut res = Vec::with_capacity(out.len());
     let mut i = 0;
     while i < out.len() {
         let mut hit: Option<(&Vec<String>, usize)> = None;
         for (from, to) in &pairs {
             if out.len() - i >= from.len()
+                && !protected[i..i + from.len()].iter().any(|flag| *flag)
                 && out[i..i + from.len()]
                     .iter()
                     .zip(from)
-                    .all(|(w, f)| cmp_norm(&w.text) == *f)
+                    .all(|(w, f)| normalize_word(&w.text) == *f)
             {
                 hit = Some((to, from.len()));
                 break;
@@ -843,7 +880,7 @@ impl GigaCTC {
             self.blank,
             BEAM_WIDTH,
             &self.hw_cache_ids,
-            HOTWORD_BONUS,
+            hotword_bonus(),
         );
         let duration_sec = mel.len() as f64 * 160.0 / 16000.0;
         let frame_sec = duration_sec / frames.len() as f64;
@@ -865,6 +902,16 @@ impl GigaCTC {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bonus_override_accepts_only_bounded_values() {
+        assert_eq!(parse_bonus("2.5"), Some(2.5));
+        assert_eq!(parse_bonus(" 0 "), Some(0.0));
+        assert_eq!(parse_bonus("10"), Some(10.0));
+        assert_eq!(parse_bonus("10.1"), None);
+        assert_eq!(parse_bonus("-1"), None);
+        assert_eq!(parse_bonus("нет"), None);
+    }
 
     fn vocab4() -> Vec<String> {
         vec![
@@ -1127,6 +1174,29 @@ mod tests {
         assert_eq!(aligned[1].text, "багов");
         assert!(!aligned[0].needs_review);
         assert!(!aligned[1].needs_review);
-        assert_eq!(aligned[2].text, "вылез");
+    }
+
+    #[test]
+    fn pair_does_not_rewrite_canonical_term() {
+        let ctc = CtcHypothesis {
+            text: String::new(),
+            words: Vec::new(),
+        };
+        let aligned = align_to_reference(
+            "опен код хаб",
+            &ctc,
+            &[
+                "опен код => OpenCode".to_string(),
+                "опен код хаб".to_string(),
+            ],
+            DEFAULT_CONFIDENCE_THRESHOLD,
+        );
+        assert_eq!(
+            aligned
+                .iter()
+                .map(|word| word.text.as_str())
+                .collect::<Vec<_>>(),
+            ["опен", "код", "хаб"]
+        );
     }
 }

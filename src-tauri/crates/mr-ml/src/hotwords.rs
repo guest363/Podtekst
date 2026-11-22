@@ -5,12 +5,38 @@ pub const MAX_HOTWORDS: usize = 500;
 pub const MAX_HOTWORD_CHARS: usize = 64;
 pub const DEFAULT_CONFIDENCE_THRESHOLD: f64 = 0.55;
 
+pub fn confidence_threshold() -> f64 {
+    static VALUE: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| {
+        if std::env::var("MR_HOTWORD_BENCH").as_deref() != Ok("1") {
+            return DEFAULT_CONFIDENCE_THRESHOLD;
+        }
+        std::env::var("MR_HOTWORD_CONFIDENCE")
+            .ok()
+            .and_then(|raw| parse_confidence(&raw))
+            .unwrap_or(DEFAULT_CONFIDENCE_THRESHOLD)
+    })
+}
+
+fn parse_confidence(raw: &str) -> Option<f64> {
+    raw.trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite() && (0.0..=1.0).contains(value))
+}
+
 pub fn normalize_term(s: &str) -> String {
     s.to_lowercase()
         .replace('ё', "е")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+pub fn normalize_word(s: &str) -> String {
+    normalize_term(s)
+        .trim_matches(|c: char| !c.is_alphanumeric())
+        .to_string()
 }
 
 pub fn sanitize_hotwords(raw: &[String]) -> Vec<String> {
@@ -45,7 +71,7 @@ pub fn parse_hotwords(raw: &[String]) -> Vec<HotwordEntry> {
             let from: Vec<String> = normalize_term(a)
                 .split(' ')
                 .filter(|w| !w.is_empty())
-                .map(cmp_norm_word)
+                .map(normalize_word)
                 .collect();
             let to_display = b.trim().to_string();
             let boost = normalize_term(b);
@@ -81,10 +107,6 @@ pub fn parse_hotwords(raw: &[String]) -> Vec<HotwordEntry> {
     out
 }
 
-fn cmp_norm_word(s: &str) -> String {
-    s.trim_matches(|c: char| !c.is_alphanumeric()).to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,6 +127,15 @@ mod tests {
         let many: Vec<String> = (0..600).map(|i| format!("слово{i}")).collect();
         assert_eq!(sanitize_hotwords(&many).len(), MAX_HOTWORDS);
         assert_eq!(normalize_term("Ёлка  Палка"), "елка палка");
+    }
+
+    #[test]
+    fn confidence_override_accepts_only_probabilities() {
+        assert_eq!(parse_confidence("0.4"), Some(0.4));
+        assert_eq!(parse_confidence(" 1 "), Some(1.0));
+        assert_eq!(parse_confidence("1.1"), None);
+        assert_eq!(parse_confidence("-0.1"), None);
+        assert_eq!(parse_confidence("нет"), None);
     }
 
     #[test]
