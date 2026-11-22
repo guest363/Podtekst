@@ -232,7 +232,9 @@ pub fn vad_segments_from_probs(
         }
     }
 
-    const MERGE_GAP_SEC: f32 = 0.40;
+    // Учитывает ±0.25 с паддинга выше: 0.25 с здесь даёт ~0.75 с суммарного порога паузы
+    // и не склеивает короткие реплики разных дикторов через затяжное молчание.
+    const MERGE_GAP_SEC: f32 = 0.25;
     let mut merged: Vec<(f32, f32)> = Vec::with_capacity(raw_segs.len());
     for (s, e) in raw_segs {
         if let Some(last) = merged.last_mut() {

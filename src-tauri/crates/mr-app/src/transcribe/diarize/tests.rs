@@ -1040,6 +1040,49 @@ fn overlapping_units_do_not_inflate_promotion_duration() {
 }
 
 #[test]
+fn unmatched_short_fragment_similar_to_cluster_joins_instead_of_new_speaker() {
+    let units = vec![
+        AcoustUnit {
+            utterance: 0,
+            start: 0.0,
+            end: 2.0,
+            dur: 2.0,
+            quality: 1.0,
+            embedding: vec![1.0, 0.0, 0.0],
+        },
+        AcoustUnit {
+            utterance: 1,
+            start: 3.0,
+            end: 5.0,
+            dur: 2.0,
+            quality: 1.0,
+            embedding: vec![0.0, 1.0, 0.0],
+        },
+        AcoustUnit {
+            utterance: 2,
+            start: 6.0,
+            end: 7.2,
+            dur: 1.2,
+            quality: 1.0,
+            embedding: vec![0.0, 0.35, (1.0f64 - 0.35 * 0.35).sqrt()],
+        },
+    ];
+    let mut labels = HashMap::from([(0usize, 0usize), (1usize, 1usize)]);
+    let mut next = 2usize;
+    let promoted = promote_unmatched_utterances(
+        &units,
+        &mut labels,
+        &mut next,
+        0,
+        SpeechSupport::default(),
+        None,
+    );
+    assert!(promoted.is_empty());
+    assert_eq!(labels.get(&2), Some(&1));
+    assert_eq!(next, 2);
+}
+
+#[test]
 fn promoted_utterances_survive_coverage_renumbering() {
     let mut utterances = vec![
         utt(0.0, 8.0, "", 0, "one two three four"),
