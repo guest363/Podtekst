@@ -88,3 +88,7 @@ ui/web/frontend/.yarn/install-state.gz
 
 # Локальные отчёты скриптов проверки компонентов
 runs/
+
+# Временное состояние Open Code Review
+.ocr/
+.opencode/commands/ocr/
