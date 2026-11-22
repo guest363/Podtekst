@@ -23,7 +23,7 @@ symphonia = { version = "0.5", default-features = false, features = ["mp3", "wav
 opus-decoder = "0.1"
 zip = { version = "9.1", default-features = false, features = ["deflate"] }
 tar = "0.4"
-lzma-rust2 = { version = "0.15", default-features = false, features = ["std", "xz", "encoder"] }
+lzma-rust2 = { version = "0.25", default-features = false, features = ["std", "xz", "encoder"] }
 sha2 = "0.11"
 regex = "1.13"
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
