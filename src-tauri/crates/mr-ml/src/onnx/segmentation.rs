@@ -61,6 +61,23 @@ impl Segmentation {
         }
         write
     }
+
+    /// Доля кадров с перекрытием голосов на отрезке сэмплов `[start_sample..end_sample)`.
+    pub fn overlap_share(&self, start_sample: usize, end_sample: usize) -> f64 {
+        if end_sample <= start_sample || self.frames.is_empty() {
+            return 0.0;
+        }
+        let first = start_sample / FRAME_SAMPLES;
+        let last = end_sample.div_ceil(FRAME_SAMPLES).min(self.frames.len());
+        if first >= last {
+            return 0.0;
+        }
+        let overlap = self.frames[first..last]
+            .iter()
+            .filter(|&&class| class >= 4)
+            .count();
+        overlap as f64 / (last - first) as f64
+    }
 }
 
 pub struct SegmentationModel {
@@ -445,5 +462,19 @@ mod tests {
         assert_eq!(frame_class(&[0.0; POWERSET_CLASSES], 0.0, 0), 0);
         // Перестановка речи между окнами (1.2 + 1.2 + 0.6 > тишина 2.0) остаётся речью.
         assert_ne!(frame_class(&[2.0, 1.2, 1.2, 0.6, 0.0, 0.0, 0.0], 0.0, 5), 0);
+    }
+
+    #[test]
+    fn overlap_share_reports_fraction_inside_requested_range() {
+        let segmentation = Segmentation {
+            frames: vec![1, 4, 5, 2],
+            windows: vec![],
+        };
+        assert!((segmentation.overlap_share(0, FRAME_SAMPLES * 4) - 0.5).abs() < 1e-6);
+        assert_eq!(segmentation.overlap_share(0, FRAME_SAMPLES), 0.0);
+        assert_eq!(
+            segmentation.overlap_share(FRAME_SAMPLES, FRAME_SAMPLES),
+            0.0
+        );
     }
 }

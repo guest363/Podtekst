@@ -19,6 +19,12 @@ const CUT_SCORE_TURN_DASH: f64 = 1.0;
 const CUT_SCORE_MID_PHRASE_TINY_GAP: f64 = 0.65;
 const TINY_MID_PHRASE_GAP_SEC: f64 = 0.12;
 const CUT_SAME_SPEAKER_MIN_SIM: f64 = 0.35;
+// Поштучный срез по точке не опирается на 3+ окон, поэтому требуем контраст
+// строже обычного порога и не режем, если срез попадает в плотное перекрытие.
+const SENTENCE_CUT_SAME_SPEAKER_MIN_SIM: f64 = 0.30;
+const SENTENCE_CUT_OVERLAP_GUARD_SEC: f64 = 0.75;
+const SENTENCE_CUT_MAX_LOCAL_OVERLAP_SHARE: f64 = 0.20;
+const SENTENCE_CUT_MAX_ARM_OVERLAP_SHARE: f64 = 0.15;
 const MIN_SENTENCE_SPLIT_SIDE_SEC: f64 = 1.0;
 
 fn lowest_rms_time(samples: &[f32], search_lo: f64, search_hi: f64, fallback: f64) -> f64 {
@@ -262,6 +268,27 @@ fn sentence_cut_candidates(samples: &[f32], u: &Utterance) -> Vec<f64> {
     candidates
 }
 
+fn sentence_cut_near_overlap(
+    segmentation: Option<&Segmentation>,
+    seg_start: f64,
+    cut: f64,
+    seg_end: f64,
+) -> bool {
+    let Some(seg) = segmentation else {
+        return false;
+    };
+    let sr = 16000.0;
+    let to_sample = |t: f64| (t.max(0.0) * sr) as usize;
+    let guard_lo = to_sample((cut - SENTENCE_CUT_OVERLAP_GUARD_SEC).max(seg_start));
+    let guard_hi = to_sample((cut + SENTENCE_CUT_OVERLAP_GUARD_SEC).min(seg_end));
+    if seg.overlap_share(guard_lo, guard_hi) > SENTENCE_CUT_MAX_LOCAL_OVERLAP_SHARE {
+        return true;
+    }
+    seg.overlap_share(to_sample(seg_start), to_sample(cut)) > SENTENCE_CUT_MAX_ARM_OVERLAP_SHARE
+        || seg.overlap_share(to_sample(cut), to_sample(seg_end))
+            > SENTENCE_CUT_MAX_ARM_OVERLAP_SHARE
+}
+
 /// Скользящее 1.6 с окно проглатывает смену голоса при перепаде громкости:
 /// громкий сосед заглушает тихую половину. Граница предложения (`.`/`!`/`?`/`…`)
 /// позволяет сравнить левый и правый куски порознь без смешивания энергий.
@@ -277,6 +304,9 @@ fn sentence_boundary_cuts(
     let mut seg_start = u.start;
     for (idx, &cut) in candidates.iter().enumerate() {
         let seg_end = candidates.get(idx + 1).copied().unwrap_or(u.end);
+        if sentence_cut_near_overlap(segmentation, seg_start, cut, seg_end) {
+            continue;
+        }
         let (Some(left), Some(right)) = (
             extract_clean_slice(samples, seg_start, cut, segmentation, echo),
             extract_clean_slice(samples, cut, seg_end, segmentation, echo),
@@ -287,7 +317,7 @@ fn sentence_boundary_cuts(
             continue;
         };
         if let [Some(l), Some(r)] = embs.as_slice() {
-            if mr_ml::cosine_similarity(l, r) < CUT_SAME_SPEAKER_MIN_SIM {
+            if mr_ml::cosine_similarity(l, r) < SENTENCE_CUT_SAME_SPEAKER_MIN_SIM {
                 cuts.push(cut);
                 seg_start = cut;
             }
@@ -512,5 +542,32 @@ mod tests {
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0].text, "альфа?");
         assert_eq!(parts[1].text, "бета.");
+    }
+
+    #[test]
+    fn sentence_cut_is_suppressed_near_overlap_region() {
+        let frames_per_4s = (4 * 16000) / mr_ml::onnx::segmentation::FRAME_SAMPLES + 1;
+        let mut frames = vec![1u8; frames_per_4s];
+        let ov_lo = (11 * 1600) / mr_ml::onnx::segmentation::FRAME_SAMPLES;
+        let ov_hi = (19 * 1600) / mr_ml::onnx::segmentation::FRAME_SAMPLES;
+        for f in &mut frames[ov_lo..ov_hi] {
+            *f = 4;
+        }
+        let seg = Segmentation {
+            frames,
+            windows: vec![],
+        };
+        assert!(sentence_cut_near_overlap(Some(&seg), 0.0, 1.5, 3.1));
+        assert!(!sentence_cut_near_overlap(None, 0.0, 1.5, 3.1));
+
+        let mut far_frames = vec![1u8; frames_per_4s * 3];
+        if let Some(last) = far_frames.last_mut() {
+            *last = 4;
+        }
+        let far_seg = Segmentation {
+            frames: far_frames,
+            windows: vec![],
+        };
+        assert!(!sentence_cut_near_overlap(Some(&far_seg), 0.0, 1.5, 3.1));
     }
 }

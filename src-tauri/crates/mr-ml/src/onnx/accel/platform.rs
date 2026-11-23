@@ -50,7 +50,9 @@ fn enumerate_dxgi_adapters() -> Vec<super::AdapterCandidate> {
 fn probe_cuda_runtime_windows() -> bool {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{FreeLibrary, HMODULE};
-    use windows::Win32::System::LibraryLoader::LoadLibraryW;
+    use windows::Win32::System::LibraryLoader::{
+        LoadLibraryExW, LoadLibraryW, DONT_RESOLVE_DLL_REFERENCES,
+    };
 
     const DLLS: &[&str] = &[
         "cudart64_13.dll",
@@ -61,7 +63,6 @@ fn probe_cuda_runtime_windows() -> bool {
         "cudnn_ops64_9.dll",
         "cudnn_cnn64_9.dll",
         "onnxruntime_providers_shared.dll",
-        "onnxruntime_providers_cuda.dll",
     ];
     let mut loaded: Vec<HMODULE> = Vec::with_capacity(DLLS.len());
     for name in DLLS {
@@ -80,7 +81,37 @@ fn probe_cuda_runtime_windows() -> bool {
             }
         }
     }
-    true
+    // `onnxruntime_providers_cuda.dll` в `DllMain` вызывает `Provider_GetHost()`, поэтому
+    // до инициализации ORT проверяем её наличие без исполнения `DllMain`.
+    let cuda_provider: Vec<u16> = "onnxruntime_providers_cuda.dll"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: нуль-терминированная UTF-16 строка имени провайдера ORT.
+    match unsafe {
+        LoadLibraryExW(
+            PCWSTR(cuda_provider.as_ptr()),
+            None,
+            DONT_RESOLVE_DLL_REFERENCES,
+        )
+    } {
+        Ok(handle) => {
+            // SAFETY: дескриптор только что получен от `LoadLibraryExW`.
+            unsafe {
+                let _ = FreeLibrary(handle);
+            }
+            true
+        }
+        Err(_) => {
+            for handle in loaded.into_iter().rev() {
+                // SAFETY: дескриптор только что получен от `LoadLibraryW` выше.
+                unsafe {
+                    let _ = FreeLibrary(handle);
+                }
+            }
+            false
+        }
+    }
 }
 
 #[cfg(any(

@@ -40,11 +40,12 @@ pub struct GigaAM {
 
 impl GigaAM {
     pub fn load(dir: &Path) -> Result<Self, String> {
-        // INT8-граф с динамической длиной на DirectML медленнее CPU и даёт численный дрейф.
+        // ЗАЧЕМ: INT8-граф с динамической длиной на GPU (DirectML и CUDA) медленнее CPU
+        // из-за переключения ядра по длине сегмента и даёт численный дрейф на коротких фразах.
         let enc = OrtSession::load_with_probe(
             &dir.join("gigaam_enc_q.onnx"),
             0,
-            SessionProfile::CudaPreferred,
+            SessionProfile::CpuOnly,
             |session| {
                 let input_name = session
                     .input_names

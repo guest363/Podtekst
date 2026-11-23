@@ -24,7 +24,9 @@ const COOCCUR_CONFLICT_MIN_OVERLAP: f64 = 0.5;
 const MIN_NEW_SPEAKER_SEC: f64 = 0.8;
 /// При ложном разбиении монолога PyAnnote (нулевое перекрытие в окне) второй
 /// локальный класс акустически явно ближе к уже занятому голосу, чем к свободному.
-const MONOLOGUE_SAME_VOICE_SIM: f64 = 0.70;
+// ЗАЧЕМ: порог 0.70 без перекрытий захватывал тихого/похожего второго спикера в ov0;
+// 0.85 удерживает монолог одного голоса, но не подавляет смену диктора в паузе.
+const MONOLOGUE_SAME_VOICE_SIM: f64 = 0.85;
 const MONOLOGUE_PEER_MIN_SIM: f64 = 0.50;
 const MONOLOGUE_REASSIGN_MARGIN: f64 = 0.25;
 
@@ -362,8 +364,11 @@ fn apply_resolved_labels(
             old_label != label
                 && !conflict
                 && should_keep_self_cluster(
-                    embs.get(index).and_then(Option::as_deref),
-                    globals.get(&old_label).map(Vec::as_slice),
+                    index,
+                    old_label,
+                    embs,
+                    durs,
+                    label_of,
                     globals.get(&label).map(Vec::as_slice),
                 )
         });
@@ -378,18 +383,46 @@ fn apply_resolved_labels(
 }
 
 fn should_keep_self_cluster(
-    embedding: Option<&[f64]>,
-    old_centroid: Option<&[f64]>,
+    index: usize,
+    old_label: usize,
+    embs: &[Option<Vec<f64>>],
+    durs: &[f64],
+    label_of: &HashMap<usize, usize>,
     new_centroid: Option<&[f64]>,
 ) -> bool {
-    let (Some(embedding), Some(old_centroid), Some(new_centroid)) =
-        (embedding, old_centroid, new_centroid)
+    let (Some(embedding), Some(new_centroid)) =
+        (embs.get(index).and_then(Option::as_deref), new_centroid)
     else {
         return false;
     };
-    let old_sim = cosine_similarity(embedding, old_centroid);
+    // ЗАЧЕМ: центроид без самого проверяемого фрагмента исключает самоутечку в микро-кластере
+    // из 1-2 коротких реплик, а порог SAME_SPEAKER_MERGE_SIM не мешает окну вернуть осколок того же голоса.
+    let mut peers: Vec<usize> = label_of
+        .iter()
+        .filter(|&(&i, &label)| i != index && label == old_label)
+        .map(|(&i, _)| i)
+        .collect();
+    peers.sort_unstable();
+    let (vecs, ws): (Vec<Vec<f64>>, Vec<f64>) = peers
+        .into_iter()
+        .filter_map(|peer| {
+            embs.get(peer).and_then(Option::as_deref).map(|vec| {
+                (
+                    vec.to_vec(),
+                    durs.get(peer).copied().unwrap_or(1.0).clamp(0.4, 8.0),
+                )
+            })
+        })
+        .unzip();
+    if vecs.is_empty() {
+        return false;
+    }
+    let old_centroid = weighted_centroid(&vecs, &ws);
+    let old_sim = cosine_similarity(embedding, &old_centroid);
     let new_sim = cosine_similarity(embedding, new_centroid);
-    old_sim >= SELF_CLUSTER_MIN_SIM && old_sim - new_sim >= SELF_CLUSTER_MIN_MARGIN
+    new_sim < mr_ml::SAME_SPEAKER_MERGE_SIM
+        && old_sim >= SELF_CLUSTER_MIN_SIM
+        && old_sim - new_sim >= SELF_CLUSTER_MIN_MARGIN
 }
 
 /// Окна перекрываются, а локальные метки шумят. Голосуем покадрово и
@@ -1271,5 +1304,71 @@ mod tests {
         assert_eq!(labels[&0], 0);
         assert_eq!(labels[&1], 0);
         assert!(outcome.voice_runs.iter().all(|span| span.label == 0));
+    }
+
+    #[test]
+    fn self_cluster_retention_ignores_singleton_or_same_voice_target() {
+        // Одиночный микро-кластер не должен удерживать сам себя без независимого соседа.
+        let embs = vec![
+            Some(vec![1.0, 0.0]),
+            Some(vec![0.8, 0.6]),
+            Some(vec![1.0, 0.0]),
+        ];
+        let durs = [2.0, 1.6, 2.0];
+        let label_of = HashMap::from([(0usize, 0usize), (1, 1), (2, 0)]);
+        assert!(!should_keep_self_cluster(
+            1,
+            1,
+            &embs,
+            &durs,
+            &label_of,
+            Some(&[1.0, 0.0]),
+        ));
+
+        // При независимой паре с sim >= SAME_SPEAKER_MERGE_SIM к цели окно всё равно возвращает осколок.
+        let pair_embs = vec![
+            Some(vec![1.0, 0.0]),
+            Some(vec![0.8, 0.6]),
+            Some(vec![0.8, 0.6]),
+        ];
+        let pair_durs = [8.0, 1.6, 1.6];
+        let pair_labels = HashMap::from([(0usize, 0usize), (1, 1), (2, 1)]);
+        assert!(!should_keep_self_cluster(
+            1,
+            1,
+            &pair_embs,
+            &pair_durs,
+            &pair_labels,
+            Some(&[1.0, 0.0]),
+        ));
+    }
+
+    #[test]
+    fn non_overlapping_split_preserves_distinct_speaker_below_strict_monologue_threshold() {
+        let mut w0 = vec![1u8; 296];
+        w0.extend(vec![2u8; 178]);
+        let segmentation = Segmentation {
+            frames: vec![],
+            windows: vec![SegmentationWindow {
+                start_sample: 0,
+                classes: w0,
+            }],
+        };
+        let utterances = vec![utterance(0.0, 5.0), utterance(5.0, 8.0)];
+        // Сходство 0.75 ниже строгого монопорога 0.85: отдельный диктор в паузе не поглощается.
+        let embs = vec![Some(vec![1.0, 0.0]), Some(vec![0.75, 0.6614])];
+        let mut labels = HashMap::from([(0usize, 0usize)]);
+        apply(
+            &segmentation,
+            &utterances,
+            &embs,
+            &[5.0, 3.0],
+            &[1.0; 2],
+            &mut labels,
+            &HashSet::new(),
+            0,
+        );
+        assert_eq!(labels[&0], 0);
+        assert_eq!(labels[&1], 1);
     }
 }
