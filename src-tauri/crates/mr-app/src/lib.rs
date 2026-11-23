@@ -1,3 +1,4 @@
+mod auto_detect;
 mod boot;
 mod cli;
 mod config;

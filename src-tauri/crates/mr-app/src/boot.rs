@@ -338,6 +338,7 @@ pub fn run_cli() {
     system::cleanup_stale();
     summary::init();
     crash::begin_run();
+    crate::auto_detect::start(state.clone());
 
     if start_on_launch {
         let res = start_recording_with_notify(&state);
@@ -358,6 +359,7 @@ pub fn run_cli() {
         let visible = cli.show || !cli.tray;
         ipc::expect_ui();
         let code = crate::tauri_shell::run_tauri_window(state.clone(), cli.port, visible);
+        crate::auto_detect::stop();
         summary::shutdown();
         logging::shutdown();
         if code != 0 {
@@ -375,6 +377,7 @@ pub fn run_cli() {
         });
     }
     let served = run_http_server(state, cli.port);
+    crate::auto_detect::stop();
     logging::shutdown();
     crash::mark_clean();
     if !served {

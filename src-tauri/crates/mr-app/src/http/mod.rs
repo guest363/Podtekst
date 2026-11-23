@@ -58,8 +58,9 @@ use self::update::{
     handle_update_state,
 };
 use crate::config::{
-    app_data_dir, configured_auto_transcribe, configured_record_mode, record_mode_explicit,
-    save_auto_transcribe, save_dir, save_record_mode, static_dir,
+    app_data_dir, configured_auto_detect_mode, configured_auto_transcribe, configured_record_mode,
+    record_mode_explicit, save_auto_detect_mode, save_auto_transcribe, save_dir, save_record_mode,
+    static_dir, AutoDetectMode,
 };
 use crate::recording::now_secs;
 use crate::recording::{start_recording, stop_recording, RecordingState};
@@ -552,6 +553,7 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) -> b
                         "core": "rust",
                     });
                     status["features"] = json!({"summary": crate::summary::supported()});
+                    status["auto_detect"] = crate::auto_detect::status_snapshot();
                     if let (Some(target), Some(extra)) = (
                         status.as_object_mut(),
                         crate::summary::status_fields().as_object(),
@@ -638,6 +640,43 @@ pub(crate) fn run_http_server(state: Arc<Mutex<RecordingState>>, port: u16) -> b
                             400,
                         ),
                     }
+                }
+                (tiny_http::Method::Get, "/api/record/auto_detect") => {
+                    let cap = mr_audio::capture::detection_capability();
+                    json_response(
+                        request,
+                        json!({
+                            "ok": true,
+                            "mode": configured_auto_detect_mode().as_str(),
+                            "supported": cap != mr_audio::capture::DetectionCapability::Unsupported,
+                            "capability": crate::auto_detect::capability_str(cap),
+                        }),
+                        200,
+                    );
+                }
+                (tiny_http::Method::Post, "/api/record/auto_detect") => {
+                    let body = read_body_to_json(&mut request);
+                    match body
+                        .get("mode")
+                        .and_then(|x| x.as_str())
+                        .and_then(AutoDetectMode::parse)
+                    {
+                        Some(mode) => {
+                            save_auto_detect_mode(mode);
+                            crate::auto_detect::notify_mode_changed();
+                            json_response(request, json!({"ok": true, "mode": mode.as_str()}), 200);
+                        }
+                        None => json_response(
+                            request,
+                            json!({"ok": false, "error": "Режим: off, notify или auto"}),
+                            400,
+                        ),
+                    }
+                }
+                (tiny_http::Method::Post, "/api/record/auto_detect/dismiss") => {
+                    drain_small_body(&mut request);
+                    crate::auto_detect::dismiss_prompt();
+                    json_response(request, json!({"ok": true}), 200);
                 }
                 (tiny_http::Method::Post, "/api/log") => {
                     let mut s = String::new();
