@@ -1,23 +1,79 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::transcribe::echo::{self, EchoEvidence};
 use crate::transcribe::{SpeakerInfo, Utterance};
 
 use super::super::text::{interval_overlap, text_similarity, words_contained};
 use super::words::{append_overlap_text, better_utterance, overlap_word_count, utterance_rms};
 
+const ECHO_PRECEDENCE_MAX_LOCAL_ONLY: f32 = 0.50;
+const ECHO_PRECEDENCE_MAX_DOUBLE_TALK: f32 = 0.35;
+const SHORT_ECHO_MIN_ECHO_ONLY: f32 = 0.60;
+const SHORT_ECHO_MAX_LOCAL_ONLY: f32 = 0.05;
+const SHORT_ECHO_MAX_DOUBLE_TALK: f32 = 0.15;
+const SHORT_ECHO_LEAD_SEC: f64 = 0.1;
+const SHORT_ECHO_TAIL_SEC: f64 = 0.3;
+
+enum StrongEchoDecision {
+    DropCh0,
+    KeepBoth,
+}
+
+fn strong_echo_decision(
+    u_ch0: &Utterance,
+    u_ch1: &Utterance,
+    sim: f64,
+    ev: &EchoEvidence,
+) -> StrongEchoDecision {
+    let ch0_profile = echo::segment_profile(ev, u_ch0.start, u_ch0.end);
+    if sim >= 0.55 {
+        // При сильном эхе ch1 → ch0 источник физически известен; однако при
+        // реальной одновременной речи оба спикера могли сказать одно и то же слово.
+        if ch0_profile.local_only < ECHO_PRECEDENCE_MAX_LOCAL_ONLY
+            && ch0_profile.double_talk < ECHO_PRECEDENCE_MAX_DOUBLE_TALK
+        {
+            StrongEchoDecision::DropCh0
+        } else {
+            StrongEchoDecision::KeepBoth
+        }
+    } else {
+        let is_ch0_echo = ch0_profile.echo_only >= SHORT_ECHO_MIN_ECHO_ONLY
+            && ch0_profile.local_only <= SHORT_ECHO_MAX_LOCAL_ONLY
+            && ch0_profile.double_talk <= SHORT_ECHO_MAX_DOUBLE_TALK;
+        let inside_ch1 = u_ch0.start >= u_ch1.start - SHORT_ECHO_LEAD_SEC
+            && u_ch0.end <= u_ch1.end + SHORT_ECHO_TAIL_SEC;
+        if is_ch0_echo && (words_contained(&u_ch0.text, &u_ch1.text) || inside_ch1) {
+            StrongEchoDecision::DropCh0
+        } else {
+            StrongEchoDecision::KeepBoth
+        }
+    }
+}
+
 /// Одна и та же фраза, попавшая в оба канала (эхо), остаётся в одном виде.
 /// Канал-источник определяется по уровню речи: пролезание в соседний канал
 /// тише оригинала. Разные уверенно распознанные голоса при близких уровнях
 /// не удаляем — иначе теряется один из спикеров.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn dedupe_cross_channel(
     utterances: &mut Vec<Utterance>,
     speakers: &[SpeakerInfo],
     channel_samples: &HashMap<usize, Vec<f32>>,
 ) {
+    dedupe_cross_channel_with_echo(utterances, speakers, channel_samples, None);
+}
+
+pub(crate) fn dedupe_cross_channel_with_echo(
+    utterances: &mut Vec<Utterance>,
+    speakers: &[SpeakerInfo],
+    channel_samples: &HashMap<usize, Vec<f32>>,
+    echo: Option<&EchoEvidence>,
+) {
     let before = utterances.len();
     if utterances.len() < 2 {
         return;
     }
+    let strong_echo = echo.filter(|ev| ev.is_strong());
     let matched: HashSet<&str> = speakers
         .iter()
         .filter(|speaker| speaker.matched)
@@ -46,7 +102,26 @@ pub(crate) fn dedupe_cross_channel(
             if ov <= 0.0 {
                 continue;
             }
-            if text_similarity(&utterances[i].text, &utterances[j].text) < 0.55 {
+            let sim = text_similarity(&utterances[i].text, &utterances[j].text);
+            if let Some(ev) = strong_echo {
+                if let Some((ch0, ch1)) = match (utterances[i].channel, utterances[j].channel) {
+                    (Some(0), Some(1)) => Some((i, j)),
+                    (Some(1), Some(0)) => Some((j, i)),
+                    _ => None,
+                } {
+                    match strong_echo_decision(&utterances[ch0], &utterances[ch1], sim, ev) {
+                        StrongEchoDecision::DropCh0 => {
+                            keep[ch0] = false;
+                            if ch0 == i {
+                                break;
+                            }
+                        }
+                        StrongEchoDecision::KeepBoth => {}
+                    }
+                    continue;
+                }
+            }
+            if sim < 0.55 {
                 continue;
             }
             let rms_i = utterance_rms(
@@ -281,5 +356,123 @@ mod tests {
         assert_eq!(kept.len(), 2, "{kept:?}");
         assert_eq!(kept[0].end, 12.0);
         assert_eq!(kept[1].channel, Some(0));
+    }
+
+    fn strong_echo(total_sec: f64, spans: &[(f64, f64, echo::FrameClass)]) -> EchoEvidence {
+        let win = 512.0 / 16_000.0;
+        let n = (total_sec / win).ceil() as usize;
+        let mut frames = vec![echo::FrameClass::Uncertain; n];
+        for (idx, frame) in frames.iter_mut().enumerate() {
+            let t = idx as f64 * win;
+            if let Some(&(_, _, class)) = spans.iter().find(|&&(a, b, _)| t >= a && t < b) {
+                *frame = class;
+            }
+        }
+        EchoEvidence {
+            delay_samples: 1008,
+            delay_sec: 1008.0 / 16_000.0,
+            prominence: echo::STRONG_PROMINENCE + 20.0,
+            stability: 1.0,
+            gain: 0.4,
+            noise_floor: 1e-4,
+            residual: vec![0.0; n],
+            frames,
+        }
+    }
+
+    fn speaker_info(name: &str, ch: i32, matched: bool) -> SpeakerInfo {
+        SpeakerInfo {
+            id: format!("spk_{ch}"),
+            name: name.to_string(),
+            channel: Some(ch),
+            matched,
+            matched_name: matched.then(|| name.to_string()),
+            matched_pack_id: None,
+            matched_pack_name: None,
+            similarity: if matched { 0.8 } else { 0.0 },
+            silhouette: 0.5,
+            candidates: Vec::new(),
+            embedding: None,
+            samples: Vec::new(),
+            utterances_count: 1,
+            total_speech_sec: 2.0,
+        }
+    }
+
+    #[test]
+    fn dedupe_with_strong_echo_prefers_ch1_even_when_ch0_is_louder() {
+        let ev = strong_echo(10.0, &[(0.0, 10.0, echo::FrameClass::EchoOnly)]);
+        let samples = HashMap::from([
+            (0usize, vec![0.5f32; 16_000 * 6]),
+            (1usize, vec![0.1f32; 16_000 * 6]),
+        ]);
+        let speakers = vec![
+            speaker_info("Спикер A", 0, true),
+            speaker_info("Спикер B", 1, false),
+        ];
+        let mut utts = vec![
+            utt(1.0, 3.0, "Спикер A", 0, "альфа бета гамма"),
+            utt(1.0, 3.0, "Спикер B", 1, "альфа бета гамма"),
+        ];
+        dedupe_cross_channel_with_echo(&mut utts, &speakers, &samples, Some(&ev));
+        assert_eq!(utts.len(), 1, "{utts:?}");
+        assert_eq!(utts[0].channel, Some(1));
+        assert_eq!(utts[0].speaker, "Спикер B");
+    }
+
+    #[test]
+    fn dedupe_with_strong_echo_drops_short_ch0_echo_over_long_ch1_but_keeps_double_talk_backchannel(
+    ) {
+        let ev = strong_echo(
+            20.0,
+            &[
+                (1.0, 3.0, echo::FrameClass::EchoOnly),
+                (5.0, 7.0, echo::FrameClass::DoubleTalk),
+                (9.0, 11.0, echo::FrameClass::LocalOnly),
+            ],
+        );
+        let mut utts = vec![
+            utt(
+                0.0,
+                15.0,
+                "Спикер B",
+                1,
+                "альфа бета гамма дельта эпсилон зета эта тета йота каппа",
+            ),
+            utt(1.5, 2.3, "Спикер A", 0, "искаженное"),
+            utt(5.5, 6.3, "Спикер A", 0, "понял"),
+            utt(9.5, 10.3, "Спикер A", 0, "точно"),
+        ];
+        dedupe_cross_channel_with_echo(&mut utts, &[], &HashMap::new(), Some(&ev));
+        let ch0_texts: Vec<&str> = utts
+            .iter()
+            .filter(|u| u.channel == Some(0))
+            .map(|u| u.text.as_str())
+            .collect();
+        assert_eq!(ch0_texts, vec!["понял", "точно"], "{utts:?}");
+        assert!(utts.iter().any(|u| u.channel == Some(1)));
+    }
+
+    #[test]
+    fn dedupe_with_strong_echo_keeps_simultaneous_double_talk_same_word() {
+        let ev = strong_echo(
+            6.0,
+            &[
+                (1.0, 1.3, echo::FrameClass::EchoOnly),
+                (1.3, 2.0, echo::FrameClass::DoubleTalk),
+            ],
+        );
+        let samples = HashMap::from([
+            (0usize, vec![0.4f32; 16_000 * 4]),
+            (1usize, vec![0.1f32; 16_000 * 4]),
+        ]);
+        let mut utts = vec![
+            utt(1.0, 2.0, "Спикер A", 0, "согласен"),
+            utt(1.0, 2.0, "Спикер B", 1, "согласен"),
+        ];
+        dedupe_cross_channel_with_echo(&mut utts, &[], &samples, Some(&ev));
+        assert_eq!(utts.len(), 2, "двойная речь не должна удаляться: {utts:?}");
+        assert!(utts.iter().any(|u| u.channel == Some(0)));
+        assert!(utts.iter().any(|u| u.channel == Some(1)));
     }
 }

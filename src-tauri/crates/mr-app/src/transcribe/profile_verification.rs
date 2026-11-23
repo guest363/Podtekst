@@ -705,7 +705,7 @@ fn run_with_embedder(
         profiles,
         utterances.as_slice(),
     );
-    finalize_verified_utterances(utterances, infos, channels);
+    finalize_verified_utterances(utterances, infos, channels, audio.echo);
     log::debug!(
         target: "diar",
         reassigned = reassigned,
@@ -720,8 +720,9 @@ pub(super) fn finalize_verified_utterances(
     utterances: &mut Vec<Utterance>,
     infos: &mut [SpeakerInfo],
     channels: &HashMap<usize, Vec<f32>>,
+    echo: Option<&EchoEvidence>,
 ) {
-    super::diarize::dedupe_cross_channel(utterances, infos, channels);
+    super::diarize::dedupe_cross_channel_with_echo(utterances, infos, channels, echo);
     // Переназначенные и открытые после отсева эха фрагменты одного голоса
     // на одном канале должны собраться обратно в цельные реплики.
     utterances.sort_by(|a, b| a.start.total_cmp(&b.start).then(a.speaker.cmp(&b.speaker)));
@@ -1051,7 +1052,7 @@ mod tests {
             (1usize, vec![0.3f32; 16000 * 7]),
         ]);
 
-        finalize_verified_utterances(&mut utterances, &mut infos, &channels);
+        finalize_verified_utterances(&mut utterances, &mut infos, &channels, None);
         assert_eq!(utterances.len(), 2, "{utterances:?}");
         assert_eq!(utterances[0].speaker, "Спикер A");
         assert_eq!(utterances[0].channel, Some(1));

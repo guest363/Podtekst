@@ -16,7 +16,7 @@ mod turn_anchors;
 pub(crate) use core::diarize_channel;
 pub(crate) use profiles::load_profiles;
 pub(crate) use reconcile::{
-    dedupe_cross_channel, merge_utterances, merge_verified_cards, reconcile_channels,
+    dedupe_cross_channel_with_echo, merge_utterances, merge_verified_cards, reconcile_channels,
     refresh_speaker_stats,
 };
 pub(crate) use segments::{group_segments, merge_quiet_short_with_evidence};

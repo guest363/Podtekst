@@ -43,10 +43,11 @@ pub(crate) fn dedupe_words(
         return 0;
     };
     let sys = samples.get(&1).map(Vec::as_slice);
+    let tail_pad = echo.delay_sec + DELAY_DRIFT_SEC;
     let other_spans: Vec<(f64, f64)> = utterances
         .iter()
         .filter(|u| u.channel == Some(1))
-        .map(|u| (u.start, u.end))
+        .map(|u| (u.start, u.end + tail_pad))
         .collect();
     let mut echo_words: Vec<(f64, f64, String)> = utterances
         .iter()
@@ -704,5 +705,20 @@ mod tests {
         assert_eq!(single_timed[0].text, "— Бета …");
         assert!((single_timed[0].start - 0.6).abs() < 1e-9);
         assert!((single_timed[0].end - 1.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn delayed_echo_tail_after_ch1_end_is_dropped() {
+        let mut ev = evidence(&[(0.0, 2.0, FrameClass::EchoOnly, 0.0)], 2.0);
+        ev.delay_samples = 1008;
+        ev.delay_sec = 1008.0 / 16_000.0;
+        let mut utts = vec![
+            utterance(1.02, 1.25, 0, vec![word("альфа", 1.02, 1.25)]),
+            utterance(0.5, 1.0, 1, vec![word("альфа", 0.92, 1.0)]),
+        ];
+        let changed = dedupe_words(&mut utts, &samples(), &ev, None);
+        assert_eq!(changed, 1, "{utts:?}");
+        assert_eq!(utts.len(), 1, "{utts:?}");
+        assert_eq!(utts[0].channel, Some(1));
     }
 }
