@@ -7,11 +7,20 @@ pub enum DetectionCapability {
     Unsupported,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum CaptureState {
+    #[default]
+    None,
+    Paused,
+    Active,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveAudioClient {
     pub pid: Option<u32>,
     pub process: Option<String>,
     pub app_name: Option<String>,
+    pub capture: CaptureState,
     pub has_active_render: bool,
 }
 
@@ -34,18 +43,18 @@ pub fn detection_capability() -> DetectionCapability {
     }
 }
 
-pub fn active_mic_clients() -> Vec<ActiveAudioClient> {
+pub fn active_audio_clients() -> Vec<ActiveAudioClient> {
     #[cfg(target_os = "windows")]
     {
-        win::active_mic_clients()
+        win::active_audio_clients()
     }
     #[cfg(target_os = "linux")]
     {
-        super::pulse_detect::active_mic_clients()
+        super::pulse_detect::active_audio_clients()
     }
     #[cfg(target_os = "macos")]
     {
-        super::macos::active_mic_clients()
+        super::macos::active_audio_clients()
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
@@ -76,6 +85,7 @@ pub(super) fn merge_clients(raw: Vec<ActiveAudioClient>) -> Vec<ActiveAudioClien
     for item in raw {
         if let Some(pid) = item.pid {
             if let Some(existing) = out.iter_mut().find(|c| c.pid == Some(pid)) {
+                existing.capture = existing.capture.max(item.capture);
                 existing.has_active_render |= item.has_active_render;
                 if existing.process.is_none() {
                     existing.process = item.process;
@@ -104,8 +114,9 @@ mod win {
     use windows::core::{Interface, PWSTR};
     use windows::Win32::Foundation::{CloseHandle, HANDLE, S_OK};
     use windows::Win32::Media::Audio::{
-        eCapture, eRender, AudioSessionStateActive, EDataFlow, IAudioSessionControl2,
-        IAudioSessionManager2, IMMDeviceEnumerator, MMDeviceEnumerator, DEVICE_STATE_ACTIVE,
+        eCapture, eRender, AudioSessionStateActive, AudioSessionStateInactive, EDataFlow,
+        IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator, MMDeviceEnumerator,
+        DEVICE_STATE_ACTIVE,
     };
     use windows::Win32::System::Com::{CoCreateInstance, CoUninitialize, CLSCTX_ALL};
     use windows::Win32::System::Threading::{
@@ -113,7 +124,15 @@ mod win {
         PROCESS_QUERY_LIMITED_INFORMATION,
     };
 
-    use super::{exe_basename, has_matching_render, merge_clients, ActiveAudioClient};
+    use super::{
+        exe_basename, has_matching_render, merge_clients, ActiveAudioClient, CaptureState,
+    };
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum FlowKind {
+        Capture,
+        Render,
+    }
 
     struct HandleGuard(HANDLE);
 
@@ -124,7 +143,7 @@ mod win {
         }
     }
 
-    pub(super) fn active_mic_clients() -> Vec<ActiveAudioClient> {
+    pub(super) fn active_audio_clients() -> Vec<ActiveAudioClient> {
         let com_owned = super::super::windows::com_init();
         // Отдельная область: COM-объекты обязаны освободиться до CoUninitialize.
         let clients = unsafe { collect_clients_com() };
@@ -142,8 +161,9 @@ mod win {
             return Vec::new();
         };
         let self_pid = std::process::id();
-        let capture_pids = active_pids_for_flow(&en, eCapture, self_pid);
-        if capture_pids.is_empty() {
+        let capture_sessions = active_sessions_for_flow(&en, eCapture, FlowKind::Capture, self_pid);
+        let render_sessions = active_sessions_for_flow(&en, eRender, FlowKind::Render, self_pid);
+        if capture_sessions.is_empty() && render_sessions.is_empty() {
             return Vec::new();
         }
 
@@ -155,44 +175,51 @@ mod win {
                 .clone()
         };
 
-        let render_list = active_pids_for_flow(&en, eRender, self_pid);
-        let mut render_pids = HashSet::with_capacity(render_list.len());
-        let mut render_names = HashSet::with_capacity(render_list.len());
-        for pid in render_list {
+        let mut render_pids = HashSet::with_capacity(render_sessions.len());
+        let mut render_names = HashSet::with_capacity(render_sessions.len());
+        let mut clients = Vec::with_capacity(capture_sessions.len() + render_sessions.len());
+        for (pid, _) in render_sessions {
             render_pids.insert(pid);
-            if let Some(name) = resolve(pid) {
+            let process = resolve(pid);
+            if let Some(name) = process.as_deref() {
                 render_names.insert(name.to_ascii_lowercase());
             }
+            clients.push(ActiveAudioClient {
+                pid: Some(pid),
+                process,
+                app_name: None,
+                capture: CaptureState::None,
+                has_active_render: true,
+            });
         }
 
-        let clients = capture_pids
-            .into_iter()
-            .map(|pid| {
-                let process = resolve(pid);
-                let has_active_render =
-                    has_matching_render(Some(pid), process.as_deref(), &render_pids, &render_names);
-                ActiveAudioClient {
-                    pid: Some(pid),
-                    process,
-                    app_name: None,
-                    has_active_render,
-                }
-            })
-            .collect();
+        for (pid, capture) in capture_sessions {
+            let process = resolve(pid);
+            let has_active_render =
+                has_matching_render(Some(pid), process.as_deref(), &render_pids, &render_names);
+            clients.push(ActiveAudioClient {
+                pid: Some(pid),
+                process,
+                app_name: None,
+                capture,
+                has_active_render,
+            });
+        }
         merge_clients(clients)
     }
 
-    unsafe fn active_pids_for_flow(
+    unsafe fn active_sessions_for_flow(
         en: &IMMDeviceEnumerator,
         flow: EDataFlow,
+        kind: FlowKind,
         self_pid: u32,
-    ) -> Vec<u32> {
-        let mut pids = Vec::new();
+    ) -> Vec<(u32, CaptureState)> {
+        let mut sessions_out = Vec::new();
         let Ok(coll) = en.EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE) else {
-            return pids;
+            return sessions_out;
         };
         let Ok(dev_count) = coll.GetCount() else {
-            return pids;
+            return sessions_out;
         };
         for dev_idx in 0..dev_count {
             let Ok(dev) = coll.Item(dev_idx) else {
@@ -211,9 +238,13 @@ mod win {
                 let Ok(ctrl) = sessions.GetSession(sess_idx) else {
                     continue;
                 };
-                if ctrl.GetState().ok() != Some(AudioSessionStateActive) {
-                    continue;
-                }
+                let capture_state = match (kind, ctrl.GetState().ok()) {
+                    (_, Some(s)) if s == AudioSessionStateActive => CaptureState::Active,
+                    (FlowKind::Capture, Some(s)) if s == AudioSessionStateInactive => {
+                        CaptureState::Paused
+                    }
+                    _ => continue,
+                };
                 let Ok(ctrl2) = ctrl.cast::<IAudioSessionControl2>() else {
                     continue;
                 };
@@ -226,10 +257,10 @@ mod win {
                 if pid == 0 || pid == self_pid {
                     continue;
                 }
-                pids.push(pid);
+                sessions_out.push((pid, capture_state));
             }
         }
-        pids
+        sessions_out
     }
 
     fn process_exe_name(pid: u32) -> Option<String> {
@@ -305,24 +336,27 @@ mod tests {
     }
 
     #[test]
-    fn merge_clients_deduplicates_pid_and_unions_render_flag() {
+    fn merge_clients_deduplicates_pid_and_unions_state() {
         let merged = merge_clients(vec![
             ActiveAudioClient {
                 pid: Some(42),
                 process: None,
                 app_name: None,
+                capture: CaptureState::Paused,
                 has_active_render: false,
             },
             ActiveAudioClient {
                 pid: Some(42),
                 process: Some("Zoom.exe".into()),
                 app_name: Some("Zoom".into()),
+                capture: CaptureState::Active,
                 has_active_render: true,
             },
             ActiveAudioClient {
                 pid: None,
                 process: None,
                 app_name: None,
+                capture: CaptureState::Active,
                 has_active_render: false,
             },
         ]);
@@ -330,6 +364,7 @@ mod tests {
         assert_eq!(merged[0].pid, Some(42));
         assert_eq!(merged[0].process.as_deref(), Some("Zoom.exe"));
         assert_eq!(merged[0].app_name.as_deref(), Some("Zoom"));
+        assert_eq!(merged[0].capture, CaptureState::Active);
         assert!(merged[0].has_active_render);
         assert_eq!(merged[1].pid, None);
     }
@@ -342,7 +377,7 @@ mod tests {
         #[cfg(not(target_os = "windows"))]
         let _ = cap;
 
-        let clients = active_mic_clients();
+        let clients = active_audio_clients();
         let self_pid = std::process::id();
         assert!(clients.iter().all(|c| c.pid != Some(self_pid)));
     }

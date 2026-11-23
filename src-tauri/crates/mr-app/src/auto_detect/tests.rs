@@ -1,17 +1,22 @@
 use std::time::{Duration, Instant};
 
-use mr_audio::capture::{ActiveAudioClient, DetectionCapability};
+use mr_audio::capture::{ActiveAudioClient, CaptureState, DetectionCapability};
 
 use super::detector::{Detector, DetectorAction, TickContext};
 use crate::config::AutoDetectMode;
 
-fn client(pid: u32, process: &str, render: bool) -> ActiveAudioClient {
+fn client_state(pid: u32, process: &str, capture: CaptureState, render: bool) -> ActiveAudioClient {
     ActiveAudioClient {
         pid: Some(pid),
         process: Some(process.to_string()),
         app_name: None,
+        capture,
         has_active_render: render,
     }
+}
+
+fn client(pid: u32, process: &str, render: bool) -> ActiveAudioClient {
+    client_state(pid, process, CaptureState::Active, render)
 }
 
 fn idle_ctx() -> TickContext {
@@ -38,18 +43,9 @@ fn native_app_debounces_starts_and_stops_after_cooldown() {
             idle_ctx(),
         )
         .is_empty());
-    assert!(d
-        .tick(
-            t0 + Duration::from_secs(2),
-            AutoDetectMode::Auto,
-            DetectionCapability::Process,
-            &zoom,
-            idle_ctx(),
-        )
-        .is_empty());
     assert_eq!(
         d.tick(
-            t0 + Duration::from_secs(4),
+            t0 + Duration::from_secs(2),
             AutoDetectMode::Auto,
             DetectionCapability::Process,
             &zoom,
@@ -65,7 +61,7 @@ fn native_app_debounces_starts_and_stops_after_cooldown() {
     };
     assert!(d
         .tick(
-            t0 + Duration::from_secs(18),
+            t0 + Duration::from_secs(16),
             AutoDetectMode::Auto,
             DetectionCapability::Process,
             &[],
@@ -74,7 +70,7 @@ fn native_app_debounces_starts_and_stops_after_cooldown() {
         .is_empty());
     assert_eq!(
         d.tick(
-            t0 + Duration::from_secs(19),
+            t0 + Duration::from_secs(17),
             AutoDetectMode::Auto,
             DetectionCapability::Process,
             &[],
@@ -89,7 +85,7 @@ fn browser_requires_active_render() {
     let mut d = Detector::new();
     let t0 = Instant::now();
     let mic_only = [client(10, "chrome.exe", false)];
-    for step in [0, 2, 4, 6] {
+    for step in [0, 2, 4] {
         assert!(d
             .tick(
                 t0 + Duration::from_secs(step),
@@ -101,20 +97,18 @@ fn browser_requires_active_render() {
             .is_empty());
     }
     let call = [client(10, "chrome.exe", true)];
-    for step in [8, 10] {
-        assert!(d
-            .tick(
-                t0 + Duration::from_secs(step),
-                AutoDetectMode::Auto,
-                DetectionCapability::Process,
-                &call,
-                idle_ctx(),
-            )
-            .is_empty());
-    }
+    assert!(d
+        .tick(
+            t0 + Duration::from_secs(6),
+            AutoDetectMode::Auto,
+            DetectionCapability::Process,
+            &call,
+            idle_ctx(),
+        )
+        .is_empty());
     assert_eq!(
         d.tick(
-            t0 + Duration::from_secs(12),
+            t0 + Duration::from_secs(8),
             AutoDetectMode::Auto,
             DetectionCapability::Process,
             &call,
@@ -144,7 +138,7 @@ fn manual_recording_is_never_auto_stopped_and_manual_stop_suppresses() {
         )
         .is_empty());
 
-    for step in [0, 2, 4] {
+    for step in [0, 2] {
         let _ = d.tick(
             t0 + Duration::from_secs(step),
             AutoDetectMode::Auto,
@@ -154,7 +148,7 @@ fn manual_recording_is_never_auto_stopped_and_manual_stop_suppresses() {
         );
     }
     d.on_manual_stop();
-    for step in [6, 8, 10, 12] {
+    for step in [4, 6, 8, 10] {
         assert!(d
             .tick(
                 t0 + Duration::from_secs(step),
@@ -165,8 +159,8 @@ fn manual_recording_is_never_auto_stopped_and_manual_stop_suppresses() {
             )
             .is_empty());
     }
-    for step in [14, 24, 26, 28] {
-        let active = if step < 26 { &[][..] } else { &teams[..] };
+    for step in [12, 22, 24] {
+        let active = if step < 24 { &[][..] } else { &teams[..] };
         assert!(d
             .tick(
                 t0 + Duration::from_secs(step),
@@ -179,7 +173,7 @@ fn manual_recording_is_never_auto_stopped_and_manual_stop_suppresses() {
     }
     assert_eq!(
         d.tick(
-            t0 + Duration::from_secs(30),
+            t0 + Duration::from_secs(26),
             AutoDetectMode::Auto,
             DetectionCapability::Process,
             &teams,
@@ -196,7 +190,7 @@ fn dismiss_and_start_failure_suppress_until_mic_released() {
     let tg = [client(5, "Telegram.exe", false)];
 
     let mut last = Vec::new();
-    for step in [0, 2, 4] {
+    for step in [0, 2] {
         last = d.tick(
             t0 + Duration::from_secs(step),
             AutoDetectMode::Notify,
@@ -217,7 +211,7 @@ fn dismiss_and_start_failure_suppress_until_mic_released() {
     assert!(d.prompt().is_none());
     assert!(d
         .tick(
-            t0 + Duration::from_secs(6),
+            t0 + Duration::from_secs(4),
             AutoDetectMode::Notify,
             DetectionCapability::Process,
             &tg,
@@ -226,7 +220,7 @@ fn dismiss_and_start_failure_suppress_until_mic_released() {
         .is_empty());
 
     let mut d2 = Detector::new();
-    for step in [0, 2, 4] {
+    for step in [0, 2] {
         let _ = d2.tick(
             t0 + Duration::from_secs(step),
             AutoDetectMode::Auto,
@@ -236,7 +230,7 @@ fn dismiss_and_start_failure_suppress_until_mic_released() {
         );
     }
     d2.on_auto_start_failed();
-    for step in [6, 8, 10] {
+    for step in [4, 6, 8] {
         assert!(d2
             .tick(
                 t0 + Duration::from_secs(step),
@@ -257,10 +251,11 @@ fn device_only_forces_notify_self_excluded_and_off_resets() {
         pid: None,
         process: None,
         app_name: None,
+        capture: CaptureState::Active,
         has_active_render: false,
     }];
     let mut acts = Vec::new();
-    for step in [0, 2, 4] {
+    for step in [0, 2] {
         acts = d.tick(
             t0 + Duration::from_secs(step),
             AutoDetectMode::Auto,
@@ -278,7 +273,7 @@ fn device_only_forces_notify_self_excluded_and_off_resets() {
     );
     assert!(d.prompt().is_some());
     d.tick(
-        t0 + Duration::from_secs(6),
+        t0 + Duration::from_secs(4),
         AutoDetectMode::Off,
         DetectionCapability::DeviceOnly,
         &anon,
@@ -332,7 +327,7 @@ fn macos_helper_roles_and_avconferenced_match() {
     let t0 = Instant::now();
     let chrome_helper = [client(11, "com.google.Chrome.helper.audio", true)];
     let mut acts = Vec::new();
-    for step in [0, 2, 4] {
+    for step in [0, 2] {
         acts = d.tick(
             t0 + Duration::from_secs(step),
             AutoDetectMode::Auto,
@@ -348,7 +343,7 @@ fn macos_helper_roles_and_avconferenced_match() {
 
     let mut d2 = Detector::new();
     let discord_helper = [client(12, "com.hnc.Discord.helper.renderer", false)];
-    for step in [0, 2, 4] {
+    for step in [0, 2] {
         acts = d2.tick(
             t0 + Duration::from_secs(step),
             AutoDetectMode::Notify,
@@ -367,7 +362,7 @@ fn macos_helper_roles_and_avconferenced_match() {
 
     let mut d3 = Detector::new();
     let avconf = [client(13, "com.apple.avconferenced", false)];
-    for step in [0, 2, 4] {
+    for step in [0, 2] {
         acts = d3.tick(
             t0 + Duration::from_secs(step),
             AutoDetectMode::Notify,
@@ -390,7 +385,7 @@ fn prompted_transitions_to_auto_on_mode_switch() {
     let mut d = Detector::new();
     let t0 = Instant::now();
     let zoom = [client(42, "Zoom.exe", false)];
-    for step in [0, 2, 4] {
+    for step in [0, 2] {
         let _ = d.tick(
             t0 + Duration::from_secs(step),
             AutoDetectMode::Notify,
@@ -402,7 +397,7 @@ fn prompted_transitions_to_auto_on_mode_switch() {
     assert!(d.prompt().is_some());
     assert_eq!(
         d.tick(
-            t0 + Duration::from_secs(6),
+            t0 + Duration::from_secs(4),
             AutoDetectMode::Auto,
             DetectionCapability::Process,
             &zoom,
@@ -417,7 +412,7 @@ fn manual_start_from_banner_then_manual_stop_suppresses_same_call() {
     let mut d = Detector::new();
     let t0 = Instant::now();
     let zoom = [client(42, "Zoom.exe", false)];
-    for step in [0, 2, 4] {
+    for step in [0, 2] {
         let _ = d.tick(
             t0 + Duration::from_secs(step),
             AutoDetectMode::Notify,
@@ -437,7 +432,7 @@ fn manual_start_from_banner_then_manual_stop_suppresses_same_call() {
     };
     assert!(d
         .tick(
-            t0 + Duration::from_secs(6),
+            t0 + Duration::from_secs(4),
             AutoDetectMode::Notify,
             DetectionCapability::Process,
             &zoom,
@@ -446,7 +441,7 @@ fn manual_start_from_banner_then_manual_stop_suppresses_same_call() {
         .is_empty());
 
     d.on_manual_stop();
-    for step in [8, 10, 12, 14] {
+    for step in [6, 8, 10, 12] {
         assert!(d
             .tick(
                 t0 + Duration::from_secs(step),
@@ -459,8 +454,8 @@ fn manual_start_from_banner_then_manual_stop_suppresses_same_call() {
         assert!(d.prompt().is_none());
     }
 
-    for step in [16, 26, 28, 30] {
-        let active = if step < 28 { &[][..] } else { &zoom[..] };
+    for step in [14, 24, 26] {
+        let active = if step < 26 { &[][..] } else { &zoom[..] };
         assert!(d
             .tick(
                 t0 + Duration::from_secs(step),
@@ -473,7 +468,7 @@ fn manual_start_from_banner_then_manual_stop_suppresses_same_call() {
     }
     assert_eq!(
         d.tick(
-            t0 + Duration::from_secs(32),
+            t0 + Duration::from_secs(28),
             AutoDetectMode::Notify,
             DetectionCapability::Process,
             &zoom,
@@ -484,4 +479,227 @@ fn manual_start_from_banner_then_manual_stop_suppresses_same_call() {
             label: "Zoom",
         }]
     );
+}
+
+#[test]
+fn conferencing_starts_and_stays_alive_without_microphone() {
+    let mut d = Detector::new();
+    let t0 = Instant::now();
+    let zoom_listen = [client_state(42, "zoom", CaptureState::None, true)];
+
+    assert!(d
+        .tick(
+            t0,
+            AutoDetectMode::Auto,
+            DetectionCapability::Process,
+            &zoom_listen,
+            idle_ctx(),
+        )
+        .is_empty());
+    assert_eq!(
+        d.tick(
+            t0 + Duration::from_secs(2),
+            AutoDetectMode::Auto,
+            DetectionCapability::Process,
+            &zoom_listen,
+            idle_ctx(),
+        ),
+        vec![DetectorAction::StartAutoRecording { slug: "zoom" }]
+    );
+
+    let rec_ctx = TickContext {
+        is_recording: true,
+        is_auto_recording: true,
+        ..idle_ctx()
+    };
+    for step in [10, 25, 40] {
+        assert!(d
+            .tick(
+                t0 + Duration::from_secs(step),
+                AutoDetectMode::Auto,
+                DetectionCapability::Process,
+                &zoom_listen,
+                rec_ctx,
+            )
+            .is_empty());
+    }
+    assert_eq!(
+        d.tick(
+            t0 + Duration::from_secs(55),
+            AutoDetectMode::Auto,
+            DetectionCapability::Process,
+            &[],
+            rec_ctx,
+        ),
+        vec![DetectorAction::StopAutoRecording { slug: "zoom" }]
+    );
+}
+
+#[test]
+fn browser_and_messenger_handle_muted_calls_and_short_speech_without_youtube_false_positives() {
+    let t0 = Instant::now();
+    let rec_ctx = TickContext {
+        is_recording: true,
+        is_auto_recording: true,
+        ..idle_ctx()
+    };
+
+    // Просмотр видео без захвата микрофона в браузере и пустой sink_input Electron-клиента
+    // (например, Пачки в простое) не запускают запись, а звонок в Telegram без микрофона запускается.
+    let mut d_media = Detector::new();
+    let youtube = [client_state(10, "chrome", CaptureState::None, true)];
+    let idle_pachca = [client_state(12, "Pachca", CaptureState::None, true)];
+    for step in [0, 2, 4] {
+        assert!(d_media
+            .tick(
+                t0 + Duration::from_secs(step),
+                AutoDetectMode::Auto,
+                DetectionCapability::Process,
+                &youtube,
+                idle_ctx(),
+            )
+            .is_empty());
+        assert!(d_media
+            .tick(
+                t0 + Duration::from_secs(step),
+                AutoDetectMode::Auto,
+                DetectionCapability::Process,
+                &idle_pachca,
+                idle_ctx(),
+            )
+            .is_empty());
+    }
+
+    let mut d_tg = Detector::new();
+    let tg_muted_call = [client_state(
+        11,
+        "telegram-desktop",
+        CaptureState::None,
+        true,
+    )];
+    assert!(d_tg
+        .tick(
+            t0,
+            AutoDetectMode::Auto,
+            DetectionCapability::Process,
+            &tg_muted_call,
+            idle_ctx(),
+        )
+        .is_empty());
+    assert_eq!(
+        d_tg.tick(
+            t0 + Duration::from_secs(2),
+            AutoDetectMode::Auto,
+            DetectionCapability::Process,
+            &tg_muted_call,
+            idle_ctx(),
+        ),
+        vec![DetectorAction::StartAutoRecording { slug: "telegram" }]
+    );
+
+    // Браузер с потоком захвата на паузе (corked) + звуком созвона стартует без речи.
+    let mut d_muted = Detector::new();
+    let muted_meet = [client_state(10, "chrome", CaptureState::Paused, true)];
+    assert!(d_muted
+        .tick(
+            t0,
+            AutoDetectMode::Auto,
+            DetectionCapability::Process,
+            &muted_meet,
+            idle_ctx(),
+        )
+        .is_empty());
+    assert_eq!(
+        d_muted.tick(
+            t0 + Duration::from_secs(2),
+            AutoDetectMode::Auto,
+            DetectionCapability::Process,
+            &muted_meet,
+            idle_ctx(),
+        ),
+        vec![DetectorAction::StartAutoRecording { slug: "chrome" }]
+    );
+
+    // Короткая реплика 4 с в середине созвона запускает запись и далее удерживается по выводу звука.
+    let mut d_short = Detector::new();
+    let split_chrome = [
+        client_state(10, "chrome", CaptureState::None, true),
+        client_state(12, "chrome", CaptureState::Active, true),
+    ];
+    assert!(d_short
+        .tick(
+            t0,
+            AutoDetectMode::Auto,
+            DetectionCapability::Process,
+            &split_chrome,
+            idle_ctx(),
+        )
+        .is_empty());
+    assert_eq!(
+        d_short.tick(
+            t0 + Duration::from_secs(2),
+            AutoDetectMode::Auto,
+            DetectionCapability::Process,
+            &split_chrome,
+            idle_ctx(),
+        ),
+        vec![DetectorAction::StartAutoRecording { slug: "chrome" }]
+    );
+    for step in [4, 20, 40] {
+        assert!(d_short
+            .tick(
+                t0 + Duration::from_secs(step),
+                AutoDetectMode::Auto,
+                DetectionCapability::Process,
+                &youtube,
+                rec_ctx,
+            )
+            .is_empty());
+    }
+    assert_eq!(
+        d_short.tick(
+            t0 + Duration::from_secs(55),
+            AutoDetectMode::Auto,
+            DetectionCapability::Process,
+            &[],
+            rec_ctx,
+        ),
+        vec![DetectorAction::StopAutoRecording { slug: "chrome" }]
+    );
+}
+
+#[test]
+fn switching_auto_to_notify_disarms_auto_stop_without_prompting() {
+    let mut d = Detector::new();
+    let t0 = Instant::now();
+    let zoom = [client(42, "Zoom.exe", false)];
+
+    for step in [0, 2] {
+        let _ = d.tick(
+            t0 + Duration::from_secs(step),
+            AutoDetectMode::Auto,
+            DetectionCapability::Process,
+            &zoom,
+            idle_ctx(),
+        );
+    }
+
+    // После смены режима на notify и сброса auto-флага запись считается ручной и не останавливается.
+    let disarmed_rec = TickContext {
+        is_recording: true,
+        is_auto_recording: false,
+        ..idle_ctx()
+    };
+    for step in [4, 20, 40] {
+        assert!(d
+            .tick(
+                t0 + Duration::from_secs(step),
+                AutoDetectMode::Notify,
+                DetectionCapability::Process,
+                &[],
+                disarmed_rec,
+            )
+            .is_empty());
+    }
+    assert!(d.prompt().is_none());
 }

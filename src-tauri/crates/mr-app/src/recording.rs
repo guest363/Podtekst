@@ -998,7 +998,9 @@ pub(crate) fn stop_recording_with_notify(state: &Arc<Mutex<RecordingState>>) -> 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) fn start_recording_auto(state: &Arc<Mutex<RecordingState>>) -> serde_json::Value {
     lifecycle(state, |st| {
-        if crate::config::configured_auto_detect_mode() != crate::config::AutoDetectMode::Auto {
+        if st.is_recording
+            || crate::config::configured_auto_detect_mode() != crate::config::AutoDetectMode::Auto
+        {
             return json!({"ok": false, "aborted": true});
         }
         start_recording_notified(st, true)

@@ -158,7 +158,7 @@ type PaStrerror = unsafe extern "C" fn(c_int) -> *const c_char;
 
 type PaMainloopNew = unsafe extern "C" fn() -> *mut c_void;
 type PaMainloopGetApi = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
-type PaMainloopIterate = unsafe extern "C" fn(*mut c_void, c_int) -> c_int;
+type PaMainloopIterate = unsafe extern "C" fn(*mut c_void, c_int, *mut c_int) -> c_int;
 type PaMainloopQuit = unsafe extern "C" fn(*mut c_void, c_int);
 type PaMainloopFree = unsafe extern "C" fn(*mut c_void);
 
@@ -569,7 +569,7 @@ impl PulseLib {
             // иначе iterate(block=1) может повиснуть на замолчавшем сервере.
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
             loop {
-                let iter = (self.mainloop_iterate)(mainloop, 0);
+                let iter = (self.mainloop_iterate)(mainloop, 0, std::ptr::null_mut());
                 if iter < 0 {
                     break; // pa_mainloop_quit или ошибка цикла
                 }

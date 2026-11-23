@@ -8,7 +8,7 @@ use super::devices::{
 };
 use super::ffi::*;
 use crate::capture::detect::{
-    has_matching_render, merge_clients, ActiveAudioClient, DetectionCapability,
+    has_matching_render, merge_clients, ActiveAudioClient, CaptureState, DetectionCapability,
 };
 
 const CAP_UNKNOWN: u8 = 0;
@@ -72,7 +72,7 @@ fn active_process_clients() -> Vec<ActiveAudioClient> {
     let self_pid = std::process::id();
     let mut render_pids = HashSet::new();
     let mut render_bundles = HashSet::new();
-    let mut raw_captures: Vec<(Option<u32>, Option<String>, bool)> = Vec::new();
+    let mut raw_clients: Vec<(Option<u32>, Option<String>, CaptureState, bool)> = Vec::new();
 
     for obj in process_object_ids() {
         let running_in = get_u32(obj, PROCESS_PROPERTY_IS_RUNNING_INPUT, OBJECT_SCOPE_GLOBAL)
@@ -100,20 +100,24 @@ fn active_process_clients() -> Vec<ActiveAudioClient> {
                 render_bundles.insert(b.to_ascii_lowercase());
             }
         }
-        if running_in {
-            raw_captures.push((pid, bundle_id, running_out));
-        }
+        let capture = if running_in {
+            CaptureState::Active
+        } else {
+            CaptureState::None
+        };
+        raw_clients.push((pid, bundle_id, capture, running_out));
     }
 
-    let clients = raw_captures
+    let clients = raw_clients
         .into_iter()
-        .map(|(pid, process, running_out)| {
+        .map(|(pid, process, capture, running_out)| {
             let has_active_render = running_out
                 || has_matching_render(pid, process.as_deref(), &render_pids, &render_bundles);
             ActiveAudioClient {
                 pid,
                 process,
                 app_name: None,
+                capture,
                 has_active_render,
             }
         })
@@ -139,6 +143,7 @@ fn active_device_fallback() -> Vec<ActiveAudioClient> {
                 pid: None,
                 process: None,
                 app_name: None,
+                capture: CaptureState::Active,
                 has_active_render: false,
             }];
         }
@@ -146,7 +151,7 @@ fn active_device_fallback() -> Vec<ActiveAudioClient> {
     Vec::new()
 }
 
-pub fn active_mic_clients() -> Vec<ActiveAudioClient> {
+pub fn active_audio_clients() -> Vec<ActiveAudioClient> {
     match detection_capability() {
         DetectionCapability::Process => active_process_clients(),
         DetectionCapability::DeviceOnly => active_device_fallback(),

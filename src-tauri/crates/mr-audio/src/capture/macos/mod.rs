@@ -9,7 +9,7 @@ mod ffi;
 mod permission;
 mod sck;
 
-pub use detect::{active_mic_clients, detection_capability};
+pub use detect::{active_audio_clients, detection_capability};
 pub use devices::devices;
 pub use permission::screen_recording_granted;
 

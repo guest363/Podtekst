@@ -4,7 +4,9 @@ use std::collections::HashSet;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::time::{Duration, Instant};
 
-use super::detect::{has_matching_render, merge_clients, ActiveAudioClient, DetectionCapability};
+use super::detect::{
+    has_matching_render, merge_clients, ActiveAudioClient, CaptureState, DetectionCapability,
+};
 use super::pulse::{
     self, cstr_to_string, PaCVolume, PaChannelMap, PaSampleSpec, PaSourceInfo, PulseLib,
     PA_CONTEXT_FAILED, PA_CONTEXT_NOAUTOSPAWN, PA_CONTEXT_READY, PA_CONTEXT_TERMINATED,
@@ -75,12 +77,14 @@ struct RawCapture {
     pid: Option<u32>,
     process: Option<String>,
     app_name: Option<String>,
+    capture: CaptureState,
 }
 
 struct RawRender {
     client: u32,
     pid: Option<u32>,
     process: Option<String>,
+    app_name: Option<String>,
 }
 
 struct DetectState {
@@ -102,7 +106,7 @@ fn all_done(state: &DetectState) -> bool {
 
 fn quit_mainloop(state: &mut DetectState) {
     if let Ok(lib) = pulse::lib() {
-        // SAFETY: mainloop жив до конца active_mic_clients; колбэки вызываются из того же потока.
+        // SAFETY: mainloop жив до конца active_audio_clients; колбэки вызываются из того же потока.
         unsafe { (lib.mainloop_quit)(state.mainloop, 0) };
     }
 }
@@ -115,6 +119,20 @@ unsafe fn proplist_get(lib: &PulseLib, proplist: *const c_void, key: &CStr) -> O
     let ptr = unsafe { (lib.proplist_gets)(proplist, key.as_ptr()) };
     let s = cstr_to_string(ptr);
     (!s.is_empty()).then_some(s)
+}
+
+unsafe fn read_client_props(
+    lib: &PulseLib,
+    proplist: *const c_void,
+) -> (Option<u32>, Option<String>, Option<String>) {
+    // SAFETY: proplist валиден на время колбэка PulseAudio.
+    unsafe {
+        let pid = proplist_get(lib, proplist, c"application.process.id")
+            .and_then(|s| s.parse::<u32>().ok());
+        let process = proplist_get(lib, proplist, c"application.process.binary");
+        let app_name = proplist_get(lib, proplist, c"application.name");
+        (pid, process, app_name)
+    }
 }
 
 unsafe extern "C" fn on_source(
@@ -176,17 +194,13 @@ unsafe extern "C" fn on_source_output(
     }
     // SAFETY: ненулевой info гарантирован контрактом pa_source_output_info_cb_t.
     let info = unsafe { &*info };
-    if info.corked != 0 {
-        return;
-    }
     let Ok(lib) = pulse::lib() else { return };
     // SAFETY: proplist внутри info валиден на время колбэка.
-    let (pid, process, app_name) = unsafe {
-        let pid = proplist_get(lib, info.proplist, c"application.process.id")
-            .and_then(|s| s.parse::<u32>().ok());
-        let process = proplist_get(lib, info.proplist, c"application.process.binary");
-        let app_name = proplist_get(lib, info.proplist, c"application.name");
-        (pid, process, app_name)
+    let (pid, process, app_name) = unsafe { read_client_props(lib, info.proplist) };
+    let capture = if info.corked != 0 {
+        CaptureState::Paused
+    } else {
+        CaptureState::Active
     };
     state.captures.push(RawCapture {
         source: info.source,
@@ -194,6 +208,7 @@ unsafe extern "C" fn on_source_output(
         pid,
         process,
         app_name,
+        capture,
     });
 }
 
@@ -228,16 +243,19 @@ unsafe extern "C" fn on_sink_input(
     }
     let Ok(lib) = pulse::lib() else { return };
     // SAFETY: proplist внутри info валиден на время колбэка.
-    let (pid, process) = unsafe {
-        let pid = proplist_get(lib, info.proplist, c"application.process.id")
-            .and_then(|s| s.parse::<u32>().ok());
-        let process = proplist_get(lib, info.proplist, c"application.process.binary");
-        (pid, process)
-    };
+    let (pid, process, app_name) = unsafe { read_client_props(lib, info.proplist) };
+    // Telegram проигрывает голосовые и видео через OpenAL, а звонки идут через WebRTC (tg_owt).
+    if app_name
+        .as_deref()
+        .is_some_and(|n| matches!(n.to_ascii_lowercase().as_str(), "alsoft" | "openal soft"))
+    {
+        return;
+    }
     state.renders.push(RawRender {
         client: info.client,
         pid,
         process,
+        app_name,
     });
 }
 
@@ -285,7 +303,7 @@ unsafe extern "C" fn on_state(_ctx: *mut c_void, userdata: *mut c_void) {
             quit_mainloop(state);
         }
     } else if st == PA_CONTEXT_FAILED || st == PA_CONTEXT_TERMINATED {
-        // SAFETY: mainloop валиден до выхода из active_mic_clients.
+        // SAFETY: mainloop валиден до выхода из active_audio_clients.
         unsafe { (lib.mainloop_quit)(state.mainloop, 1) };
     }
 }
@@ -298,7 +316,7 @@ pub(super) fn detection_capability() -> DetectionCapability {
     }
 }
 
-pub(super) fn active_mic_clients() -> Vec<ActiveAudioClient> {
+pub(super) fn active_audio_clients() -> Vec<ActiveAudioClient> {
     let Ok(lib) = pulse::lib() else {
         return Vec::new();
     };
@@ -327,12 +345,16 @@ pub(super) fn active_mic_clients() -> Vec<ActiveAudioClient> {
         }
     }
 
-    let clients = state
+    let mut capture_clients = HashSet::new();
+    let mut clients: Vec<ActiveAudioClient> = state
         .captures
         .into_iter()
         .filter(|c| !state.monitor_sources.contains(&c.source))
         .filter(|c| c.pid != Some(self_pid))
         .map(|c| {
+            if c.client != u32::MAX {
+                capture_clients.insert(c.client);
+            }
             // Совпадение по client-индексу закрывает Flatpak-приложения с изолированным PID.
             let has_active_render = (c.client != u32::MAX && render_clients.contains(&c.client))
                 || has_matching_render(c.pid, c.process.as_deref(), &render_pids, &render_bins);
@@ -340,10 +362,25 @@ pub(super) fn active_mic_clients() -> Vec<ActiveAudioClient> {
                 pid: c.pid,
                 process: c.process,
                 app_name: c.app_name,
+                capture: c.capture,
                 has_active_render,
             }
         })
         .collect();
+
+    for r in state.renders {
+        if r.pid == Some(self_pid) || (r.client != u32::MAX && capture_clients.contains(&r.client))
+        {
+            continue;
+        }
+        clients.push(ActiveAudioClient {
+            pid: r.pid,
+            process: r.process,
+            app_name: r.app_name,
+            capture: CaptureState::None,
+            has_active_render: true,
+        });
+    }
     merge_clients(clients)
 }
 
@@ -391,7 +428,7 @@ fn query_pulse(lib: &PulseLib) -> DetectState {
             loop {
                 let mut quit = false;
                 loop {
-                    let iter = (lib.mainloop_iterate)(mainloop, 0);
+                    let iter = (lib.mainloop_iterate)(mainloop, 0, std::ptr::null_mut());
                     if iter < 0 {
                         quit = true;
                         break;

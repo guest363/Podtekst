@@ -22,7 +22,7 @@ mod desktop_runtime {
     use std::thread::JoinHandle;
     use std::time::{Duration, Instant};
 
-    use mr_audio::capture::{active_mic_clients, detection_capability, DetectionCapability};
+    use mr_audio::capture::{active_audio_clients, detection_capability, DetectionCapability};
     use serde_json::{json, Value};
 
     use super::apps::GENERIC_CALL;
@@ -96,13 +96,13 @@ mod desktop_runtime {
     }
 
     pub(crate) fn notify_mode_changed() {
-        let is_off = configured_auto_detect_mode() == AutoDetectMode::Off;
-        if is_off {
+        let mode = configured_auto_detect_mode();
+        if mode != AutoDetectMode::Auto {
             crate::recording::clear_auto_started();
         }
         let Some(s) = SHARED.get() else { return };
         let mut guard = s.detector.lock().unwrap_or_else(|e| e.into_inner());
-        if is_off {
+        if mode == AutoDetectMode::Off {
             guard.reset();
         }
         s.wake.notify_all();
@@ -155,7 +155,7 @@ mod desktop_runtime {
                 continue;
             }
             let cap = detection_capability();
-            let clients = active_mic_clients();
+            let clients = active_audio_clients();
             let ctx = TickContext {
                 is_recording: crate::recording::is_active(),
                 is_auto_recording: crate::recording::is_auto_recording(),

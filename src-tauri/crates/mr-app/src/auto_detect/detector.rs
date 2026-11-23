@@ -6,8 +6,8 @@ use mr_audio::capture::{ActiveAudioClient, DetectionCapability};
 use super::apps::{matched_clients, MatchedApp, GENERIC_CALL};
 use crate::config::AutoDetectMode;
 
-const START_DEBOUNCE_TICKS: u8 = 3;
-const START_DEBOUNCE_MIN: Duration = Duration::from_secs(4);
+const START_DEBOUNCE_TICKS: u8 = 2;
+const START_DEBOUNCE_MIN: Duration = Duration::from_secs(2);
 const STOP_COOLDOWN: Duration = Duration::from_secs(15);
 const SUPPRESS_RELEASE: Duration = Duration::from_secs(10);
 
@@ -149,10 +149,14 @@ impl Detector {
             };
 
         let matched = matched_clients(clients, capability, ctx.self_pid, ctx.is_recording);
-        let active_slugs: HashSet<&'static str> = matched.iter().map(|m| m.slug).collect();
+        let keep_alive_slugs: HashSet<&'static str> = matched
+            .iter()
+            .filter(|m| m.keep_alive)
+            .map(|m| m.app.slug)
+            .collect();
 
         self.suppressed.retain(|slug, absent_since| {
-            if active_slugs.contains(slug) {
+            if keep_alive_slugs.contains(slug) {
                 *absent_since = None;
                 true
             } else {
@@ -162,7 +166,7 @@ impl Detector {
         });
 
         if self.suppress_active_on_next_tick && !ctx.is_recording {
-            for slug in &active_slugs {
+            for slug in &keep_alive_slugs {
                 self.suppressed.insert(*slug, None);
             }
             self.suppress_active_on_next_tick = false;
@@ -177,7 +181,12 @@ impl Detector {
             let (app, last_seen) = match self.phase {
                 Phase::AutoRecording { app, last_seen } => (app, last_seen),
                 _ => {
-                    let app = matched.first().copied().unwrap_or(GENERIC_CALL);
+                    let app = matched
+                        .iter()
+                        .find(|m| m.can_start)
+                        .or_else(|| matched.iter().find(|m| m.keep_alive))
+                        .map(|m| m.app)
+                        .unwrap_or(GENERIC_CALL);
                     self.phase = Phase::AutoRecording {
                         app,
                         last_seen: now,
@@ -185,7 +194,9 @@ impl Detector {
                     return Vec::new();
                 }
             };
-            if !matched.is_empty() {
+            let still_alive =
+                keep_alive_slugs.contains(app.slug) || matched.iter().any(|m| m.can_start);
+            if still_alive {
                 self.phase = Phase::AutoRecording {
                     app,
                     last_seen: now,
@@ -205,8 +216,9 @@ impl Detector {
 
         let candidate = matched
             .iter()
-            .copied()
-            .find(|m| !self.suppressed.contains_key(m.slug));
+            .filter(|m| m.can_start && !self.suppressed.contains_key(m.app.slug))
+            .map(|m| m.app)
+            .next();
 
         match self.phase.clone() {
             Phase::Idle => {
@@ -277,7 +289,7 @@ impl Detector {
                     self.phase = Phase::Idle;
                     return Vec::new();
                 }
-                if active_slugs.contains(app.slug) {
+                if keep_alive_slugs.contains(app.slug) {
                     self.phase = Phase::Prompted {
                         id,
                         app,
