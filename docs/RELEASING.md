@@ -68,9 +68,9 @@ git status --short
       ffmpeg, вошедшие в сборку;
 - [ ] в `.github/release-notes/` лежит описание для тега версии со ссылкой
       на `docs/UNSIGNED-INSTALL.md`;
-- [ ] лендинг обновлён: `softwareVersion` и тексты с версией в `site/index.html`
-      (JSON-LD, блок «Возможности»), скриншоты `site/assets/screenshots/` и
+- [ ] лендинг обновлён: `softwareVersion` в JSON-LD, скриншоты `site/assets/screenshots/` и
       `og-image.png` пересняты при изменении UI, `lastmod` в `site/sitemap.xml`.
+      Блок «Что нового» собирается из первых абзацев заметок к двум последним версиям в `CHANGELOG.md`.
 
 ## 3. Тег и релиз
 
