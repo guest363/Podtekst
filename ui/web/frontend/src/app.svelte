@@ -11,21 +11,26 @@ import SettingsModal from './components/settings-modal.svelte'
 import Toasts from './components/toasts.svelte'
 import TranscriptPage from './components/transcript-page.svelte'
 import UpdateModal from './components/update-modal.svelte'
-import { isAndroid, isCoreModel, isMobile, remainingMb } from './lib/api'
-import { readLocal } from './lib/guards.ts'
+import type { OkResponse } from './lib/api'
+import { isAndroid, isCoreModel, isMobile, readJsonSafe, remainingMb } from './lib/api'
+import { errText, readLocal } from './lib/guards.ts'
 import { loadPeople } from './lib/people.svelte.ts'
 import { loadQueue, queueState } from './lib/queue.svelte.ts'
 import { loadRecordings, recordings } from './lib/recordings.svelte.ts'
 import {
+  dismissAutoDetectPrompt,
+  loadAutoDetect,
   loadAutoTranscribe,
   loadModels,
   loadRecordMode,
   loadSummaryFeature,
   loadVoicePacks,
+  refreshAutoDetectStatus,
   settings,
 } from './lib/settings.svelte.ts'
 import { loadSupportInfo } from './lib/support.svelte.ts'
 import { loadSystem, runChecks, system } from './lib/system.svelte.ts'
+import { toast } from './lib/toast.svelte.ts'
 import {
   downloadAllCoreModels,
   downloadingCore,
@@ -39,6 +44,30 @@ import { checkUpdate, dismissUpdate, openUpdateModal, update } from './lib/updat
 
 let introOpen = $state(false)
 let introStep = $state<1 | 2 | 3>(1)
+let startingFromPrompt = $state(false)
+
+const startRecordingFromPrompt = async (): Promise<void> => {
+  if (startingFromPrompt) return
+  startingFromPrompt = true
+  try {
+    const r = await fetch('/api/record/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: settings.recordMode, screen: false }),
+    })
+    const d = await readJsonSafe<OkResponse>(r)
+    if (d.ok || d.error === 'Запись уже идёт') {
+      settings.autoDetectPrompt = null
+      void refreshAutoDetectStatus()
+    } else {
+      toast(d.error || 'Не удалось начать запись', 'error')
+    }
+  } catch (e) {
+    toast(`Ошибка записи: ${errText(e)}`, 'error')
+  } finally {
+    startingFromPrompt = false
+  }
+}
 
 const openDiagnostics = (): void => {
   selectTab('settings')
@@ -91,6 +120,29 @@ $effect(() => {
   if (ui.settingsOpen) {
     selectTab('settings')
     ui.settingsOpen = false
+  }
+})
+
+$effect(() => {
+  if (
+    (ui.activeTab === 'studio' && !ui.transcriptOpen) ||
+    !settings.autoDetectSupported ||
+    settings.autoDetectMode === 'off'
+  ) {
+    return
+  }
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let stopped = false
+  const poll = async (): Promise<void> => {
+    if (stopped) return
+    await refreshAutoDetectStatus()
+    if (stopped) return
+    timer = setTimeout(() => void poll(), 3000)
+  }
+  void poll()
+  return () => {
+    stopped = true
+    if (timer) clearTimeout(timer)
   }
 })
 
@@ -165,6 +217,7 @@ onMount(() => {
     loadModels(),
     loadRecordMode(),
     loadAutoTranscribe(),
+    loadAutoDetect(),
     loadSummaryFeature(),
     loadSupportInfo(),
     checkUpdate(),
@@ -174,7 +227,12 @@ onMount(() => {
   // Снимок иначе остаётся с момента запуска: после установки моделей и ffmpeg
   // индикатор продолжал бы показывать старое состояние.
   const refreshSystem = (): void => {
-    if (document.visibilityState === 'visible') void loadSystem()
+    if (document.visibilityState === 'visible') {
+      void loadSystem()
+      if (settings.autoDetectSupported && settings.autoDetectMode !== 'off') {
+        void refreshAutoDetectStatus()
+      }
+    }
   }
   window.addEventListener('focus', refreshSystem)
   document.addEventListener('visibilitychange', refreshSystem)
@@ -342,6 +400,35 @@ onMount(() => {
 
       <main class="main-column shell-main">
         <CrashBanner />
+        {#if settings.autoDetectPrompt}
+          <section class="card call-prompt-card" aria-label="Обнаружен звонок">
+            <div class="card-header">
+              <span class="card-title">
+                {settings.autoDetectPrompt.app && settings.autoDetectPrompt.app !== 'Звонок'
+                  ? `Обнаружен звонок (${settings.autoDetectPrompt.app}). Начать запись?`
+                  : 'Обнаружен звонок. Начать запись?'}
+              </span>
+            </div>
+            <div class="row-start">
+              <button
+                type="button"
+                class="btn-primary"
+                disabled={startingFromPrompt}
+                onclick={() => void startRecordingFromPrompt()}
+              >
+                {startingFromPrompt ? 'Запуск…' : 'Начать запись'}
+              </button>
+              <button
+                type="button"
+                class="btn-secondary"
+                disabled={startingFromPrompt}
+                onclick={() => void dismissAutoDetectPrompt()}
+              >
+                Пропустить
+              </button>
+            </div>
+          </section>
+        {/if}
         {#if update.isNewer && !update.dismissed}
           <section class="card update-card" aria-label="Доступно обновление">
             <div class="card-header">

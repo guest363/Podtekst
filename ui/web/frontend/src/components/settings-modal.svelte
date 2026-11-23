@@ -12,6 +12,7 @@ import {
   importPack,
   loadFfmpeg,
   loadModels,
+  setAutoDetectMode,
   setAutoTranscribe,
   setRecordMode,
   settings,
@@ -221,6 +222,48 @@ const onWindowKey = (e: KeyboardEvent): void => {
           <div class="help-text">
             После остановки запись сама уйдёт в расшифровку. Результат появится в «Тексте и спикерах».
           </div>
+
+          {#if !isMobile && settings.autoDetectSupported}
+            <div class="card-title pt-2">Автоопределение звонков</div>
+            <div class="seg-bar" role="group" aria-label="Автоопределение звонков">
+              <button
+                type="button"
+                class="seg-item {settings.autoDetectMode === 'off' ? 'active' : ''}"
+                aria-pressed={settings.autoDetectMode === 'off'}
+                onclick={() => void setAutoDetectMode('off')}
+              >
+                Выкл
+              </button>
+              <button
+                type="button"
+                class="seg-item {settings.autoDetectMode === 'notify' ? 'active' : ''}"
+                aria-pressed={settings.autoDetectMode === 'notify'}
+                onclick={() => void setAutoDetectMode('notify')}
+              >
+                Уведомлять
+              </button>
+              <button
+                type="button"
+                class="seg-item {settings.autoDetectMode === 'auto' ? 'active' : ''}"
+                aria-pressed={settings.autoDetectMode === 'auto'}
+                onclick={() => void setAutoDetectMode('auto')}
+              >
+                Автозапись
+              </button>
+            </div>
+            <div class="help-text">
+              {#if settings.autoDetectMode === 'off'}
+                Приложение не отслеживает звонки. Запись запускается вручную кнопкой или горячей клавишей.
+              {:else if settings.autoDetectMode === 'notify'}
+                Когда приложение для звонков или браузер использует микрофон, Подтекст предложит начать запись.
+              {:else}
+                Запись начинается автоматически через несколько секунд после начала звонка и останавливается после его окончания.
+              {/if}
+              {#if settings.autoDetectCapability === 'device_only'}
+                На этой версии ОС нельзя определить приложение, занявшее микрофон, и момент окончания звонка, поэтому в автоматическом режиме отправляется только уведомление.
+              {/if}
+            </div>
+          {/if}
 
           <div class="audio-diag-block pt-2">
             <div class="card-title">Состояние звукового тракта</div>
