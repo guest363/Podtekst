@@ -556,12 +556,6 @@ fn browser_and_messenger_handle_muted_calls_and_short_speech_without_youtube_fal
     let mut d_media = Detector::new();
     let youtube = [client_state(10, "chrome", CaptureState::None, true)];
     let idle_pachca = [client_state(12, "Pachca", CaptureState::None, true)];
-    let tg_playback = [client_state(
-        11,
-        "telegram-desktop",
-        CaptureState::None,
-        true,
-    )];
     for step in [0, 2, 4] {
         assert!(d_media
             .tick(
@@ -581,22 +575,13 @@ fn browser_and_messenger_handle_muted_calls_and_short_speech_without_youtube_fal
                 idle_ctx(),
             )
             .is_empty());
-        assert!(d_media
-            .tick(
-                t0 + Duration::from_secs(step),
-                AutoDetectMode::Auto,
-                DetectionCapability::Process,
-                &tg_playback,
-                idle_ctx(),
-            )
-            .is_empty());
     }
 
     let mut d_tg = Detector::new();
     let tg_muted_call = [client_state(
         11,
         "telegram-desktop",
-        CaptureState::Paused,
+        CaptureState::None,
         true,
     )];
     assert!(d_tg

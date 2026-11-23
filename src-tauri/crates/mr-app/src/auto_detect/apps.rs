@@ -101,7 +101,7 @@ fn match_native(token: &str) -> Option<MatchedApp> {
         | "ayugram"
         | "kotatogram"
         | "ru.keepcoder.telegram"
-        | "org.telegram.desktop" => ("telegram", "Telegram", Messenger),
+        | "org.telegram.desktop" => ("telegram", "Telegram", Voip),
         "slack" | "com.tinyspeck.slackmacgap" => ("slack", "Slack", Messenger),
         "skype" | "skypeforlinux" | "com.skype.skype" => ("skype", "Skype", Messenger),
         "webex"
