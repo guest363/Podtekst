@@ -47,7 +47,7 @@ pub(super) fn matched_clients(
 fn normalize_token(raw: &str) -> String {
     let trimmed = raw.trim().to_ascii_lowercase();
     let trimmed = trimmed.strip_suffix(".exe").unwrap_or(&trimmed);
-    let trimmed = trimmed.strip_suffix(".helper").unwrap_or(trimmed);
+    let trimmed = trimmed.split(".helper").next().unwrap_or(trimmed);
     trimmed.to_string()
 }
 
@@ -79,7 +79,9 @@ fn match_native(token: &str) -> Option<MatchedApp> {
         | "cisco-webex"
         | "com.cisco.webexmeetingsapp"
         | "com.webex.meetingmanager" => ("webex", "Webex"),
-        "facetime" | "avconferenced" | "com.apple.facetime" => ("facetime", "FaceTime"),
+        "facetime" | "avconferenced" | "com.apple.facetime" | "com.apple.avconferenced" => {
+            ("facetime", "FaceTime")
+        }
         "jitsi" | "jitsi-meet" | "org.jitsi.jitsi-meet" => ("jitsi", "Jitsi"),
         "element" | "element-desktop" | "im.riot.app" => ("element", "Element"),
         "viber" | "com.viber.osx" => ("viber", "Viber"),

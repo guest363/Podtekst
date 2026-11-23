@@ -61,6 +61,7 @@ enum Phase {
 pub(super) struct Detector {
     phase: Phase,
     suppressed: HashMap<&'static str, Option<Instant>>,
+    suppress_active_on_next_tick: bool,
     prompt_seq: u64,
 }
 
@@ -69,6 +70,7 @@ impl Detector {
         Self {
             phase: Phase::Idle,
             suppressed: HashMap::new(),
+            suppress_active_on_next_tick: false,
             prompt_seq: 0,
         }
     }
@@ -76,6 +78,7 @@ impl Detector {
     pub(super) fn reset(&mut self) {
         self.phase = Phase::Idle;
         self.suppressed.clear();
+        self.suppress_active_on_next_tick = false;
     }
 
     pub(super) fn prompt(&self) -> Option<PromptInfo> {
@@ -89,6 +92,7 @@ impl Detector {
     }
 
     pub(super) fn on_manual_start(&mut self) {
+        self.suppress_active_on_next_tick = false;
         if matches!(
             self.phase,
             Phase::Debouncing { .. } | Phase::Prompted { .. }
@@ -102,6 +106,7 @@ impl Detector {
             self.suppressed.insert(app.slug, None);
             self.phase = Phase::Idle;
         }
+        self.suppress_active_on_next_tick = true;
     }
 
     pub(super) fn on_dismiss(&mut self) {
@@ -155,6 +160,13 @@ impl Detector {
                 now.saturating_duration_since(since) < SUPPRESS_RELEASE
             }
         });
+
+        if self.suppress_active_on_next_tick && !ctx.is_recording {
+            for slug in &active_slugs {
+                self.suppressed.insert(*slug, None);
+            }
+            self.suppress_active_on_next_tick = false;
+        }
 
         if ctx.is_recording && !ctx.is_auto_recording {
             self.phase = Phase::Idle;

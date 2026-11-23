@@ -145,6 +145,7 @@ fn escape_xml(s: &str) -> String {
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&apos;"),
             '\r' => {}
+            c if c.is_control() && c != '\n' && c != '\t' => {}
             c => out.push(c),
         }
     }
@@ -169,9 +170,14 @@ pub fn notify_icon(title: &str, body: &str, icon: &str) {
         let esc_body = escape_applescript(body);
         let esc_title = escape_applescript(title);
         let script = format!("display notification \"{esc_body}\" with title \"{esc_title}\"");
-        let _ = std::process::Command::new("osascript")
+        if let Ok(mut child) = std::process::Command::new("osascript")
             .args(["-e", &script])
-            .spawn();
+            .spawn()
+        {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
     }
     #[cfg(target_os = "windows")]
     {
@@ -184,15 +190,25 @@ pub fn notify_icon(title: &str, body: &str, icon: &str) {
             escape_xml(title),
             escape_xml(body),
         );
-        // Постоянный AUMID Windows PowerShell гарантирует показ уведомления без регистрации ярлыка.
+        // shortcut: системный AUMID PowerShell показывает подпись «Windows PowerShell» в центре уведомлений, заменить после регистрации ярлыка/AUMID установщиком.
         let ps = "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; \
             [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null; \
             $doc = New-Object Windows.Data.Xml.Dom.XmlDocument; \
             $doc.LoadXml($env:PODTEKST_TOAST_XML); \
             $toast = [Windows.UI.Notifications.ToastNotification]::new($doc); \
             [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show($toast)";
+        let ps_exe = std::env::var_os("SystemRoot")
+            .map(|root| {
+                PathBuf::from(root)
+                    .join("System32")
+                    .join("WindowsPowerShell")
+                    .join("v1.0")
+                    .join("powershell.exe")
+            })
+            .filter(|path| path.is_file())
+            .unwrap_or_else(|| PathBuf::from("powershell.exe"));
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let _ = std::process::Command::new("powershell.exe")
+        let _ = std::process::Command::new(ps_exe)
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -262,8 +278,8 @@ mod tests {
     fn notification_escapers_handle_special_chars() {
         assert_eq!(escape_applescript("a\"b\\c\nd"), "a\\\"b\\\\c d");
         assert_eq!(
-            escape_xml("<Zoom> & \"'ok'\""),
-            "&lt;Zoom&gt; &amp; &quot;&apos;ok&apos;&quot;"
+            escape_xml("<Zoom>\x00\x07\x1b & \"'ok'\"\n\tline"),
+            "&lt;Zoom&gt; &amp; &quot;&apos;ok&apos;&quot;\n\tline"
         );
     }
 }

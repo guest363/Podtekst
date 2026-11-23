@@ -103,7 +103,8 @@ const parseAutoDetectMode = (value: unknown): AutoDetectMode | null =>
 const parseAutoDetectCapability = (value: unknown): AutoDetectCapability | null =>
   value === 'process' || value === 'device_only' || value === 'unsupported' ? value : null
 
-let autoDetectSaving = false
+let autoDetectSaveSeq = 0
+let autoDetectInFlight = 0
 let dismissedPromptId: string | null = null
 
 export const syncAutoDetectStatus = (raw: unknown): void => {
@@ -112,7 +113,7 @@ export const syncAutoDetectStatus = (raw: unknown): void => {
   const capability = parseAutoDetectCapability(raw.capability)
   if (capability) settings.autoDetectCapability = capability
   const mode = parseAutoDetectMode(raw.mode)
-  if (mode && !autoDetectSaving) settings.autoDetectMode = mode
+  if (mode && autoDetectInFlight === 0) settings.autoDetectMode = mode
   if (typeof raw.auto_recording === 'boolean') settings.autoRecording = raw.auto_recording
   if (raw.prompt === null) {
     dismissedPromptId = null
@@ -143,7 +144,7 @@ export const loadAutoDetect = async (): Promise<void> => {
     const capability = parseAutoDetectCapability(d.capability)
     if (capability) settings.autoDetectCapability = capability
     const mode = parseAutoDetectMode(d.mode)
-    if (mode && !autoDetectSaving) settings.autoDetectMode = mode
+    if (mode && autoDetectInFlight === 0) settings.autoDetectMode = mode
   } catch {}
 }
 
@@ -158,7 +159,8 @@ export const setAutoDetectMode = async (mode: AutoDetectMode): Promise<boolean> 
   const previous = settings.autoDetectMode
   settings.autoDetectMode = mode
   if (mode !== 'notify') settings.autoDetectPrompt = null
-  autoDetectSaving = true
+  const seq = ++autoDetectSaveSeq
+  autoDetectInFlight += 1
   try {
     const r = await fetch('/api/record/auto_detect', {
       method: 'POST',
@@ -166,6 +168,7 @@ export const setAutoDetectMode = async (mode: AutoDetectMode): Promise<boolean> 
       body: JSON.stringify({ mode }),
     })
     const d = await readJsonSafe<AutoDetectResponse>(r)
+    if (seq !== autoDetectSaveSeq) return true
     if (!r.ok || d.ok === false) {
       settings.autoDetectMode = previous
       toast(d.error || 'Не удалось сохранить автоопределение звонков', 'error')
@@ -175,11 +178,12 @@ export const setAutoDetectMode = async (mode: AutoDetectMode): Promise<boolean> 
     if (saved) settings.autoDetectMode = saved
     return true
   } catch (e) {
+    if (seq !== autoDetectSaveSeq) return false
     settings.autoDetectMode = previous
     toast(`Не удалось сохранить автоопределение звонков: ${errText(e)}`, 'error')
     return false
   } finally {
-    autoDetectSaving = false
+    autoDetectInFlight -= 1
   }
 }
 

@@ -308,7 +308,6 @@ pub(crate) struct RecordingState {
     pub(crate) session_id: Option<String>,
     /// Некритичные сбои старта: журнал и диагностика показывают их без падения записи.
     pub(crate) warnings: Vec<String>,
-    pub(crate) auto_started: bool,
 }
 
 impl Default for RecordingState {
@@ -323,7 +322,6 @@ impl Default for RecordingState {
             screen_session: None,
             session_id: None,
             warnings: Vec::new(),
-            auto_started: false,
         }
     }
 }
@@ -353,6 +351,7 @@ pub(crate) fn notify_recording_state(is_recording: bool) {
 
 static RECORDING_ACTIVE: AtomicBool = AtomicBool::new(false);
 static RECORDING_AUTO: AtomicBool = AtomicBool::new(false);
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 static LIFECYCLE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
 /// Факт записи без доступа к состоянию: замена бинарников ffmpeg не должна
@@ -362,15 +361,17 @@ pub(crate) fn is_active() -> bool {
 }
 
 pub(crate) fn is_auto_recording() -> bool {
-    RECORDING_AUTO.load(Ordering::Relaxed)
+    RECORDING_AUTO.load(Ordering::SeqCst)
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) fn is_lifecycle_in_flight() -> bool {
     LIFECYCLE_IN_FLIGHT.load(Ordering::SeqCst)
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) fn clear_auto_started() {
-    RECORDING_AUTO.store(false, Ordering::Relaxed);
+    RECORDING_AUTO.store(false, Ordering::SeqCst);
 }
 
 /// Пока идёт открытие устройств или финализация WAV, мьютекс состояния
@@ -381,6 +382,7 @@ fn lifecycle<R>(
 ) -> R {
     static SERIAL: Mutex<()> = Mutex::new(());
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     LIFECYCLE_IN_FLIGHT.store(true, Ordering::SeqCst);
     let taken = std::mem::take(&mut *state.lock().unwrap_or_else(|e| e.into_inner()));
     let mut slot = StateSlot { state, taken };
@@ -396,6 +398,7 @@ impl Drop for StateSlot<'_> {
     fn drop(&mut self) {
         let taken = std::mem::take(&mut self.taken);
         *self.state.lock().unwrap_or_else(|e| e.into_inner()) = taken;
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         LIFECYCLE_IN_FLIGHT.store(false, Ordering::SeqCst);
     }
 }
@@ -408,8 +411,7 @@ pub(crate) fn start_recording(
     lifecycle(state, |st| {
         let res = start_recording_inner(st, mode, screen);
         if res.get("ok").and_then(|x| x.as_bool()) == Some(true) {
-            st.auto_started = false;
-            RECORDING_AUTO.store(false, Ordering::Relaxed);
+            RECORDING_AUTO.store(false, Ordering::SeqCst);
             crate::auto_detect::on_manual_start();
         }
         res
@@ -421,9 +423,9 @@ pub(crate) fn stop_recording(
     defer_autotranscribe: bool,
 ) -> serde_json::Value {
     lifecycle(state, |st| {
-        let was_auto = st.auto_started;
+        let was_recording = st.is_recording;
         let res = stop_recording_inner(st, defer_autotranscribe);
-        if res.get("ok").and_then(|x| x.as_bool()) == Some(true) && was_auto {
+        if was_recording && !st.is_recording {
             crate::auto_detect::on_manual_stop();
         }
         res
@@ -712,8 +714,7 @@ pub(crate) fn stop_recording_inner(
     }
     let session = st.session_id.clone();
     st.is_recording = false;
-    st.auto_started = false;
-    RECORDING_AUTO.store(false, Ordering::Relaxed);
+    RECORDING_AUTO.store(false, Ordering::SeqCst);
     notify_recording_state(false);
     let ended = now_secs();
     let started = st.start_time;
@@ -938,8 +939,7 @@ fn start_recording_notified(st: &mut RecordingState, auto: bool) -> serde_json::
     let mode = crate::configured_record_mode();
     let res = start_recording_inner(st, &mode, false);
     if res.get("ok").and_then(|x| x.as_bool()) == Some(true) {
-        st.auto_started = auto;
-        RECORDING_AUTO.store(auto, Ordering::Relaxed);
+        RECORDING_AUTO.store(auto, Ordering::SeqCst);
         if !auto {
             crate::auto_detect::on_manual_start();
         }
@@ -962,12 +962,12 @@ fn start_recording_notified(st: &mut RecordingState, auto: bool) -> serde_json::
 }
 
 fn stop_recording_notified(st: &mut RecordingState, auto: bool) -> serde_json::Value {
-    let was_auto = st.auto_started;
+    let was_recording = st.is_recording;
     let res = stop_recording_inner(st, false);
+    if !auto && was_recording && !st.is_recording {
+        crate::auto_detect::on_manual_stop();
+    }
     if res.get("ok").and_then(|x| x.as_bool()) == Some(true) {
-        if !auto && was_auto {
-            crate::auto_detect::on_manual_stop();
-        }
         let fname = res
             .get("filename")
             .and_then(|x| x.as_str())
@@ -997,13 +997,18 @@ pub(crate) fn stop_recording_with_notify(state: &Arc<Mutex<RecordingState>>) -> 
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) fn start_recording_auto(state: &Arc<Mutex<RecordingState>>) -> serde_json::Value {
-    lifecycle(state, |st| start_recording_notified(st, true))
+    lifecycle(state, |st| {
+        if crate::config::configured_auto_detect_mode() != crate::config::AutoDetectMode::Auto {
+            return json!({"ok": false, "aborted": true});
+        }
+        start_recording_notified(st, true)
+    })
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) fn stop_recording_auto(state: &Arc<Mutex<RecordingState>>) -> serde_json::Value {
     lifecycle(state, |st| {
-        if !st.is_recording || !st.auto_started || !is_auto_recording() {
+        if !st.is_recording || !is_auto_recording() {
             return json!({"ok": false, "error": "Автозапись не активна"});
         }
         stop_recording_notified(st, true)

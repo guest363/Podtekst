@@ -325,3 +325,163 @@ fn lifecycle_in_flight_skips_tick_without_advancing() {
             .is_empty());
     }
 }
+
+#[test]
+fn macos_helper_roles_and_avconferenced_match() {
+    let mut d = Detector::new();
+    let t0 = Instant::now();
+    let chrome_helper = [client(11, "com.google.Chrome.helper.audio", true)];
+    let mut acts = Vec::new();
+    for step in [0, 2, 4] {
+        acts = d.tick(
+            t0 + Duration::from_secs(step),
+            AutoDetectMode::Auto,
+            DetectionCapability::Process,
+            &chrome_helper,
+            idle_ctx(),
+        );
+    }
+    assert_eq!(
+        acts,
+        vec![DetectorAction::StartAutoRecording { slug: "chrome" }]
+    );
+
+    let mut d2 = Detector::new();
+    let discord_helper = [client(12, "com.hnc.Discord.helper.renderer", false)];
+    for step in [0, 2, 4] {
+        acts = d2.tick(
+            t0 + Duration::from_secs(step),
+            AutoDetectMode::Notify,
+            DetectionCapability::Process,
+            &discord_helper,
+            idle_ctx(),
+        );
+    }
+    assert_eq!(
+        acts,
+        vec![DetectorAction::NotifyCall {
+            slug: "discord",
+            label: "Discord",
+        }]
+    );
+
+    let mut d3 = Detector::new();
+    let avconf = [client(13, "com.apple.avconferenced", false)];
+    for step in [0, 2, 4] {
+        acts = d3.tick(
+            t0 + Duration::from_secs(step),
+            AutoDetectMode::Notify,
+            DetectionCapability::Process,
+            &avconf,
+            idle_ctx(),
+        );
+    }
+    assert_eq!(
+        acts,
+        vec![DetectorAction::NotifyCall {
+            slug: "facetime",
+            label: "FaceTime",
+        }]
+    );
+}
+
+#[test]
+fn prompted_transitions_to_auto_on_mode_switch() {
+    let mut d = Detector::new();
+    let t0 = Instant::now();
+    let zoom = [client(42, "Zoom.exe", false)];
+    for step in [0, 2, 4] {
+        let _ = d.tick(
+            t0 + Duration::from_secs(step),
+            AutoDetectMode::Notify,
+            DetectionCapability::Process,
+            &zoom,
+            idle_ctx(),
+        );
+    }
+    assert!(d.prompt().is_some());
+    assert_eq!(
+        d.tick(
+            t0 + Duration::from_secs(6),
+            AutoDetectMode::Auto,
+            DetectionCapability::Process,
+            &zoom,
+            idle_ctx(),
+        ),
+        vec![DetectorAction::StartAutoRecording { slug: "zoom" }]
+    );
+}
+
+#[test]
+fn manual_start_from_banner_then_manual_stop_suppresses_same_call() {
+    let mut d = Detector::new();
+    let t0 = Instant::now();
+    let zoom = [client(42, "Zoom.exe", false)];
+    for step in [0, 2, 4] {
+        let _ = d.tick(
+            t0 + Duration::from_secs(step),
+            AutoDetectMode::Notify,
+            DetectionCapability::Process,
+            &zoom,
+            idle_ctx(),
+        );
+    }
+    assert!(d.prompt().is_some());
+
+    d.on_manual_start();
+    assert!(d.prompt().is_none());
+    let manual_rec = TickContext {
+        is_recording: true,
+        is_auto_recording: false,
+        ..idle_ctx()
+    };
+    assert!(d
+        .tick(
+            t0 + Duration::from_secs(6),
+            AutoDetectMode::Notify,
+            DetectionCapability::Process,
+            &zoom,
+            manual_rec,
+        )
+        .is_empty());
+
+    d.on_manual_stop();
+    for step in [8, 10, 12, 14] {
+        assert!(d
+            .tick(
+                t0 + Duration::from_secs(step),
+                AutoDetectMode::Notify,
+                DetectionCapability::Process,
+                &zoom,
+                idle_ctx(),
+            )
+            .is_empty());
+        assert!(d.prompt().is_none());
+    }
+
+    for step in [16, 26, 28, 30] {
+        let active = if step < 28 { &[][..] } else { &zoom[..] };
+        assert!(d
+            .tick(
+                t0 + Duration::from_secs(step),
+                AutoDetectMode::Notify,
+                DetectionCapability::Process,
+                active,
+                idle_ctx(),
+            )
+            .is_empty());
+    }
+    assert_eq!(
+        d.tick(
+            t0 + Duration::from_secs(32),
+            AutoDetectMode::Notify,
+            DetectionCapability::Process,
+            &zoom,
+            idle_ctx(),
+        ),
+        vec![DetectorAction::NotifyCall {
+            slug: "zoom",
+            label: "Zoom",
+        }]
+    );
+}

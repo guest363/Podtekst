@@ -46,6 +46,11 @@ let introOpen = $state(false)
 let introStep = $state<1 | 2 | 3>(1)
 let startingFromPrompt = $state(false)
 
+type RecordStartResponse = OkResponse & {
+  mic_muted?: boolean
+  sys_error?: string
+}
+
 const startRecordingFromPrompt = async (): Promise<void> => {
   if (startingFromPrompt) return
   startingFromPrompt = true
@@ -55,9 +60,15 @@ const startRecordingFromPrompt = async (): Promise<void> => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode: settings.recordMode, screen: false }),
     })
-    const d = await readJsonSafe<OkResponse>(r)
+    const d = await readJsonSafe<RecordStartResponse>(r)
     if (d.ok || d.error === 'Запись уже идёт') {
       settings.autoDetectPrompt = null
+      selectTab('studio')
+      if (d.ok) {
+        toast('Запись началась')
+        if (d.mic_muted) toast('Микрофон выключен в системе – будет тишина', 'error')
+        if (d.sys_error) toast(`Системный звук не пишется: ${d.sys_error}`, 'error')
+      }
       void refreshAutoDetectStatus()
     } else {
       toast(d.error || 'Не удалось начать запись', 'error')
@@ -125,7 +136,8 @@ $effect(() => {
 
 $effect(() => {
   if (
-    (ui.activeTab === 'studio' && !ui.transcriptOpen) ||
+    ui.activeTab === 'studio' ||
+    ui.transcriptOpen ||
     !settings.autoDetectSupported ||
     settings.autoDetectMode === 'off'
   ) {
