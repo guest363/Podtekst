@@ -173,6 +173,7 @@ pub(super) const PROCESS_PROPERTY_BUNDLE_ID: u32 = fourcc(b"pbid");
 pub(super) const PROCESS_PROPERTY_IS_RUNNING_INPUT: u32 = fourcc(b"piri");
 pub(super) const PROCESS_PROPERTY_IS_RUNNING_OUTPUT: u32 = fourcc(b"piro");
 pub(super) const DEVICE_PROPERTY_IS_RUNNING_SOMEWHERE: u32 = fourcc(b"gone");
+pub(super) const HARDWARE_UNKNOWN_PROPERTY_ERROR: OSStatus = fourcc(b"who?") as OSStatus;
 pub(super) const DEVICE_PROPERTY_STREAM_CONFIGURATION: u32 = fourcc(b"slay");
 pub(super) const DEVICE_PROPERTY_NAME_CFSTRING: u32 = fourcc(b"lnam");
 pub(super) const DEVICE_PROPERTY_MUTE: u32 = fourcc(b"mute");

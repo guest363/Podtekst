@@ -34,10 +34,6 @@ pub fn detection_capability() -> DetectionCapability {
     }
 }
 
-pub fn is_detection_supported() -> bool {
-    detection_capability() != DetectionCapability::Unsupported
-}
-
 pub fn active_mic_clients() -> Vec<ActiveAudioClient> {
     #[cfg(target_os = "windows")]
     {
@@ -341,12 +337,10 @@ mod tests {
     #[test]
     fn capability_and_poll_smoke_never_include_self() {
         let cap = detection_capability();
-        assert_eq!(
-            is_detection_supported(),
-            cap != DetectionCapability::Unsupported
-        );
         #[cfg(target_os = "windows")]
         assert_eq!(cap, DetectionCapability::Process);
+        #[cfg(not(target_os = "windows"))]
+        let _ = cap;
 
         let clients = active_mic_clients();
         let self_pid = std::process::id();

@@ -93,6 +93,7 @@ struct DetectState {
     sources_done: bool,
     outputs_done: bool,
     inputs_done: bool,
+    failed: bool,
 }
 
 fn all_done(state: &DetectState) -> bool {
@@ -128,6 +129,9 @@ unsafe extern "C" fn on_source(
     // SAFETY: userdata — указатель на DetectState на стеке активного вызова.
     let state = unsafe { &mut *(userdata as *mut DetectState) };
     if eol != 0 {
+        if eol < 0 {
+            state.failed = true;
+        }
         state.sources_done = true;
         if all_done(state) {
             quit_mainloop(state);
@@ -158,6 +162,9 @@ unsafe extern "C" fn on_source_output(
     // SAFETY: userdata — указатель на DetectState на стеке активного вызова.
     let state = unsafe { &mut *(userdata as *mut DetectState) };
     if eol != 0 {
+        if eol < 0 {
+            state.failed = true;
+        }
         state.outputs_done = true;
         if all_done(state) {
             quit_mainloop(state);
@@ -202,6 +209,9 @@ unsafe extern "C" fn on_sink_input(
     // SAFETY: userdata — указатель на DetectState на стеке активного вызова.
     let state = unsafe { &mut *(userdata as *mut DetectState) };
     if eol != 0 {
+        if eol < 0 {
+            state.failed = true;
+        }
         state.inputs_done = true;
         if all_done(state) {
             quit_mainloop(state);
@@ -247,6 +257,9 @@ unsafe extern "C" fn on_state(_ctx: *mut c_void, userdata: *mut c_void) {
             let op = (lib.context_get_source_info_list)(state.ctx, Some(on_source), userdata);
             if !op.is_null() {
                 (lib.operation_unref)(op);
+            } else {
+                state.sources_done = true;
+                state.failed = true;
             }
             let op = (lib.context_get_source_output_info_list)(
                 state.ctx,
@@ -255,12 +268,21 @@ unsafe extern "C" fn on_state(_ctx: *mut c_void, userdata: *mut c_void) {
             );
             if !op.is_null() {
                 (lib.operation_unref)(op);
+            } else {
+                state.outputs_done = true;
+                state.failed = true;
             }
             let op =
                 (lib.context_get_sink_input_info_list)(state.ctx, Some(on_sink_input), userdata);
             if !op.is_null() {
                 (lib.operation_unref)(op);
+            } else {
+                state.inputs_done = true;
+                state.failed = true;
             }
+        }
+        if all_done(state) {
+            quit_mainloop(state);
         }
     } else if st == PA_CONTEXT_FAILED || st == PA_CONTEXT_TERMINATED {
         // SAFETY: mainloop валиден до выхода из active_mic_clients.
@@ -281,6 +303,10 @@ pub(super) fn active_mic_clients() -> Vec<ActiveAudioClient> {
         return Vec::new();
     };
     let state = query_pulse(lib);
+    // Неполный снимок после таймаута или сбоя мог пропустить .monitor-источники.
+    if !all_done(&state) || state.failed {
+        return Vec::new();
+    }
     let self_pid = std::process::id();
 
     let mut render_pids = HashSet::new();
@@ -332,6 +358,7 @@ fn query_pulse(lib: &PulseLib) -> DetectState {
         sources_done: false,
         outputs_done: false,
         inputs_done: false,
+        failed: false,
     };
     // SAFETY: однопоточный жизненный цикл mainloop и контекста в пределах одного вызова.
     unsafe {

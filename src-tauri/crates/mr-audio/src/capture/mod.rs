@@ -61,8 +61,7 @@ pub fn foreground_processing_stop() {
 }
 
 pub use detect::{
-    active_mic_clients, detection_capability, is_detection_supported, ActiveAudioClient,
-    DetectionCapability,
+    active_mic_clients, detection_capability, ActiveAudioClient, DetectionCapability,
 };
 pub use stream::{read_raw_f32, resample_to};
 

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::ffi::c_void;
 use std::ptr::null;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use super::devices::{
     address, device_ids, device_name, get_cf_string, get_u32, input_channels, is_loopback,
@@ -11,20 +11,32 @@ use crate::capture::detect::{
     has_matching_render, merge_clients, ActiveAudioClient, DetectionCapability,
 };
 
+const CAP_UNKNOWN: u8 = 0;
+const CAP_PROCESS: u8 = 1;
+const CAP_DEVICE_ONLY: u8 = 2;
+
 pub fn detection_capability() -> DetectionCapability {
-    static CAP: OnceLock<DetectionCapability> = OnceLock::new();
-    *CAP.get_or_init(|| {
-        let addr = address(HARDWARE_PROPERTY_PROCESS_OBJECT_LIST, OBJECT_SCOPE_GLOBAL);
-        let mut size = 0u32;
-        // SAFETY: запрос размера системного свойства CoreAudio без выделения буфера.
-        let status =
-            unsafe { AudioObjectGetPropertyDataSize(OBJECT_SYSTEM, &addr, 0, null(), &mut size) };
-        if status == 0 {
-            DetectionCapability::Process
-        } else {
-            DetectionCapability::DeviceOnly
-        }
-    })
+    static CAP: AtomicU8 = AtomicU8::new(CAP_UNKNOWN);
+    match CAP.load(Ordering::Relaxed) {
+        CAP_PROCESS => return DetectionCapability::Process,
+        CAP_DEVICE_ONLY => return DetectionCapability::DeviceOnly,
+        _ => {}
+    }
+    let addr = address(HARDWARE_PROPERTY_PROCESS_OBJECT_LIST, OBJECT_SCOPE_GLOBAL);
+    let mut size = 0u32;
+    // SAFETY: запрос размера системного свойства CoreAudio без выделения буфера.
+    let status =
+        unsafe { AudioObjectGetPropertyDataSize(OBJECT_SYSTEM, &addr, 0, null(), &mut size) };
+    if status == 0 {
+        CAP.store(CAP_PROCESS, Ordering::Relaxed);
+        DetectionCapability::Process
+    } else if status == HARDWARE_UNKNOWN_PROPERTY_ERROR {
+        CAP.store(CAP_DEVICE_ONLY, Ordering::Relaxed);
+        DetectionCapability::DeviceOnly
+    } else {
+        // Временный сбой coreaudiod не кэшируем, чтобы повторить зонд на следующем тике.
+        DetectionCapability::DeviceOnly
+    }
 }
 
 fn process_object_ids() -> Vec<AudioObjectId> {
