@@ -2381,7 +2381,7 @@ dependencies = [
 
 [[package]]
 name = "mr-app"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "clap",
@@ -2418,7 +2418,7 @@ dependencies = [
 
 [[package]]
 name = "mr-audio"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "hound",
  "libc",
@@ -2434,7 +2434,7 @@ dependencies = [
 
 [[package]]
 name = "mr-eval"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "clap",
  "serde",
@@ -2444,7 +2444,7 @@ dependencies = [
 
 [[package]]
 name = "mr-metrics"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "hound",
  "mr-audio",
@@ -2454,7 +2454,7 @@ dependencies = [
 
 [[package]]
 name = "mr-ml"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "libc",
@@ -2468,7 +2468,7 @@ dependencies = [
 
 [[package]]
 name = "mr-models"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "fs2",
  "serde",
@@ -2480,7 +2480,7 @@ dependencies = [
 
 [[package]]
 name = "mr-packs"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2490,7 +2490,7 @@ dependencies = [
 
 [[package]]
 name = "mr-summarize"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "regex",
