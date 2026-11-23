@@ -61,7 +61,7 @@ fn native_app_debounces_starts_and_stops_after_cooldown() {
     };
     assert!(d
         .tick(
-            t0 + Duration::from_secs(16),
+            t0 + Duration::from_secs(11),
             AutoDetectMode::Auto,
             DetectionCapability::Process,
             &[],
@@ -70,7 +70,7 @@ fn native_app_debounces_starts_and_stops_after_cooldown() {
         .is_empty());
     assert_eq!(
         d.tick(
-            t0 + Duration::from_secs(17),
+            t0 + Duration::from_secs(12),
             AutoDetectMode::Auto,
             DetectionCapability::Process,
             &[],
@@ -523,9 +523,18 @@ fn conferencing_starts_and_stays_alive_without_microphone() {
             )
             .is_empty());
     }
+    assert!(d
+        .tick(
+            t0 + Duration::from_secs(48),
+            AutoDetectMode::Auto,
+            DetectionCapability::Process,
+            &[],
+            rec_ctx,
+        )
+        .is_empty());
     assert_eq!(
         d.tick(
-            t0 + Duration::from_secs(55),
+            t0 + Duration::from_secs(50),
             AutoDetectMode::Auto,
             DetectionCapability::Process,
             &[],
@@ -544,11 +553,15 @@ fn browser_and_messenger_handle_muted_calls_and_short_speech_without_youtube_fal
         ..idle_ctx()
     };
 
-    // Просмотр видео без захвата микрофона в браузере и пустой sink_input Electron-клиента
-    // (например, Пачки в простое) не запускают запись, а звонок в Telegram без микрофона запускается.
     let mut d_media = Detector::new();
     let youtube = [client_state(10, "chrome", CaptureState::None, true)];
     let idle_pachca = [client_state(12, "Pachca", CaptureState::None, true)];
+    let tg_playback = [client_state(
+        11,
+        "telegram-desktop",
+        CaptureState::None,
+        true,
+    )];
     for step in [0, 2, 4] {
         assert!(d_media
             .tick(
@@ -568,13 +581,22 @@ fn browser_and_messenger_handle_muted_calls_and_short_speech_without_youtube_fal
                 idle_ctx(),
             )
             .is_empty());
+        assert!(d_media
+            .tick(
+                t0 + Duration::from_secs(step),
+                AutoDetectMode::Auto,
+                DetectionCapability::Process,
+                &tg_playback,
+                idle_ctx(),
+            )
+            .is_empty());
     }
 
     let mut d_tg = Detector::new();
     let tg_muted_call = [client_state(
         11,
         "telegram-desktop",
-        CaptureState::None,
+        CaptureState::Paused,
         true,
     )];
     assert!(d_tg
@@ -624,7 +646,7 @@ fn browser_and_messenger_handle_muted_calls_and_short_speech_without_youtube_fal
     let mut d_short = Detector::new();
     let split_chrome = [
         client_state(10, "chrome", CaptureState::None, true),
-        client_state(12, "chrome", CaptureState::Active, true),
+        client_state(12, "chrome", CaptureState::Active, false),
     ];
     assert!(d_short
         .tick(
@@ -656,9 +678,18 @@ fn browser_and_messenger_handle_muted_calls_and_short_speech_without_youtube_fal
             )
             .is_empty());
     }
+    assert!(d_short
+        .tick(
+            t0 + Duration::from_secs(48),
+            AutoDetectMode::Auto,
+            DetectionCapability::Process,
+            &[],
+            rec_ctx,
+        )
+        .is_empty());
     assert_eq!(
         d_short.tick(
-            t0 + Duration::from_secs(55),
+            t0 + Duration::from_secs(50),
             AutoDetectMode::Auto,
             DetectionCapability::Process,
             &[],

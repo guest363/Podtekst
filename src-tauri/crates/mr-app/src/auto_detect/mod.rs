@@ -216,8 +216,10 @@ mod desktop_runtime {
                 }
             }
             DetectorAction::StopAutoRecording { slug } => {
-                crate::note!("ev=auto_detect.stop app={slug}");
-                let _ = crate::recording::stop_recording_auto(state);
+                let res = crate::recording::stop_recording_auto(state);
+                if res.get("ok").and_then(|x| x.as_bool()) == Some(true) {
+                    crate::note!("ev=auto_detect.stop app={slug}");
+                }
             }
         }
     }

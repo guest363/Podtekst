@@ -15,10 +15,11 @@ static SHARE_HANDLER: std::sync::OnceLock<std::sync::Mutex<Option<ShareHandler>>
 
 const LOG_TAIL_BYTES: usize = 200 * 1024;
 const LOG_TAIL_LINES: usize = 500;
-const SAFE_CONFIG_KEYS: [&str; 7] = [
+const SAFE_CONFIG_KEYS: [&str; 8] = [
     "record_mode",
     "record_mode_explicit",
     "auto_transcribe",
+    "auto_detect_mode",
     "ctc_enabled",
     "diar",
     "new_speaker_min_sim",

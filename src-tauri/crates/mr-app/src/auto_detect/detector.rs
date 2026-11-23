@@ -8,7 +8,7 @@ use crate::config::AutoDetectMode;
 
 const START_DEBOUNCE_TICKS: u8 = 2;
 const START_DEBOUNCE_MIN: Duration = Duration::from_secs(2);
-const STOP_COOLDOWN: Duration = Duration::from_secs(15);
+const STOP_COOLDOWN: Duration = Duration::from_secs(10);
 const SUPPRESS_RELEASE: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -33,7 +33,7 @@ pub(super) fn matched_clients(
     self_pid: u32,
     is_recording: bool,
 ) -> Vec<MatchedClient> {
-    let mut out: Vec<MatchedClient> = Vec::new();
+    let mut agg: Vec<(MatchedApp, CaptureState, bool)> = Vec::new();
     for client in clients {
         if client.pid == Some(self_pid) {
             continue;
@@ -44,30 +44,30 @@ pub(super) fn matched_clients(
             && client.app_name.is_none()
         {
             if client.capture == CaptureState::Active && !is_recording {
-                push_or_merge(
-                    &mut out,
-                    MatchedClient {
-                        app: GENERIC_CALL,
-                        can_start: true,
-                        keep_alive: true,
-                    },
-                );
+                merge_state(&mut agg, GENERIC_CALL, CaptureState::Active, false);
             }
             continue;
         }
-        if let Some(matched) = classify_client(client) {
-            push_or_merge(&mut out, matched);
+        if let Some(app) = identify_app(client) {
+            merge_state(&mut agg, app, client.capture, client.has_active_render);
         }
     }
-    out
+    agg.into_iter()
+        .filter_map(|(app, capture, has_active_render)| signal_for(app, capture, has_active_render))
+        .collect()
 }
 
-fn push_or_merge(out: &mut Vec<MatchedClient>, item: MatchedClient) {
-    if let Some(existing) = out.iter_mut().find(|e| e.app.slug == item.app.slug) {
-        existing.can_start |= item.can_start;
-        existing.keep_alive |= item.keep_alive;
+fn merge_state(
+    agg: &mut Vec<(MatchedApp, CaptureState, bool)>,
+    app: MatchedApp,
+    capture: CaptureState,
+    has_active_render: bool,
+) {
+    if let Some((_, c, r)) = agg.iter_mut().find(|(a, _, _)| a.slug == app.slug) {
+        *c = (*c).max(capture);
+        *r |= has_active_render;
     } else {
-        out.push(item);
+        agg.push((app, capture, has_active_render));
     }
 }
 
@@ -101,7 +101,7 @@ fn match_native(token: &str) -> Option<MatchedApp> {
         | "ayugram"
         | "kotatogram"
         | "ru.keepcoder.telegram"
-        | "org.telegram.desktop" => ("telegram", "Telegram", Voip),
+        | "org.telegram.desktop" => ("telegram", "Telegram", Messenger),
         "slack" | "com.tinyspeck.slackmacgap" => ("slack", "Slack", Messenger),
         "skype" | "skypeforlinux" | "com.skype.skype" => ("skype", "Skype", Messenger),
         "webex"
@@ -166,25 +166,29 @@ fn match_browser(token: &str) -> Option<MatchedApp> {
     })
 }
 
-fn signal_for(app: MatchedApp, client: &ActiveAudioClient) -> Option<MatchedClient> {
+fn signal_for(
+    app: MatchedApp,
+    capture: CaptureState,
+    has_active_render: bool,
+) -> Option<MatchedClient> {
     let (can_start, keep_alive) = match app.kind {
         AppKind::Voip => {
-            let active = client.capture == CaptureState::Active || client.has_active_render;
+            let active = capture == CaptureState::Active || has_active_render;
             (active, active)
         }
         // Electron/WebView-клиенты держат пустой sink_input в простое (например, для уведомлений),
         // поэтому без открытого потока захвата нельзя ни запускать, ни удерживать запись.
         AppKind::Messenger => {
-            let can_start = client.capture == CaptureState::Active
-                || (client.capture == CaptureState::Paused && client.has_active_render);
-            (can_start, client.capture != CaptureState::None)
+            let can_start = capture == CaptureState::Active
+                || (capture == CaptureState::Paused && has_active_render);
+            (can_start, capture != CaptureState::None)
         }
         // Для браузера нужен хотя бы открытый поток захвата (активный или на паузе) с воспроизведением,
         // иначе нельзя отличить звонок от обычного видео или музыки.
         AppKind::Browser => {
-            let can_start = client.capture != CaptureState::None && client.has_active_render;
+            let can_start = capture != CaptureState::None && has_active_render;
             // shortcut: удержание браузера по активному выводу звука до паузы, пока нет проверки заголовка вкладки.
-            let keep_alive = can_start || client.has_active_render;
+            let keep_alive = can_start || has_active_render;
             (can_start, keep_alive)
         }
     };
@@ -195,7 +199,7 @@ fn signal_for(app: MatchedApp, client: &ActiveAudioClient) -> Option<MatchedClie
     })
 }
 
-fn classify_client(client: &ActiveAudioClient) -> Option<MatchedClient> {
+fn identify_app(client: &ActiveAudioClient) -> Option<MatchedApp> {
     let tokens: Vec<String> = [client.process.as_deref(), client.app_name.as_deref()]
         .into_iter()
         .flatten()
@@ -207,12 +211,12 @@ fn classify_client(client: &ActiveAudioClient) -> Option<MatchedClient> {
     }
     for token in &tokens {
         if let Some(app) = match_native(token) {
-            return signal_for(app, client);
+            return Some(app);
         }
     }
     for token in &tokens {
         if let Some(app) = match_browser(token) {
-            return signal_for(app, client);
+            return Some(app);
         }
     }
     None

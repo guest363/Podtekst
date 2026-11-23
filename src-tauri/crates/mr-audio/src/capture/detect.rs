@@ -114,9 +114,8 @@ mod win {
     use windows::core::{Interface, PWSTR};
     use windows::Win32::Foundation::{CloseHandle, HANDLE, S_OK};
     use windows::Win32::Media::Audio::{
-        eCapture, eRender, AudioSessionStateActive, AudioSessionStateInactive, EDataFlow,
-        IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator, MMDeviceEnumerator,
-        DEVICE_STATE_ACTIVE,
+        eCapture, eRender, AudioSessionStateActive, EDataFlow, IAudioSessionControl2,
+        IAudioSessionManager2, IMMDeviceEnumerator, MMDeviceEnumerator, DEVICE_STATE_ACTIVE,
     };
     use windows::Win32::System::Com::{CoCreateInstance, CoUninitialize, CLSCTX_ALL};
     use windows::Win32::System::Threading::{
@@ -127,12 +126,6 @@ mod win {
     use super::{
         exe_basename, has_matching_render, merge_clients, ActiveAudioClient, CaptureState,
     };
-
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum FlowKind {
-        Capture,
-        Render,
-    }
 
     struct HandleGuard(HANDLE);
 
@@ -161,9 +154,9 @@ mod win {
             return Vec::new();
         };
         let self_pid = std::process::id();
-        let capture_sessions = active_sessions_for_flow(&en, eCapture, FlowKind::Capture, self_pid);
-        let render_sessions = active_sessions_for_flow(&en, eRender, FlowKind::Render, self_pid);
-        if capture_sessions.is_empty() && render_sessions.is_empty() {
+        let capture_pids = active_sessions_for_flow(&en, eCapture, self_pid);
+        let render_pids_raw = active_sessions_for_flow(&en, eRender, self_pid);
+        if capture_pids.is_empty() && render_pids_raw.is_empty() {
             return Vec::new();
         }
 
@@ -175,10 +168,10 @@ mod win {
                 .clone()
         };
 
-        let mut render_pids = HashSet::with_capacity(render_sessions.len());
-        let mut render_names = HashSet::with_capacity(render_sessions.len());
-        let mut clients = Vec::with_capacity(capture_sessions.len() + render_sessions.len());
-        for (pid, _) in render_sessions {
+        let mut render_pids = HashSet::with_capacity(render_pids_raw.len());
+        let mut render_names = HashSet::with_capacity(render_pids_raw.len());
+        let mut clients = Vec::with_capacity(capture_pids.len() + render_pids_raw.len());
+        for pid in render_pids_raw {
             render_pids.insert(pid);
             let process = resolve(pid);
             if let Some(name) = process.as_deref() {
@@ -193,7 +186,7 @@ mod win {
             });
         }
 
-        for (pid, capture) in capture_sessions {
+        for pid in capture_pids {
             let process = resolve(pid);
             let has_active_render =
                 has_matching_render(Some(pid), process.as_deref(), &render_pids, &render_names);
@@ -201,7 +194,7 @@ mod win {
                 pid: Some(pid),
                 process,
                 app_name: None,
-                capture,
+                capture: CaptureState::Active,
                 has_active_render,
             });
         }
@@ -211,15 +204,14 @@ mod win {
     unsafe fn active_sessions_for_flow(
         en: &IMMDeviceEnumerator,
         flow: EDataFlow,
-        kind: FlowKind,
         self_pid: u32,
-    ) -> Vec<(u32, CaptureState)> {
-        let mut sessions_out = Vec::new();
+    ) -> Vec<u32> {
+        let mut pids = Vec::new();
         let Ok(coll) = en.EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE) else {
-            return sessions_out;
+            return pids;
         };
         let Ok(dev_count) = coll.GetCount() else {
-            return sessions_out;
+            return pids;
         };
         for dev_idx in 0..dev_count {
             let Ok(dev) = coll.Item(dev_idx) else {
@@ -238,13 +230,9 @@ mod win {
                 let Ok(ctrl) = sessions.GetSession(sess_idx) else {
                     continue;
                 };
-                let capture_state = match (kind, ctrl.GetState().ok()) {
-                    (_, Some(s)) if s == AudioSessionStateActive => CaptureState::Active,
-                    (FlowKind::Capture, Some(s)) if s == AudioSessionStateInactive => {
-                        CaptureState::Paused
-                    }
-                    _ => continue,
-                };
+                if ctrl.GetState().ok() != Some(AudioSessionStateActive) {
+                    continue;
+                }
                 let Ok(ctrl2) = ctrl.cast::<IAudioSessionControl2>() else {
                     continue;
                 };
@@ -257,10 +245,10 @@ mod win {
                 if pid == 0 || pid == self_pid {
                     continue;
                 }
-                sessions_out.push((pid, capture_state));
+                pids.push(pid);
             }
         }
-        sessions_out
+        pids
     }
 
     fn process_exe_name(pid: u32) -> Option<String> {
