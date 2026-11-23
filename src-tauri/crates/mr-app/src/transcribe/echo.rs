@@ -19,8 +19,11 @@ const CORR_HALF_FRAMES: usize = 10;
 const GAIN_MIN: f32 = 0.05;
 const GAIN_MAX: f32 = 4.0;
 const LOCAL_GAIN_STRIDE: usize = 32;
-/// Полуширина ±15 с: отслеживает дрейф громкости динамиков и АРУ, но не сглаживает
-/// короткие локальные всплески речи.
+/// Полуширина ±5 с для быстрого дрейфа усиления; порог 25 кадров (≥0.8 с)
+/// не даёт короткому наложению двойной речи перекосить оценку.
+const LOCAL_GAIN_TIGHT_HALF_FRAMES: usize = 156;
+const MIN_TIGHT_GAIN_SAMPLES: usize = 25;
+/// Запасное окно ±15 с на разреженных участках с малым числом эхо-кадров.
 const LOCAL_GAIN_HALF_FRAMES: usize = 469;
 const MIN_LOCAL_GAIN_SAMPLES: usize = 10;
 const WF_HALF_FRAMES: usize = 2;
@@ -82,6 +85,24 @@ fn median_in_place(values: &mut [f32]) -> f32 {
     *value
 }
 
+fn window_median(
+    gain_samples: &[(usize, f32)],
+    center: usize,
+    half_frames: usize,
+    min_samples: usize,
+    buf: &mut Vec<f32>,
+) -> Option<f32> {
+    let lo = gain_samples.partition_point(|&(frame, _)| frame < center.saturating_sub(half_frames));
+    let hi =
+        gain_samples.partition_point(|&(frame, _)| frame <= center.saturating_add(half_frames));
+    if hi - lo < min_samples {
+        return None;
+    }
+    buf.clear();
+    buf.extend(gain_samples[lo..hi].iter().map(|&(_, ratio)| ratio));
+    Some(median_in_place(buf).clamp(GAIN_MIN, GAIN_MAX))
+}
+
 fn estimate_local_gains(
     corr: &[f64],
     mic_env: &[f32],
@@ -116,17 +137,24 @@ fn estimate_local_gains(
     let last_frame = mic_env.len().saturating_sub(1);
     for block in 0..blocks {
         let center = (block * LOCAL_GAIN_STRIDE + LOCAL_GAIN_STRIDE / 2).min(last_frame);
-        let lo = gain_samples
-            .partition_point(|&(frame, _)| frame < center.saturating_sub(LOCAL_GAIN_HALF_FRAMES));
-        let hi = gain_samples
-            .partition_point(|&(frame, _)| frame <= center.saturating_add(LOCAL_GAIN_HALF_FRAMES));
-        if hi - lo < MIN_LOCAL_GAIN_SAMPLES {
-            local_gains.push(global_gain);
-        } else {
-            buf.clear();
-            buf.extend(gain_samples[lo..hi].iter().map(|&(_, ratio)| ratio));
-            local_gains.push(median_in_place(&mut buf).clamp(GAIN_MIN, GAIN_MAX));
-        }
+        let local = window_median(
+            &gain_samples,
+            center,
+            LOCAL_GAIN_TIGHT_HALF_FRAMES,
+            MIN_TIGHT_GAIN_SAMPLES,
+            &mut buf,
+        )
+        .or_else(|| {
+            window_median(
+                &gain_samples,
+                center,
+                LOCAL_GAIN_HALF_FRAMES,
+                MIN_LOCAL_GAIN_SAMPLES,
+                &mut buf,
+            )
+        })
+        .unwrap_or(global_gain);
+        local_gains.push(local);
     }
     (global_gain, local_gains)
 }
@@ -692,6 +720,36 @@ mod tests {
         assert!(first_half.double_talk <= 0.05, "{first_half:?}");
         assert!(second_half.echo_only >= 0.9, "{second_half:?}");
         assert!(second_half.double_talk <= 0.05, "{second_half:?}");
+    }
+
+    #[test]
+    fn rapid_gain_ramp_echo_stays_echo_only() {
+        let len = SAMPLE_RATE * 40;
+        let system = am_bursts(len, &[(2.0, 32.0)], 0.35, 29, 300.0);
+        let mut mic = delayed_echo(&system, DELAY, 1.0);
+        for (i, sample) in mic.iter_mut().enumerate() {
+            let t = i as f64 / SAMPLE_RATE as f64;
+            let frac = ((t - 2.0) / 30.0).clamp(0.0, 1.0) as f32;
+            let gain = 2.4 + (0.6 - 2.4) * frac;
+            *sample *= gain;
+        }
+
+        let mic_env = vad_envelope(&mic);
+        let sys_env = vad_envelope(&system);
+        let delay_frames = DELAY as f32 / VAD_WINDOW as f32;
+        let corr = vec![0.95f64; mic_env.len()];
+        let (_, local_gains) = estimate_local_gains(&corr, &mic_env, &sys_env, delay_frames, 1e-4);
+        let early_block = (3 * SAMPLE_RATE / VAD_WINDOW) / LOCAL_GAIN_STRIDE;
+        assert!(
+            local_gains[early_block] > 2.1,
+            "узкое окно ±5 с должно отслеживать быстрый старт рампы: {}",
+            local_gains[early_block]
+        );
+
+        let ev = detect(&mic, &system, None).expect("эхо с быстрой рампой должно находиться");
+        let early = segment_profile(&ev, 2.5, 12.0);
+        assert!(early.echo_only >= 0.85, "{early:?}");
+        assert!(early.double_talk <= 0.10, "{early:?}");
     }
 
     #[test]

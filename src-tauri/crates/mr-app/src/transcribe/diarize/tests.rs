@@ -2390,3 +2390,89 @@ fn split_at_pauses_preserves_quiet_speaker_in_dense_channel() {
         "тихая реплика не должна дробиться: {split:?}"
     );
 }
+
+#[test]
+fn ch0_strong_echo_caps_speaker_assignment_to_existing_k() {
+    let frame = mr_ml::onnx::segmentation::FRAME_SAMPLES;
+    let frame_sec = frame as f64 / 16_000.0;
+    let mut classes = vec![1u8; 120];
+    classes.extend(vec![2u8; 120]);
+    let segmentation = mr_ml::onnx::segmentation::Segmentation {
+        frames: vec![],
+        windows: vec![mr_ml::onnx::segmentation::SegmentationWindow {
+            start_sample: 0,
+            classes,
+        }],
+    };
+    let utts = vec![
+        utt(0.0, 120.0 * frame_sec, "Участник 1", 0, "первая реплика"),
+        utt(
+            120.0 * frame_sec,
+            240.0 * frame_sec,
+            "Участник 1",
+            0,
+            "вторая реплика",
+        ),
+    ];
+    let embs = vec![Some(vec![1.0, 0.0]), Some(vec![0.0, 1.0])];
+    let durs = vec![2.0, 2.0];
+    let quals = vec![1.0, 1.0];
+    let protected = HashSet::new();
+
+    let mut uncapped_labels = HashMap::from([(0usize, 0usize), (1, 0)]);
+    let uncapped_max = super::core::assignment_max_speakers(&uncapped_labels, 0, None);
+    assert_eq!(uncapped_max, 0);
+    crate::transcribe::speaker_assignment::apply(
+        &segmentation,
+        &utts,
+        &embs,
+        &durs,
+        &quals,
+        &mut uncapped_labels,
+        &protected,
+        uncapped_max,
+    );
+    assert_eq!(
+        uncapped_labels
+            .values()
+            .copied()
+            .collect::<HashSet<_>>()
+            .len(),
+        2
+    );
+
+    let mut strong_ev = echo_evidence(10.0, &[(0.0, 10.0, FrameClass::EchoOnly)]);
+    strong_ev.prominence = crate::transcribe::echo::STRONG_PROMINENCE + 10.0;
+    let mut capped_labels = HashMap::from([(0usize, 0usize), (1, 0)]);
+    let capped_max = super::core::assignment_max_speakers(&capped_labels, 0, Some(&strong_ev));
+    assert_eq!(capped_max, 1);
+    crate::transcribe::speaker_assignment::apply(
+        &segmentation,
+        &utts,
+        &embs,
+        &durs,
+        &quals,
+        &mut capped_labels,
+        &protected,
+        capped_max,
+    );
+    assert_eq!(
+        capped_labels
+            .values()
+            .copied()
+            .collect::<HashSet<_>>()
+            .len(),
+        1,
+        "при сильном эхе ch0 с k=1 не должен плодить фантомный кластер: {capped_labels:?}"
+    );
+
+    let two_clusters = HashMap::from([(0usize, 0usize), (1, 1)]);
+    assert_eq!(
+        super::core::assignment_max_speakers(&two_clusters, 0, Some(&strong_ev)),
+        2
+    );
+    assert_eq!(
+        super::core::assignment_max_speakers(&two_clusters, 1, Some(&strong_ev)),
+        1
+    );
+}

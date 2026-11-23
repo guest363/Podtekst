@@ -576,6 +576,7 @@ pub(crate) fn diarize_channel(
     let mut voice_runs: Vec<crate::transcribe::speaker_assignment::SpeakerSpan> = Vec::new();
     let promoted_keys: HashSet<usize> = promoted_utts.keys().copied().collect();
     if let Some(segmentation) = segmentation {
+        let assignment_max = assignment_max_speakers(&label_of, max_speakers, echo);
         let outcome = crate::transcribe::speaker_assignment::apply(
             segmentation,
             utterances,
@@ -584,7 +585,7 @@ pub(crate) fn diarize_channel(
             &quals,
             &mut label_of,
             &promoted_keys,
-            max_speakers,
+            assignment_max,
         );
         // Поле spans нужно для unit-тестов speaker_assignment; доразбиение опирается на voice_runs.
         let _ = outcome.spans;
@@ -940,4 +941,27 @@ pub(crate) fn diarize_channel(
         );
     }
     (infos, voice_timeline)
+}
+
+/// При сильном эхе PyAnnote на необработанном ch=0 видит чужой голос из динамиков
+/// как второй локальный класс; ограничиваем число кластеров уже найденным AHC.
+pub(super) fn assignment_max_speakers(
+    label_of: &HashMap<usize, usize>,
+    max_speakers: usize,
+    echo: Option<&EchoEvidence>,
+) -> usize {
+    if !echo.is_some_and(EchoEvidence::is_strong) {
+        return max_speakers;
+    }
+    let existing_k = label_of
+        .values()
+        .copied()
+        .collect::<HashSet<_>>()
+        .len()
+        .max(1);
+    if max_speakers > 0 {
+        max_speakers.min(existing_k)
+    } else {
+        existing_k
+    }
 }

@@ -11,6 +11,10 @@ const ECHO_PRECEDENCE_MAX_DOUBLE_TALK: f32 = 0.35;
 const SHORT_ECHO_MIN_ECHO_ONLY: f32 = 0.60;
 const SHORT_ECHO_MAX_LOCAL_ONLY: f32 = 0.05;
 const SHORT_ECHO_MAX_DOUBLE_TALK: f32 = 0.15;
+const SHORT_CRUMB_MAX_SEC: f64 = 1.5;
+const SHORT_CRUMB_MAX_WORDS: usize = 2;
+const SHORT_CRUMB_MIN_ECHO_ONLY: f32 = 0.20;
+const SHORT_CRUMB_MIN_ECHO_UNCERTAIN: f32 = 0.80;
 const SHORT_ECHO_LEAD_SEC: f64 = 0.1;
 const SHORT_ECHO_TAIL_SEC: f64 = 0.3;
 
@@ -37,9 +41,15 @@ fn strong_echo_decision(
             StrongEchoDecision::KeepBoth
         }
     } else {
-        let is_ch0_echo = ch0_profile.echo_only >= SHORT_ECHO_MIN_ECHO_ONLY
-            && ch0_profile.local_only <= SHORT_ECHO_MAX_LOCAL_ONLY
-            && ch0_profile.double_talk <= SHORT_ECHO_MAX_DOUBLE_TALK;
+        let short_crumb = (u_ch0.end - u_ch0.start) <= SHORT_CRUMB_MAX_SEC
+            && u_ch0.text.split_whitespace().count() <= SHORT_CRUMB_MAX_WORDS;
+        let is_ch0_echo = ch0_profile.local_only <= SHORT_ECHO_MAX_LOCAL_ONLY
+            && ch0_profile.double_talk <= SHORT_ECHO_MAX_DOUBLE_TALK
+            && (ch0_profile.echo_only >= SHORT_ECHO_MIN_ECHO_ONLY
+                || (short_crumb
+                    && ch0_profile.echo_only >= SHORT_CRUMB_MIN_ECHO_ONLY
+                    && ch0_profile.echo_only + ch0_profile.uncertain
+                        >= SHORT_CRUMB_MIN_ECHO_UNCERTAIN));
         let inside_ch1 = u_ch0.start >= u_ch1.start - SHORT_ECHO_LEAD_SEC
             && u_ch0.end <= u_ch1.end + SHORT_ECHO_TAIL_SEC;
         if is_ch0_echo && (words_contained(&u_ch0.text, &u_ch1.text) || inside_ch1) {
@@ -473,6 +483,50 @@ mod tests {
         dedupe_cross_channel_with_echo(&mut utts, &[], &samples, Some(&ev));
         assert_eq!(utts.len(), 2, "двойная речь не должна удаляться: {utts:?}");
         assert!(utts.iter().any(|u| u.channel == Some(0)));
+        assert!(utts.iter().any(|u| u.channel == Some(1)));
+    }
+
+    #[test]
+    fn short_echo_uncertain_crumb_inside_ch1_is_dropped_while_zero_eo_backchannel_stays() {
+        let ev = strong_echo(
+            15.0,
+            &[
+                (1.0, 1.2, echo::FrameClass::EchoOnly),
+                (1.2, 1.76, echo::FrameClass::Uncertain),
+                (1.76, 1.8, echo::FrameClass::DoubleTalk),
+                (3.0, 3.58, echo::FrameClass::Uncertain),
+                (3.58, 3.8, echo::FrameClass::DoubleTalk),
+                (5.0, 5.48, echo::FrameClass::Uncertain),
+                (5.48, 5.8, echo::FrameClass::LocalOnly),
+                (7.0, 7.5, echo::FrameClass::EchoOnly),
+                (7.5, 8.9, echo::FrameClass::Uncertain),
+                (8.9, 9.0, echo::FrameClass::DoubleTalk),
+            ],
+        );
+        let mut utts = vec![
+            utt(
+                0.0,
+                12.0,
+                "Спикер B",
+                1,
+                "альфа бета гамма дельта эпсилон зета эта тета йота каппа",
+            ),
+            utt(1.0, 1.8, "Спикер A", 0, "искаженное"),
+            utt(3.0, 3.8, "Спикер A", 0, "понял"),
+            utt(5.0, 5.8, "Спикер A", 0, "точно"),
+            utt(7.0, 9.0, "Спикер A", 0, "первое второе третье"),
+        ];
+        dedupe_cross_channel_with_echo(&mut utts, &[], &HashMap::new(), Some(&ev));
+        let ch0_texts: Vec<&str> = utts
+            .iter()
+            .filter(|u| u.channel == Some(0))
+            .map(|u| u.text.as_str())
+            .collect();
+        assert_eq!(
+            ch0_texts,
+            vec!["понял", "точно", "первое второе третье"],
+            "{utts:?}"
+        );
         assert!(utts.iter().any(|u| u.channel == Some(1)));
     }
 }
