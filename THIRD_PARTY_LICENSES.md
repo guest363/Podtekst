@@ -8,7 +8,7 @@ copyright-уведомления пакетов - в upstream-репозитор
 
 ## Сводка
 
-* Всего пакетов: 570
+* Всего пакетов: 571
 * `MIT OR Apache-2.0` - 269
 * `MIT` - 117
 * `Apache-2.0 OR MIT` - 56
@@ -17,7 +17,7 @@ copyright-уведомления пакетов - в upstream-репозитор
 * `Unicode-3.0` - 18
 * `MIT/Apache-2.0` - 17
 * `Unlicense OR MIT` - 9
-* `Apache-2.0` - 6
+* `Apache-2.0` - 7
 * `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - 5
 * `ISC` - 4
 * `Apache-2.0 OR ISC OR MIT` - 3
@@ -101,9 +101,9 @@ copyright-уведомления пакетов - в upstream-репозитор
 | `cfg_aliases` | 0.2.2 | MIT | https://github.com/katharostech/cfg_aliases |
 | `chrono` | 0.4.45 | MIT OR Apache-2.0 | https://github.com/chronotope/chrono |
 | `chunked_transfer` | 1.5.0 | MIT OR Apache-2.0 | https://github.com/frewsxcv/rust-chunked-transfer |
-| `clap` | 4.6.7 | MIT OR Apache-2.0 | https://github.com/clap-rs/clap |
+| `clap` | 4.6.9 | MIT OR Apache-2.0 | https://github.com/clap-rs/clap |
 | `clap_builder` | 4.6.7 | MIT OR Apache-2.0 | https://github.com/clap-rs/clap |
-| `clap_derive` | 4.6.7 | MIT OR Apache-2.0 | https://github.com/clap-rs/clap |
+| `clap_derive` | 4.6.9 | MIT OR Apache-2.0 | https://github.com/clap-rs/clap |
 | `clap_lex` | 1.1.1 | MIT OR Apache-2.0 | https://github.com/clap-rs/clap |
 | `colorchoice` | 1.0.5 | MIT OR Apache-2.0 | https://github.com/rust-cli/anstyle.git |
 | `combine` | 4.6.9 | MIT | https://github.com/Marwes/combine |
@@ -273,6 +273,7 @@ copyright-уведомления пакетов - в upstream-репозитор
 | `lock_api` | 0.4.14 | MIT OR Apache-2.0 | https://github.com/Amanieu/parking_lot |
 | `log` | 0.4.35 | MIT OR Apache-2.0 | https://github.com/rust-lang/log |
 | `lzma-rust2` | 0.15.8 | Apache-2.0 | https://github.com/hasenbanck/lzma-rust2/ |
+| `lzma-rust2` | 0.25.0 | Apache-2.0 | https://github.com/hasenbanck/lzma-rust2/ |
 | `markup5ever` | 0.39.0 | MIT OR Apache-2.0 | https://github.com/servo/html5ever |
 | `matrixmultiply` | 0.3.11 | MIT/Apache-2.0 | https://github.com/bluss/matrixmultiply/ |
 | `memchr` | 2.8.3 | Unlicense OR MIT | https://github.com/BurntSushi/memchr |
@@ -364,9 +365,9 @@ copyright-уведомления пакетов - в upstream-репозитор
 | `redox_users` | 0.5.3 | MIT | https://gitlab.redox-os.org/redox-os/users |
 | `ref-cast` | 1.0.27 | MIT OR Apache-2.0 | https://github.com/dtolnay/ref-cast |
 | `ref-cast-impl` | 1.0.27 | MIT OR Apache-2.0 | https://github.com/dtolnay/ref-cast |
-| `regex` | 1.13.1 | MIT OR Apache-2.0 | https://github.com/rust-lang/regex |
-| `regex-automata` | 0.4.18 | MIT OR Apache-2.0 | https://github.com/rust-lang/regex |
-| `regex-syntax` | 0.8.11 | MIT OR Apache-2.0 | https://github.com/rust-lang/regex |
+| `regex` | 1.13.2 | MIT OR Apache-2.0 | https://github.com/rust-lang/regex |
+| `regex-automata` | 0.4.19 | MIT OR Apache-2.0 | https://github.com/rust-lang/regex |
+| `regex-syntax` | 0.8.12 | MIT OR Apache-2.0 | https://github.com/rust-lang/regex |
 | `reqwest` | 0.13.5 | MIT OR Apache-2.0 | https://github.com/seanmonstar/reqwest |
 | `ring` | 0.17.14 | Apache-2.0 AND ISC | https://github.com/briansmith/ring |
 | `rustc-hash` | 2.1.3 | Apache-2.0 OR MIT | https://github.com/rust-lang/rustc-hash |
@@ -442,7 +443,7 @@ copyright-уведомления пакетов - в upstream-репозитор
 | `symphonia-utils-xiph` | 0.5.5 | MPL-2.0 | https://github.com/pdeljanov/Symphonia |
 | `syn` | 1.0.109 | MIT OR Apache-2.0 | https://github.com/dtolnay/syn |
 | `syn` | 2.0.119 | MIT OR Apache-2.0 | https://github.com/dtolnay/syn |
-| `syn` | 3.0.9 | MIT OR Apache-2.0 | https://github.com/dtolnay/syn |
+| `syn` | 3.0.10 | MIT OR Apache-2.0 | https://github.com/dtolnay/syn |
 | `sync_wrapper` | 1.0.2 | Apache-2.0 | https://github.com/Actyx/sync_wrapper |
 | `synstructure` | 0.14.0 | MIT | https://github.com/mystor/synstructure |
 | `system-configuration` | 0.7.0 | MIT OR Apache-2.0 | https://github.com/mullvad/system-configuration-rs |
@@ -452,18 +453,18 @@ copyright-уведомления пакетов - в upstream-репозитор
 | `tao-macros` | 0.1.4 | MIT OR Apache-2.0 | https://github.com/tauri-apps/tao |
 | `tar` | 0.4.46 | MIT OR Apache-2.0 | https://github.com/composefs/tar-rs |
 | `target-lexicon` | 0.12.16 | Apache-2.0 WITH LLVM-exception | https://github.com/bytecodealliance/target-lexicon |
-| `tauri` | 2.12.5 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| `tauri-build` | 2.7.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| `tauri-codegen` | 2.7.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| `tauri-macros` | 2.7.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| `tauri` | 2.12.7 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| `tauri-build` | 2.7.6 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| `tauri-codegen` | 2.7.6 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| `tauri-macros` | 2.7.6 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | `tauri-plugin` | 2.7.2 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | `tauri-plugin-autostart` | 2.7.0 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
 | `tauri-plugin-global-shortcut` | 2.4.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
 | `tauri-plugin-single-instance` | 2.5.5 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
 | `tauri-plugin-updater` | 2.14.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
-| `tauri-runtime` | 2.12.2 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| `tauri-runtime-wry` | 2.12.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| `tauri-utils` | 2.10.2 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| `tauri-runtime` | 2.12.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| `tauri-runtime-wry` | 2.12.5 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| `tauri-utils` | 2.10.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | `tauri-winres` | 0.3.7 | MIT | https://github.com/tauri-apps/winres |
 | `tempfile` | 3.27.0 | MIT OR Apache-2.0 | https://github.com/Stebalien/tempfile |
 | `tendril` | 0.5.1 | MIT OR Apache-2.0 | https://github.com/servo/html5ever |
@@ -514,7 +515,7 @@ copyright-уведомления пакетов - в upstream-репозитор
 | `utf8-zero` | 0.8.1 | MIT OR Apache-2.0 | https://github.com/algesten/utf8-zero |
 | `utf8_iter` | 1.0.4 | Apache-2.0 OR MIT | https://github.com/hsivonen/utf8_iter |
 | `utf8parse` | 0.2.2 | Apache-2.0 OR MIT | https://github.com/alacritty/vte |
-| `uuid` | 1.29.2 | Apache-2.0 OR MIT | https://github.com/uuid-rs/uuid |
+| `uuid` | 1.29.3 | Apache-2.0 OR MIT | https://github.com/uuid-rs/uuid |
 | `version-compare` | 0.2.1 | MIT | https://gitlab.com/timvisee/version-compare |
 | `version_check` | 0.9.5 | MIT/Apache-2.0 | https://github.com/SergioBenitez/version_check |
 | `vswhom` | 0.1.0 | MIT | https://github.com/nabijaczleweli/vswhom.rs |
@@ -592,12 +593,12 @@ copyright-уведомления пакетов - в upstream-репозитор
 | `yoke` | 0.8.4 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | `yoke-derive` | 0.8.4 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | `zbus` | 5.19.0 | MIT | https://github.com/z-galaxy/zbus/ |
-| `zbus` | 6.2.1 | MIT | https://github.com/z-galaxy/zbus/ |
+| `zbus` | 6.4.0 | MIT | https://github.com/z-galaxy/zbus/ |
 | `zbus_macros` | 5.19.0 | MIT | https://github.com/z-galaxy/zbus/ |
-| `zbus_macros` | 6.2.1 | MIT | https://github.com/z-galaxy/zbus/ |
+| `zbus_macros` | 6.5.0 | MIT | https://github.com/z-galaxy/zbus/ |
 | `zbus_names` | 4.3.5 | MIT | https://github.com/z-galaxy/zbus/ |
 | `zbus_utils` | 6.1.0 | MIT | https://github.com/z-galaxy/zbus/ |
-| `zcheapstr` | 1.1.0 | MIT | https://github.com/z-galaxy/zcheapstr/ |
+| `zcheapstr` | 1.4.0 | MIT | https://github.com/z-galaxy/zcheapstr/ |
 | `zerofrom` | 0.1.8 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | `zerofrom-derive` | 0.1.8 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | `zeroize` | 1.9.1 | Apache-2.0 OR MIT | https://github.com/RustCrypto/utils |
@@ -605,7 +606,7 @@ copyright-уведомления пакетов - в upstream-репозитор
 | `zerotrie` | 0.2.5 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | `zerovec` | 0.11.9 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | `zerovec-derive` | 0.11.7 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
-| `zip` | 9.5.1 | MIT | https://github.com/zip-rs/zip2 |
+| `zip` | 9.8.2 | MIT | https://github.com/zip-rs/zip2 |
 | `zlib-rs` | 0.6.8 | Zlib | https://github.com/trifectatechfoundation/zlib-rs |
 | `zmij` | 1.0.23 | MIT | https://github.com/dtolnay/zmij |
 | `zopfli` | 0.8.4 | Apache-2.0 | https://github.com/zopfli-rs/zopfli |
