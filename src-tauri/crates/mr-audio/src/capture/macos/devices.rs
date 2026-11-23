@@ -4,7 +4,7 @@ use std::ptr::null;
 use super::ffi::*;
 use crate::capture::{AudioError, DeviceCatalog, DeviceInfo, Result};
 
-fn address(selector: u32, scope: u32) -> AudioObjectPropertyAddress {
+pub(super) fn address(selector: u32, scope: u32) -> AudioObjectPropertyAddress {
     AudioObjectPropertyAddress {
         selector,
         scope,
@@ -12,7 +12,7 @@ fn address(selector: u32, scope: u32) -> AudioObjectPropertyAddress {
     }
 }
 
-fn get_u32(object: u32, selector: u32, scope: u32) -> Option<u32> {
+pub(super) fn get_u32(object: u32, selector: u32, scope: u32) -> Option<u32> {
     let addr = address(selector, scope);
     let mut value: u32 = 0;
     let mut size = std::mem::size_of::<u32>() as u32;
@@ -30,7 +30,7 @@ fn get_u32(object: u32, selector: u32, scope: u32) -> Option<u32> {
     (status == 0 && size as usize == std::mem::size_of::<u32>()).then_some(value)
 }
 
-fn get_cf_string(object: u32, selector: u32, scope: u32) -> Option<String> {
+pub(super) fn get_cf_string(object: u32, selector: u32, scope: u32) -> Option<String> {
     let addr = address(selector, scope);
     let mut value: *const c_void = null();
     let mut size = std::mem::size_of::<*const c_void>() as u32;
@@ -71,7 +71,7 @@ fn get_cf_string(object: u32, selector: u32, scope: u32) -> Option<String> {
     )
 }
 
-fn input_channels(device: AudioDeviceId) -> u32 {
+pub(super) fn input_channels(device: AudioDeviceId) -> u32 {
     let addr = address(DEVICE_PROPERTY_STREAM_CONFIGURATION, OBJECT_SCOPE_INPUT);
     let mut size = 0u32;
     // SAFETY: запрос размера свойства без данных.
@@ -108,7 +108,7 @@ fn input_channels(device: AudioDeviceId) -> u32 {
     channels
 }
 
-fn device_ids() -> Vec<AudioDeviceId> {
+pub(super) fn device_ids() -> Vec<AudioDeviceId> {
     let addr = address(HARDWARE_PROPERTY_DEVICES, OBJECT_SCOPE_GLOBAL);
     let mut size = 0u32;
     // SAFETY: запрос размера списка устройств.
@@ -145,7 +145,7 @@ fn default_input() -> Option<AudioDeviceId> {
     )
 }
 
-fn device_name(device: AudioDeviceId) -> String {
+pub(super) fn device_name(device: AudioDeviceId) -> String {
     get_cf_string(device, DEVICE_PROPERTY_NAME_CFSTRING, OBJECT_SCOPE_GLOBAL)
         .or_else(|| get_cf_string(device, OBJECT_PROPERTY_NAME, OBJECT_SCOPE_GLOBAL))
         .unwrap_or_else(|| format!("Микрофон {device}"))
@@ -160,7 +160,7 @@ const NATIVE_SYSTEM_NAME: &str = "Системный звук (ScreenCaptureKit)
 
 /// Виртуальный loopback-драйвер (BlackHole/Loopback/Soundflower): для CoreAudio
 /// это обычный вход, но по смыслу — системный звук.
-fn is_loopback(name: &str) -> bool {
+pub(super) fn is_loopback(name: &str) -> bool {
     let n = name.to_lowercase();
     [
         "blackhole",

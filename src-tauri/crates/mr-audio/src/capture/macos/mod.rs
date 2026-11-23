@@ -3,11 +3,13 @@ use std::path::Path;
 use crate::capture::{CaptureStream, Result, StreamKind};
 
 mod audio;
+mod detect;
 mod devices;
 mod ffi;
 mod permission;
 mod sck;
 
+pub use detect::{active_mic_clients, detection_capability};
 pub use devices::devices;
 pub use permission::screen_recording_granted;
 

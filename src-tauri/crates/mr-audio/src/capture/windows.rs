@@ -103,7 +103,7 @@ unsafe fn resolve_endpoint_id_com(kind: StreamKind, device: Option<&str>) -> Res
     device_id(&d).ok_or_else(|| AudioError::Other("id устройства не прочитан".into()))
 }
 
-fn com_init() -> bool {
+pub(super) fn com_init() -> bool {
     // Поток наш собственный, но на всякий случай допускаем уже инициализированный COM.
     // Освобождать квартиру можно только после S_OK/S_FALSE: при
     // RPC_E_CHANGED_MODE она чужая, и CoUninitialize испортил бы её владельцу.
