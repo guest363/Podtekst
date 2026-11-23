@@ -74,7 +74,6 @@
 
 ## Где детали
 
-- Dev-логи и артефакты запуска — `docs/dev-logging.md`.
 - Стенд качества и метрики — `docs/testing/SPEC.md`, `tools/diar_eval/`.
 - Метрики речи — `src-tauri/crates/mr-metrics/AGENTS.md`.
 - Локальные итоги — `src-tauri/crates/mr-summarize/AGENTS.md`.

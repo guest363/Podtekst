@@ -303,7 +303,6 @@ cd podtekst
 - [ROADMAP.md](ROADMAP.md) - планы развития и будущие возможности;
 - [ANDROID.md](ANDROID.md) - сборка и особенности мобильной версии;
 - [docs/UNSIGNED-INSTALL.md](docs/UNSIGNED-INSTALL.md) - установка сборок без подписи Apple и Microsoft;
-- [docs/dev-logging.md](docs/dev-logging.md) - руководство по dev-логам и анализу качества распознавания;
 - [docs/RELEASING.md](docs/RELEASING.md) - релизный цикл и публикация версий;
 - [PRIVACY.md](PRIVACY.md) - политика конфиденциальности и локальности данных;
 - [SECURITY.md](SECURITY.md) - сообщение об уязвимостях;

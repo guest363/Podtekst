@@ -22,6 +22,11 @@ const CUT_SAME_SPEAKER_MIN_SIM: f64 = 0.35;
 // Поштучный срез по точке не опирается на 3+ окон, поэтому требуем контраст
 // строже обычного порога и не режем, если срез попадает в плотное перекрытие.
 const SENTENCE_CUT_SAME_SPEAKER_MIN_SIM: f64 = 0.30;
+// Skip-1 (`wins[i]` vs `wins[i+2]`) допускает сбалансированное переходное окно (~0.71 / ~0.71),
+// но при перекосе среднего окна к одной стороне (≥ 0.80) без провала второй стороны (< 0.45)
+// падение даёт тихий хвост одной фразы, а не смена спикера.
+const SKIP_CUT_BIASED_MIX_SIM: f64 = 0.80;
+const SKIP_CUT_MIN_WEAK_ADJ_SIM: f64 = 0.45;
 const SENTENCE_CUT_OVERLAP_GUARD_SEC: f64 = 0.75;
 const SENTENCE_CUT_MAX_LOCAL_OVERLAP_SHARE: f64 = 0.20;
 const SENTENCE_CUT_MAX_ARM_OVERLAP_SHARE: f64 = 0.15;
@@ -147,7 +152,10 @@ pub(crate) fn speaker_change_cuts(
             .map(|i| mr_ml::cosine_similarity(&wins[i].1, &wins[i + 2].1))
             .collect();
         for (i, &s2) in sims2.iter().enumerate() {
-            if s2 >= CUT_SAME_SPEAKER_MIN_SIM {
+            if s2 >= CUT_SAME_SPEAKER_MIN_SIM
+                || (sims[i].max(sims[i + 1]) >= SKIP_CUT_BIASED_MIX_SIM
+                    && sims[i].min(sims[i + 1]) >= SKIP_CUT_MIN_WEAK_ADJ_SIM)
+            {
                 continue;
             }
             let prev = if i > 0 { sims2[i - 1] } else { 1.0 };
@@ -569,5 +577,32 @@ mod tests {
             windows: vec![],
         };
         assert!(!sentence_cut_near_overlap(Some(&far_seg), 0.0, 1.5, 3.1));
+    }
+
+    #[test]
+    fn skip_window_cut_requires_adjacent_weakening() {
+        let unit_vec = |angle: f64| vec![angle.cos(), angle.sin()];
+        let samples = vec![0.01f32; 16000 * 5];
+
+        // Тихий хвост без разрыва на соседних окнах (cos 0.96 и 0.51) не режет фразу.
+        let tail_drift = vec![
+            (0.0, unit_vec(0.0)),
+            (0.5, unit_vec(0.28)),
+            (1.0, unit_vec(0.56)),
+            (1.5, unit_vec(1.60)),
+        ];
+        assert!(speaker_change_cuts(&samples, 0.0, 4.0, &tail_drift, &[]).is_empty());
+
+        // Настоящий переход через смешанное среднее окно (соседние cos 0.41 < 0.45) режет.
+        let cross_boundary = vec![
+            (0.0, unit_vec(0.0)),
+            (0.5, unit_vec(0.45)),
+            (1.0, unit_vec(1.60)),
+            (1.5, unit_vec(2.75)),
+        ];
+        assert_eq!(
+            speaker_change_cuts(&samples, 0.0, 4.0, &cross_boundary, &[]).len(),
+            1
+        );
     }
 }
