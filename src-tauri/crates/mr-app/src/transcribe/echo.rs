@@ -18,6 +18,19 @@ const MAX_DELAY_SPREAD: usize = 32;
 const CORR_HALF_FRAMES: usize = 10;
 const GAIN_MIN: f32 = 0.05;
 const GAIN_MAX: f32 = 4.0;
+const LOCAL_GAIN_STRIDE: usize = 32;
+/// Полуширина ±5 с для быстрого дрейфа усиления; порог 25 кадров (≥0.8 с)
+/// не даёт короткому наложению двойной речи перекосить оценку.
+const LOCAL_GAIN_TIGHT_HALF_FRAMES: usize = 156;
+const MIN_TIGHT_GAIN_SAMPLES: usize = 25;
+/// Запасное окно ±15 с на разреженных участках с малым числом эхо-кадров.
+const LOCAL_GAIN_HALF_FRAMES: usize = 469;
+const MIN_LOCAL_GAIN_SAMPLES: usize = 10;
+const WF_HALF_FRAMES: usize = 2;
+const WF_LAG_RADIUS: isize = 16;
+/// Калибровка на живой стереозаписи: чистое эхо (включая резонансные всплески)
+/// держит |corr| 0.43–0.77 в окне 160 мс, одновременная речь — медиану 0.19 (p90 0.39).
+const WF_ECHO_CORR: f64 = 0.45;
 /// Калибровка на синтетике (тон + медленная огибающая): чистому эху хватает
 /// корреляции огибающих 0.65, двойная речь видна по остатку уже с 0.45.
 const ECHO_CORR: f64 = 0.65;
@@ -66,10 +79,141 @@ pub(crate) struct SegmentProfile {
     pub(crate) uncertain: f32,
 }
 
-fn median(values: &[f32]) -> f32 {
-    let mut sorted = values.to_vec();
-    sorted.sort_by(f32::total_cmp);
-    sorted[sorted.len() / 2]
+fn median_in_place(values: &mut [f32]) -> f32 {
+    let mid = values.len() / 2;
+    let (_, value, _) = values.select_nth_unstable_by(mid, f32::total_cmp);
+    *value
+}
+
+fn window_median(
+    gain_samples: &[(usize, f32)],
+    center: usize,
+    half_frames: usize,
+    min_samples: usize,
+    buf: &mut Vec<f32>,
+) -> Option<f32> {
+    let lo = gain_samples.partition_point(|&(frame, _)| frame < center.saturating_sub(half_frames));
+    let hi =
+        gain_samples.partition_point(|&(frame, _)| frame <= center.saturating_add(half_frames));
+    if hi - lo < min_samples {
+        return None;
+    }
+    buf.clear();
+    buf.extend(gain_samples[lo..hi].iter().map(|&(_, ratio)| ratio));
+    Some(median_in_place(buf).clamp(GAIN_MIN, GAIN_MAX))
+}
+
+fn estimate_local_gains(
+    corr: &[f64],
+    mic_env: &[f32],
+    sys_env: &[f32],
+    delay_frames: f32,
+    noise_floor: f32,
+) -> (f32, Vec<f32>) {
+    let mut gain_samples: Vec<(usize, f32)> = Vec::new();
+    for (frame, &value) in corr.iter().enumerate() {
+        if value < ECHO_CORR {
+            continue;
+        }
+        let sys_level = lagged_envelope(sys_env, frame, delay_frames);
+        let mic_level = mic_env[frame];
+        if sys_level <= noise_floor || mic_level <= noise_floor {
+            continue;
+        }
+        let ratio = mic_level / sys_level;
+        if (0.02..=GAIN_MAX).contains(&ratio) {
+            gain_samples.push((frame, ratio));
+        }
+    }
+    let global_gain = if gain_samples.is_empty() {
+        1.0
+    } else {
+        let mut all_ratios: Vec<f32> = gain_samples.iter().map(|&(_, ratio)| ratio).collect();
+        median_in_place(&mut all_ratios).clamp(GAIN_MIN, GAIN_MAX)
+    };
+    let blocks = mic_env.len().div_ceil(LOCAL_GAIN_STRIDE);
+    let mut local_gains = Vec::with_capacity(blocks);
+    let mut buf: Vec<f32> = Vec::new();
+    let last_frame = mic_env.len().saturating_sub(1);
+    for block in 0..blocks {
+        let center = (block * LOCAL_GAIN_STRIDE + LOCAL_GAIN_STRIDE / 2).min(last_frame);
+        let local = window_median(
+            &gain_samples,
+            center,
+            LOCAL_GAIN_TIGHT_HALF_FRAMES,
+            MIN_TIGHT_GAIN_SAMPLES,
+            &mut buf,
+        )
+        .or_else(|| {
+            window_median(
+                &gain_samples,
+                center,
+                LOCAL_GAIN_HALF_FRAMES,
+                MIN_LOCAL_GAIN_SAMPLES,
+                &mut buf,
+            )
+        })
+        .unwrap_or(global_gain);
+        local_gains.push(local);
+    }
+    (global_gain, local_gains)
+}
+
+fn wf_echo_at_frame(
+    mic: &[f32],
+    system: &[f32],
+    frame: usize,
+    delay_samples: usize,
+    threshold: f64,
+) -> bool {
+    let start_frame = frame.saturating_sub(WF_HALF_FRAMES);
+    let end_frame = frame + WF_HALF_FRAMES + 1;
+    let mic_start = start_frame * VAD_WINDOW;
+    let mic_end = (end_frame * VAD_WINDOW).min(mic.len());
+    let radius = WF_LAG_RADIUS as usize;
+    let max_lag = delay_samples.saturating_add(radius);
+    let min_lag = delay_samples.saturating_sub(radius);
+    let a_lo = mic_start.max(max_lag);
+    let a_hi = mic_end.min(system.len().saturating_add(min_lag));
+    if a_hi <= a_lo || a_hi - a_lo < VAD_WINDOW {
+        return false;
+    }
+    let mic_slice = &mic[a_lo..a_hi];
+    let n = mic_slice.len() as f64;
+    let mean_m = mic_slice.iter().map(|&x| f64::from(x)).sum::<f64>() / n;
+    let mut var_m = 0.0f64;
+    for &x in mic_slice {
+        let d = f64::from(x) - mean_m;
+        var_m += d * d;
+    }
+    if var_m < 1e-12 {
+        return false;
+    }
+    for step in 0..=WF_LAG_RADIUS {
+        let deltas: &[isize] = if step == 0 { &[0] } else { &[step, -step] };
+        for &delta in deltas {
+            let Some(lag) = delay_samples.checked_add_signed(delta) else {
+                continue;
+            };
+            let sys_slice = &system[a_lo - lag..a_hi - lag];
+            let mean_s = sys_slice.iter().map(|&y| f64::from(y)).sum::<f64>() / n;
+            let mut cov = 0.0f64;
+            let mut var_s = 0.0f64;
+            for (&x, &y) in mic_slice.iter().zip(sys_slice) {
+                let dx = f64::from(x) - mean_m;
+                let dy = f64::from(y) - mean_s;
+                cov += dx * dy;
+                var_s += dy * dy;
+            }
+            if var_s < 1e-12 {
+                continue;
+            }
+            if (cov / (var_m * var_s).sqrt()).abs() >= threshold {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn frame_sec() -> f64 {
@@ -153,7 +297,6 @@ pub(crate) fn detect(
     candidates.sort_by(|a, b| b.0.total_cmp(&a.0));
     let probes: Vec<(usize, f32)> = candidates
         .into_iter()
-        .take(PROBE_COUNT)
         .filter_map(|(_, start)| {
             mr_audio::echo::delay::estimate(
                 &mic[start..start + window],
@@ -161,6 +304,7 @@ pub(crate) fn detect(
                 MAX_DELAY_SAMPLES,
             )
         })
+        .take(PROBE_COUNT)
         .collect();
     if probes.len() < MIN_INFORMATIVE_PROBES {
         return None;
@@ -204,33 +348,16 @@ pub(crate) fn detect(
         })
         .collect();
 
-    let mut ratios: Vec<f32> = Vec::new();
-    for (frame, &value) in corr.iter().enumerate() {
-        if value < ECHO_CORR {
-            continue;
-        }
-        let sys_level = lagged_envelope(&sys_env, frame, delay_frames);
-        let mic_level = mic_env[frame];
-        if sys_level <= noise_floor || mic_level <= noise_floor {
-            continue;
-        }
-        let ratio = mic_level / sys_level;
-        if (0.02..=2.0).contains(&ratio) {
-            ratios.push(ratio);
-        }
-    }
-    let gain = if ratios.is_empty() {
-        1.0
-    } else {
-        median(&ratios).clamp(GAIN_MIN, GAIN_MAX)
-    };
+    let (gain, local_gains) =
+        estimate_local_gains(&corr, &mic_env, &sys_env, delay_frames, noise_floor);
 
     let mut frames = Vec::with_capacity(mic_env.len());
     let mut residual = Vec::with_capacity(mic_env.len());
     for (frame, &value) in corr.iter().enumerate() {
         let mic_level = mic_env[frame];
         let sys_level = lagged_envelope(&sys_env, frame, delay_frames);
-        let predicted = gain * sys_level;
+        let local_gain = local_gains[frame / LOCAL_GAIN_STRIDE];
+        let predicted = local_gain * sys_level;
         let rest = (mic_level * mic_level - predicted * predicted)
             .max(0.0)
             .sqrt();
@@ -238,20 +365,35 @@ pub(crate) fn detect(
         let speech = mic_probs
             .and_then(|probs| probs.get(frame).copied())
             .is_none_or(|prob| prob >= 0.30);
-        let class = if sys_level < sys_floor && mic_level > noise_floor * 3.0 && speech {
-            FrameClass::LocalOnly
-        } else if value >= ECHO_CORR
-            && mic_level <= predicted * ECHO_LEVEL_MARGIN
-            && rest <= rest_floor
+        let local_only = sys_level < sys_floor && mic_level > noise_floor * 3.0 && speech;
+        // Условие `rest <= rest_floor` раньше сжимало допуск `ECHO_LEVEL_MARGIN` с 1.15 до 1.0114
+        // из-за квадратичного корня sqrt(m² − p²), отправляя половину чистого эха в DoubleTalk.
+        let level_echo = value >= ECHO_CORR && mic_level <= predicted * ECHO_LEVEL_MARGIN;
+        let (class, frame_residual) = if local_only {
+            (FrameClass::LocalOnly, rest)
+        } else if level_echo {
+            (FrameClass::EchoOnly, 0.0)
+        } else if value >= DOUBLE_TALK_CORR
+            && sys_level >= sys_floor
+            && mic_level > predicted * ECHO_LEVEL_MARGIN
+            && wf_echo_at_frame(mic, system, frame, delay_samples, WF_ECHO_CORR)
         {
-            FrameClass::EchoOnly
-        } else if value >= DOUBLE_TALK_CORR && rest > rest_floor && speech {
-            FrameClass::DoubleTalk
+            if value >= ECHO_CORR {
+                (FrameClass::EchoOnly, 0.0)
+            } else {
+                (FrameClass::Uncertain, 0.0)
+            }
+        } else if value >= DOUBLE_TALK_CORR
+            && mic_level > predicted * ECHO_LEVEL_MARGIN
+            && rest > rest_floor
+            && speech
+        {
+            (FrameClass::DoubleTalk, rest)
         } else {
-            FrameClass::Uncertain
+            (FrameClass::Uncertain, rest)
         };
         frames.push(class);
-        residual.push(rest);
+        residual.push(frame_residual);
     }
 
     Some(EchoEvidence {
@@ -267,6 +409,9 @@ pub(crate) fn detect(
 }
 
 fn frame_range(ev: &EchoEvidence, start: f64, end: f64) -> (usize, usize) {
+    if !start.is_finite() || !end.is_finite() || end <= start {
+        return (0, 0);
+    }
     let win = frame_sec();
     let lo = (start.max(0.0) / win).floor() as usize;
     let hi = (end.max(0.0) / win).ceil() as usize;
@@ -516,6 +661,138 @@ mod tests {
         assert!((profile.uncertain - 0.1).abs() < 1e-6, "{profile:?}");
         let empty = segment_profile(&ev, 1000.0, 1001.0);
         assert!((empty.uncertain - 1.0).abs() < 1e-6, "{empty:?}");
+        for (a, b) in [
+            (1.0, 1.0),
+            (2.0, 1.0),
+            (f64::NAN, 1.0),
+            (1.0, f64::NAN),
+            (0.0, 0.0),
+        ] {
+            let degenerate = segment_profile(&ev, a, b);
+            assert!((degenerate.uncertain - 1.0).abs() < 1e-6, "{degenerate:?}");
+            assert!(!degenerate.echo_only.is_nan() && !degenerate.double_talk.is_nan());
+        }
+        let empty_ev = evidence(Vec::new());
+        let zero_frames = segment_profile(&empty_ev, 0.0, 1.0);
+        assert!(
+            (zero_frames.uncertain - 1.0).abs() < 1e-6,
+            "{zero_frames:?}"
+        );
+        let short_span = segment_profile(&ev, 1.0, 1.005);
+        assert!((short_span.echo_only - 1.0).abs() < 1e-6, "{short_span:?}");
+    }
+
+    #[test]
+    fn drifting_gain_echo_stays_echo_only() {
+        let len = SAMPLE_RATE * 46;
+        let system = am_bursts(len, &[(2.0, 20.0), (26.0, 44.0)], 0.35, 17, 300.0);
+        let mut mic = delayed_echo(&system, DELAY, 1.0);
+        let split = SAMPLE_RATE * 23;
+        for sample in &mut mic[..split] {
+            *sample *= 2.0;
+        }
+        for sample in &mut mic[split..] {
+            *sample *= 0.25;
+        }
+
+        let mic_env = vad_envelope(&mic);
+        let sys_env = vad_envelope(&system);
+        let delay_frames = DELAY as f32 / VAD_WINDOW as f32;
+        let corr = vec![0.95f64; mic_env.len()];
+        let (_, local_gains) = estimate_local_gains(&corr, &mic_env, &sys_env, delay_frames, 1e-4);
+        let first_block = (10 * SAMPLE_RATE / VAD_WINDOW) / LOCAL_GAIN_STRIDE;
+        let second_block = (35 * SAMPLE_RATE / VAD_WINDOW) / LOCAL_GAIN_STRIDE;
+        assert!(
+            (local_gains[first_block] - 2.0).abs() < 0.25,
+            "первая половина: {}",
+            local_gains[first_block]
+        );
+        assert!(
+            (local_gains[second_block] - 0.25).abs() < 0.05,
+            "вторая половина: {}",
+            local_gains[second_block]
+        );
+
+        let ev = detect(&mic, &system, None).expect("эхо с дрейфом усиления должно находиться");
+        let first_half = segment_profile(&ev, 3.0, 19.0);
+        let second_half = segment_profile(&ev, 27.0, 43.0);
+        assert!(first_half.echo_only >= 0.9, "{first_half:?}");
+        assert!(first_half.double_talk <= 0.05, "{first_half:?}");
+        assert!(second_half.echo_only >= 0.9, "{second_half:?}");
+        assert!(second_half.double_talk <= 0.05, "{second_half:?}");
+    }
+
+    #[test]
+    fn rapid_gain_ramp_echo_stays_echo_only() {
+        let len = SAMPLE_RATE * 40;
+        let system = am_bursts(len, &[(2.0, 32.0)], 0.35, 29, 300.0);
+        let mut mic = delayed_echo(&system, DELAY, 1.0);
+        for (i, sample) in mic.iter_mut().enumerate() {
+            let t = i as f64 / SAMPLE_RATE as f64;
+            let frac = ((t - 2.0) / 30.0).clamp(0.0, 1.0) as f32;
+            let gain = 2.4 + (0.6 - 2.4) * frac;
+            *sample *= gain;
+        }
+
+        let mic_env = vad_envelope(&mic);
+        let sys_env = vad_envelope(&system);
+        let delay_frames = DELAY as f32 / VAD_WINDOW as f32;
+        let corr = vec![0.95f64; mic_env.len()];
+        let (_, local_gains) = estimate_local_gains(&corr, &mic_env, &sys_env, delay_frames, 1e-4);
+        let early_block = (3 * SAMPLE_RATE / VAD_WINDOW) / LOCAL_GAIN_STRIDE;
+        assert!(
+            local_gains[early_block] > 2.1,
+            "узкое окно ±5 с должно отслеживать быстрый старт рампы: {}",
+            local_gains[early_block]
+        );
+
+        let ev = detect(&mic, &system, None).expect("эхо с быстрой рампой должно находиться");
+        let early = segment_profile(&ev, 2.5, 12.0);
+        assert!(early.echo_only >= 0.85, "{early:?}");
+        assert!(early.double_talk <= 0.10, "{early:?}");
+    }
+
+    #[test]
+    fn resonant_echo_spike_is_classified_as_echo_not_double_talk() {
+        let system = am_bursts(LEN, &[(1.0, 10.0)], 0.4, 7, 300.0);
+        let mut mic = delayed_echo(&system, DELAY, 0.1);
+        let spike_lo = SAMPLE_RATE * 4;
+        let spike_hi = SAMPLE_RATE * 5 + SAMPLE_RATE / 2;
+        for sample in &mut mic[spike_lo..spike_hi] {
+            *sample *= -2.5;
+        }
+        let ev = detect(&mic, &system, None).expect("эхо должно быть найдено");
+        let profile = segment_profile(&ev, 4.4, 5.1);
+        assert!(profile.echo_only >= 0.9, "{profile:?}");
+        assert!(profile.double_talk <= 0.1, "{profile:?}");
+        assert!(
+            mean_residual(&ev, 4.4, 5.1) <= 1e-6,
+            "остаток резонансного эха: {}",
+            mean_residual(&ev, 4.4, 5.1)
+        );
+    }
+
+    #[test]
+    fn probe_selection_skips_failed_high_rms_windows() {
+        let len = SAMPLE_RATE * 120;
+        let hum_end = SAMPLE_RATE * 68;
+        let mut system = vec![0.0f32; len];
+        let mut phase = 0.0f64;
+        for (i, sample) in system[..hum_end].iter_mut().enumerate() {
+            let f = 1000.0 + 5.0 * (i as f64 / hum_end as f64);
+            phase += std::f64::consts::TAU * f / SAMPLE_RATE as f64;
+            *sample = (phase.sin() as f32) * 0.8;
+        }
+        let speech = am_bursts(len - hum_end, &[(0.5, 51.5)], 0.2, 19, 300.0);
+        system[hum_end..].copy_from_slice(&speech);
+        let mic = delayed_echo(&system, DELAY, 0.15);
+
+        let ev =
+            detect(&mic, &system, None).expect("отсев узкополосных окон не должен ломать детекцию");
+        assert!(
+            (ev.delay_samples as i64 - DELAY as i64).abs() <= MAX_DELAY_SPREAD as i64,
+            "{ev:?}"
+        );
     }
 
     #[test]

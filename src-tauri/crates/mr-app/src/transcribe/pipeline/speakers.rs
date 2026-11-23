@@ -223,7 +223,12 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
     // Один и тот же голос в микрофоне и системе — одна карточка, а не два
     // разных «Участник N» / «Собеседник N». Дубли эха схлопываем до одной фразы.
     diarize::reconcile_channels(&mut speakers_info, &mut all_utts);
-    diarize::dedupe_cross_channel(&mut all_utts, &speakers_info, channel_samples);
+    diarize::dedupe_cross_channel_with_echo(
+        &mut all_utts,
+        &speakers_info,
+        channel_samples,
+        echo.as_ref(),
+    );
     all_utts.sort_by(|a, b| a.start.total_cmp(&b.start).then(a.speaker.cmp(&b.speaker)));
     let mut merged = diarize::merge_utterances(all_utts);
     on_event(92, "Проверяю голоса отдельных реплик…");
@@ -247,6 +252,7 @@ pub(super) fn run(input: Input<'_>) -> (Vec<SpeakerInfo>, Vec<Utterance>, Vec<St
             &mut merged,
             &mut speakers_info,
             channel_samples,
+            echo.as_ref(),
         );
     }
     stage_end("diar", diar_stage);
