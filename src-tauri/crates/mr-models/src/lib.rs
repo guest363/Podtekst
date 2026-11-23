@@ -54,7 +54,8 @@ pub fn sha256_of_file(path: &Path) -> Result<String> {
     use std::io::Read;
     let mut f = fs::File::open(path)?;
     let mut hasher = Sha256::new();
-    let mut buf = [0u8; 1024 * 1024];
+    // 64 КиБ вместо 1 МиБ на стеке: главный поток на Windows ограничен 1 МиБ.
+    let mut buf = [0u8; 64 * 1024];
     loop {
         let n = f.read(&mut buf)?;
         if n == 0 {

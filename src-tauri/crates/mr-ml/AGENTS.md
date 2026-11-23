@@ -1,6 +1,6 @@
 # mr-ml - AGENTS.md
 
-Крейт локального машинного обучения и диаризации на базе ONNX Runtime (CPU).
+Крейт локального машинного обучения и диаризации на базе ONNX Runtime (`CUDA` → `DirectML` → `CoreML` → `NNAPI` → `CPU`).
 
 ## 1. Архитектура и строгие инварианты
 
@@ -9,17 +9,21 @@
 - **Потокобезопасность:** вызовы инференса `ort::Session` запускаются в пуле блокирующих задач (`tokio::task::spawn_blocking`), чтобы не блокировать асинхронный планировщик Tokio.
 - **Память и аллокации:** на горячем пути VAD и извлечения признаков используются предварительно выделенные буферы (`ndarray`).
 - **Размерность отпечатков:** голосовые эмбеддинги ERes2NetV2 строго **192-мерные**, с обязательной L2-нормализацией (длина вектора равна 1.0).
+- **Профили ускорения (`SessionProfile`):** единый порядок EP `CUDA` → `DirectML` → `CoreML` → `NNAPI` → `CPU` с `OnceLock`-детектом GPU/DLL (`MIN_VRAM_BYTES = 1.5 GiB`, исключение software/CPU-устройств) и синтетическим `probe` до отката на CPU. Калибровка: `GpuPreferred` — `ERes2NetV2`; `CudaPreferred` — `PyAnnote`, `GigaAM enc`, `GigaCTC`, `Whisper enc` (на DirectML медленнее CPU или без замера); `CpuOnly` — `Silero VAD`, `GigaAM dec/joint`, `Whisper dec`.
 
 ## 2. Ключевые файлы
 
 - `src/lib.rs` - фасад крейта, публичные структуры диаризации и сегментации.
 - `src/cluster.rs` - взвешенный average linkage (UPGMA) через nearest-neighbor chain O(n²), cannot-link ограничения, плоская матрица расстояний, auto-k по максимальному разрыву в высотах слияний, финальный merge кластеров по косинусу центроидов и силуэт-оценка фрагментов.
+- `src/onnx/accel/{mod,platform}.rs` - однократный preflight ускорителей и библиотек (`DXGI` + `LoadLibraryW` на Windows, `libcuda.so.1` + CUDA 13 `.so` через `dlopen` на Linux, `CoreML::is_available` на macOS, `libneuralnetworks.so` API 29+ на Android), выбор адаптера и лимит VRAM для CUDA.
+- `src/onnx/session.rs` - `OrtSession` с профилями `SessionProfile`, по-сессионной проверкой EP (`memory_pattern = false` для DirectML, `Heuristic` + `memory_limit` для CUDA), синтетическим `probe` и безопасным откатом на CPU.
 - `src/onnx/vad.rs` - детектор речи Silero VAD v6.2 с сохранением скрытого состояния (state) между окнами 32 мс и pre-roll 64 мс.
 - `src/onnx/rnnt.rs` - акустическая модель GigaAM-v3 e2e RNNT (энкодер, предиктор, джойнер). Декодер и джойнер работают в один поток для исключения накладных расходов синхронизации.
 - `src/onnx/whisper.rs` - мультиязычный ASR Whisper large-v3-turbo.
 - `src/onnx/embed.rs` - модель ERes2NetV2 (3D-Speaker) для извлечения 192-мерных отпечатков; батчевый инференс до 8 окон одинаковой длины без паддинга и warmup сессии при загрузке.
 - `src/onnx/segmentation.rs` - PyAnnote 3.0 Powerset: окна 10 с с шагом 2 с, VAD-гейт тишины, батчинг при динамической оси, маски перекрытий и локальные метки спикеров.
 - `src/onnx/features.rs` - вычисление 80-полосных лог-мел спектрограмм; in-place смешанное БПФ с переиспользуемыми буферами.
+- `src/dictionary.rs` - чистая пост-замена пар `услышано => термин` для текста без CTC.
 
 ## 3. Состояние и известные ограничения (не «чинить» без задачи)
 

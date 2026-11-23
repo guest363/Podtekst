@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use super::session::OrtSession;
+use super::accel::{ExecutionProviderKind, SessionProfile};
+use super::session::{outputs_are_finite, OrtSession};
 
 pub const WINDOW_SAMPLES: usize = 160_000;
 pub const STEP_SAMPLES: usize = 32_000;
@@ -60,6 +61,23 @@ impl Segmentation {
         }
         write
     }
+
+    /// Доля кадров с перекрытием голосов на отрезке сэмплов `[start_sample..end_sample)`.
+    pub fn overlap_share(&self, start_sample: usize, end_sample: usize) -> f64 {
+        if end_sample <= start_sample || self.frames.is_empty() {
+            return 0.0;
+        }
+        let first = start_sample / FRAME_SAMPLES;
+        let last = end_sample.div_ceil(FRAME_SAMPLES).min(self.frames.len());
+        if first >= last {
+            return 0.0;
+        }
+        let overlap = self.frames[first..last]
+            .iter()
+            .filter(|&&class| class >= 4)
+            .count();
+        overlap as f64 / (last - first) as f64
+    }
 }
 
 pub struct SegmentationModel {
@@ -68,15 +86,36 @@ pub struct SegmentationModel {
     output_name: String,
 }
 
+fn pick_segmentation_input(session: &OrtSession) -> Result<String, String> {
+    ["input_values", "input", "waveform"]
+        .iter()
+        .find(|name| session.has_input(name))
+        .map(|name| name.to_string())
+        .or_else(|| session.input_names.first().cloned())
+        .ok_or_else(|| "у segmentation-модели нет входов".to_string())
+}
+
 impl SegmentationModel {
     pub fn load(path: &std::path::Path) -> Result<Self, String> {
-        let session = OrtSession::load(path, 0)?;
-        let input_name = ["input_values", "input", "waveform"]
-            .iter()
-            .find(|name| session.has_input(name))
-            .map(|name| name.to_string())
-            .or_else(|| session.input_names.first().cloned())
-            .ok_or_else(|| "у segmentation-модели нет входов".to_string())?;
+        // Bi-LSTM в PyAnnote на DirectML медленнее CPU в ~44 раза; ускоряется только на CUDA.
+        let session =
+            OrtSession::load_with_probe(path, 0, SessionProfile::CudaPreferred, |session| {
+                let input_name = pick_segmentation_input(session)?;
+                let mut inputs = HashMap::new();
+                inputs.insert(
+                    input_name,
+                    (
+                        vec![1i64, 1, WINDOW_SAMPLES as i64],
+                        vec![0.0f32; WINDOW_SAMPLES],
+                    ),
+                );
+                let outputs = session.run_f32(inputs)?;
+                if !outputs_are_finite(&outputs) {
+                    return Err("segmentation probe: нечисловой выход".to_string());
+                }
+                Ok(())
+            })?;
+        let input_name = pick_segmentation_input(&session)?;
         let output_name = session
             .output_names
             .iter()
@@ -89,6 +128,10 @@ impl SegmentationModel {
             input_name,
             output_name,
         })
+    }
+
+    pub fn provider(&self) -> ExecutionProviderKind {
+        self.session.provider()
     }
 
     pub fn segment(&mut self, samples: &[f32]) -> Result<Segmentation, String> {
@@ -419,5 +462,19 @@ mod tests {
         assert_eq!(frame_class(&[0.0; POWERSET_CLASSES], 0.0, 0), 0);
         // Перестановка речи между окнами (1.2 + 1.2 + 0.6 > тишина 2.0) остаётся речью.
         assert_ne!(frame_class(&[2.0, 1.2, 1.2, 0.6, 0.0, 0.0, 0.0], 0.0, 5), 0);
+    }
+
+    #[test]
+    fn overlap_share_reports_fraction_inside_requested_range() {
+        let segmentation = Segmentation {
+            frames: vec![1, 4, 5, 2],
+            windows: vec![],
+        };
+        assert!((segmentation.overlap_share(0, FRAME_SAMPLES * 4) - 0.5).abs() < 1e-6);
+        assert_eq!(segmentation.overlap_share(0, FRAME_SAMPLES), 0.0);
+        assert_eq!(
+            segmentation.overlap_share(FRAME_SAMPLES, FRAME_SAMPLES),
+            0.0
+        );
     }
 }

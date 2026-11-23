@@ -9,8 +9,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use super::accel::{ExecutionProviderKind, SessionProfile};
 use super::features::whisper_mel;
-use super::session::{NamedTensors, OrtSession};
+use super::session::{outputs_are_finite, NamedTensors, OrtSession};
 
 pub struct Whisper {
     enc: OrtSession,
@@ -31,8 +32,37 @@ pub struct Whisper {
 impl Whisper {
     pub fn load(dir: &Path) -> Result<Self, String> {
         let (enc, dec) = std::thread::scope(|scope| {
-            let enc = scope.spawn(|| OrtSession::load(&dir.join("whisper_enc_q.onnx"), 0));
-            let dec = scope.spawn(|| OrtSession::load(&dir.join("whisper_dec_merged_q.onnx"), 0));
+            let enc = scope.spawn(|| {
+                // shortcut: DirectML для quantized Whisper не замерялся, перевести на GpuPreferred после замера
+                OrtSession::load_with_probe(
+                    &dir.join("whisper_enc_q.onnx"),
+                    0,
+                    SessionProfile::CudaPreferred,
+                    |session| {
+                        let input_name = pick(
+                            &session.input_names,
+                            &["input_features", "audio_features", "mel"],
+                        )?;
+                        let mut enc_in = HashMap::new();
+                        enc_in.insert(
+                            input_name,
+                            (vec![1i64, 128, 3000], vec![0.0f32; 128 * 3000]),
+                        );
+                        let out = session.run_f32(enc_in)?;
+                        if !outputs_are_finite(&out) {
+                            return Err("whisper_enc probe: нечисловой выход".to_string());
+                        }
+                        Ok(())
+                    },
+                )
+            });
+            let dec = scope.spawn(|| {
+                OrtSession::load_with_profile(
+                    &dir.join("whisper_dec_merged_q.onnx"),
+                    0,
+                    SessionProfile::CpuOnly,
+                )
+            });
             (
                 enc.join()
                     .unwrap_or_else(|_| Err("Whisper: загрузка энкодера упала".to_string())),
@@ -105,6 +135,10 @@ impl Whisper {
             eot,
             no_timestamps,
         })
+    }
+
+    pub fn provider(&self) -> ExecutionProviderKind {
+        self.enc.provider()
     }
 
     pub fn transcribe_segment(

@@ -62,7 +62,21 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_Threading",
 ] }
 
+# Аппаратное ускорение ORT по платформам; рантайм-проверка отсеивает недоступные EP.
+[target.'cfg(all(target_os = "windows", target_arch = "x86_64"))'.dependencies]
+mr-ml = { path = "../mr-ml", features = ["ort-cuda", "ort-directml"] }
 
+[target.'cfg(all(target_os = "windows", target_arch = "aarch64"))'.dependencies]
+mr-ml = { path = "../mr-ml", features = ["ort-directml"] }
+
+[target.'cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
+mr-ml = { path = "../mr-ml", features = ["ort-cuda"] }
+
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+mr-ml = { path = "../mr-ml", features = ["ort-coreml"] }
+
+[target.'cfg(all(target_os = "android", any(target_arch = "aarch64", target_arch = "x86_64")))'.dependencies]
+mr-ml = { path = "../mr-ml", features = ["ort-nnapi"] }
 
 [build-dependencies]
 tauri-build = { version = "2.1", optional = true , features = [] }
@@ -70,6 +84,10 @@ tauri-build = { version = "2.1", optional = true , features = [] }
 [features]
 default = ["onnx"]
 onnx = ["mr-ml/onnx"]
+ort-cuda = ["onnx", "mr-ml/ort-cuda"]
+ort-directml = ["onnx", "mr-ml/ort-directml"]
+ort-coreml = ["onnx", "mr-ml/ort-coreml"]
+ort-nnapi = ["onnx", "mr-ml/ort-nnapi"]
 tauri-ui = [
   "dep:tauri",
   "dep:tauri-build",

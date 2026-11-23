@@ -1,6 +1,7 @@
 import type { OkResponse, Utterance } from './api'
 import { fmtClockShort, readJsonSafe } from './api'
 import { isAbortError } from './guards.ts'
+import { buildSrt, buildVtt } from './subtitles.ts'
 import { toast } from './toast.svelte.ts'
 
 export type TranscriptMeta = {
@@ -11,6 +12,8 @@ export type TranscriptMeta = {
 }
 
 const encoder = new TextEncoder()
+const fileStem = (fileName: string, fallback: string): string =>
+  fileName.replace(/\.[^.]+$/, '').trim() || fallback
 const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, n) => {
   let c = n
   for (let i = 0; i < 8; i += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
@@ -239,13 +242,31 @@ export const exportDocx = async (
   meta?: TranscriptMeta,
 ): Promise<void> => {
   const bytes = buildDocx(fileName, utterances, meta)
-  const defaultName = `${fileName.replace(/\.[^.]+$/, '') || 'Расшифровка'}.docx`
+  const defaultName = `${fileStem(fileName, 'Расшифровка')}.docx`
   await saveBinary(defaultName, bytes, {
     mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     description: 'Word Document (*.docx)',
     accept: {
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
     },
+  })
+}
+
+export const exportSubtitles = async (
+  fileName: string,
+  utterances: Utterance[],
+  format: 'srt' | 'vtt',
+): Promise<void> => {
+  const base = fileStem(fileName, 'Расшифровка')
+  const name = `${base}.${format}`
+  const bytes = encoder.encode(format === 'srt' ? buildSrt(utterances) : buildVtt(utterances))
+  await saveBinary(name, bytes, {
+    mime: format === 'srt' ? 'application/x-subrip;charset=utf-8' : 'text/vtt;charset=utf-8',
+    description: format === 'srt' ? 'SubRip (*.srt)' : 'WebVTT (*.vtt)',
+    accept:
+      format === 'srt'
+        ? { 'application/x-subrip': ['.srt'], 'text/plain': ['.srt'] }
+        : { 'text/vtt': ['.vtt'] },
   })
 }
 
@@ -260,7 +281,7 @@ export const buildComposedMarkdown = (
 }
 
 export const downloadMarkdown = async (fileName: string, markdown: string): Promise<void> => {
-  const base = fileName.replace(/\.[^.]+$/, '').trim() || 'Итоги и расшифровка'
+  const base = fileStem(fileName, 'Расшифровка')
   const name = `${base}.md`
   const bytes = new TextEncoder().encode(markdown)
   await saveBinary(name, bytes, {

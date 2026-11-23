@@ -51,7 +51,6 @@ Silero VAD v6, PyAnnote 3.0, ERes2NetV2 192-dim — всё локально, б�
 | Правила P1–P12, стиль, комментарии | `docs/ai/code-style.md` |
 | Процесс, Track 1/2, верификация, критерий готовности | `docs/ai/workflow.md` |
 | Архитектура, стадии конвейера, UI ↔ Rust ↔ файлы | `docs/architecture.md` |
-| Dev-логи, артефакты запуска, разбор сбоев | `docs/dev-logging.md` |
 | Тестирование на датасетах, метрики, приёмка | `docs/testing/SPEC.md`, `docs/testing/PERF.md`, `tools/diar_eval/baseline.json` |
 | ML, ONNX, Silero, GigaAM, Whisper, эмбеддинги | `src-tauri/crates/mr-ml/AGENTS.md` |
 | Захват аудио, устройства, WAV, symphonia | `src-tauri/crates/mr-audio/AGENTS.md` |
@@ -60,6 +59,7 @@ Silero VAD v6, PyAnnote 3.0, ERes2NetV2 192-dim — всё локально, б�
 | Локальные итоги: шаблоны, парсер, grounding | `src-tauri/crates/mr-summarize/AGENTS.md` |
 | Голосовые пакеты, экспорт и импорт | `src-tauri/crates/mr-packs/AGENTS.md` |
 | Метрики речи, F0, качество записи | `src-tauri/crates/mr-metrics/AGENTS.md` |
+| Метрики словаря и hotwords (Rust) | `src-tauri/crates/mr-eval/README.md` |
 | Web UI (Svelte 5 + Vite + TS) | `ui/web/frontend/AGENTS.md` |
 | Android (AAudio, Foreground Service) | `ANDROID.md` |
 | Релиз и публикация версий | `docs/RELEASING.md` |

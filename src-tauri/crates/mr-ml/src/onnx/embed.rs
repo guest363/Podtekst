@@ -7,8 +7,9 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use super::accel::{ExecutionProviderKind, SessionProfile};
 use super::features::eres2netv2_fbank;
-use super::session::OrtSession;
+use super::session::{outputs_are_finite, OrtSession};
 use crate::{l2_normalize, EMBEDDING_DIM};
 
 const LEGACY_EMBEDDING_DIM: usize = 256;
@@ -25,35 +26,70 @@ pub struct EmbeddingExtractor {
     input_name: String,
 }
 
+fn pick_embed_input(session: &OrtSession) -> Result<String, String> {
+    ["fbank_features", "speech", "fbank", "features", "x"]
+        .iter()
+        .find(|n| session.has_input(n))
+        .map(|s| s.to_string())
+        .or_else(|| session.input_names.first().cloned())
+        .ok_or_else(|| "у embedding-модели нет входов".to_string())
+}
+
 impl EmbeddingExtractor {
     pub fn load(path: &std::path::Path) -> Result<Self, String> {
-        let session = OrtSession::load(path, 0)?;
-        let input_name = ["fbank_features", "speech", "fbank", "features", "x"]
-            .iter()
-            .find(|n| session.has_input(n))
-            .map(|s| s.to_string())
-            .or_else(|| session.input_names.first().cloned())
-            .ok_or_else(|| "у embedding-модели нет входов".to_string())?;
+        let warmup_fbank = eres2netv2_fbank(&vec![0.0; 16_000]);
+        let frames = warmup_fbank.len();
+        let mut flat_probe = Vec::with_capacity(frames * 80);
+        for row in &warmup_fbank {
+            flat_probe.extend_from_slice(row);
+        }
+        let session =
+            OrtSession::load_with_probe(path, 0, SessionProfile::GpuPreferred, |session| {
+                let input_name = pick_embed_input(session)?;
+                let mut inputs = HashMap::new();
+                inputs.insert(
+                    input_name,
+                    (vec![1i64, frames as i64, 80], flat_probe.clone()),
+                );
+                let out = session.run_f32(inputs)?;
+                if !outputs_are_finite(&out) {
+                    return Err("embed probe: нечисловой выход".to_string());
+                }
+                let valid_dim = [EMBEDDING_DIM, LEGACY_EMBEDDING_DIM]
+                    .into_iter()
+                    .any(|dim| out.values().any(|(_, data)| data.len() == dim));
+                if !valid_dim {
+                    return Err("embed probe: неожиданная размерность выхода".to_string());
+                }
+                Ok(())
+            })?;
+        let input_name = pick_embed_input(&session)?;
         let mut model = Self {
             session,
             input_name,
         };
-        // Первый прогон выделяет арены ORT; без него он падает на первой реплике.
-        let started = std::time::Instant::now();
-        if let Err(error) = model.embed(&vec![0.0; 16_000]) {
-            log::debug!(
-                target: "model",
-                error = error;
-                "ev=model.warmup"
-            );
-        } else {
-            log::debug!(
-                target: "model",
-                elapsed_ms = started.elapsed().as_millis() as u64;
-                "ev=model.warmup"
-            );
+        if model.session.provider() == ExecutionProviderKind::Cpu {
+            // Первый прогон выделяет арены ORT; на GPU этот прогон уже сделал probe.
+            let started = std::time::Instant::now();
+            if let Err(error) = model.embed(&vec![0.0; 16_000]) {
+                log::debug!(
+                    target: "model",
+                    error = error;
+                    "ev=model.warmup"
+                );
+            } else {
+                log::debug!(
+                    target: "model",
+                    elapsed_ms = started.elapsed().as_millis() as u64;
+                    "ev=model.warmup"
+                );
+            }
         }
         Ok(model)
+    }
+
+    pub fn provider(&self) -> ExecutionProviderKind {
+        self.session.provider()
     }
 
     /// Короткие фрагменты (< 0.4 с) отклоняются из-за недостатка речевых данных.

@@ -9,7 +9,7 @@ import {
   pluralSpeakers,
   pluralUtterances,
 } from '../lib/api'
-import { exportDocx, printTranscript } from '../lib/export.ts'
+import { exportDocx, exportSubtitles, printTranscript } from '../lib/export.ts'
 import { peopleState } from '../lib/people.svelte.ts'
 import { isQueued } from '../lib/queue.svelte.ts'
 import { extractMp3 } from '../lib/recordings.svelte.ts'
@@ -53,6 +53,8 @@ let summaryOpen = $state(
 )
 
 let metricsOpen = $state(false)
+let exportOpen = $state(false)
+let exportTrigger = $state<HTMLButtonElement | null>(null)
 let metricsBtn = $state<HTMLButtonElement | null>(null)
 let metricsPanelEl = $state<HTMLElement | null>(null)
 let summaryBtn = $state<HTMLButtonElement | null>(null)
@@ -264,6 +266,18 @@ const buildFullTranscriptMarkdown = (): string => {
   return lines.join('\n').trim()
 }
 
+const closeExport = (refocus = false): void => {
+  exportOpen = false
+  if (refocus) exportTrigger?.focus()
+}
+
+const onExportFocusOut = (event: FocusEvent): void => {
+  const next = event.relatedTarget instanceof Node ? event.relatedTarget : null
+  if (next && event.currentTarget instanceof HTMLElement && event.currentTarget.contains(next))
+    return
+  exportOpen = false
+}
+
 const copyAll = async (): Promise<void> => {
   const txt = buildFullTranscriptMarkdown()
   if (!txt.trim()) {
@@ -335,7 +349,11 @@ const onWindowKey = (e: KeyboardEvent): void => {
     }
   }
   if (e.key === 'Escape') {
-    if (metricsOpen) {
+    if (exportOpen) {
+      closeExport(true)
+      e.preventDefault()
+      e.stopPropagation()
+    } else if (metricsOpen) {
       closeMetricsPanel()
       e.preventDefault()
       e.stopPropagation()
@@ -501,17 +519,88 @@ const onWindowKey = (e: KeyboardEvent): void => {
           </button>
         {/if}
 
-        <button
-          class="btn-secondary btn-sm"
-          disabled={!transcript.utterances.length}
-          title={transcript.utterances.length ? '' : 'Экспорт появится после расшифровки'}
-          onclick={() => void exportDocx(baseName(ui.currentTranscriptPath), transcript.utterances, transcriptMeta)}
+        <div
+          class="export-menu"
+          onfocusout={onExportFocusOut}
         >
-          DOCX
-        </button>
-        <button class="btn-secondary btn-sm" onclick={printTranscript} title="Печать или сохранение в PDF">
-          PDF
-        </button>
+          <button
+            bind:this={exportTrigger}
+            type="button"
+            class="btn-secondary btn-sm export-trigger"
+            aria-expanded={exportOpen}
+            aria-controls="transcript-export-menu"
+            onclick={() => (exportOpen = !exportOpen)}
+          >
+            Экспорт
+            <span class="export-chevron {exportOpen ? 'open' : ''}" aria-hidden="true">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </span>
+          </button>
+          {#if exportOpen}
+            <button
+              type="button"
+              class="speaker-popover-backdrop"
+              aria-label="Закрыть меню экспорта"
+              onclick={() => closeExport()}
+            ></button>
+            <div
+              id="transcript-export-menu"
+              class="speaker-select-popover export-popover"
+              role="group"
+              aria-label="Экспорт расшифровки"
+            >
+              <button
+                type="button"
+                class="speaker-select-item"
+                disabled={!transcript.utterances.length}
+                onclick={() => {
+                  closeExport()
+                  void exportDocx(baseName(ui.currentTranscriptPath), transcript.utterances, transcriptMeta)
+                }}
+              >
+                <span class="speaker-select-item-left"><span class="speaker-select-item-name">DOCX</span></span>
+                <span class="speaker-select-item-sub">Word</span>
+              </button>
+              <button
+                type="button"
+                class="speaker-select-item"
+                disabled={!transcript.utterances.length}
+                onclick={() => {
+                  closeExport()
+                  void exportSubtitles(baseName(ui.currentTranscriptPath), transcript.utterances, 'srt')
+                }}
+              >
+                <span class="speaker-select-item-left"><span class="speaker-select-item-name">SRT</span></span>
+                <span class="speaker-select-item-sub">SubRip</span>
+              </button>
+              <button
+                type="button"
+                class="speaker-select-item"
+                disabled={!transcript.utterances.length}
+                onclick={() => {
+                  closeExport()
+                  void exportSubtitles(baseName(ui.currentTranscriptPath), transcript.utterances, 'vtt')
+                }}
+              >
+                <span class="speaker-select-item-left"><span class="speaker-select-item-name">VTT</span></span>
+                <span class="speaker-select-item-sub">WebVTT</span>
+              </button>
+              <button
+                type="button"
+                class="speaker-select-item"
+                onclick={() => {
+                  closeExport()
+                  printTranscript()
+                }}
+              >
+                <span class="speaker-select-item-left"><span class="speaker-select-item-name">PDF</span></span>
+                <span class="speaker-select-item-sub">Печать</span>
+              </button>
+            </div>
+          {/if}
+        </div>
         <button class="btn-secondary btn-sm" onclick={() => void copyAll()} title="Скопировать весь текст расшифровки">
           Копировать текст
         </button>
@@ -748,3 +837,39 @@ const onWindowKey = (e: KeyboardEvent): void => {
     </div>
   {/if}
 </div>
+
+<style>
+  .export-menu {
+    position: relative;
+    display: inline-flex;
+  }
+  .export-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .export-chevron {
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-faint);
+    transition: transform 160ms var(--ease-spring);
+  }
+  .export-chevron.open {
+    transform: rotate(180deg);
+  }
+  .export-popover {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    left: auto;
+    width: 230px;
+    min-width: 0;
+    max-width: calc(100vw - 16px);
+    max-height: none;
+  }
+  .export-popover .speaker-select-item:disabled {
+    opacity: 0.5;
+    cursor: default;
+    background: transparent;
+  }
+</style>

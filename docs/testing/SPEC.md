@@ -129,7 +129,7 @@ SCA (speaker count accuracy, точность числа спикеров) - д�
 
 Подготовка многоканальных наборов: берём канал 1 микрофонного массива, приводим к 16 кГц и моно. Для AMI IHM используем готовый микс головных микрофонов. Для AISHELL-4 выбираем тот же вариант микса, что в публичных бенчмарках, и фиксируем команду подготовки в `datasets.yaml`.
 
-Русские наборы проверяем основным движком GigaAM v3 RNNT. Whisper turbo запускаем на выборке 2 ч из Golos Crowd и FLEURS `ru_ru` как контрольный движок. Многоязычные наборы проверяем только Whisper turbo. Hotwords и CTC по умолчанию выключены; их проверяем отдельным сценарием.
+Русские наборы проверяем основным движком GigaAM v3 RNNT. Whisper turbo запускаем на выборке 2 ч из Golos Crowd и FLEURS `ru_ru` как контрольный движок. Многоязычные наборы проверяем только Whisper turbo. CTC включён в конфиге по умолчанию, hotwords применяются при непустом списке; их качество проверяем отдельным Rust-сценарием `podtekst-eval hotwords`, вне `small`/`full` и `baseline.json`.
 
 ### 4.2. Уровень 2: русские встречи и стресс
 
@@ -191,7 +191,7 @@ SCA (speaker count accuracy, точность числа спикеров) - д�
 
 ## 6. Стенд и автоматизация
 
-Стенд - `tools/diar_eval`. Python в рантайм приложения не попадает.
+Стенд диаризации и ASR - `tools/diar_eval` (Python, в рантайм приложения не попадает). Метрики словаря и hotwords - отдельная Rust-утилита `src-tauri/crates/mr-eval` (`podtekst-eval`).
 
 | Файл | Назначение |
 |---|---|
@@ -202,6 +202,7 @@ SCA (speaker count accuracy, точность числа спикеров) - д�
 | `run_suite.py` | запуск `small`/`full` suite по JSON-описанию |
 | `check.py` | детерминированная сверка `metrics.csv` с `baseline.json` |
 | `metrics.py` | WER, CER, DER, SCA, cpWER v2, attribution accuracy |
+| `mr-eval` (`podtekst-eval`) | отдельная Rust-диагностика словаря: recall терминов, false insertions, term-normalized WER, off/on |
 | `report.py` | `report.md`, доверительные интервалы, сравнение с `baseline.json` |
 | `regression.py` | короткий регрессионный порог на синтетических встречах |
 | `suites/*.json` | `small` и `full` наборы |

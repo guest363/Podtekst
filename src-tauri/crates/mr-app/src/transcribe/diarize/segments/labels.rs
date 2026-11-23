@@ -103,6 +103,18 @@ pub(crate) fn fill_unit_labels_by_time(units: &[AcoustUnit], label_of: &mut Hash
     }
 }
 
+fn units_centroid(units: &[AcoustUnit], indices: &[usize]) -> Vec<f64> {
+    let vectors: Vec<Vec<f64>> = indices
+        .iter()
+        .map(|&index| units[index].embedding.clone())
+        .collect();
+    let weights: Vec<f64> = indices
+        .iter()
+        .map(|&index| units[index].dur.clamp(0.4, 4.0) * units[index].quality)
+        .collect();
+    mr_ml::weighted_centroid(&vectors, &weights)
+}
+
 /// Реплика, целиком не попавшая ни в один кластер, — отдельный голос, а не
 /// продолжение соседа по времени. Иначе `fill_unit_labels_by_time` копирует
 /// метку ближайшей реплики, и короткая вставка незнакомого собеседника
@@ -117,6 +129,20 @@ pub(in crate::transcribe::diarize) fn promote_unmatched_utterances(
     support: SpeechSupport<'_>,
     echo: Option<&EchoEvidence>,
 ) -> Vec<usize> {
+    let mut by_existing: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for (&index, &label) in label_of.iter() {
+        if index < units.len() {
+            by_existing.entry(label).or_default().push(index);
+        }
+    }
+    let existing: Vec<(usize, Vec<f64>)> = by_existing
+        .into_iter()
+        .map(|(label, mut members)| {
+            members.sort_unstable();
+            (label, units_centroid(units, &members))
+        })
+        .collect();
+
     let mut unmatched: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for (index, unit) in units.iter().enumerate() {
         if !label_of.contains_key(&index) {
@@ -162,15 +188,25 @@ pub(in crate::transcribe::diarize) fn promote_unmatched_utterances(
         if clean < super::super::MIN_LOCAL_EMBED_SEC {
             continue;
         }
-        let vectors: Vec<Vec<f64>> = indices
+        let centroid = units_centroid(units, &indices);
+        if let Some((best_label, best_sim)) = existing
             .iter()
-            .map(|&index| units[index].embedding.clone())
-            .collect();
-        let weights: Vec<f64> = indices
-            .iter()
-            .map(|&index| units[index].dur.clamp(0.4, 4.0) * units[index].quality)
-            .collect();
-        let centroid = mr_ml::weighted_centroid(&vectors, &weights);
+            .map(|(label, candidate)| (*label, mr_ml::cosine_similarity(&centroid, candidate)))
+            .max_by(|a, b| a.1.total_cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+        {
+            // Короткий (< 2 с) фрагмент уже отвергнут coverage: при сходстве ≥ 0.30
+            // он не «явно чужой голос» и возвращается к top-1 кластеру, а не плодит
+            // фантомного собеседника на тихих/дальних репликах.
+            if (clean < super::super::coverage::MIN_CLUSTER_SEC
+                && best_sim >= crate::transcribe::speaker_assignment::PROMOTED_OVERRIDE_MIN_SIM)
+                || best_sim >= mr_ml::SAME_SPEAKER_MERGE_SIM
+            {
+                for index in indices {
+                    label_of.insert(index, best_label);
+                }
+                continue;
+            }
+        }
         groups.push((indices, clean, centroid));
     }
     groups.sort_by(|a, b| {
@@ -189,16 +225,7 @@ pub(in crate::transcribe::diarize) fn promote_unmatched_utterances(
         {
             clusters[slot].0.extend(indices);
             clusters[slot].1 += clean;
-            let members = &clusters[slot].0;
-            let vectors: Vec<Vec<f64>> = members
-                .iter()
-                .map(|&index| units[index].embedding.clone())
-                .collect();
-            let weights: Vec<f64> = members
-                .iter()
-                .map(|&index| units[index].dur.clamp(0.4, 4.0) * units[index].quality)
-                .collect();
-            clusters[slot].2 = mr_ml::weighted_centroid(&vectors, &weights);
+            clusters[slot].2 = units_centroid(units, &clusters[slot].0);
         } else {
             clusters.push((indices, clean, centroid));
         }
