@@ -1238,6 +1238,7 @@ mod tests {
             &mut utterances,
             &mut infos,
             &channels,
+            None,
         );
         super::super::refresh_speaker_stats(&mut infos, &utterances);
 

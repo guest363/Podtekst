@@ -30,6 +30,12 @@ const MIN_LOCAL_WORDS: usize = 3;
 /// Доля локальных слов, ниже которой остаток реплики считается шумом: правило
 /// по доле, а не по абсолютному числу, иначе длинная реплика теряет реальные слова.
 const MIN_LOCAL_SHARE: f32 = 0.25;
+/// Подтверждённый локальный остаток спасает короткую реальную реплику, даже если
+/// рядом с ней отсеяно больше 75% эхо-слов.
+const RESIDUE_LOCAL_ONLY: f32 = 0.25;
+const RESIDUE_LOCAL_MIN_SEC: f64 = 0.35;
+/// Крошки CTC короче 220 мс без локальных кадров — ошмётки эха после вырезания слов.
+const RESIDUE_CRUMB_MAX_SEC: f64 = 0.22;
 
 /// Пословная дедупликация эха в микрофонном канале; счётчик изменённых
 /// реплик нужен только для лога `ev=diar.word_dedupe`.
@@ -43,10 +49,11 @@ pub(crate) fn dedupe_words(
         return 0;
     };
     let sys = samples.get(&1).map(Vec::as_slice);
+    let tail_pad = echo.delay_sec + DELAY_DRIFT_SEC;
     let other_spans: Vec<(f64, f64)> = utterances
         .iter()
         .filter(|u| u.channel == Some(1))
-        .map(|u| (u.start, u.end))
+        .map(|u| (u.start, u.end + tail_pad))
         .collect();
     let mut echo_words: Vec<(f64, f64, String)> = utterances
         .iter()
@@ -70,10 +77,17 @@ pub(crate) fn dedupe_words(
     let mut dropped_words = 0usize;
     let mut kept: Vec<Utterance> = Vec::with_capacity(utterances.len());
     for mut utterance in utterances.drain(..) {
-        if utterance.channel != Some(0)
-            || !utterance.words.iter().any(|w| w.end_sec > w.start_sec)
-            || !overlaps_any(&utterance, &other_spans)
-        {
+        if utterance.channel != Some(0) || !overlaps_any(&utterance, &other_spans) {
+            kept.push(utterance);
+            continue;
+        }
+        if !utterance.words.iter().any(|w| w.end_sec > w.start_sec) {
+            if is_untimed_echo(&utterance, mic, sys, echo) {
+                changed += 1;
+                dropped += 1;
+                dropped_words += utterance.words.len();
+                continue;
+            }
             kept.push(utterance);
             continue;
         }
@@ -92,19 +106,30 @@ pub(crate) fn dedupe_words(
             continue;
         }
         changed += 1;
-        let real_total_words = count_real_words(&utterance.words);
-        let local_share = real_local_words as f32 / real_total_words.max(1) as f32;
-        if real_local_words < MIN_LOCAL_WORDS && local_share < MIN_LOCAL_SHARE {
-            dropped += 1;
-            dropped_words += utterance.words.len() - local.len();
-            continue;
-        }
         let mut timed = local.iter().filter(|w| w.end_sec > w.start_sec);
         let (start, end) = match (timed.next(), timed.next_back()) {
             (Some(first), Some(last)) => (first.start_sec, last.end_sec),
             (Some(only), None) => (only.start_sec, only.end_sec),
             (None, _) => (utterance.start, utterance.end),
         };
+        let real_total_words = count_real_words(&utterance.words);
+        let local_share = real_local_words as f32 / real_total_words.max(1) as f32;
+        if real_local_words < MIN_LOCAL_WORDS {
+            let residue_profile = echo::segment_profile(echo, start, end);
+            let residue_dur = (end - start).max(0.0);
+            let clearly_local = residue_profile.local_only >= RESIDUE_LOCAL_ONLY
+                && residue_dur >= RESIDUE_LOCAL_MIN_SEC;
+            let tiny_echo_crumb = echo.is_strong()
+                && residue_profile.local_only <= MAX_MUFFLED_LOCAL_ONLY
+                && (residue_dur < RESIDUE_CRUMB_MAX_SEC
+                    || (local_share <= MIN_LOCAL_SHARE
+                        && residue_profile.echo_only + residue_profile.uncertain >= ECHO_SHARE));
+            if (!clearly_local && local_share < MIN_LOCAL_SHARE) || tiny_echo_crumb {
+                dropped += 1;
+                dropped_words += utterance.words.len() - local.len();
+                continue;
+            }
+        }
         let text = local
             .iter()
             .map(|w| w.w.as_str())
@@ -207,6 +232,29 @@ fn is_echo(
         return false;
     }
     residual_ratio <= RESIDUAL_KEEP
+}
+
+fn is_untimed_echo(
+    utterance: &Utterance,
+    mic: &[f32],
+    sys: Option<&[f32]>,
+    echo: &EchoEvidence,
+) -> bool {
+    if !echo.is_strong() || utterance.end <= utterance.start {
+        return false;
+    }
+    let profile = echo::segment_profile(echo, utterance.start, utterance.end);
+    if profile.local_only > MAX_MUFFLED_LOCAL_ONLY {
+        return false;
+    }
+    let rms = channel_rms(mic, utterance.start, utterance.end);
+    if is_muffled_echo(rms, sys, echo, &profile, utterance.start, utterance.end) {
+        return true;
+    }
+    let residual_ratio = echo::mean_residual(echo, utterance.start, utterance.end) / rms.max(1e-6);
+    profile.double_talk <= DOUBLE_TALK_SHARE
+        && profile.echo_only >= ECHO_SHARE
+        && residual_ratio <= RESIDUAL_KEEP
 }
 
 fn is_muffled_echo(
@@ -704,5 +752,132 @@ mod tests {
         assert_eq!(single_timed[0].text, "— Бета …");
         assert!((single_timed[0].start - 0.6).abs() < 1e-9);
         assert!((single_timed[0].end - 1.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn delayed_echo_tail_after_ch1_end_is_dropped() {
+        let mut ev = evidence(&[(0.0, 2.0, FrameClass::EchoOnly, 0.0)], 2.0);
+        ev.delay_samples = 1008;
+        ev.delay_sec = 1008.0 / 16_000.0;
+        let mut utts = vec![
+            utterance(1.02, 1.25, 0, vec![word("альфа", 1.02, 1.25)]),
+            utterance(0.5, 1.0, 1, vec![word("альфа", 0.92, 1.0)]),
+        ];
+        let changed = dedupe_words(&mut utts, &samples(), &ev, None);
+        assert_eq!(changed, 1, "{utts:?}");
+        assert_eq!(utts.len(), 1, "{utts:?}");
+        assert_eq!(utts[0].channel, Some(1));
+    }
+
+    #[test]
+    fn untimed_noise_blip_under_strong_echo_is_dropped_while_local_stays() {
+        let mut ev = evidence(
+            &[
+                (0.0, 1.0, FrameClass::EchoOnly, 0.0),
+                (1.0, 2.0, FrameClass::LocalOnly, 0.0),
+            ],
+            2.0,
+        );
+        ev.prominence = 50.0;
+        ev.noise_floor = 0.001;
+        ev.gain = 0.15;
+        let mut mic = vec![0.0015f32; 16_000 * 2];
+        for s in &mut mic[16_000..] {
+            *s = 0.2;
+        }
+        let audio = HashMap::from([(0usize, mic), (1usize, vec![0.15f32; 16_000 * 2])]);
+        let mut blip = utterance(0.2, 0.8, 0, Vec::new());
+        blip.text = "шум".to_string();
+        let mut local = utterance(1.1, 1.8, 0, Vec::new());
+        local.text = "местная".to_string();
+        let mut utts = vec![
+            blip,
+            local,
+            utterance(0.0, 2.0, 1, vec![word("альфа", 0.0, 2.0)]),
+        ];
+        let changed = dedupe_words(&mut utts, &audio, &ev, None);
+        assert_eq!(changed, 1, "{utts:?}");
+        assert_eq!(utts.len(), 2, "{utts:?}");
+        assert_eq!(utts[0].channel, Some(0));
+        assert_eq!(utts[0].text, "местная");
+    }
+
+    #[test]
+    fn post_dedupe_residue_drops_tiny_echo_crumb_and_rescues_clearly_local_word() {
+        let mut crumb_ev = evidence(
+            &[
+                (0.0, 1.5, FrameClass::EchoOnly, 0.0),
+                (1.5, 2.0, FrameClass::Uncertain, 0.05),
+            ],
+            2.0,
+        );
+        crumb_ev.prominence = 50.0;
+        let mut crumb_utts = vec![
+            utterance(
+                0.0,
+                1.7,
+                0,
+                vec![
+                    word("альфа", 0.0, 0.3),
+                    word("бета", 0.4, 0.7),
+                    word("гамма", 0.8, 1.2),
+                    word("крошка", 1.54, 1.70),
+                ],
+            ),
+            utterance(
+                0.0,
+                2.0,
+                1,
+                vec![
+                    word("альфа", 0.0, 0.3),
+                    word("бета", 0.4, 0.7),
+                    word("гамма", 0.8, 1.2),
+                ],
+            ),
+        ];
+        let changed_crumb = dedupe_words(&mut crumb_utts, &samples(), &crumb_ev, None);
+        assert_eq!(changed_crumb, 1, "{crumb_utts:?}");
+        assert_eq!(crumb_utts.len(), 1, "{crumb_utts:?}");
+        assert_eq!(crumb_utts[0].channel, Some(1));
+
+        let mut rescue_ev = evidence(
+            &[
+                (0.0, 1.2, FrameClass::EchoOnly, 0.0),
+                (1.2, 1.52, FrameClass::LocalOnly, 0.05),
+                (1.52, 2.0, FrameClass::DoubleTalk, 0.05),
+            ],
+            2.0,
+        );
+        rescue_ev.prominence = 50.0;
+        let mut rescue_utts = vec![
+            utterance(
+                0.0,
+                1.96,
+                0,
+                vec![
+                    word("альфа", 0.0, 0.25),
+                    word("бета", 0.3, 0.55),
+                    word("гамма", 0.6, 0.85),
+                    word("дельта", 0.9, 1.15),
+                    word("местное", 1.20, 1.96),
+                ],
+            ),
+            utterance(
+                0.0,
+                2.0,
+                1,
+                vec![
+                    word("альфа", 0.0, 0.25),
+                    word("бета", 0.3, 0.55),
+                    word("гамма", 0.6, 0.85),
+                    word("дельта", 0.9, 1.15),
+                ],
+            ),
+        ];
+        let changed_rescue = dedupe_words(&mut rescue_utts, &samples(), &rescue_ev, None);
+        assert_eq!(changed_rescue, 1, "{rescue_utts:?}");
+        assert_eq!(rescue_utts.len(), 2, "{rescue_utts:?}");
+        assert_eq!(rescue_utts[0].channel, Some(0));
+        assert_eq!(rescue_utts[0].text, "местное");
     }
 }

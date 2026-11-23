@@ -19,7 +19,10 @@ pub fn estimate(mic: &[f32], reference: &[f32], max_delay: usize) -> Option<(usi
     let mut d_buf = vec![Cx::default(); spectrum_len];
     let mut x_buf = vec![Cx::default(); spectrum_len];
     let low = (400.0 * FRAME as f32 / 16000.0) as usize;
-    let high = (spectrum_len * 78 / 100).min(spectrum_len / 2);
+    let high = ((7800.0 * FRAME as f32 / 16000.0) as usize).min(spectrum_len / 2);
+    // Узкополосный VoIP отсекает спектр выше 4 кГц: знаменатель разреженности
+    // ограничиваем речевой полосой, чтобы пустые 4–8 кГц не браковали валидное эхо.
+    let voice_high = ((4000.0 * FRAME as f32 / 16000.0) as usize).min(high);
     let mut d_mag = vec![0.0f32; high];
     for start in (0..=(n - FRAME)).step_by(FRAME) {
         for (i, b) in d_buf.iter_mut().enumerate() {
@@ -44,13 +47,14 @@ pub fn estimate(mic: &[f32], reference: &[f32], max_delay: usize) -> Option<(usi
             d_buf[k] = cross;
             d_mag[k] = dm;
         }
+        let mut frame_bins = 0usize;
         for k in low..high {
             let cross = d_buf[k];
             let m = cross.norm2().sqrt();
             if m < gate {
                 continue;
             }
-            bins += 1;
+            frame_bins += 1;
             let norm = Cx::new(cross.re / m, cross.im / m);
             acc[k] = Cx::new(acc[k].re + norm.re, acc[k].im + norm.im);
             acc[spectrum_len - k] = Cx::new(
@@ -61,11 +65,12 @@ pub fn estimate(mic: &[f32], reference: &[f32], max_delay: usize) -> Option<(usi
             den_d[k] += d_mag[k];
             den_x[k] += x_buf[k].norm2();
         }
-        if bins > 0 {
+        if frame_bins > 0 {
+            bins += frame_bins;
             frames += 1;
         }
     }
-    if frames == 0 || bins < frames * (high - low) / 20 {
+    if frames == 0 || bins < frames * (voice_high - low) / 20 {
         return None;
     }
     for k in low..high {
@@ -155,6 +160,50 @@ mod tests {
         mic.extend(reference[..reference.len() - 1600].iter().copied());
         if let Some((_, prom)) = estimate(&mic, &reference, 8000) {
             println!("narrowband prom={prom}");
+            assert!(prom < 6.5, "проминентность {prom}");
+        }
+    }
+
+    #[test]
+    fn narrowband_voip_band_echo_is_detected() {
+        let active_len = FRAME * 3;
+        let bands = [
+            (450.0, 680.0),
+            (950.0, 1180.0),
+            (1650.0, 1880.0),
+            (2650.0, 2880.0),
+        ];
+        let mut reference = vec![0.0f32; active_len];
+        for (f0, f1) in bands {
+            let component = chirp(active_len, f0, f1);
+            for (dst, src) in reference.iter_mut().zip(component) {
+                *dst += 0.25 * src;
+            }
+        }
+        // Хвост с внеполосным 100 Гц фоном (frame_power >= 1e-8, но 0 бинов в 400..7800 Гц)
+        // ловит регрессию с накопленным счётчиком `bins` в условии инкремента `frames`.
+        let tail = chirp(FRAME * 3, 100.0, 110.0);
+        reference.extend(tail.into_iter().map(|s| s * 0.05));
+
+        let delay = 1008usize;
+        let mut mic = vec![0.0f32; delay];
+        mic.extend(reference[..reference.len() - delay].iter().map(|s| s * 0.4));
+
+        let (delay_found, prom) =
+            estimate(&mic, &reference, 8000).expect("узкополосное VoIP-эхо должно находиться");
+        assert!(
+            (delay_found as i64 - delay as i64).abs() <= 2,
+            "задержка {delay_found} вместо {delay}"
+        );
+        assert!(prom > 10.0, "проминентность {prom}");
+    }
+
+    #[test]
+    fn in_band_narrowband_hum_is_rejected() {
+        let reference = chirp(FRAME * 2, 1000.0, 1005.0);
+        let mut mic = vec![0.0f32; 1600];
+        mic.extend(reference[..reference.len() - 1600].iter().copied());
+        if let Some((_, prom)) = estimate(&mic, &reference, 8000) {
             assert!(prom < 6.5, "проминентность {prom}");
         }
     }
