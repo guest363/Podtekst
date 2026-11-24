@@ -146,6 +146,15 @@ impl Whisper {
         samples: &[f32],
         language: &str,
     ) -> Result<String, String> {
+        self.transcribe_segment_with_prompt(samples, language, None)
+    }
+
+    pub fn transcribe_segment_with_prompt(
+        &mut self,
+        samples: &[f32],
+        language: &str,
+        prompt: Option<&str>,
+    ) -> Result<String, String> {
         if samples.len() < 1600 {
             return Ok(String::new());
         }
@@ -185,8 +194,21 @@ impl Whisper {
 
         // «auto»/пустой язык — без токена языка: модель сама эмитит его
         // первым сгенерированным токеном (спецтокены decode() пропускает).
+        const MAX_PROMPT_TOKENS: usize = 224;
         let transcribe = self.bpe.special("<|transcribe|>")?;
-        let mut tokens = vec![self.sot];
+        let mut tokens = Vec::new();
+        if let Some(text) = prompt.map(str::trim).filter(|s| !s.is_empty()) {
+            if let Ok(sot_prev) = self.bpe.special("<|startofprev|>") {
+                // Ведущий пробел — контракт Whisper ByteLevel BPE для первого слова подсказки.
+                let mut prompt_ids = self.bpe.encode(&format!(" {text}"));
+                if !prompt_ids.is_empty() {
+                    prompt_ids.truncate(MAX_PROMPT_TOKENS);
+                    tokens.push(sot_prev);
+                    tokens.extend(prompt_ids);
+                }
+            }
+        }
+        tokens.push(self.sot);
         if !language.is_empty() && language != "auto" {
             tokens.push(self.bpe.special(&format!("<|{language}|>"))?);
         }
@@ -325,14 +347,17 @@ fn argmax(v: &[f32]) -> usize {
     best
 }
 
-/// GPT-2 byte-level BPE (как в Whisper): вокод `token → id`, спецтокены `<|...|>`.
+/// GPT-2 byte-level BPE (как в Whisper): кодек `token ↔ id`, слияния и спецтокены `<|...|>`.
 pub struct Gpt2Bpe {
     id_to_token: Vec<String>,
+    token_to_id: HashMap<String, i64>,
+    merges: HashMap<(String, String), usize>,
     special: HashMap<String, i64>,
     byte_map: HashMap<char, u8>,
+    byte_to_char: [char; 256],
 }
 
-fn gpt2_byte_map() -> HashMap<char, u8> {
+fn gpt2_byte_tables() -> (HashMap<char, u8>, [char; 256]) {
     let mut bs: Vec<u32> = (0x21..=0x7E).collect();
     bs.extend(0xA1..=0xAC);
     bs.extend(0xAE..=0xFF);
@@ -345,10 +370,84 @@ fn gpt2_byte_map() -> HashMap<char, u8> {
             n += 1;
         }
     }
-    bs.iter()
-        .zip(&cs)
-        .filter_map(|(b, c)| char::from_u32(*c).map(|ch| (ch, *b as u8)))
-        .collect()
+    let mut char_to_byte = HashMap::with_capacity(256);
+    let mut byte_to_char = ['\0'; 256];
+    for (b, c) in bs.iter().zip(&cs) {
+        if let Some(ch) = char::from_u32(*c) {
+            char_to_byte.insert(ch, *b as u8);
+            byte_to_char[*b as usize] = ch;
+        }
+    }
+    (char_to_byte, byte_to_char)
+}
+
+fn match_contraction(rest: &str) -> Option<usize> {
+    const CONTRS: [&str; 7] = ["'s", "'t", "'re", "'ve", "'m", "'ll", "'d"];
+    CONTRS
+        .iter()
+        .find(|pfx| rest.starts_with(*pfx))
+        .map(|pfx| pfx.len())
+}
+
+fn match_prefixed_run(rest: &str, pred: fn(char) -> bool) -> Option<usize> {
+    let (space_len, body) = match rest.strip_prefix(' ') {
+        Some(after) => (1, after),
+        None => (0, rest),
+    };
+    let mut chars = body.chars();
+    let first = chars.next()?;
+    if !pred(first) {
+        return None;
+    }
+    let mut consumed = first.len_utf8();
+    for ch in chars {
+        if pred(ch) {
+            consumed += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    Some(space_len + consumed)
+}
+
+fn match_spaces(rest: &str) -> Option<usize> {
+    let mut ws_len = 0usize;
+    let mut ws_count = 0usize;
+    let mut prev_ws_len = 0usize;
+    for ch in rest.chars() {
+        if ch.is_whitespace() {
+            prev_ws_len = ws_len;
+            ws_len += ch.len_utf8();
+            ws_count += 1;
+        } else {
+            break;
+        }
+    }
+    if ws_len == 0 {
+        return None;
+    }
+    if ws_len < rest.len() && ws_count > 1 {
+        Some(prev_ws_len)
+    } else {
+        Some(ws_len)
+    }
+}
+
+fn gpt2_pretokenize(text: &str) -> Vec<&str> {
+    let mut chunks = Vec::new();
+    let mut i = 0;
+    while i < text.len() {
+        let rest = &text[i..];
+        let end = match_contraction(rest)
+            .or_else(|| match_prefixed_run(rest, char::is_alphabetic))
+            .or_else(|| match_prefixed_run(rest, char::is_numeric))
+            .or_else(|| match_prefixed_run(rest, |c| !c.is_whitespace() && !c.is_alphanumeric()))
+            .or_else(|| match_spaces(rest))
+            .unwrap_or_else(|| rest.chars().next().map(char::len_utf8).unwrap_or(1));
+        chunks.push(&text[i..i + end]);
+        i += end;
+    }
+    chunks
 }
 
 impl Gpt2Bpe {
@@ -365,9 +464,26 @@ impl Gpt2Bpe {
             max_id = max_id.max(id as usize);
         }
         let mut id_to_token = vec![String::new(); max_id + 1];
+        let mut token_to_id = HashMap::with_capacity(vocab.len());
         for (tok, id) in vocab {
             if let Some(i) = id.as_u64() {
                 id_to_token[i as usize] = tok.clone();
+                token_to_id.insert(tok.clone(), i as i64);
+            }
+        }
+        let mut merges = HashMap::new();
+        if let Some(arr) = model.get("merges").and_then(|x| x.as_array()) {
+            for (rank, entry) in arr.iter().enumerate() {
+                if let Some((a, b)) = entry.as_str().and_then(|s| s.split_once(' ')) {
+                    merges.insert((a.to_string(), b.to_string()), rank);
+                } else if let Some(pair) = entry.as_array() {
+                    if let (Some(a), Some(b)) = (
+                        pair.first().and_then(|x| x.as_str()),
+                        pair.get(1).and_then(|x| x.as_str()),
+                    ) {
+                        merges.insert((a.to_string(), b.to_string()), rank);
+                    }
+                }
             }
         }
         let mut special = HashMap::new();
@@ -387,10 +503,14 @@ impl Gpt2Bpe {
                 id_to_token[i] = content.to_string();
             }
         }
+        let (byte_map, byte_to_char) = gpt2_byte_tables();
         Ok(Self {
             id_to_token,
+            token_to_id,
+            merges,
             special,
-            byte_map: gpt2_byte_map(),
+            byte_map,
+            byte_to_char,
         })
     }
 
@@ -399,6 +519,57 @@ impl Gpt2Bpe {
             .get(tok)
             .copied()
             .ok_or_else(|| format!("нет спецтокена {tok}"))
+    }
+
+    pub fn encode(&self, text: &str) -> Vec<i64> {
+        let mut out = Vec::new();
+        for chunk in gpt2_pretokenize(text) {
+            let mut word: Vec<String> = chunk
+                .as_bytes()
+                .iter()
+                .map(|&b| self.byte_to_char[b as usize].to_string())
+                .collect();
+            if word.len() > 1 && !self.merges.is_empty() {
+                loop {
+                    let mut best_rank = usize::MAX;
+                    let mut best_pair: Option<(String, String)> = None;
+                    for pair in word.windows(2) {
+                        let key = (pair[0].clone(), pair[1].clone());
+                        if let Some(&rank) = self.merges.get(&key) {
+                            if rank < best_rank {
+                                best_rank = rank;
+                                best_pair = Some(key);
+                            }
+                        }
+                    }
+                    let Some((a, b)) = best_pair else {
+                        break;
+                    };
+                    let merged = format!("{a}{b}");
+                    let mut next = Vec::with_capacity(word.len());
+                    let mut idx = 0;
+                    while idx < word.len() {
+                        if idx + 1 < word.len() && word[idx] == a && word[idx + 1] == b {
+                            next.push(merged.clone());
+                            idx += 2;
+                        } else {
+                            next.push(word[idx].clone());
+                            idx += 1;
+                        }
+                    }
+                    word = next;
+                    if word.len() < 2 {
+                        break;
+                    }
+                }
+            }
+            for tok in word {
+                if let Some(&id) = self.token_to_id.get(&tok) {
+                    out.push(id);
+                }
+            }
+        }
+        out
     }
 
     pub fn decode(&self, ids: &[i64]) -> String {
@@ -477,5 +648,29 @@ mod tests {
         assert_eq!(bpe.decode(&[220, 31373]), "hello");
         assert_eq!(bpe.decode(&[50258, 220, 995, 50257]), "world");
         assert!(bpe.special("<|xx|>").is_err());
+    }
+
+    #[test]
+    fn bpe_encode_applies_gpt2_merges_and_roundtrips() {
+        let tok_json = serde_json::json!({
+            "model": {
+                "vocab": {
+                    "Ġ": 1, "a": 2, "b": 3, "c": 4, "d": 5, ",": 6,
+                    "Ġa": 7, "bc": 8, "Ġabc": 9, "Ġb": 10
+                },
+                "merges": ["Ġ a", "b c", "Ġa bc", "Ġ b"]
+            },
+            "added_tokens": [{"content": "<|startofprev|>", "id": 50362}]
+        })
+        .to_string();
+        let bpe = Gpt2Bpe::parse(&tok_json).unwrap();
+        assert_eq!(bpe.special("<|startofprev|>").unwrap(), 50362);
+        let ids = bpe.encode(" abc, bd");
+        assert_eq!(ids, vec![9, 6, 10, 5]);
+        assert_eq!(bpe.decode(&ids), "abc, bd");
+        assert_eq!(
+            gpt2_pretokenize("don't  test!"),
+            vec!["don", "'t", " ", " test", "!"]
+        );
     }
 }

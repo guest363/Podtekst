@@ -100,3 +100,26 @@ fn plan_apply_is_bitwise_identical_to_single_pass_agc() {
         .zip(direct.iter())
         .all(|(a, b)| a.to_bits() == b.to_bits()));
 }
+
+#[test]
+fn quiet_tail_after_loud_opening_is_amplified_by_windowed_agc() {
+    let mut samples = signal(0.002, 4);
+    samples.extend(signal(0.4, 24));
+    samples.extend(signal(0.001, 4));
+    samples.extend(signal(0.01, 16));
+    samples.extend(signal(0.001, 4));
+    let stats = agc_rms_16k(&mut samples);
+    let tail_speech = rms(&samples[36 * 16_000..46 * 16_000]);
+    assert!((0.06..0.13).contains(&tail_speech), "tail={tail_speech}");
+    assert!(rms(&samples[49 * 16_000..]) < 0.0015);
+    assert!(stats.gain_p95 > 5.0, "gain_p95={}", stats.gain_p95);
+}
+
+#[test]
+fn long_steady_noise_is_not_promoted_to_speech() {
+    let mut samples = signal(0.001, 35);
+    let before = rms(&samples);
+    let stats = agc_rms_16k(&mut samples);
+    assert!(rms(&samples) <= before * 1.01);
+    assert_eq!(stats.amplified_fraction, 0.0);
+}
