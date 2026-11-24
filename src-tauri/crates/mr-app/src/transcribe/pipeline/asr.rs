@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -30,6 +31,9 @@ pub(super) fn run(
     let mut channel_utts: HashMap<usize, Vec<Utterance>> = HashMap::new();
     let ctc_available = use_gigaam && opts.ctc_enabled && models.ctc.is_some();
     let dictionary = Dictionary::new(&opts.hotwords);
+    let whisper_prompt = (!use_gigaam)
+        .then(|| whisper_hotword_prompt(&opts.hotwords))
+        .flatten();
     let mut dictionary_utts = 0usize;
     let mut dictionary_words = 0usize;
     if !ctc_available && total_segs > 0 {
@@ -64,32 +68,8 @@ pub(super) fn run(
             let hi = ((b * 16000.0) as usize).min(samples.len());
             let raw_chunk = &samples[lo..hi];
 
-            // По-чанковая нормализация до пика 0.9 перед ASR:
-            // полный динамический диапазон для INT8 квантованных моделей (GigaAM / Whisper).
-            const TARGET_PEAK: f32 = 0.9;
-            let mut peak = 0.0f32;
-            let mut sum_sq = 0.0f32;
-            for &x in raw_chunk {
-                peak = peak.max(x.abs());
-                sum_sq += x * x;
-            }
-            let rms_raw = (sum_sq / raw_chunk.len().max(1) as f32).sqrt();
-            // Пол по RMS, а не по пику: один щелчок задаёт пик, но не энергию.
-            // Ниже 1e-5 — только шум квантования 16-бит (LSB/√12 ≈ 9e-6) и
-            // дизеринг; их растяжение до пика 0.9 даёт галлюцинации ASR на
-            // ложных VAD-сегментах. Реальная тихая речь — от 1e-4, запас 10×.
-            const QUIET_RMS_FLOOR: f32 = 1e-5;
-            let normalized_buf: Vec<f32>;
-            let chunk: &[f32] = if rms_raw > QUIET_RMS_FLOOR && (peak - TARGET_PEAK).abs() > 0.05 {
-                let scale = TARGET_PEAK / peak;
-                normalized_buf = raw_chunk
-                    .iter()
-                    .map(|&x| (x * scale).clamp(-1.0, 1.0))
-                    .collect();
-                &normalized_buf
-            } else {
-                raw_chunk
-            };
+            let (chunk_buf, rms_raw) = normalize_asr_chunk(raw_chunk);
+            let chunk: &[f32] = chunk_buf.as_ref();
             let rms = (chunk.iter().map(|x| x * x).sum::<f32>() / chunk.len().max(1) as f32).sqrt();
             // Штраф — по RMS сырого сегмента: после нормализации до пика 0.9
             // любая речь даёт 0.09–0.6, и ветка «тихая короткая речь» недостижима.
@@ -150,22 +130,32 @@ pub(super) fn run(
                         format!("GigaAM: {error}")
                     })?
             } else {
-                models
-                    .whisper
-                    .as_mut()
-                    .ok_or("нет Whisper-модели")?
-                    .transcribe_segment(chunk, &opts.language)
-                    .map_err(|error| {
-                        log::error!(
-                            target: "asr",
-                            i = seg_index,
-                            model = "whisper-large-v3-turbo-q",
-                            mel_frames = mel_frames,
-                            error = error;
-                            "ev=asr.infer_error"
-                        );
-                        format!("Whisper: {error}")
-                    })?
+                let first = decode_whisper_segment(
+                    models.whisper.as_mut(),
+                    chunk,
+                    &opts.language,
+                    whisper_prompt.as_deref(),
+                    seg_index,
+                    mel_frames,
+                )?;
+                let norm = first.split_whitespace().collect::<Vec<_>>().join(" ");
+                if whisper_prompt.is_some() && metrics_look_like_loop(asr_loop_metrics(&norm)) {
+                    log::warn!(
+                        target: "asr",
+                        i = seg_index;
+                        "ev=asr.whisper_prompt_loop_retry"
+                    );
+                    decode_whisper_segment(
+                        models.whisper.as_mut(),
+                        chunk,
+                        &opts.language,
+                        None,
+                        seg_index,
+                        mel_frames,
+                    )?
+                } else {
+                    first
+                }
             };
             let infer_ms = infer_started.elapsed().as_millis() as u64;
             let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -432,6 +422,114 @@ pub(super) fn run(
     Ok((channel_utts, ctc_used_any))
 }
 
+fn normalize_asr_chunk(raw_chunk: &[f32]) -> (Cow<'_, [f32]>, f32) {
+    const TARGET_PEAK: f32 = 0.9;
+    // Ниже 1e-5 — только шум квантования 16-бит (LSB/√12 ≈ 9e-6) и дизеринг;
+    // их растяжение даёт галлюцинации ASR на ложных VAD-сегментах.
+    const QUIET_RMS_FLOOR: f32 = 1e-5;
+    const ACTIVE_RMS_FLOOR: f32 = 1e-4;
+
+    if raw_chunk.is_empty() {
+        return (Cow::Borrowed(raw_chunk), 0.0);
+    }
+    let mut peak = 0.0f32;
+    let mut sum_sq = 0.0f32;
+    for &x in raw_chunk {
+        peak = peak.max(x.abs());
+        sum_sq += x * x;
+    }
+    let rms_raw = (sum_sq / raw_chunk.len() as f32).sqrt();
+    if rms_raw <= QUIET_RMS_FLOOR || peak <= f32::EPSILON {
+        return (Cow::Borrowed(raw_chunk), rms_raw);
+    }
+
+    let active_rms = if raw_chunk.len() > 1600 {
+        let mut frame_rms: Vec<f32> = raw_chunk
+            .chunks(1600)
+            .map(|c| (c.iter().map(|&x| x * x).sum::<f32>() / c.len() as f32).sqrt())
+            .collect();
+        frame_rms.sort_unstable_by(f32::total_cmp);
+        percentile(&frame_rms, 0.9)
+    } else {
+        rms_raw
+    };
+
+    let peak_scale = TARGET_PEAK / peak;
+    let rms_scale = if active_rms > ACTIVE_RMS_FLOOR
+        && active_rms * peak_scale < mr_audio::dsp::TARGET_RMS * 0.8
+    {
+        Some((mr_audio::dsp::TARGET_RMS / active_rms).min(mr_audio::dsp::MAX_GAIN))
+    } else {
+        None
+    };
+
+    let Some(scale) = rms_scale
+        .map(|s| s.max(peak_scale))
+        .or_else(|| ((peak - TARGET_PEAK).abs() > 0.05).then_some(peak_scale))
+    else {
+        return (Cow::Borrowed(raw_chunk), rms_raw);
+    };
+
+    // ЗАЧЕМ: одиночный щелчок не даёт peak-нормализации поднять тихую речь;
+    // при разгоне до TARGET_RMS пик выброса мягко сжимаем через tanh.
+    let soft_clip = scale * peak > 1.0;
+    let scaled = raw_chunk
+        .iter()
+        .map(|&x| {
+            let y = x * scale;
+            if soft_clip {
+                y.tanh()
+            } else {
+                y.clamp(-1.0, 1.0)
+            }
+        })
+        .collect();
+    (Cow::Owned(scaled), rms_raw)
+}
+
+fn decode_whisper_segment(
+    whisper: Option<&mut mr_ml::onnx::whisper::Whisper>,
+    chunk: &[f32],
+    language: &str,
+    prompt: Option<&str>,
+    seg_index: usize,
+    mel_frames: usize,
+) -> Result<String, String> {
+    whisper
+        .ok_or("нет Whisper-модели")?
+        .transcribe_segment_with_prompt(chunk, language, prompt)
+        .map_err(|error| {
+            log::error!(
+                target: "asr",
+                i = seg_index,
+                model = "whisper-large-v3-turbo-q",
+                mel_frames = mel_frames,
+                error = error;
+                "ev=asr.infer_error"
+            );
+            format!("Whisper: {error}")
+        })
+}
+
+fn whisper_hotword_prompt(hotwords: &[String]) -> Option<String> {
+    let mut terms = Vec::new();
+    for entry in mr_ml::hotwords::parse_hotwords(hotwords) {
+        if !terms.contains(&entry.to_display) {
+            terms.push(entry.to_display);
+        }
+    }
+    if terms.is_empty() {
+        return None;
+    }
+    let joined = terms.join(", ");
+    // ЗАЧЕМ: незакрытая фраза без точки провоцирует greedy Whisper достраивать зацикленный хвост.
+    Some(if joined.ends_with(['.', '!', '?']) {
+        joined
+    } else {
+        format!("{joined}.")
+    })
+}
+
 fn apply_dictionary(dictionary: &Dictionary, ctc_used: bool, text: &mut String) -> usize {
     if ctc_used {
         0
@@ -452,5 +550,29 @@ mod tests {
         assert_eq!(text, "мерши");
         assert_eq!(apply_dictionary(&dictionary, false, &mut text), 1);
         assert_eq!(text, "merge");
+    }
+
+    #[test]
+    fn normalize_lifts_quiet_speech_past_transient_click() {
+        let mut samples = vec![0.0f32; 32_000];
+        for (i, sample) in samples.iter_mut().enumerate() {
+            *sample = 0.015 * (std::f32::consts::TAU * 440.0 * i as f32 / 16_000.0).sin();
+        }
+        samples[100] = 0.5;
+        let (chunk, _) = normalize_asr_chunk(&samples);
+        let speech_rms = (chunk[16_000..].iter().map(|x| x * x).sum::<f32>() / 16_000.0f32).sqrt();
+        assert!(speech_rms >= 0.08, "speech_rms={speech_rms}");
+        assert!(chunk.iter().all(|x| x.is_finite() && x.abs() <= 1.0));
+    }
+
+    #[test]
+    fn whisper_hotword_prompt_keeps_canonical_terms_once() {
+        let prompt = whisper_hotword_prompt(&[
+            "гк => ГПК РФ".to_string(),
+            "СК РФ".to_string(),
+            "ск => СК РФ".to_string(),
+        ]);
+        assert_eq!(prompt.as_deref(), Some("ГПК РФ, СК РФ."));
+        assert_eq!(whisper_hotword_prompt(&[]), None);
     }
 }

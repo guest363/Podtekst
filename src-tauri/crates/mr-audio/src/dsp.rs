@@ -57,6 +57,7 @@ pub struct AgcStats {
 }
 
 const WINDOW: usize = 1600;
+const BLOCK_FRAMES: usize = 200;
 pub const TARGET_RMS: f32 = 0.1;
 pub const MAX_GAIN: f32 = 100.0;
 
@@ -70,7 +71,7 @@ fn percentile(sorted: &[f32], fraction: f32) -> f32 {
 pub struct AgcPlan {
     noise_floor: f32,
     speech_rms: f32,
-    desired: f32,
+    desired: Vec<f32>,
     active: Vec<bool>,
 }
 
@@ -79,15 +80,101 @@ fn agc_plan(levels: &[f32]) -> AgcPlan {
     sorted.sort_unstable_by(f32::total_cmp);
     let noise_floor = percentile(&sorted, 0.1);
     let speech_rms = percentile(&sorted, 0.9);
-    let gate = noise_floor * 2.5;
+    if levels.len() <= BLOCK_FRAMES {
+        let gate = noise_floor * 2.5;
+        let desired = (TARGET_RMS / speech_rms.max(f32::EPSILON)).clamp(1.0, MAX_GAIN);
+        return AgcPlan {
+            noise_floor,
+            speech_rms,
+            desired: vec![desired; levels.len()],
+            active: levels
+                .iter()
+                .map(|&rms| rms > gate && rms > f32::EPSILON)
+                .collect(),
+        };
+    }
+
+    // ЗАЧЕМ: на длинных записях громкий участник в начале завышает глобальный p90
+    // и не даёт поднять тихую речь в хвосте — при отклонении > 20% от фона берём локальную цель.
+    let global_desired = (TARGET_RMS / speech_rms.max(f32::EPSILON)).clamp(1.0, MAX_GAIN);
+    let global_floor = if noise_floor > 1e-6 {
+        noise_floor
+    } else {
+        let mut sorted_nz: Vec<f32> = levels.iter().copied().filter(|&x| x > 1e-6).collect();
+        sorted_nz.sort_unstable_by(f32::total_cmp);
+        if sorted_nz.is_empty() {
+            0.0
+        } else {
+            percentile(&sorted_nz, 0.1)
+        }
+    };
+
+    let mut blocks: Vec<(usize, usize)> = (0..levels.len())
+        .step_by(BLOCK_FRAMES)
+        .map(|s| (s, (s + BLOCK_FRAMES).min(levels.len())))
+        .collect();
+    if blocks.len() >= 2 {
+        let last = blocks[blocks.len() - 1];
+        if last.1 - last.0 < BLOCK_FRAMES / 4 {
+            blocks.pop();
+            if let Some(prev) = blocks.last_mut() {
+                prev.1 = levels.len();
+            }
+        }
+    }
+
+    let mut active = vec![false; levels.len()];
+    let mut anchors: Vec<(f32, f32)> = Vec::new();
+    for (s, e) in blocks {
+        let mut bsorted = levels[s..e].to_vec();
+        bsorted.sort_unstable_by(f32::total_cmp);
+        let bp10 = percentile(&bsorted, 0.1);
+        let bp90 = percentile(&bsorted, 0.9);
+        let bnoise = if global_floor > 0.0 && bp90 > global_floor * 2.5 {
+            bp10.min(global_floor)
+        } else {
+            bp10
+        };
+        let bgate = bnoise * 2.5;
+        for i in s..e {
+            active[i] = levels[i] > bgate && levels[i] > f32::EPSILON;
+        }
+        if bp90 > bgate && bp90 > f32::EPSILON {
+            let bdesired = if (bp90 - speech_rms).abs() <= speech_rms * 0.20 {
+                global_desired
+            } else {
+                (TARGET_RMS / bp90).clamp(1.0, MAX_GAIN)
+            };
+            anchors.push(((s + e) as f32 * 0.5, bdesired));
+        }
+    }
+
+    let desired = if anchors.is_empty() {
+        vec![1.0; levels.len()]
+    } else {
+        (0..levels.len())
+            .map(|i| {
+                let pos = i as f32 + 0.5;
+                if pos <= anchors[0].0 {
+                    anchors[0].1
+                } else if pos >= anchors[anchors.len() - 1].0 {
+                    anchors[anchors.len() - 1].1
+                } else {
+                    let k = anchors.partition_point(|&(c, _)| c < pos).saturating_sub(1);
+                    let (c0, d0) = anchors[k];
+                    let (c1, d1) = anchors[k + 1];
+                    let t = ((pos - c0) / (c1 - c0).max(1.0)).clamp(0.0, 1.0);
+                    d0 + (d1 - d0) * t
+                }
+            })
+            .collect()
+    };
+
     AgcPlan {
         noise_floor,
         speech_rms,
-        desired: (TARGET_RMS / speech_rms.max(f32::EPSILON)).clamp(1.0, MAX_GAIN),
-        active: levels
-            .iter()
-            .map(|&rms| rms > gate && rms > f32::EPSILON)
-            .collect(),
+        desired,
+        active,
     }
 }
 
@@ -121,7 +208,7 @@ fn window_gain(plan: &AgcPlan, index: usize, position: usize, len: usize) -> f32
         (true, false, true) => 1.0 - progress,
         (true, false, false) => 1.0,
     };
-    1.0 + (plan.desired - 1.0) * envelope
+    1.0 + (plan.desired[index] - 1.0) * envelope
 }
 
 fn stats_from(plan: &AgcPlan, mut gains: Vec<f32>, amplified: usize) -> AgcStats {
