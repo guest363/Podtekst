@@ -719,3 +719,31 @@ fn switching_auto_to_notify_disarms_auto_stop_without_prompting() {
     }
     assert!(d.prompt().is_none());
 }
+
+#[test]
+fn debounce_keeps_active_candidate_when_client_order_changes() {
+    let mut d = Detector::new();
+    let t0 = Instant::now();
+    let zoom = client(1, "Zoom.exe", true);
+    let meet = client(2, "chrome.exe", true);
+
+    assert!(d
+        .tick(
+            t0,
+            AutoDetectMode::Auto,
+            DetectionCapability::Process,
+            &[zoom.clone(), meet.clone()],
+            idle_ctx(),
+        )
+        .is_empty());
+    assert_eq!(
+        d.tick(
+            t0 + Duration::from_secs(2),
+            AutoDetectMode::Auto,
+            DetectionCapability::Process,
+            &[meet, zoom],
+            idle_ctx(),
+        ),
+        vec![DetectorAction::StartAutoRecording { slug: "zoom" }]
+    );
+}

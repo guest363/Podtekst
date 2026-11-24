@@ -18,6 +18,7 @@ import { loadPeople } from './lib/people.svelte.ts'
 import { loadQueue, queueState } from './lib/queue.svelte.ts'
 import { loadRecordings, recordings } from './lib/recordings.svelte.ts'
 import {
+  clearAutoDetectPrompt,
   dismissAutoDetectPrompt,
   loadAutoDetect,
   loadAutoTranscribe,
@@ -62,7 +63,7 @@ const startRecordingFromPrompt = async (): Promise<void> => {
     })
     const d = await readJsonSafe<RecordStartResponse>(r)
     if (d.ok || d.error === 'Запись уже идёт') {
-      settings.autoDetectPrompt = null
+      clearAutoDetectPrompt()
       selectTab('studio')
       if (d.ok) {
         toast('Запись началась')

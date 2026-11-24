@@ -939,12 +939,17 @@ fn start_recording_notified(st: &mut RecordingState, auto: bool) -> serde_json::
     let mode = crate::configured_record_mode();
     let res = start_recording_inner(st, &mode, false);
     if res.get("ok").and_then(|x| x.as_bool()) == Some(true) {
-        RECORDING_AUTO.store(auto, Ordering::SeqCst);
-        if !auto {
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        let effective_auto = auto
+            && crate::config::configured_auto_detect_mode() == crate::config::AutoDetectMode::Auto;
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        let effective_auto = false;
+        RECORDING_AUTO.store(effective_auto, Ordering::SeqCst);
+        if !effective_auto {
             crate::auto_detect::on_manual_start();
         }
         let sys = res.get("sys").and_then(|x| x.as_bool()).unwrap_or(false);
-        let what = match (auto, sys) {
+        let what = match (effective_auto, sys) {
             (true, true) => "Автозапись началась (микрофон + система)",
             (true, false) => "Автозапись началась (микрофон)",
             (false, true) => "🔴 Запись началась (микрофон + система)",

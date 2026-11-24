@@ -8,7 +8,12 @@ import {
   screenRecorder,
   toggleScreenCapture,
 } from '../lib/screen-recorder.svelte.ts'
-import { hasSystemAudio, settings, syncAutoDetectStatus } from '../lib/settings.svelte.ts'
+import {
+  clearAutoDetectPrompt,
+  hasSystemAudio,
+  settings,
+  syncAutoDetectStatus,
+} from '../lib/settings.svelte.ts'
 import { toast } from '../lib/toast.svelte.ts'
 import { engine, syncEngineFromStatus } from '../lib/transcript.svelte.ts'
 import { emit, openTranscript, ui } from '../lib/ui.svelte.ts'
@@ -115,7 +120,7 @@ const toggleRecord = async (): Promise<void> => {
       const d = await readJsonSafe<RecordStartResponse>(r)
       if (d.ok) {
         setRecordingState(true)
-        settings.autoDetectPrompt = null
+        clearAutoDetectPrompt()
         if (wantScreen) {
           screenRecorder.active = true
           toast('Запись экрана и звука началась')
@@ -125,6 +130,7 @@ const toggleRecord = async (): Promise<void> => {
         if (d.screen_error) toast(`Экран не записывается: ${d.screen_error}`, 'error')
       } else if (d.error === 'Запись уже идёт') {
         setRecordingState(true)
+        clearAutoDetectPrompt()
       } else {
         toast(d.error || 'Не удалось начать запись', 'error')
       }

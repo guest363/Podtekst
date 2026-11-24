@@ -140,11 +140,7 @@ export const loadAutoDetect = async (): Promise<void> => {
   }
   try {
     const d = await readJsonSafe<AutoDetectResponse>(await fetch('/api/record/auto_detect'))
-    if (typeof d.supported === 'boolean') settings.autoDetectSupported = d.supported
-    const capability = parseAutoDetectCapability(d.capability)
-    if (capability) settings.autoDetectCapability = capability
-    const mode = parseAutoDetectMode(d.mode)
-    if (mode && autoDetectInFlight === 0) settings.autoDetectMode = mode
+    syncAutoDetectStatus(d)
   } catch {}
 }
 
@@ -187,9 +183,15 @@ export const setAutoDetectMode = async (mode: AutoDetectMode): Promise<boolean> 
   }
 }
 
-export const dismissAutoDetectPrompt = async (): Promise<void> => {
-  dismissedPromptId = settings.autoDetectPrompt?.id ?? null
+export const clearAutoDetectPrompt = (): void => {
+  if (settings.autoDetectPrompt) {
+    dismissedPromptId = settings.autoDetectPrompt.id
+  }
   settings.autoDetectPrompt = null
+}
+
+export const dismissAutoDetectPrompt = async (): Promise<void> => {
+  clearAutoDetectPrompt()
   try {
     await fetch('/api/record/auto_detect/dismiss', {
       method: 'POST',

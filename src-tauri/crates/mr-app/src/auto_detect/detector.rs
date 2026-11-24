@@ -214,11 +214,23 @@ impl Detector {
             self.phase = Phase::Idle;
         }
 
-        let candidate = matched
+        let mut candidates = matched
             .iter()
             .filter(|m| m.can_start && !self.suppressed.contains_key(m.app.slug))
-            .map(|m| m.app)
-            .next();
+            .map(|m| m.app);
+        let first_candidate = candidates.next();
+        let candidate = match &self.phase {
+            Phase::Debouncing { app, .. } => {
+                if first_candidate.is_some_and(|c| c.slug == app.slug)
+                    || candidates.any(|c| c.slug == app.slug)
+                {
+                    Some(*app)
+                } else {
+                    first_candidate
+                }
+            }
+            _ => first_candidate,
+        };
 
         match self.phase.clone() {
             Phase::Idle => {
