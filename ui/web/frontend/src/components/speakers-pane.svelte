@@ -211,6 +211,13 @@ onDestroy(() => {
   sampleAudio = null
 })
 
+const sampleDur = (s: SpeakerSample): number => s.dur ?? Math.max(0, s.end - s.start)
+
+const bestSample = (list: SpeakerSample[]): SpeakerSample | undefined =>
+  list.length > 0
+    ? list.reduce((best, s) => (sampleDur(s) > sampleDur(best) ? s : best))
+    : undefined
+
 const saveVoiceprint = async (
   oldName: string,
   nameOrInput: string | HTMLInputElement | null,
@@ -649,13 +656,14 @@ const onInputKey = (e: KeyboardEvent, btn: HTMLButtonElement | null): void => {
               class="btn-primary btn-sm btn-save-voiceprint"
               title="Сохранить голос за этим человеком и обновить текст"
               onclick={(e) => {
+                const best = bestSample(spk.samples)
                 void saveVoiceprint(
                   spk.name,
                   cardVal,
                   spk.embedding ?? null,
                   e.currentTarget,
-                  samples[0]
-                    ? { start: samples[0].start, end: samples[0].end, channel: samples[0].channel }
+                  best
+                    ? { start: best.start, end: best.end, channel: best.channel }
                     : undefined,
                   getCardPack(spk.key, cardVal),
                 )

@@ -792,6 +792,24 @@ fn sample_window_stays_inside_utterance() {
 }
 
 #[test]
+fn short_utterance_sample_does_not_overhang_and_loses_to_extractable_turn() {
+    let mut crumb = utt(1.0, 1.35, "A", 0, "да");
+    crumb.silhouette = 1.0;
+    let mut extractable = utt(5.0, 5.45, "A", 0, "хорошо");
+    extractable.silhouette = -0.4;
+    let tiny = utt(10.006, 10.306, "A", 0, "угу");
+    let micro = utt(12.0, 12.05, "A", 0, "а");
+    for u in [&crumb, &extractable, &tiny, &micro] {
+        let s = &pick_samples(&[u], 1)[0];
+        assert!(s.start >= u.start && s.end <= u.end, "{u:?} -> {s:?}");
+        assert!(s.dur <= u.end - u.start + 1e-9, "{u:?} -> {s:?}");
+    }
+    let ranked = pick_samples(&[&crumb, &extractable], 2);
+    assert_eq!(ranked[0].start, 5.0);
+    assert_eq!(ranked[1].start, 1.0);
+}
+
+#[test]
 fn fill_unit_labels_by_time_uses_nearest_unit_inside_utterance() {
     let units = vec![
         AcoustUnit {
@@ -1409,6 +1427,15 @@ fn short_but_distinct_voice_is_not_merged_into_dominant() {
     merge_tiny_clusters(&vecs, &mut labels, &weights, 1, &[], &[]);
     assert_eq!(labels[3], 1);
     assert_eq!(labels[4], 1);
+}
+
+#[test]
+fn tiny_cluster_cap_merges_midsize_noise_subcluster_on_long_recording() {
+    let vecs = vec![vec![1.0, 0.0], vec![1.0, 0.0], vec![0.8, 0.6]];
+    let weights = vec![800.0, 800.0, 20.0];
+    let mut labels = vec![0usize, 0, 1];
+    merge_tiny_clusters(&vecs, &mut labels, &weights, 1, &[], &[]);
+    assert_eq!(labels[2], 0);
 }
 
 #[test]
@@ -2475,4 +2502,61 @@ fn ch0_strong_echo_caps_speaker_assignment_to_existing_k() {
         super::core::assignment_max_speakers(&two_clusters, 1, Some(&strong_ev)),
         1
     );
+}
+
+#[test]
+fn post_assign_merge_consolidates_duplicate_clusters_and_voice_runs() {
+    use crate::transcribe::speaker_assignment::SpeakerSpan;
+
+    let emb_0 = vec![1.0, 0.0, 0.0];
+    let emb_1 = vec![0.91, (1.0 - 0.91_f64 * 0.91).sqrt(), 0.0];
+    let emb_2 = vec![0.85, 0.0, (1.0 - 0.85_f64 * 0.85).sqrt()];
+    let embs = vec![Some(emb_0), Some(emb_1), Some(emb_2)];
+    let durs = vec![10.0, 4.0, 8.0];
+    let quals = vec![1.0, 1.0, 1.0];
+    let mut label_of = HashMap::from([(0usize, 0usize), (1, 1), (2, 2)]);
+    let mut voice_runs = vec![
+        SpeakerSpan {
+            start: 0.0,
+            end: 5.0,
+            label: 0,
+        },
+        SpeakerSpan {
+            start: 5.0,
+            end: 9.0,
+            label: 1,
+        },
+        SpeakerSpan {
+            start: 9.0,
+            end: 17.0,
+            label: 2,
+        },
+    ];
+    super::core::merge_duplicate_clusters_post_assign(
+        -1,
+        &embs,
+        &durs,
+        &quals,
+        &mut label_of,
+        &mut voice_runs,
+        1,
+    );
+    assert_eq!(label_of[&0], 0);
+    assert_eq!(label_of[&1], 0);
+    assert_eq!(label_of[&2], 2);
+    assert_eq!(voice_runs[1].label, 0);
+    assert_eq!(voice_runs[2].label, 2);
+
+    let mut min_keep_labels = HashMap::from([(0usize, 0usize), (1, 1)]);
+    super::core::merge_duplicate_clusters_post_assign(
+        -1,
+        &embs[..2],
+        &durs[..2],
+        &quals[..2],
+        &mut min_keep_labels,
+        &mut voice_runs[..2],
+        2,
+    );
+    assert_eq!(min_keep_labels[&0], 0);
+    assert_eq!(min_keep_labels[&1], 1);
 }

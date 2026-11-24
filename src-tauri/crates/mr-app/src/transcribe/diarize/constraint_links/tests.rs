@@ -57,9 +57,9 @@ fn links_with_vectors(segmentation: &Segmentation, units: &[AcoustUnit]) -> Vec<
 
 #[test]
 fn contradictory_pair_is_dropped_only_with_confident_local_label() {
-    // Один голос, разведённый PyAnnote на два локальных класса: сходство юнитов
-    // высокое. Уверенная метка (purity 1.0) — ошибка меток, пара отбрасывается;
-    // размытая (purity 0.7) — ограничение сохраняется.
+    // Один голос, разведённый PyAnnote на два локальных класса: в пограничной
+    // зоне (0.65..0.75) уверенная метка (purity 1.0) означает ошибку меток,
+    // а размытая (purity 0.7) сохраняет ограничение.
     let first = 100;
     let second = 100;
     let scene = |second_class_frames: usize| {
@@ -70,19 +70,47 @@ fn contradictory_pair_is_dropped_only_with_confident_local_label() {
     };
     let pair = [unit(0, time(0), time(100)), {
         let mut u = unit(1, time(100), time(200));
-        u.embedding = vec![1.0, 0.05];
+        u.embedding = vec![0.70, (1.0 - 0.70_f64 * 0.70).sqrt()];
         u
     }];
     let confident = links_with_vectors(&scene(second), &pair);
     assert!(
         confident.is_empty(),
-        "purity 1.0 + sim 0.999 — это один голос, а не перекрытие: {confident:?}"
+        "purity 1.0 + sim 0.70 — это один голос, а не перекрытие: {confident:?}"
     );
     let blurry = links_with_vectors(&scene(70), &pair);
     assert_eq!(
         blurry,
         vec![(0, 1)],
-        "purity 0.7 оставляет ограничение даже при высоком сходстве"
+        "purity 0.7 оставляет ограничение в зоне 0.65..0.75"
+    );
+}
+
+#[test]
+fn high_similarity_pair_is_dropped_even_with_blurry_local_label() {
+    let scene = |second_class_frames: usize| {
+        let mut classes = vec![1u8; 100];
+        classes.extend(std::iter::repeat_n(2u8, second_class_frames));
+        classes.extend(std::iter::repeat_n(3u8, 100 - second_class_frames));
+        segmentation(classes)
+    };
+    let pair_with_sim = |sim: f64| {
+        [unit(0, time(0), time(100)), {
+            let mut u = unit(1, time(100), time(200));
+            u.embedding = vec![sim, (1.0 - sim * sim).sqrt()];
+            u
+        }]
+    };
+    let high_sim = links_with_vectors(&scene(65), &pair_with_sim(0.76));
+    assert!(
+        high_sim.is_empty(),
+        "sim >= 0.75 сбрасывается даже при min_purity 0.65: {high_sim:?}"
+    );
+    let overlap_pair = links_with_vectors(&scene(68), &pair_with_sim(0.677));
+    assert_eq!(
+        overlap_pair,
+        vec![(0, 1)],
+        "калибровочная пара перекрытия (sim 0.677, min_purity 0.68) сохраняется"
     );
 }
 

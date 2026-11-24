@@ -56,6 +56,110 @@ const AUTO_K_MAX_SPEAKERS: usize = 12;
 /// только при ретрае после коллапса в один кластер.
 const CROSS_TURN_ACTIVE_SIM: f64 = 0.5;
 
+/// shortcut: порог выше максимума разных дикторов в small (0.8457) и full (0.8836);
+/// дубли одного голоса после speaker_assignment лежат на ≥ 0.894. При росте
+/// эталонной базы пересмотреть совместно с speaker_assignment.
+const POST_ASSIGN_MERGE_SIM: f64 = 0.89;
+
+fn members_centroid(
+    members: &[usize],
+    embs: &[Option<Vec<f64>>],
+    durs: &[f64],
+    quals: &[f64],
+) -> Option<Vec<f64>> {
+    // Пары «вектор-вес» строим вместе: иначе веса съезжают на
+    // реплики без эмбеддинга и центроид считается не по тем голосам.
+    let weighted: Vec<(Vec<f64>, f64)> = members
+        .iter()
+        .filter_map(|&i| {
+            embs.get(i)
+                .and_then(Option::as_ref)
+                .map(|vector| (vector.clone(), durs[i].min(8.0) * quals[i]))
+        })
+        .collect();
+    if weighted.is_empty() {
+        None
+    } else {
+        let (vecs, ws): (Vec<Vec<f64>>, Vec<f64>) = weighted.into_iter().unzip();
+        Some(mr_ml::weighted_centroid(&vecs, &ws))
+    }
+}
+
+pub(super) fn merge_duplicate_clusters_post_assign(
+    ch: i32,
+    embs: &[Option<Vec<f64>>],
+    durs: &[f64],
+    quals: &[f64],
+    label_of: &mut HashMap<usize, usize>,
+    voice_runs: &mut [crate::transcribe::speaker_assignment::SpeakerSpan],
+    min_keep: usize,
+) {
+    let min_keep = min_keep.max(1);
+    loop {
+        let mut by_cluster: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (&utt, &label) in label_of.iter() {
+            by_cluster.entry(label).or_default().push(utt);
+        }
+        if by_cluster.len() <= min_keep {
+            return;
+        }
+        let mut clusters: Vec<(usize, f64, usize, Vec<f64>)> = by_cluster
+            .into_iter()
+            .filter_map(|(label, mut members)| {
+                // Порядок обхода HashMap не должен влиять на сумму центроида.
+                members.sort_unstable();
+                let centroid = members_centroid(&members, embs, durs, quals)?;
+                let speech: f64 = members.iter().map(|&i| durs[i]).sum();
+                Some((label, speech, members.len(), centroid))
+            })
+            .collect();
+        clusters.sort_unstable_by_key(|(label, ..)| *label);
+        let mut best: Option<(usize, usize, f64)> = None;
+        for i in 0..clusters.len() {
+            for j in (i + 1)..clusters.len() {
+                let (la, sa, na, ca) = &clusters[i];
+                let (lb, sb, nb, cb) = &clusters[j];
+                let sim = mr_ml::cosine_similarity(ca, cb);
+                if sim < POST_ASSIGN_MERGE_SIM {
+                    continue;
+                }
+                let a_wins = sa
+                    .total_cmp(sb)
+                    .then_with(|| na.cmp(nb))
+                    .then_with(|| lb.cmp(la))
+                    .is_gt();
+                let (into, from) = if a_wins { (*la, *lb) } else { (*lb, *la) };
+                if best.is_none_or(|(bi, bf, bsim)| {
+                    sim > bsim || (sim == bsim && (into, from) < (bi, bf))
+                }) {
+                    best = Some((into, from, sim));
+                }
+            }
+        }
+        let Some((into, from, sim)) = best else {
+            return;
+        };
+        log::debug!(
+            target: "diar",
+            ch = ch,
+            from = from,
+            into = into,
+            similarity = sim;
+            "ev=diar.merge_post_assign"
+        );
+        for label in label_of.values_mut() {
+            if *label == from {
+                *label = into;
+            }
+        }
+        for span in voice_runs.iter_mut() {
+            if span.label == from {
+                span.label = into;
+            }
+        }
+    }
+}
+
 fn summarize_unit_members(
     units: &[super::AcoustUnit],
     members: &[usize],
@@ -597,6 +701,17 @@ pub(crate) fn diarize_channel(
         reassign_short_replies(utterances, &embs, &durs, &quals, &mut label_of);
     }
     coverage::restore_protected(&mut label_of, &protected);
+    if k.is_none() {
+        merge_duplicate_clusters_post_assign(
+            ch,
+            &embs,
+            &durs,
+            &quals,
+            &mut label_of,
+            &mut voice_runs,
+            min_auto,
+        );
+    }
     let scored: Vec<usize> = (0..n).filter(|&i| embs[i].is_some()).collect();
     let final_vecs: Vec<Vec<f64>> = scored.iter().map(|&i| embs[i].clone().unwrap()).collect();
     diagnostics::turns("final", ch, utterances, &label_of, support);
@@ -614,32 +729,15 @@ pub(crate) fn diarize_channel(
         log::debug!(target: "diar", ch = ch, before = candidate_k, after_ahc = after_ahc, after_coverage = after_coverage, after_smooth = after_smooth, after_assignment = after_assignment, after = 1; "ev=diar.collapse");
     }
     let cluster_centroid = |c: usize| -> Vec<f64> {
-        let members: Vec<usize> = {
-            let mut members: Vec<usize> = label_of
-                .iter()
-                .filter(|(_, &l)| l == c)
-                .map(|(&i, _)| i)
-                .collect();
-            // Порядок обхода HashMap не должен влиять на сумму центроида.
-            members.sort_unstable();
-            members
-        };
-        // Пары «вектор-вес» строим вместе: иначе веса съезжают на
-        // реплики без эмбеддинга и центроид считается не по тем голосам.
-        let weighted: Vec<(Vec<f64>, f64)> = members
+        let mut members: Vec<usize> = label_of
             .iter()
-            .filter_map(|&i| {
-                embs[i]
-                    .clone()
-                    .map(|vector| (vector, durs[i].min(8.0) * quals[i]))
-            })
+            .filter(|(_, &l)| l == c)
+            .map(|(&i, _)| i)
             .collect();
-        if weighted.is_empty() {
-            vec![0.0; mr_ml::EMBEDDING_DIM]
-        } else {
-            let (vecs, ws): (Vec<Vec<f64>>, Vec<f64>) = weighted.into_iter().unzip();
-            mr_ml::weighted_centroid(&vecs, &ws)
-        }
+        // Порядок обхода HashMap не должен влиять на сумму центроида.
+        members.sort_unstable();
+        members_centroid(&members, &embs, &durs, &quals)
+            .unwrap_or_else(|| vec![0.0; mr_ml::EMBEDDING_DIM])
     };
     let eligible = eligible_clusters(&raw_clusters, &label_of, &embs, &durs);
     let (long, short): (Vec<_>, Vec<_>) = eligible
@@ -810,22 +908,7 @@ pub(crate) fn diarize_channel(
         } else {
             0.0
         };
-        let emb = {
-            let weighted: Vec<(Vec<f64>, f64)> = members
-                .iter()
-                .filter_map(|&i| {
-                    embs[i]
-                        .clone()
-                        .map(|vector| (vector, durs[i].min(8.0) * quals[i]))
-                })
-                .collect();
-            if weighted.is_empty() {
-                None
-            } else {
-                let (vecs, ws): (Vec<Vec<f64>>, Vec<f64>) = weighted.into_iter().unzip();
-                Some(mr_ml::weighted_centroid(&vecs, &ws))
-            }
-        };
+        let emb = members_centroid(&members, &embs, &durs, &quals);
         let spk_id = if channel_idx == Some(0) && name == default_name {
             "speaker_me".to_string()
         } else if let Some(ch) = channel_idx {
