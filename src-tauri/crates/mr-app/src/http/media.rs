@@ -511,16 +511,40 @@ const MAX_SNIPPET_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_SNIPPET_RATE: u32 = 192_000;
 const MAX_SNIPPET_CHANNELS: u16 = 8;
 
-/// Общая нарезка для HTTP-фрагментов и сниппетов: две реализации разъедутся на границах.
-pub(super) fn build_wav_snippet(
-    path: &Path,
-    start: f64,
-    end: f64,
-    channel: Option<usize>,
-) -> Option<Vec<u8>> {
-    if !(0.0..=MAX_SNIPPET_SEC).contains(&(end - start)) || start < 0.0 {
+fn pcm16_wav_from_channels(chans: &[Vec<f32>], channel: Option<usize>) -> Option<Vec<u8>> {
+    let selected: &[Vec<f32>] = match channel.filter(|&c| c < chans.len()) {
+        Some(c) => &chans[c..=c],
+        None => chans,
+    };
+    let frames = selected.iter().map(|c| c.len()).max().unwrap_or(0);
+    if selected.is_empty() || selected.len() > MAX_SNIPPET_CHANNELS as usize || frames == 0 {
         return None;
     }
+    let out_ch = selected.len() as u16;
+    let data_bytes = frames as u64 * u64::from(out_ch) * 2;
+    if data_bytes > MAX_SNIPPET_BYTES || data_bytes > u32::MAX as u64 {
+        return None;
+    }
+    let info = WavInfo {
+        audio_format: 1,
+        channels: out_ch,
+        rate: 16_000,
+        bits: 16,
+        data_offset: 44,
+        data_len: data_bytes,
+    };
+    let mut body = wav_header_bytes(&info, data_bytes as u32);
+    body.reserve(data_bytes as usize);
+    for f in 0..frames {
+        for ch in selected {
+            let sample = (ch.get(f).copied().unwrap_or(0.0).clamp(-1.0, 1.0) * 32767.0) as i16;
+            body.extend_from_slice(&sample.to_le_bytes());
+        }
+    }
+    Some(body)
+}
+
+fn wav_byte_snippet(path: &Path, start: f64, end: f64, channel: Option<usize>) -> Option<Vec<u8>> {
     let mut file = std::fs::File::open(path).ok()?;
     use std::io::{Read, Seek, SeekFrom};
     let mut head = vec![0u8; 4096];
@@ -559,9 +583,48 @@ pub(super) fn build_wav_snippet(
     }
 }
 
-/// маленький WAV, нарезанный байтовым срезом PCM — без декодирования, поэтому
-/// мгновенно даже на часовом файле. Клиентский `#t=`-seek по гигабайтному WAV
-/// вешал WebView (он буферизовал весь файл), фрагмент решает это в корне.
+/// Общая нарезка для HTTP-фрагментов и сниппетов: две реализации разъедутся на границах.
+/// Для обычного WAV режет PCM байтами без декодирования, прочие контейнеры переводит в 16 кГц WAV.
+pub(super) fn build_wav_snippet(
+    path: &Path,
+    start: f64,
+    end: f64,
+    channel: Option<usize>,
+) -> Option<Vec<u8>> {
+    if !start.is_finite()
+        || !end.is_finite()
+        || !(0.0..=MAX_SNIPPET_SEC).contains(&(end - start))
+        || start < 0.0
+        || end <= start
+    {
+        return None;
+    }
+    if path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("wav"))
+    {
+        if let Some(body) = wav_byte_snippet(path, start, end, channel) {
+            return Some(body);
+        }
+        // ADPCM/сжатый WAV падает на байтовом срезе: добираем через общий декодер.
+        let mut head = vec![0u8; 4096];
+        if let Ok(mut f) = std::fs::File::open(path) {
+            let got = f.read(&mut head).unwrap_or(0);
+            head.truncate(got);
+            if let Some(info) = parse_wav_header(&head) {
+                if matches!(info.audio_format, 1 | 3) {
+                    return None;
+                }
+            }
+        }
+    }
+    let chans = mr_audio::decode::decode_range_16k_auto(path, start, end).ok()?;
+    pcm16_wav_from_channels(&chans, channel)
+}
+
+/// маленький WAV, нарезанный или декодированный на сервере: браузер получает короткий
+/// самодостаточный файл с нуля, без клиентской `#t=`-перемотки, которая в WebKitGTK
+/// часто срывается до появления длительности MP3 и не изолирует канал.
 pub(super) fn serve_media_snippet(request: tiny_http::Request, query: &str) {
     let bad = |request: tiny_http::Request, msg: &str, code: u16| {
         let resp = tiny_http::Response::from_string(msg).with_status_code(code);
@@ -582,14 +645,6 @@ pub(super) fn serve_media_snippet(request: tiny_http::Request, query: &str) {
     let path = save_dir().join(&safe);
     if !inside_save_dir(&path) || !path.is_file() {
         bad(request, "Audio file not found", 404);
-        return;
-    }
-    if !path
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("wav"))
-    {
-        // Не-WAV нарезке байтами не поддаётся: фронт играет их через #t=.
-        bad(request, "Snippet supports WAV only", 415);
         return;
     }
     match build_wav_snippet(&path, start, end, channel) {
@@ -830,6 +885,49 @@ mod tests {
             parse_wav_header(&body[..44]).expect("заголовок").channels,
             1
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn snippet_builder_decodes_mp3_and_isolates_channel() {
+        if std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("mr-snip-mp3-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let wav = dir.join("src.wav");
+        let n = 48_000 * 3;
+        let mut ch0 = vec![0.0f32; n];
+        let ch1 = vec![0.005f32; n];
+        for (i, s) in ch0.iter_mut().enumerate().skip(48_000 * 15 / 10) {
+            *s = 0.5 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 48_000.0).sin();
+        }
+        mr_audio::write_stereo_wav(&wav, &ch0, &ch1, 48_000).unwrap();
+        let mp3 = dir.join("sample.mp3");
+        let ok = std::process::Command::new("ffmpeg")
+            .args(["-nostdin", "-v", "error", "-y", "-i"])
+            .arg(&wav)
+            .args(["-c:a", "libmp3lame"])
+            .arg(&mp3)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            let body = build_wav_snippet(&mp3, 1.6, 2.6, Some(0)).expect("MP3-сниппет канала 0");
+            let hdr = parse_wav_header(&body[..44]).expect("WAV-заголовок");
+            assert_eq!(hdr.channels, 1);
+            assert_eq!(hdr.rate, 16_000);
+            assert!(
+                (30_000..=34_000).contains(&hdr.data_len),
+                "ожидалось ~1 с @16кГц моно, получено {} байт",
+                hdr.data_len
+            );
+            assert!(build_wav_snippet(&mp3, 20.0, 21.0, None).is_none());
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

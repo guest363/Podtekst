@@ -288,13 +288,37 @@ const copyAll = async (): Promise<void> => {
   else toast('Не удалось скопировать', 'error')
 }
 
+let cancelPendingSeek: (() => void) | null = null
+
 const seekTo = (sec: number): void => {
+  cancelPendingSeek?.()
+  cancelPendingSeek = null
   const media = document.querySelector<HTMLMediaElement>('#transcriptFullMedia')
-  if (media && Number.isFinite(sec)) {
-    media.currentTime = Math.max(0, sec)
+  if (!media || !Number.isFinite(sec)) return
+  const target = Math.max(0, sec)
+  const apply = (): void => {
+    media.currentTime = target
     if (media.paused) {
       void media.play().catch(() => {})
     }
+  }
+  // В WebKitGTK длительность MP3 может стать > 0 чуть позже loadedmetadata;
+  // ранний seek без этого сбрасывается браузером в ноль.
+  if (Number.isFinite(media.duration) && media.duration > 0) {
+    apply()
+    return
+  }
+  const onReady = (): void => {
+    if (!Number.isFinite(media.duration) || media.duration <= 0) return
+    cancelPendingSeek?.()
+    cancelPendingSeek = null
+    apply()
+  }
+  media.addEventListener('durationchange', onReady)
+  media.addEventListener('loadedmetadata', onReady)
+  cancelPendingSeek = () => {
+    media.removeEventListener('durationchange', onReady)
+    media.removeEventListener('loadedmetadata', onReady)
   }
 }
 
@@ -315,6 +339,8 @@ const requestTranscription = (): void => {
 }
 
 const goBack = (): void => {
+  cancelPendingSeek?.()
+  cancelPendingSeek = null
   document
     .querySelectorAll<HTMLMediaElement>('.transcript-page audio, .transcript-page video')
     .forEach((m) => {
