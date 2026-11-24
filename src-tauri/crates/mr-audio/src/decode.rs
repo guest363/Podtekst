@@ -24,7 +24,44 @@ fn sanitize_sample(sample: f32) -> f32 {
     }
 }
 
-pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
+const SEEK_PREROLL_SEC: f64 = 0.25;
+const SEEK_POSTROLL_SEC: f64 = 0.05;
+
+fn push_interleaved_frames(
+    chans: &mut [Vec<f32>],
+    samples: &[f32],
+    stride: usize,
+    frames: usize,
+    rem_pre_skip: &mut usize,
+) {
+    let skip = (*rem_pre_skip).min(frames);
+    *rem_pre_skip -= skip;
+    for frame in samples.chunks(stride).take(frames).skip(skip) {
+        for (c, ch) in chans.iter_mut().enumerate() {
+            ch.push(sanitize_sample(
+                frame.get(c % stride).copied().unwrap_or(0.0),
+            ));
+        }
+    }
+}
+
+fn ts_to_sec(time_base: symphonia::core::units::TimeBase, start_ts: u64, ts: u64) -> f64 {
+    let t = time_base.calc_time(ts.saturating_sub(start_ts));
+    t.seconds as f64 + t.frac
+}
+
+fn decode_symphonia_channels(
+    path: &Path,
+    range: Option<(f64, f64)>,
+    skip_seek: bool,
+) -> Result<Vec<Vec<f32>>> {
+    if let Some((s, e)) = range {
+        if !s.is_finite() || !e.is_finite() || s < 0.0 || e <= s {
+            return Err(AudioError::Other(
+                "некорректный диапазон времени".to_string(),
+            ));
+        }
+    }
     let file = std::fs::File::open(path).map_err(AudioError::Io)?;
     let mss = symphonia::core::io::MediaSourceStream::new(Box::new(file), Default::default());
     let hint = {
@@ -83,13 +120,52 @@ pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
         )
     };
 
+    let time_base = codec_params
+        .time_base
+        .unwrap_or_else(|| symphonia::core::units::TimeBase::new(1, src_rate));
+    let start_ts = codec_params.start_ts;
+    let pre_skip_sec = pre_skip as f64 / src_rate as f64;
+    let seek_target_sec = range
+        .map(|(s, _)| (s + pre_skip_sec - SEEK_PREROLL_SEC).max(0.0))
+        .unwrap_or(0.0);
+
+    // Не перематываем малые смещения (<0.5 с): старт с начала обходится без крайних случаев seek.
+    if !skip_seek && range.is_some() && seek_target_sec > 0.5 {
+        let base = time_base.calc_time(start_ts);
+        let target = base.seconds as f64 + base.frac + seek_target_sec;
+        let seek_time = symphonia::core::units::Time::new(target.floor() as u64, target.fract());
+        match format.seek(
+            symphonia::core::formats::SeekMode::Accurate,
+            symphonia::core::formats::SeekTo::Time {
+                time: seek_time,
+                track_id: Some(track_id),
+            },
+        ) {
+            Ok(_) => {}
+            Err(symphonia::core::errors::Error::SeekError(
+                symphonia::core::errors::SeekErrorKind::OutOfRange,
+            )) => return Err(AudioError::Other("пустой аудиофрагмент".to_string())),
+            Err(symphonia::core::errors::Error::IoError(ref io))
+                if io.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                return Err(AudioError::Other("пустой аудиофрагмент".to_string()));
+            }
+            // Неперематываемый поток читаем с начала без декодирования лишних пакетов.
+            Err(_) => return decode_symphonia_channels(path, range, true),
+        }
+    }
+
     // `n_frames` из заголовка — только хинт: общий бюджет не даёт битому
-    // заголовку зарезервировать гигабайты, а try_reserve — упасть на отказе.
+    // заголовку зарезервировать гигабайты, а для фрагмента не аллоцируем весь файл.
     const RESERVE_SAMPLES: u64 = 256 * 1024 * 1024;
-    let hint = codec_params
-        .n_frames
-        .unwrap_or(0)
-        .min(RESERVE_SAMPLES / n_ch as u64) as usize;
+    let max_hint = (RESERVE_SAMPLES / n_ch as u64) as usize;
+    let hint = match range {
+        Some((s, e)) => {
+            ((e - s + SEEK_PREROLL_SEC + SEEK_POSTROLL_SEC) * src_rate as f64).ceil() as usize
+        }
+        None => codec_params.n_frames.unwrap_or(0) as usize,
+    }
+    .min(max_hint);
     let mut chans: Vec<Vec<f32>> = (0..n_ch).map(|_| Vec::new()).collect();
     for channel in chans.iter_mut() {
         channel
@@ -99,12 +175,28 @@ pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
     // Буферы вне цикла: аллокация на каждый пакет — это тысячи malloc на файл.
     let mut opus_pcm = vec![0.0f32; 0usize];
     let mut pcm_buf: Option<symphonia::core::audio::SampleBuffer<f32>> = None;
+    let mut rem_pre_skip = pre_skip;
+    let mut window_start_out_sec = if range.is_some() { None } else { Some(0.0) };
+
     loop {
         let packet = match format.next_packet() {
             Ok(p) if p.track_id() == track_id => p,
             Ok(_) => continue,
             Err(_) => break,
         };
+        if skip_seek
+            && window_start_out_sec.is_none()
+            && packet.dur() > 0
+            && ts_to_sec(
+                time_base,
+                start_ts,
+                packet.ts().saturating_add(packet.dur()),
+            ) < seek_target_sec
+        {
+            continue;
+        }
+        let packet_ts = packet.ts();
+
         if let Some(op) = opus.as_mut() {
             let need = op.max_frame_size_per_channel() * n_ch;
             if opus_pcm.len() < need {
@@ -114,53 +206,96 @@ pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
             let frames = op
                 .decode_float(&packet.data, pcm, false)
                 .map_err(|e| AudioError::Other(format!("opus: {e}")))?;
-            let skip = pre_skip.min(frames);
-            pre_skip -= skip;
-            for frame in pcm.chunks(n_ch).take(frames).skip(skip) {
-                for (c, ch) in chans.iter_mut().enumerate() {
-                    ch.push(sanitize_sample(frame.get(c % n_ch).copied().unwrap_or(0.0)));
+            if window_start_out_sec.is_none() {
+                let raw_sec = ts_to_sec(time_base, start_ts, packet_ts);
+                let skipped_raw = (raw_sec * src_rate as f64).round() as usize;
+                if skipped_raw < pre_skip {
+                    rem_pre_skip = pre_skip - skipped_raw;
+                    window_start_out_sec = Some(0.0);
+                } else {
+                    rem_pre_skip = 0;
+                    window_start_out_sec = Some(raw_sec - pre_skip_sec);
                 }
             }
-            continue;
+            push_interleaved_frames(&mut chans, pcm, n_ch, frames, &mut rem_pre_skip);
+        } else {
+            let Some(dec) = decoder.as_mut() else {
+                break;
+            };
+            let decoded = match dec.decode(&packet) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            let spec = *decoded.spec();
+            let need = decoded
+                .capacity()
+                .max(decoded.frames() * spec.channels.count());
+            if pcm_buf.as_ref().is_none_or(|b| b.capacity() < need) {
+                pcm_buf = Some(symphonia::core::audio::SampleBuffer::new(need as u64, spec));
+            }
+            let buf = pcm_buf.as_mut().expect("bufer только что создан");
+            buf.copy_interleaved_ref(decoded);
+            let got = spec.channels.count().max(1);
+            // AAC/MP3 отдают priming-сэмплы в начале: без их отсечения VAD
+            // слышит речь на 20+ мс позже и теряет тихие короткие слова.
+            let frames = buf.samples().len() / got;
+            if window_start_out_sec.is_none() {
+                let raw_sec = ts_to_sec(time_base, start_ts, packet_ts);
+                let skipped_raw = (raw_sec * src_rate as f64).round() as usize;
+                if skipped_raw < pre_skip {
+                    rem_pre_skip = pre_skip - skipped_raw;
+                    window_start_out_sec = Some(0.0);
+                } else {
+                    rem_pre_skip = 0;
+                    window_start_out_sec = Some(raw_sec - pre_skip_sec);
+                }
+            }
+            push_interleaved_frames(&mut chans, buf.samples(), got, frames, &mut rem_pre_skip);
         }
-        let Some(dec) = decoder.as_mut() else {
-            break;
-        };
-        let decoded = match dec.decode(&packet) {
-            Ok(d) => d,
-            Err(_) => continue,
-        };
-        let spec = *decoded.spec();
-        let need = decoded
-            .capacity()
-            .max(decoded.frames() * spec.channels.count());
-        if pcm_buf.as_ref().is_none_or(|b| b.capacity() < need) {
-            pcm_buf = Some(symphonia::core::audio::SampleBuffer::new(need as u64, spec));
-        }
-        let buf = pcm_buf.as_mut().expect("bufer только что создан");
-        buf.copy_interleaved_ref(decoded);
-        let got = spec.channels.count().max(1);
-        // AAC/MP3 отдают priming-сэмплы в начале: без их отсечения VAD
-        // слышит речь на 20+ мс позже и теряет тихие короткие слова.
-        let frames = buf.samples().len() / got;
-        let skip = pre_skip.min(frames);
-        pre_skip -= skip;
-        for frame in buf.samples().chunks(got).skip(skip) {
-            for (c, ch) in chans.iter_mut().enumerate() {
-                ch.push(sanitize_sample(frame.get(c % got).copied().unwrap_or(0.0)));
+
+        if let (Some((_, end_sec)), Some(start_out)) = (range, window_start_out_sec) {
+            if start_out + (chans[0].len() as f64 / src_rate as f64) >= end_sec + SEEK_POSTROLL_SEC
+            {
+                break;
             }
         }
     }
     if chans.iter().all(|c| c.is_empty()) {
         return Err(AudioError::Other("пустой аудиопоток".to_string()));
     }
-    if src_rate == 16_000 {
-        return Ok(chans);
+    let mut out = if src_rate == 16_000 {
+        chans
+    } else {
+        chans
+            .into_iter()
+            .map(|c| resample_to(&c, src_rate, 16000))
+            .collect()
+    };
+    if let Some((start_sec, end_sec)) = range {
+        let buf_start = window_start_out_sec.unwrap_or(0.0);
+        let lo = ((start_sec - buf_start).max(0.0) * 16_000.0).round() as usize;
+        let slice_start = buf_start.max(start_sec);
+        let want = ((end_sec - slice_start).max(0.0) * 16_000.0).round() as usize;
+        for c in &mut out {
+            let s = lo.min(c.len());
+            let e = s.saturating_add(want).min(c.len());
+            *c = c[s..e].to_vec();
+        }
+        if out.iter().all(|c| c.is_empty()) {
+            return Err(AudioError::Other("пустой аудиофрагмент".to_string()));
+        }
     }
-    Ok(chans
-        .into_iter()
-        .map(|c| resample_to(&c, src_rate, 16000))
-        .collect())
+    Ok(out)
+}
+
+pub fn decode_to_channels_16k(path: &Path) -> Result<Vec<Vec<f32>>> {
+    decode_symphonia_channels(path, None, false)
+}
+
+/// Быстрое декодирование интервала `[start_sec, end_sec]` в 16 кГц по каналам.
+/// Позиция считается в той же шкале времени, что и у `decode_to_channels_16k`.
+pub fn decode_range_16k(path: &Path, start_sec: f64, end_sec: f64) -> Result<Vec<Vec<f32>>> {
+    decode_symphonia_channels(path, Some((start_sec, end_sec)), false)
 }
 
 pub fn decode_wav_range_16k(
@@ -383,7 +518,7 @@ pub fn decode_to_channels_16k_auto(path: &Path) -> Result<Vec<Vec<f32>>> {
     match decode_to_channels_16k(path) {
         Ok(ch) => Ok(ch),
         Err(e) if !is_video_path(path) => Err(e),
-        Err(_) => ffmpeg_extract_to_wav(path).and_then(|tmp| {
+        Err(_) => ffmpeg_extract_to_wav(path, None).and_then(|tmp| {
             let res = decode_to_channels_16k(&tmp);
             let _ = std::fs::remove_file(&tmp);
             res
@@ -391,7 +526,21 @@ pub fn decode_to_channels_16k_auto(path: &Path) -> Result<Vec<Vec<f32>>> {
     }
 }
 
-fn ffmpeg_extract_to_wav(path: &Path) -> Result<std::path::PathBuf> {
+/// Диапазонное декодирование с fallback на `ffmpeg` для видеоконтейнеров.
+/// Разворот фрагмента в 16 кГц экономит память на длинных MP3/M4A/OGG/MP4.
+pub fn decode_range_16k_auto(path: &Path, start_sec: f64, end_sec: f64) -> Result<Vec<Vec<f32>>> {
+    match decode_range_16k(path, start_sec, end_sec) {
+        Ok(ch) => Ok(ch),
+        Err(e) if !is_video_path(path) => Err(e),
+        Err(_) => ffmpeg_extract_to_wav(path, Some((start_sec, end_sec))).and_then(|tmp| {
+            let res = decode_to_channels_16k(&tmp);
+            let _ = std::fs::remove_file(&tmp);
+            res
+        }),
+    }
+}
+
+fn ffmpeg_extract_to_wav(path: &Path, range: Option<(f64, f64)>) -> Result<std::path::PathBuf> {
     let tmp = std::env::temp_dir().join(format!(
         "mr-extract-{}-{}.wav",
         std::process::id(),
@@ -406,10 +555,19 @@ fn ffmpeg_extract_to_wav(path: &Path) -> Result<std::path::PathBuf> {
         .create_new(true)
         .open(&tmp)
         .map_err(|e| AudioError::Other(format!("не создан временный WAV: {e}")))?;
-    let out = crate::tools::external_command(crate::tools::ffmpeg_path())
-        .args(["-nostdin", "-v", "error", "-y", "-i"])
-        .arg(path)
-        .args(["-vn", "-ac", "2", "-ar", "16000", "-f", "wav"])
+    let mut cmd = crate::tools::external_command(crate::tools::ffmpeg_path());
+    cmd.args(["-nostdin", "-v", "error", "-y"]);
+    if let Some((start_sec, end_sec)) = range {
+        let dur = (end_sec - start_sec).max(0.01);
+        cmd.args(["-ss", &format!("{start_sec:.3}")]);
+        cmd.args(["-t", &format!("{dur:.3}")]);
+    }
+    cmd.arg("-i").arg(path).arg("-vn");
+    if range.is_none() {
+        cmd.args(["-ac", "2"]);
+    }
+    let out = cmd
+        .args(["-ar", "16000", "-f", "wav"])
         .arg(&tmp)
         .output()
         .map_err(|e| {
@@ -786,6 +944,108 @@ mod tests {
         assert!(range.iter().all(|s| s.is_finite()));
         assert_eq!(range[1], 0.0);
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn compressed_range_decode_hits_target_window_without_resetting_to_start() {
+        if std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "mr-range-dec-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        // 0..1.5s тихо, 1.5..2.8s тон 0.6 в ch0 / тишина в ch1, 2.8..4.0s тихо:
+        // если seek сбросится в 0, окно 1.7..2.6 получит тишину вместо сигнала.
+        let src_wav = dir.join("fixture.wav");
+        let n_total = 48_000 * 4;
+        let mut ch0 = vec![0.005f32; n_total];
+        let mut ch1 = vec![0.005f32; n_total];
+        for (i, sample) in ch0
+            .iter_mut()
+            .enumerate()
+            .take(48_000 * 28 / 10)
+            .skip(48_000 * 15 / 10)
+        {
+            *sample = 0.6 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 48_000.0).sin();
+        }
+        for (i, sample) in ch1
+            .iter_mut()
+            .enumerate()
+            .take(48_000 * 28 / 10)
+            .skip(48_000 * 15 / 10)
+        {
+            *sample = 0.02 * (2.0 * std::f32::consts::PI * 880.0 * i as f32 / 48_000.0).sin();
+        }
+        crate::write_stereo_wav(&src_wav, &ch0, &ch1, 48_000).unwrap();
+
+        let rms = |s: &[f32]| -> f64 {
+            (s.iter().map(|&x| (x * x) as f64).sum::<f64>() / s.len().max(1) as f64).sqrt()
+        };
+
+        for (name, codec) in [
+            ("sample.mp3", "libmp3lame"),
+            ("sample.ogg", "libopus"),
+            ("sample.flac", "flac"),
+            ("sample.m4a", "aac"),
+        ] {
+            let path = dir.join(name);
+            let ok = std::process::Command::new("ffmpeg")
+                .args(["-nostdin", "-v", "error", "-y", "-i"])
+                .arg(&src_wav)
+                .args(["-c:a", codec])
+                .arg(&path)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !ok {
+                continue;
+            }
+            let tone = decode_range_16k(&path, 1.7, 2.6).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(tone.len(), 2, "{name}: ожидалось стерео");
+            assert!(
+                (13_500..=15_200).contains(&tone[0].len()),
+                "{name}: ожидалось ~0.9с @16кГц, получено {}",
+                tone[0].len()
+            );
+            assert!(
+                rms(&tone[0]) > 0.25,
+                "{name}: ожидался тон в 1.7..2.6, rms0={:.4}",
+                rms(&tone[0])
+            );
+            assert!(
+                rms(&tone[1]) < 0.05,
+                "{name}: утечка канала, rms1={:.4}",
+                rms(&tone[1])
+            );
+
+            let quiet = decode_range_16k(&path, 0.2, 1.0).unwrap();
+            assert!(
+                rms(&quiet[0]) < 0.03,
+                "{name}: ожидалась тишина в 0.2..1.0, rms0={:.4}",
+                rms(&quiet[0])
+            );
+
+            let no_seek = decode_symphonia_channels(&path, Some((1.7, 2.6)), true).unwrap();
+            assert!(
+                rms(&no_seek[0]) > 0.25,
+                "{name}: fallback без seek потерял окно, rms0={:.4}",
+                rms(&no_seek[0])
+            );
+
+            assert!(decode_range_16k(&path, 10.0, 11.0).is_err());
+            assert!(decode_range_16k(&path, 2.0, 2.0).is_err());
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

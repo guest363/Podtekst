@@ -1,6 +1,5 @@
-//! Бонус hotwords — финальный рескоринг гипотез бима, а не внутрипоисковый trie:
-//! словарь ≤500 фраз, гипотез ≤8 — перебор дешевле поддержки графа.
-//! shortcut: внутрипоисковый бонус, когда словарь или beam вырастут.
+//! Бонус hotwords: внутрипоисковый префиксный trie на шагах бима и финальный рескоринг
+//! целых слов с проверкой границ токенов `▁`.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -321,6 +320,13 @@ fn decode_ctc_greedy_rows(
     )
 }
 
+fn is_word_boundary(id: i64, vocab: &[String]) -> bool {
+    id == 0
+        || vocab
+            .get(id as usize)
+            .is_some_and(|piece| piece.starts_with('▁'))
+}
+
 fn contains_seq(hay: &[i64], needle: &[i64], vocab: &[String]) -> bool {
     if needle.is_empty() || needle.len() > hay.len() {
         return false;
@@ -329,14 +335,99 @@ fn contains_seq(hay: &[i64], needle: &[i64], vocab: &[String]) -> bool {
         w == needle
             && hay
                 .get(i + needle.len())
-                .map(|&id| {
-                    id == 0
-                        || vocab
-                            .get(id as usize)
-                            .is_some_and(|piece| piece.starts_with('▁'))
-                })
+                .map(|&id| is_word_boundary(id, vocab))
                 .unwrap_or(true)
     })
+}
+
+struct TrieNode {
+    children: Vec<(i64, usize)>,
+    terminal_id: Option<usize>,
+    min_end_depth: usize,
+}
+
+struct HotwordTrie {
+    nodes: Vec<TrieNode>,
+}
+
+impl HotwordTrie {
+    fn build(hotword_ids: &[Vec<i64>]) -> Self {
+        let mut nodes = vec![TrieNode {
+            children: Vec::new(),
+            terminal_id: None,
+            min_end_depth: usize::MAX,
+        }];
+        for (idx, hw) in hotword_ids.iter().enumerate() {
+            if hw.is_empty() {
+                continue;
+            }
+            let len = hw.len();
+            let mut cur = 0;
+            nodes[cur].min_end_depth = nodes[cur].min_end_depth.min(len);
+            for &tok in hw {
+                let next = match nodes[cur].children.binary_search_by_key(&tok, |(k, _)| *k) {
+                    Ok(pos) => nodes[cur].children[pos].1,
+                    Err(pos) => {
+                        let id = nodes.len();
+                        nodes.push(TrieNode {
+                            children: Vec::new(),
+                            terminal_id: None,
+                            min_end_depth: usize::MAX,
+                        });
+                        nodes[cur].children.insert(pos, (tok, id));
+                        id
+                    }
+                };
+                cur = next;
+                nodes[cur].min_end_depth = nodes[cur].min_end_depth.min(len);
+            }
+            if nodes[cur].terminal_id.is_none() {
+                nodes[cur].terminal_id = Some(idx);
+            }
+        }
+        Self { nodes }
+    }
+
+    fn score(
+        &self,
+        prefix: &[i64],
+        vocab: &[String],
+        bonus: f32,
+        seen_epoch: &mut [u32],
+        epoch: u32,
+    ) -> f32 {
+        let mut completed = 0usize;
+        let mut best_lookahead = 0.0f32;
+        for start in 0..prefix.len() {
+            let mut cur = 0usize;
+            let mut step = 0usize;
+            for &tok in &prefix[start..] {
+                let Ok(pos) = self.nodes[cur]
+                    .children
+                    .binary_search_by_key(&tok, |(k, _)| *k)
+                else {
+                    break;
+                };
+                cur = self.nodes[cur].children[pos].1;
+                step += 1;
+                let end_pos = start + step;
+                if let Some(tid) = self.nodes[cur].terminal_id {
+                    if end_pos < prefix.len() {
+                        if is_word_boundary(prefix[end_pos], vocab) && seen_epoch[tid] != epoch {
+                            seen_epoch[tid] = epoch;
+                            completed += 1;
+                        }
+                    } else if seen_epoch[tid] != epoch {
+                        best_lookahead = best_lookahead.max(bonus);
+                    }
+                } else if end_pos == prefix.len() {
+                    let frac = step as f32 / self.nodes[cur].min_end_depth.max(1) as f32;
+                    best_lookahead = best_lookahead.max(bonus * frac);
+                }
+            }
+        }
+        completed as f32 * bonus + best_lookahead
+    }
 }
 
 pub fn decode_ctc_beam(
@@ -359,6 +450,13 @@ pub fn decode_ctc_beam_timed(
     bonus: f32,
 ) -> (CtcHypothesis, Vec<FrameSpan>) {
     let bw = beam_width.max(1);
+    let trie = (!hotword_ids.is_empty() && bonus > 0.0).then(|| HotwordTrie::build(hotword_ids));
+    let mut seen_epoch = if trie.is_some() {
+        vec![0u32; hotword_ids.len()]
+    } else {
+        Vec::new()
+    };
+    let mut epoch = 0u32;
     let mut beams: Vec<(Vec<i64>, f32, f32)> = vec![(Vec::new(), 0.0, f32::NEG_INFINITY)];
     let mut log_rows: Vec<Vec<f32>> = Vec::with_capacity(logprobs.len());
     for row in logprobs {
@@ -404,10 +502,32 @@ pub fn decode_ctc_beam_timed(
                 }
             }
         }
-        let mut v: Vec<_> = next.into_iter().collect();
-        v.sort_by(|a, b| log_add(b.1 .0, b.1 .1).total_cmp(&log_add(a.1 .0, a.1 .1)));
-        v.truncate(bw);
-        beams = v.into_iter().map(|(p, (a, b))| (p, a, b)).collect();
+        // ЗАЧЕМ: при узком beam многотокеновые термины выбиваются до конца слова,
+        // поэтому учитываем префиксный trie в ранжировании pruning без искажения pb/pnb.
+        let mut scored: Vec<_> = if let Some(trie) = trie.as_ref() {
+            next.into_iter()
+                .map(|(p, (a, b))| {
+                    epoch = epoch.wrapping_add(1);
+                    if epoch == 0 {
+                        seen_epoch.fill(0);
+                        epoch = 1;
+                    }
+                    let score =
+                        log_add(a, b) + trie.score(&p, vocab, bonus, &mut seen_epoch, epoch);
+                    (score, (p, (a, b)))
+                })
+                .collect()
+        } else {
+            next.into_iter()
+                .map(|(p, (a, b))| (log_add(a, b), (p, (a, b))))
+                .collect()
+        };
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+        scored.truncate(bw);
+        beams = scored
+            .into_iter()
+            .map(|(_, (p, (a, b)))| (p, a, b))
+            .collect();
         log_rows.push(lp);
     }
     let mut best_prefix: Vec<i64> = Vec::new();
@@ -536,10 +656,20 @@ pub fn align_to_reference_timed(
     threshold: f64,
 ) -> Vec<AlignedWord> {
     let entries = parse_hotwords(hotwords);
-    let full: HashMap<String, &str> = entries
+    let mut full: HashMap<String, &str> = entries
         .iter()
         .map(|e| (normalize_word(&e.boost), e.to_display.as_str()))
         .collect();
+    for entry in &entries {
+        if entry.to_display.contains(' ') {
+            for word in entry.to_display.split_whitespace() {
+                let key = normalize_word(word);
+                if !key.is_empty() {
+                    full.entry(key).or_insert(word);
+                }
+            }
+        }
+    }
     let in_dict = |w: &str| -> bool {
         let n = normalize_word(w);
         full.contains_key(&n)
@@ -567,10 +697,13 @@ pub fn align_to_reference_timed(
                     }
                     let nw = normalize_word(&w);
                     let nc = normalize_word(&cw.text);
-                    // SAFETY: бонусное слово — только при близком написании и уверенности ≥ порога, иначе словарь затирал бы несвязанные слова на шуме.
+                    // SAFETY: бонусное слово — только при близком написании и уверенности ≥ порога;
+                    // `longest >= 2` открывает замену 1 символа в двухбуквенных аббревиатурах.
                     let close = {
                         let longest = nw.chars().count().max(nc.chars().count());
-                        !nc.is_empty() && edit_dist(&nw, &nc) <= longest / 3
+                        !nc.is_empty()
+                            && longest >= 2
+                            && edit_dist(&nw, &nc) <= (longest / 3).max(1)
                     };
                     if nc != nw && confidence >= threshold && close && in_dict(&cw.text) {
                         text = full
@@ -1235,5 +1368,83 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["опен", "код", "хаб"]
         );
+    }
+
+    #[test]
+    fn beam_trie_keeps_multitoken_hotword_alive_before_completion() {
+        let v = vec![
+            "<unk>".to_string(),
+            "▁".to_string(),
+            "▁у".to_string(),
+            "г".to_string(),
+            "л".to_string(),
+            "▁л".to_string(),
+            "<blk>".to_string(),
+        ];
+        // На кадре 0 дистрактор `▁л` (3.6) сильнее `▁у` (3.0): при beam_width=1 без trie
+        // префикс `▁у` отбрасывается сразу и до окончания `гл` не доживает.
+        let frames = vec![
+            lp(&[0.0, 0.0, 3.0, 0.0, 0.0, 3.6, 0.0]),
+            lp(&[0.0, 0.0, 0.0, 5.0, 0.0, 0.0, 4.9]),
+            lp(&[0.0, 0.0, 0.0, 0.0, 5.0, 0.0, 4.9]),
+        ];
+        let plain = decode_ctc_beam(&frames, &v, 6, 1, &[], 0.0);
+        assert_eq!(plain.text, "лгл");
+        let hw = tokenize_term("угл", &v);
+        assert!(hw.contains(&vec![2, 3, 4]));
+        let boosted = decode_ctc_beam(&frames, &v, 6, 1, &hw, 3.0);
+        assert_eq!(boosted.text, "угл");
+    }
+
+    #[test]
+    fn beam_trie_does_not_force_prefix_of_longer_word() {
+        let v = vec![
+            "<unk>".to_string(),
+            "▁".to_string(),
+            "▁ит".to_string(),
+            "о".to_string(),
+            "г".to_string(),
+            "<blk>".to_string(),
+        ];
+        let frames = vec![
+            lp(&[0.0, 0.0, 5.0, 0.0, 0.0, 0.0]),
+            lp(&[0.0, 0.0, 0.0, 5.0, 0.0, 0.0]),
+            lp(&[0.0, 0.0, 0.0, 0.0, 5.0, 0.0]),
+        ];
+        let hw = tokenize_term("ит", &v);
+        let res = decode_ctc_beam(&frames, &v, 5, 4, &hw, 3.0);
+        assert_eq!(res.text, "итог");
+    }
+
+    #[test]
+    fn align_allows_single_edit_for_two_char_abbreviation() {
+        let ctc = CtcHypothesis {
+            text: "ск рф".to_string(),
+            words: vec![
+                CtcWord {
+                    text: "ск".to_string(),
+                    confidence: 0.9,
+                },
+                CtcWord {
+                    text: "рф".to_string(),
+                    confidence: 0.9,
+                },
+            ],
+        };
+        let aligned = align_to_reference(
+            "ук рф",
+            &ctc,
+            &["СК РФ".to_string()],
+            DEFAULT_CONFIDENCE_THRESHOLD,
+        );
+        assert_eq!(aligned[0].text, "СК");
+        assert_eq!(aligned[1].text, "рф");
+        let rejected = align_to_reference(
+            "на рф",
+            &ctc,
+            &["СК РФ".to_string()],
+            DEFAULT_CONFIDENCE_THRESHOLD,
+        );
+        assert_eq!(rejected[0].text, "на");
     }
 }

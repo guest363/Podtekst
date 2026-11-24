@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use mr_audio::decode::decode_to_channels_16k_auto;
+use mr_audio::decode::decode_range_16k_auto;
 use mr_ml::onnx::ctc::GigaCTC;
 use mr_ml::onnx::embed::EmbeddingExtractor;
 use mr_ml::onnx::rnnt::GigaAM;
@@ -12,7 +12,6 @@ use mr_ml::onnx::vad::SileroVad;
 use mr_ml::onnx::whisper::Whisper;
 
 use super::asr_engine::{models_root, AsrEngine, LoadPlan, CTC_DIR, GIGAAM_DIR, WHISPER_DIR};
-use super::memory;
 
 /// Резолв по `files[]` вшитого манифеста в порядке массива: посторонний файл в
 /// каталоге модели (остаток докачки, ручная копия) не подменяет проверенные веса.
@@ -175,14 +174,9 @@ pub(crate) fn extract_utterance_embedding(
     end: f64,
     channel: Option<i32>,
 ) -> Result<(Vec<f64>, f64, f64), String> {
-    // WAV читается только запрошенным фрагментом (2–6 с): проверка по всему
-    // файлу запрещала бы обучение голоса из длинной записи без причины.
     let is_wav = audio
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("wav"));
-    if !is_wav {
-        memory::check(audio)?;
-    }
     if end - start < 0.4 {
         return Err("Фрагмент короче 0.4 с: голос не извлечь".to_string());
     }
@@ -205,14 +199,12 @@ pub(crate) fn extract_utterance_embedding(
     let samples: Vec<f32> = match snippet {
         Some(samples) => samples,
         None => {
-            let channels = decode_to_channels_16k_auto(audio).map_err(|e| e.to_string())?;
+            let channels = decode_range_16k_auto(audio, start, end).map_err(|e| e.to_string())?;
             let ch = source_channel(channel, channels.len())?;
-            let samples = channels
+            channels
                 .get(ch)
-                .ok_or_else(|| "Файл не содержит аудиодорожки".to_string())?;
-            let lo = ((start.max(0.0) * 16000.0) as usize).min(samples.len());
-            let hi = ((end.max(start).max(0.0) * 16000.0) as usize).min(samples.len());
-            samples[lo..hi].to_vec()
+                .ok_or_else(|| "Файл не содержит аудиодорожки".to_string())?
+                .clone()
         }
     };
     if samples.len() < (16000.0 * 0.4) as usize {

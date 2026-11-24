@@ -4,6 +4,12 @@ const FRAME_SAMPLES: usize = 8_000;
 const MAX_DUP_LAG: i64 = 64;
 const DUP_LAG_PROBE_SEC: usize = 30;
 const DUP_SAMPLE_CORR: f64 = 0.70;
+const SAMPLE_RATE: usize = 16_000;
+// Согласовано с echo::MIN_DELAY_SAMPLES (4 мс @ 16 кГц): ниже этого порога эхо не бывает.
+const MIN_ECHO_DELAY_SAMPLES: usize = MAX_DUP_LAG as usize;
+const MAX_ROOM_LAG: i64 = 32;
+const ROOM_CHUNK_SAMPLES: usize = 15 * SAMPLE_RATE;
+const ROOM_FULL_SLICE_MAX: usize = 60 * SAMPLE_RATE;
 
 fn envelope(samples: &[f32]) -> Vec<f32> {
     samples
@@ -144,6 +150,163 @@ fn envelope_gate(corr: f64, containment: f64, jaccard: f64) -> bool {
         && jaccard >= 0.75
 }
 
+fn low_band(samples: &[f32]) -> Vec<f32> {
+    // Полоса 50–350 Гц устойчива к фазовой рассинхронизации ВЧ и joint-stereo кодированию.
+    const HP_ALPHA: f32 = 0.9807;
+    const LP_ALPHA: f32 = 0.1208;
+    let mut hp_prev = 0.0f32;
+    let mut hp_y = 0.0f32;
+    let mut lp1 = 0.0f32;
+    let mut lp2 = 0.0f32;
+    samples
+        .iter()
+        .map(|&x| {
+            hp_y = HP_ALPHA * (hp_y + x - hp_prev);
+            hp_prev = x;
+            lp1 += LP_ALPHA * (hp_y - lp1);
+            lp2 += LP_ALPHA * (lp1 - lp2);
+            lp2
+        })
+        .collect()
+}
+
+fn low_band_peak_corr(a: &[f32], b: &[f32]) -> Option<f64> {
+    let a_lb = low_band(a);
+    let b_lb = low_band(b);
+    let skip = if a_lb.len().min(b_lb.len()) > 3_200 {
+        800
+    } else {
+        0
+    };
+    let a_slice = &a_lb[skip..];
+    let b_slice = &b_lb[skip..];
+    let mut best = f64::NEG_INFINITY;
+    for lag in -MAX_ROOM_LAG..=MAX_ROOM_LAG {
+        let corr = sample_correlation_at_lag(a_slice, b_slice, lag);
+        if !corr.is_finite() {
+            return None;
+        }
+        best = best.max(corr);
+    }
+    best.is_finite().then_some(best)
+}
+
+fn active_room_chunks(env0: &[f32], env1: &[f32], thresh: f32, len: usize) -> Vec<(usize, usize)> {
+    if len <= ROOM_FULL_SLICE_MAX {
+        return vec![(0, len)];
+    }
+    let frames_per_chunk = ROOM_CHUNK_SAMPLES / VAD_FRAME;
+    let count_active = |start: usize| {
+        let f0 = start / VAD_FRAME;
+        let f1 = (f0 + frames_per_chunk).min(env0.len()).min(env1.len());
+        (f0..f1).filter(|&i| env0[i].max(env1[i]) > thresh).count()
+    };
+    let mut candidates = Vec::new();
+    let mut start = 0usize;
+    while start + ROOM_CHUNK_SAMPLES <= len {
+        candidates.push((start, count_active(start)));
+        start += ROOM_CHUNK_SAMPLES;
+    }
+    let tail_start = len.saturating_sub(ROOM_CHUNK_SAMPLES);
+    if len % ROOM_CHUNK_SAMPLES >= ROOM_CHUNK_SAMPLES / 4
+        && candidates.last().is_none_or(|&(prev, _)| tail_start > prev)
+    {
+        candidates.push((tail_start, count_active(tail_start)));
+    }
+    let min_active = frames_per_chunk / 10;
+    let mut active_starts: Vec<usize> = candidates
+        .iter()
+        .filter(|&&(_, count)| count >= min_active)
+        .map(|&(s, _)| s)
+        .collect();
+    if active_starts.is_empty() {
+        active_starts = candidates
+            .iter()
+            .filter(|&&(_, count)| count >= 10)
+            .map(|&(s, _)| s)
+            .collect();
+    }
+    if active_starts.is_empty() {
+        if let Some(&(best_start, count)) = candidates.iter().max_by_key(|&&(_, count)| count) {
+            if count > 0 {
+                active_starts.push(best_start);
+            }
+        }
+    }
+    let chosen = if active_starts.len() <= 5 {
+        active_starts
+    } else {
+        (0..5)
+            .map(|k| active_starts[k * (active_starts.len() - 1) / 4])
+            .collect()
+    };
+    chosen
+        .into_iter()
+        .map(|s| (s, s + ROOM_CHUNK_SAMPLES))
+        .collect()
+}
+
+fn is_room_stereo_mix(a: &[f32], b: &[f32], stats: &MixStats) -> bool {
+    // Калибровка на 59 стереозаписях: комната держит баланс <= 15 дБ и НЧ-связь у нулевого лага.
+    if !stats.corr.is_finite()
+        || !stats.containment.is_finite()
+        || !stats.jaccard.is_finite()
+        || stats.corr < 0.80
+        || stats.containment < 0.85
+        || stats.jaccard < 0.80
+    {
+        return false;
+    }
+    let env0 = vad_envelope(a);
+    let env1 = vad_envelope(b);
+    if !env0.iter().chain(&env1).all(|x| x.is_finite()) {
+        return false;
+    }
+    let peak_env: Vec<f32> = env0.iter().zip(&env1).map(|(&l, &r)| l.max(r)).collect();
+    let thresh = (percentile(&peak_env, 0.10) * 3.5).max(0.002);
+    let diffs_db: Vec<f32> = env0
+        .iter()
+        .zip(&env1)
+        .filter(|&(&l, &r)| l.max(r) > thresh)
+        .map(|(&l, &r)| 20.0 * (l.max(1e-9) / r.max(1e-9)).log10())
+        .collect();
+    if diffs_db.len() < 10 {
+        return false;
+    }
+    let spread_db = percentile(&diffs_db, 0.90) - percentile(&diffs_db, 0.10);
+    if !spread_db.is_finite() || spread_db > 15.0 {
+        return false;
+    }
+    let chunks = active_room_chunks(&env0, &env1, thresh, a.len().min(b.len()));
+    if chunks.is_empty() {
+        return false;
+    }
+    let mut chunk_corrs = Vec::with_capacity(chunks.len());
+    for (start, end) in chunks {
+        let Some(corr) = low_band_peak_corr(&a[start..end], &b[start..end]) else {
+            return false;
+        };
+        chunk_corrs.push(corr);
+    }
+    chunk_corrs.sort_by(f64::total_cmp);
+    let mid = chunk_corrs.len() / 2;
+    let lb_corr = if chunk_corrs.len() % 2 == 1 {
+        chunk_corrs[mid]
+    } else {
+        0.5 * (chunk_corrs[mid - 1] + chunk_corrs[mid])
+    };
+    let matched = lb_corr.is_finite() && lb_corr >= 0.65;
+    log::info!(
+        target: "audio",
+        spread_db = spread_db,
+        lb_corr = lb_corr,
+        chunks = chunk_corrs.len(),
+        matched = matched;
+        "ev=audio.mix_room"
+    );
+    matched
+}
+
 pub(crate) fn mixed_stereo_with_stats(channels: &[Vec<f32>]) -> (Option<usize>, MixStats) {
     let mut stats = MixStats::default();
     if channels.len() != 2 {
@@ -187,7 +350,7 @@ pub(crate) fn mixed_stereo_with_stats(channels: &[Vec<f32>]) -> (Option<usize>, 
     {
         // shortcut: delay >= 64 (4 мс) и prominence >= 8.0 фиксируют акустическое
         // эхо из динамиков в микрофон (не моно-дубль); каналы сохраняются для suppress_mic_bleed.
-        if prominence >= 8.0 && delay >= 64 {
+        if prominence >= 8.0 && delay >= MIN_ECHO_DELAY_SAMPLES {
             return (None, stats);
         }
     }
@@ -196,7 +359,10 @@ pub(crate) fn mixed_stereo_with_stats(channels: &[Vec<f32>]) -> (Option<usize>, 
     let (sample_corr, lag) = best_lag_sample_correlation(&channels[0][..len], &channels[1][..len]);
     stats.sample_corr = sample_corr;
     stats.lag = lag;
-    if !sample_corr.is_finite() || sample_corr < DUP_SAMPLE_CORR {
+    if !sample_corr.is_finite()
+        || (sample_corr < DUP_SAMPLE_CORR
+            && !is_room_stereo_mix(&channels[0][..len], &channels[1][..len], &stats))
+    {
         return (None, stats);
     }
     stats.chosen = Some(if stats.th1 > stats.th0 { 1 } else { 0 });
@@ -325,7 +491,7 @@ pub(crate) fn suppress_mic_bleed_with_stats(
     };
     stats.delay = delay;
     stats.prominence = prominence;
-    if !prominence.is_finite() || prominence < 8.0 {
+    if !prominence.is_finite() || prominence < 8.0 || delay < MIN_ECHO_DELAY_SAMPLES {
         return stats;
     }
     let mic_env = vad_envelope(mic);
@@ -614,5 +780,94 @@ mod tests {
         let mut mic = vec![0.0f32; delay];
         mic.extend(system[..system.len() - delay].iter().map(|x| x * 0.4));
         assert!(mixed_stereo(&[mic, system]).is_none());
+    }
+
+    fn room_stereo_pair(len: usize, spans: &[(f64, f64)], lag: usize) -> [Vec<f32>; 2] {
+        let mut noise = 99u64;
+        let mut ch0 = vec![0.0f32; len];
+        let mut ch1 = vec![0.0f32; len];
+        for i in 0..len {
+            let t = i as f64 / 16_000.0;
+            if spans.iter().any(|&(a, b)| t >= a && t < b) {
+                let t_lag = i.saturating_sub(lag) as f64 / 16_000.0;
+                let lb0 = 0.14 * (std::f64::consts::TAU * 150.0 * t).sin()
+                    + 0.10 * (std::f64::consts::TAU * 240.0 * t).sin();
+                let lb1 = 0.14 * (std::f64::consts::TAU * 150.0 * t_lag).sin()
+                    + 0.10 * (std::f64::consts::TAU * 240.0 * t_lag).sin();
+                let hf0 = 0.26 * (std::f64::consts::TAU * 1150.0 * t).sin();
+                let hf1 = 0.26 * (std::f64::consts::TAU * 1850.0 * t).sin();
+                ch0[i] = (lb0 + hf0) as f32;
+                ch1[i] = 1.35 * (lb1 + hf1) as f32;
+            } else {
+                ch0[i] = lcg(&mut noise) * 0.001;
+                ch1[i] = lcg(&mut noise) * 0.001;
+            }
+        }
+        [ch0, ch1]
+    }
+
+    #[test]
+    fn room_stereo_with_decorrelated_hf_and_coherent_low_band_collapses() {
+        let short_pair = room_stereo_pair(16_000 * 8, &[(0.5, 2.5), (3.0, 5.0), (5.5, 7.5)], 2);
+        let (chosen, stats) = mixed_stereo_with_stats(&short_pair);
+        assert!(stats.sample_corr < DUP_SAMPLE_CORR, "{stats:?}");
+        assert_eq!(chosen, Some(1), "{stats:?}");
+
+        let long_pair =
+            room_stereo_pair(16_000 * 90, &[(20.0, 40.0), (45.0, 65.0), (70.0, 88.0)], 3);
+        let (chosen_long, stats_long) = mixed_stereo_with_stats(&long_pair);
+        assert!(stats_long.sample_corr < DUP_SAMPLE_CORR, "{stats_long:?}");
+        assert_eq!(chosen_long, Some(1), "{stats_long:?}");
+    }
+
+    #[test]
+    fn asymmetric_zero_lag_bleed_with_extra_speech_is_not_mixed() {
+        let len = 16_000 * 20;
+        let mut noise = 42u64;
+        let mut ch0 = vec![0.0f32; len];
+        let mut ch1 = vec![0.0f32; len];
+        for i in 0..len {
+            let t = i as f64 / 16_000.0;
+            let both_active = (0.5..5.5).contains(&t) || (10.0..13.8).contains(&t);
+            let local_only = (13.8..15.0).contains(&t);
+            let lb = 0.18 * (std::f64::consts::TAU * 180.0 * t).sin()
+                + 0.18 * (std::f64::consts::TAU * 250.0 * t).sin();
+            if both_active {
+                let hf0 = 0.22 * (std::f64::consts::TAU * 1150.0 * t).sin();
+                let hf1 = 0.28 * (std::f64::consts::TAU * 1850.0 * t).sin();
+                ch0[i] = (0.6 * lb + hf0) as f32;
+                ch1[i] = (lb + hf1) as f32;
+            } else if local_only {
+                let hf0 = 0.22 * (std::f64::consts::TAU * 1150.0 * t).sin();
+                ch0[i] = (lb + hf0) as f32;
+                ch1[i] = (0.04 * lb) as f32;
+            } else {
+                ch0[i] = lcg(&mut noise) * 0.001;
+                ch1[i] = lcg(&mut noise) * 0.001;
+            }
+        }
+        let (chosen, stats) = mixed_stereo_with_stats(&[ch0, ch1]);
+        assert!(stats.sample_corr < DUP_SAMPLE_CORR, "{stats:?}");
+        assert!(
+            stats.corr >= 0.80 && stats.containment >= 0.85 && stats.jaccard >= 0.80,
+            "{stats:?}"
+        );
+        assert_eq!(chosen, None, "{stats:?}");
+    }
+
+    #[test]
+    fn near_zero_lag_bleed_is_not_suppressed() {
+        let len = 16_000 * 4;
+        let spans = [(0.5, 2.0), (2.5, 4.0)];
+        let system = chirp_bursts(len, &spans, 0.2);
+        let delay = 2usize;
+        let mut mic = vec![0.0f32; delay];
+        mic.extend(system[..system.len() - delay].iter().map(|x| x * 0.5));
+        let mut probs = vec![1.0f32; len.div_ceil(VAD_FRAME)];
+        let stats = suppress_mic_bleed_with_stats(&mic, &system, &mut probs);
+        assert_eq!(stats.delay, delay);
+        assert!(stats.prominence >= 8.0, "{stats:?}");
+        assert_eq!(stats.suppressed, 0);
+        assert!(probs.iter().all(|&p| (p - 1.0).abs() < f32::EPSILON));
     }
 }

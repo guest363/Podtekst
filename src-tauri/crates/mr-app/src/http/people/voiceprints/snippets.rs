@@ -25,12 +25,6 @@ pub(super) fn snippet_for_new_prototype(
     if !inside_save_dir(audio) || !audio.is_file() {
         return None;
     }
-    if !audio
-        .extension()
-        .is_some_and(|x| x.eq_ignore_ascii_case("wav"))
-    {
-        return None;
-    }
     let bytes = build_wav_snippet(audio, s, e, channel)?;
     let dir = pack_dir?;
     std::fs::create_dir_all(dir.join("snippets")).ok()?;

@@ -124,7 +124,7 @@ const sharePercent = (share: number): number => Math.round(Math.max(0, Math.min(
 const stopSample = (): void => {
   if (sampleAudio) {
     // Хендлеры глушим до abort: load() без src в части браузеров кидает error.
-    sampleAudio.onended = sampleAudio.onerror = null
+    sampleAudio.onended = sampleAudio.onpause = sampleAudio.onerror = null
     sampleAudio.pause()
     // Прерываем недокачанный запрос: без этого он догружается в фоне.
     sampleAudio.removeAttribute('src')
@@ -133,9 +133,8 @@ const stopSample = (): void => {
   playingKey = ''
 }
 
-// Фрагмент играет сразу по клику: без верхнего плеера и без полосы прогресса.
-// WAV-записи (наши, самые большие) нарезает ядро: маленький файл играется с нуля,
-// перемотка по гигабайтному WAV вешает WebView. Прочие форматы — медиафрагмент #t=.
+// Фрагмент играет сразу по клику: сервер отдаёт короткий готовый WAV с нуля,
+// поэтому не зависает на гигабайтном WAV и не срывается на #t=-перемотке в WebKitGTK.
 const toggleSample = (key: string, start: number, end: number, channel?: number | null): void => {
   if (playingKey === key) {
     stopSample()
@@ -156,60 +155,32 @@ const toggleSample = (key: string, start: number, end: number, channel?: number 
     if (sampleAudio === audio) playingKey = ''
   }
   audio.onended = done
+  audio.onpause = done
   audio.onerror = () => {
     done()
     toast('Не удалось воспроизвести фрагмент', 'error')
   }
 
-  const isWav = /\.wav$/i.test(ui.currentTranscriptPath || '')
-  if (isWav) {
-    const ch = channel === null || channel === undefined ? '' : `&channel=${channel}`
-    audio.src =
-      `/api/media/snippet?file=${encPath(baseName(ui.currentTranscriptPath))}` +
-      `&start=${start}&end=${Math.max(start, end)}${ch}`
-    void audio.play().catch(() => {
-      if (audio.paused) done()
-    })
-    return
-  }
-
-  let started = false
-  const begin = (): void => {
-    if (started || sampleAudio !== audio) return
-    started = true
-    void audio.play().catch(() => {
-      if (audio.paused) {
-        playingKey = ''
-        toast('Не удалось воспроизвести фрагмент', 'error')
-      }
-    })
-  }
-
-  audio.onloadedmetadata = () => {
-    const target = Math.max(0, start)
-    if (target > 0.05 && Math.abs(audio.currentTime - target) > 0.2) {
-      // Ждём seeked, чтобы play() не начал с нуля, пока перемотка ещё идёт.
-      audio.currentTime = target
-    } else {
-      begin()
-    }
-  }
-  audio.onseeked = () => begin()
-  audio.ontimeupdate = () => {
-    if (audio.currentTime >= end - 0.03) stopSample()
-  }
-  // Медиафрагмент — основной способ; currentTime и onseeked выше — страховка.
-  audio.src = `/audio/${encPath(baseName(ui.currentTranscriptPath))}#t=${start},${Math.max(start, end)}`
-  // Если WebKit не прислал loadedmetadata/seeked, не оставляем клик без звука.
-  window.setTimeout(() => {
-    if (sampleAudio === audio && audio.readyState >= 1) begin()
-  }, 1200)
+  const ch = channel === null || channel === undefined ? '' : `&channel=${channel}`
+  audio.src =
+    `/api/media/snippet?file=${encPath(baseName(ui.currentTranscriptPath))}` +
+    `&start=${start}&end=${Math.max(start, end)}${ch}`
+  void audio.play().catch(() => {
+    if (audio.paused) done()
+  })
 }
 
 onDestroy(() => {
   sampleAudio?.pause()
   sampleAudio = null
 })
+
+const sampleDur = (s: SpeakerSample): number => s.dur ?? Math.max(0, s.end - s.start)
+
+const bestSample = (list: SpeakerSample[]): SpeakerSample | undefined =>
+  list.length > 0
+    ? list.reduce((best, s) => (sampleDur(s) > sampleDur(best) ? s : best))
+    : undefined
 
 const saveVoiceprint = async (
   oldName: string,
@@ -649,13 +620,14 @@ const onInputKey = (e: KeyboardEvent, btn: HTMLButtonElement | null): void => {
               class="btn-primary btn-sm btn-save-voiceprint"
               title="Сохранить голос за этим человеком и обновить текст"
               onclick={(e) => {
+                const best = bestSample(spk.samples)
                 void saveVoiceprint(
                   spk.name,
                   cardVal,
                   spk.embedding ?? null,
                   e.currentTarget,
-                  samples[0]
-                    ? { start: samples[0].start, end: samples[0].end, channel: samples[0].channel }
+                  best
+                    ? { start: best.start, end: best.end, channel: best.channel }
                     : undefined,
                   getCardPack(spk.key, cardVal),
                 )
