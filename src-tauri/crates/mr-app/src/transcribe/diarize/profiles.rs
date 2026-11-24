@@ -7,8 +7,12 @@ use crate::transcribe::{Sample, Utterance};
 
 use super::MIN_SHORT_NAME_SEC;
 
+/// Совпадает с порогом извлечения эмбеддинга в `models.rs`: короче 0.4 с
+/// профиль голоса из фрагмента не извлечь.
+const MIN_SAMPLE_SEC: f64 = 0.4;
+
 pub(crate) fn pick_samples(utterances: &[&Utterance], max_samples: usize) -> Vec<Sample> {
-    let mut scored: Vec<(f64, &Utterance)> = utterances
+    let mut scored: Vec<(bool, f64, &Utterance)> = utterances
         .iter()
         .copied()
         .map(|u| {
@@ -16,21 +20,24 @@ pub(crate) fn pick_samples(utterances: &[&Utterance], max_samples: usize) -> Vec
             let words = u.text.split_whitespace().count() as f64;
             let dur_score = 1.0 - ((dur - 3.8).abs() / 3.8).min(1.0);
             (
+                dur >= MIN_SAMPLE_SEC,
                 dur_score * 2.0 + (words / 10.0).min(1.0) + u.silhouette.clamp(-0.5, 1.0) * 1.5,
                 u,
             )
         })
         .collect();
-    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.total_cmp(&a.1)));
     scored
         .into_iter()
         .take(max_samples)
-        .map(|(_, u)| {
-            let dur = (u.end - u.start).max(0.5);
-            let start = (u.start * 100.0).round() / 100.0;
+        .map(|(_, _, u)| {
+            let start = ((u.start * 100.0).round() / 100.0).clamp(u.start, u.end.max(u.start));
+            let avail = (u.end - start).max(0.0);
             // floor, а не round: окно сэмпла не заходит за конец реплики —
             // иначе в эталон голоса попадает до 50 мс речи следующего спикера.
-            let sample_dur = ((dur.min(6.0) * 10.0).floor() / 10.0).max(0.1);
+            let sample_dur = ((avail.min(6.0) * 10.0).floor() / 10.0).max(0.0);
+            let end = (((start + sample_dur) * 100.0).round() / 100.0).min(u.end);
+            let dur = ((end - start).max(0.0) * 100.0).round() / 100.0;
             let text = u.text.trim();
             let preview = if text.chars().count() > 98 {
                 format!("{}…", text.chars().take(95).collect::<String>())
@@ -39,8 +46,8 @@ pub(crate) fn pick_samples(utterances: &[&Utterance], max_samples: usize) -> Vec
             };
             Sample {
                 start,
-                end: ((start + sample_dur) * 100.0).round() / 100.0,
-                dur: sample_dur,
+                end,
+                dur,
                 text: preview,
                 full_text: text.to_string(),
                 channel: u.channel,

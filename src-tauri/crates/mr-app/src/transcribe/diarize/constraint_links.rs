@@ -14,6 +14,10 @@ use super::{AcoustUnit, CORE_MIN_DUR};
 /// ошибку меток, а не перекрытие; при размытой метке ограничение сохраняется.
 const CONTRADICTION_SIM: f64 = 0.65;
 const CONTRADICTION_PURITY: f64 = 0.90;
+/// Выше эталонной пары перекрытия (0.677 в synth-ru-2spk): при sim ≥ 0.75 оба
+/// юнита принадлежат одному голосу, даже если наложение кадров сбило min_purity
+/// ниже 0.90; без сброса ложный cannot-link дробит моно-кластер на дубли.
+const HIGH_CONTRADICTION_SIM: f64 = 0.75;
 
 pub(super) fn cannot_link_units(
     units: &[AcoustUnit],
@@ -115,7 +119,8 @@ pub(super) fn cannot_link_units(
             (Some(a), Some(b)) if !a.is_empty() && !b.is_empty() => cosine_similarity(a, b),
             _ => f64::NAN,
         };
-        let conflicts = sim >= CONTRADICTION_SIM && stats.min_purity >= CONTRADICTION_PURITY;
+        let conflicts = sim >= HIGH_CONTRADICTION_SIM
+            || (sim >= CONTRADICTION_SIM && stats.min_purity >= CONTRADICTION_PURITY);
         if conflicts {
             dropped.insert((*i, *j));
         }

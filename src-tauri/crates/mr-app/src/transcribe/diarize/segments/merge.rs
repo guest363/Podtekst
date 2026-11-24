@@ -211,7 +211,9 @@ pub(crate) fn merge_tiny_clusters(
     if total <= 0.0 {
         return;
     }
-    let min_sec = (total * 0.02).clamp(2.0, 10.0);
+    // Верхняя граница 45 с покрывает 2% получасовых и часовых записей,
+    // не затрагивая короткие эталоны 60–120 с (там min_sec ≤ 2.4 с).
+    let min_sec = (total * 0.02).clamp(2.0, 45.0);
     // Кластер с хорошей обособленностью — отдельный голос, пусть и короткий.
     let scores = mr_ml::cluster::silhouette_scores(vecs, labels);
     let mut silhouettes: HashMap<usize, (f64, f64)> = HashMap::new();
