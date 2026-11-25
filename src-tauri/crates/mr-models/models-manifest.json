@@ -1,33 +1,33 @@
 {
   "manifest_version": 2,
-  "updated_at": "2026-11-15T00:00:00",
+  "updated_at": "2026-11-25T00:00:00",
   "models": [
     {
       "id": "vad-silero-v6",
-      "title": "Silero VAD v6.2 (детектор речи)",
-      "version": "6.2.3",
+      "title": "Silero VAD v6.3 (детектор речи)",
+      "version": "6.3",
       "order": 1,
       "upstream": {
         "kind": "github",
         "repo": "snakers4/silero-vad",
-        "revision": "v6.2.3",
-        "version": "6.2.3"
+        "revision": "v6.3",
+        "version": "6.3"
       },
       "files": [
         {
           "filename": "silero_vad.onnx",
-          "url_hf": "https://raw.githubusercontent.com/snakers4/silero-vad/v6.2.3/src/silero_vad/data/silero_vad.onnx",
+          "url_hf": "https://raw.githubusercontent.com/snakers4/silero-vad/v6.3/src/silero_vad/data/silero_vad.onnx",
           "mirrors": [
-            "https://github.com/snakers4/silero-vad/raw/v6.2.3/src/silero_vad/data/silero_vad.onnx"
+            "https://github.com/snakers4/silero-vad/raw/v6.3/src/silero_vad/data/silero_vad.onnx"
           ],
-          "size_bytes": 2327524,
-          "sha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+          "size_bytes": 2204103,
+          "sha256": "f6f4407b41e05e277e7f5cfd9b9ae957b1dfe763c6076a934734c0b448e09b31",
           "optional": false
         }
       ],
       "embedding_space": null,
       "license": "MIT",
-      "description": "Стриминговый детектор речи Silero v6.2.3: находит речь в реальном времени. Повышенная чувствительность к тихому и приглушённому голосу."
+      "description": "Стриминговый детектор речи Silero v6.3: находит речь в реальном времени. Повышенная чувствительность к тихому и приглушённому голосу."
     },
     {
       "id": "asr-gigaam-v3-rnnt-int8",
