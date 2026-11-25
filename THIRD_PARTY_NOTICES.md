@@ -11,7 +11,7 @@
 
 | Модель | Лицензия | Источник |
 |--------|----------|----------|
-| Silero VAD v6.2.3 | MIT | https://github.com/snakers4/silero-vad |
+| Silero VAD v6.3 | MIT | https://github.com/snakers4/silero-vad |
 | GigaAM-v3 e2e RNNT (int8, ONNX) | MIT | https://github.com/salute-developers/GigaAM , конвертация https://huggingface.co/istupakov/gigaam-v3-onnx |
 | GigaAM-v3 e2e CTC (int8, ONNX) | MIT | https://github.com/salute-developers/GigaAM , конвертация https://huggingface.co/istupakov/gigaam-v3-onnx |
 | PyAnnote Segmentation 3.0 (ONNX) | MIT | https://github.com/pyannote/pyannote-audio , конвертация https://huggingface.co/onnx-community/pyannote-segmentation-3.0 |

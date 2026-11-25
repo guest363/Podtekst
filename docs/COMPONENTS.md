@@ -41,7 +41,7 @@
 
 | id | Версия | Репозиторий | Ревизия |
 | :--- | :--- | :--- | :--- |
-| `vad-silero-v6` | 6.2.3 | `snakers4/silero-vad` | `v6.2.3` |
+| `vad-silero-v6` | 6.3 | `snakers4/silero-vad` | `v6.3` |
 | `asr-gigaam-v3-rnnt-int8` | 3.1.0 | `istupakov/gigaam-v3-onnx` | `322c3b29492673eb7d0b434bfa9dfb8653e34d02` |
 | `asr-gigaam-v3-e2e-ctc-int8` | 3.1.0 | `istupakov/gigaam-v3-onnx` | `322c3b29492673eb7d0b434bfa9dfb8653e34d02` |
 | `asr-whisper-large-v3-turbo-q` | 1.0.0 | `onnx-community/whisper-large-v3-turbo` | `360ebcde2559d60bb474678be3c1de9ef347d01a` |
