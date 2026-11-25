@@ -35,14 +35,14 @@ pub struct PaSampleSpec {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct PaChannelMap {
+pub(super) struct PaChannelMap {
     channels: u8,
     map: [c_int; 32],
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct PaCVolume {
+pub(super) struct PaCVolume {
     channels: u8,
     values: [u32; 32],
 }
@@ -50,17 +50,17 @@ struct PaCVolume {
 /// `pa_source_info` — раскладка 1:1 с `pulse/introspect.h` (лишние поля — указатели/скаляры).
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct PaSourceInfo {
-    name: *const c_char,
-    index: u32,
+pub(super) struct PaSourceInfo {
+    pub(super) name: *const c_char,
+    pub(super) index: u32,
     description: *const c_char,
     sample_spec: PaSampleSpec,
     channel_map: PaChannelMap,
     owner_module: u32,
     volume: PaCVolume,
     mute: c_int,
-    monitor_of_sink: u32,
-    monitor_of_sink_name: *const c_char,
+    pub(super) monitor_of_sink: u32,
+    pub(super) monitor_of_sink_name: *const c_char,
     latency: u64,
     driver: *const c_char,
     flags: c_int,
@@ -158,7 +158,7 @@ type PaStrerror = unsafe extern "C" fn(c_int) -> *const c_char;
 
 type PaMainloopNew = unsafe extern "C" fn() -> *mut c_void;
 type PaMainloopGetApi = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
-type PaMainloopIterate = unsafe extern "C" fn(*mut c_void, c_int) -> c_int;
+type PaMainloopIterate = unsafe extern "C" fn(*mut c_void, c_int, *mut c_int) -> c_int;
 type PaMainloopQuit = unsafe extern "C" fn(*mut c_void, c_int);
 type PaMainloopFree = unsafe extern "C" fn(*mut c_void);
 
@@ -177,6 +177,17 @@ type PaContextGetSinkInfoList =
     unsafe extern "C" fn(*mut c_void, Option<PaSinkInfoCb>, *mut c_void) -> *mut c_void;
 type PaContextGetServerInfo =
     unsafe extern "C" fn(*mut c_void, Option<PaServerInfoCb>, *mut c_void) -> *mut c_void;
+type PaContextGetSourceOutputInfoList = unsafe extern "C" fn(
+    *mut c_void,
+    Option<super::pulse_detect::PaSourceOutputInfoCb>,
+    *mut c_void,
+) -> *mut c_void;
+type PaContextGetSinkInputInfoList = unsafe extern "C" fn(
+    *mut c_void,
+    Option<super::pulse_detect::PaSinkInputInfoCb>,
+    *mut c_void,
+) -> *mut c_void;
+type PaProplistGets = unsafe extern "C" fn(*const c_void, *const c_char) -> *const c_char;
 
 type PaContextNotifyCb = unsafe extern "C" fn(*mut c_void, *mut c_void);
 type PaSourceInfoCb = unsafe extern "C" fn(*mut c_void, *const PaSourceInfo, c_int, *mut c_void);
@@ -204,21 +215,24 @@ pub struct PulseLib {
     simple_read: PaSimpleRead,
     simple_free: PaSimpleFree,
     strerror: PaStrerror,
-    mainloop_new: PaMainloopNew,
-    mainloop_get_api: PaMainloopGetApi,
-    mainloop_iterate: PaMainloopIterate,
-    mainloop_quit: PaMainloopQuit,
-    mainloop_free: PaMainloopFree,
-    context_new: PaContextNew,
-    context_connect: PaContextConnect,
-    context_set_state_callback: PaContextSetStateCallback,
-    context_get_state: PaContextGetState,
-    context_disconnect: PaContextDisconnect,
-    context_unref: PaContextUnref,
-    operation_unref: PaOperationUnref,
-    context_get_source_info_list: PaContextGetSourceInfoList,
+    pub(super) mainloop_new: PaMainloopNew,
+    pub(super) mainloop_get_api: PaMainloopGetApi,
+    pub(super) mainloop_iterate: PaMainloopIterate,
+    pub(super) mainloop_quit: PaMainloopQuit,
+    pub(super) mainloop_free: PaMainloopFree,
+    pub(super) context_new: PaContextNew,
+    pub(super) context_connect: PaContextConnect,
+    pub(super) context_set_state_callback: PaContextSetStateCallback,
+    pub(super) context_get_state: PaContextGetState,
+    pub(super) context_disconnect: PaContextDisconnect,
+    pub(super) context_unref: PaContextUnref,
+    pub(super) operation_unref: PaOperationUnref,
+    pub(super) context_get_source_info_list: PaContextGetSourceInfoList,
     context_get_sink_info_list: PaContextGetSinkInfoList,
     context_get_server_info: PaContextGetServerInfo,
+    pub(super) context_get_source_output_info_list: PaContextGetSourceOutputInfoList,
+    pub(super) context_get_sink_input_info_list: PaContextGetSinkInputInfoList,
+    pub(super) proplist_gets: PaProplistGets,
 }
 
 unsafe impl Send for PulseLib {}
@@ -290,6 +304,11 @@ impl PulseLib {
         let context_get_source_info_list = sym!(handle.0, "pa_context_get_source_info_list");
         let context_get_sink_info_list = sym!(handle.0, "pa_context_get_sink_info_list");
         let context_get_server_info = sym!(handle.0, "pa_context_get_server_info");
+        let context_get_source_output_info_list =
+            sym!(handle.0, "pa_context_get_source_output_info_list");
+        let context_get_sink_input_info_list =
+            sym!(handle.0, "pa_context_get_sink_input_info_list");
+        let proplist_gets = sym!(handle.0, "pa_proplist_gets");
         Ok(Self {
             _handle: handle,
             _simple_handle: simple,
@@ -312,6 +331,9 @@ impl PulseLib {
             context_get_source_info_list,
             context_get_sink_info_list,
             context_get_server_info,
+            context_get_source_output_info_list,
+            context_get_sink_input_info_list,
+            proplist_gets,
         })
     }
 }
@@ -487,7 +509,7 @@ unsafe extern "C" fn on_state(_ctx: *mut c_void, userdata: *mut c_void) {
 }
 
 /// Строка C → Rust (NULL безопасен).
-fn cstr_to_string(ptr: *const c_char) -> String {
+pub(super) fn cstr_to_string(ptr: *const c_char) -> String {
     if ptr.is_null() {
         return String::new();
     }
@@ -547,7 +569,7 @@ impl PulseLib {
             // иначе iterate(block=1) может повиснуть на замолчавшем сервере.
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
             loop {
-                let iter = (self.mainloop_iterate)(mainloop, 0);
+                let iter = (self.mainloop_iterate)(mainloop, 0, std::ptr::null_mut());
                 if iter < 0 {
                     break; // pa_mainloop_quit или ошибка цикла
                 }

@@ -40,7 +40,7 @@
 | База голосовых векторов | `mr_packs::VoiceprintsV3` | `<app_data>/packs/<id>/voiceprints.json` | 192-мерные векторы, формат v3 |
 | Каталог ИИ-моделей | `mr_models::Manifest` | `models-manifest.json` в коде | Ссылки, SHA-256 и размеры |
 | Скачанные веса | `PathBuf` к ONNX-файлам | `<app_data>/models/<id>/` | Проверенные `.onnx` файлы |
-| Настройки приложения | `mr_app::config::AppConfig` | `<app_data>/config.json` | Устройства, пороги и язык |
+| Настройки приложения | `mr_app::config::AppConfig` | `<app_data>/config.json` | Устройства, пороги, язык и автоопределение звонков |
 
 ## Диаризация: текущая конфигурация
 

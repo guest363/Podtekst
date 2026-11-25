@@ -1,8 +1,12 @@
 import type { ModelInfo, Voicepack } from './api'
 import { isMobile, readJsonSafe } from './api'
-import { errText, readLocal } from './guards.ts'
+import { errText, isRecord, readLocal } from './guards.ts'
 import { loadPeople } from './people.svelte.ts'
 import { toast, toastConfirm } from './toast.svelte.ts'
+
+export type AutoDetectMode = 'off' | 'notify' | 'auto'
+export type AutoDetectCapability = 'process' | 'device_only' | 'unsupported'
+export type AutoDetectPrompt = { id: string; app: string }
 
 type StatusResponse = {
   platform?: string
@@ -10,6 +14,7 @@ type StatusResponse = {
   device?: { has_system_audio?: boolean }
   system_audio_permission?: boolean
   ffmpeg?: Record<string, unknown>
+  auto_detect?: unknown
 }
 
 // Проба доступности итогов до открытия вкладки: имя не должно совпадать
@@ -21,6 +26,13 @@ type SummaryFeatureProbe = {
 }
 
 type TranscribeAutoResponse = { enabled?: boolean }
+type AutoDetectResponse = {
+  ok?: boolean
+  mode?: string
+  supported?: boolean
+  capability?: string
+  error?: string
+}
 type RecordModeResponse = { mode?: 'mix' | 'split'; explicit?: boolean }
 type VoicepacksResponse = { ok?: boolean; packs?: Voicepack[] }
 type ModelsResponse = { ok?: boolean; models?: ModelInfo[]; manifest_updated_at?: string }
@@ -43,6 +55,11 @@ type SettingsState = {
   systemAudio: boolean
   systemAudioPermission: boolean
   autoTranscribe: boolean
+  autoDetectMode: AutoDetectMode
+  autoDetectSupported: boolean
+  autoDetectCapability: AutoDetectCapability
+  autoRecording: boolean
+  autoDetectPrompt: AutoDetectPrompt | null
   speakers: number
   hotwords: string[]
   ctcEnabled: boolean
@@ -67,6 +84,11 @@ export const settings: SettingsState = $state({
   systemAudio: false,
   systemAudioPermission: true,
   autoTranscribe: true,
+  autoDetectMode: 'off',
+  autoDetectSupported: false,
+  autoDetectCapability: 'unsupported',
+  autoRecording: false,
+  autoDetectPrompt: null,
   speakers: storedSpeakers(),
   hotwords: [],
   ctcEnabled: true,
@@ -74,6 +96,110 @@ export const settings: SettingsState = $state({
   summaryFeature: null,
   manifestUpdatedAt: '',
 })
+
+const parseAutoDetectMode = (value: unknown): AutoDetectMode | null =>
+  value === 'off' || value === 'notify' || value === 'auto' ? value : null
+
+const parseAutoDetectCapability = (value: unknown): AutoDetectCapability | null =>
+  value === 'process' || value === 'device_only' || value === 'unsupported' ? value : null
+
+let autoDetectSaveSeq = 0
+let autoDetectInFlight = 0
+let dismissedPromptId: string | null = null
+
+export const syncAutoDetectStatus = (raw: unknown): void => {
+  if (!isRecord(raw)) return
+  if (typeof raw.supported === 'boolean') settings.autoDetectSupported = raw.supported
+  const capability = parseAutoDetectCapability(raw.capability)
+  if (capability) settings.autoDetectCapability = capability
+  const mode = parseAutoDetectMode(raw.mode)
+  if (mode && autoDetectInFlight === 0) settings.autoDetectMode = mode
+  if (typeof raw.auto_recording === 'boolean') settings.autoRecording = raw.auto_recording
+  if (raw.prompt === null) {
+    dismissedPromptId = null
+    settings.autoDetectPrompt = null
+  } else if (
+    isRecord(raw.prompt) &&
+    typeof raw.prompt.id === 'string' &&
+    typeof raw.prompt.app === 'string'
+  ) {
+    if (raw.prompt.id !== dismissedPromptId) {
+      dismissedPromptId = null
+      settings.autoDetectPrompt = { id: raw.prompt.id, app: raw.prompt.app }
+    }
+  }
+}
+
+export const loadAutoDetect = async (): Promise<void> => {
+  if (isMobile) {
+    settings.autoDetectSupported = false
+    settings.autoDetectCapability = 'unsupported'
+    settings.autoDetectMode = 'off'
+    settings.autoDetectPrompt = null
+    return
+  }
+  try {
+    const d = await readJsonSafe<AutoDetectResponse>(await fetch('/api/record/auto_detect'))
+    syncAutoDetectStatus(d)
+  } catch {}
+}
+
+export const refreshAutoDetectStatus = async (): Promise<void> => {
+  try {
+    const st = await readJsonSafe<StatusResponse>(await fetch('/api/status'))
+    syncAutoDetectStatus(st.auto_detect)
+  } catch {}
+}
+
+export const setAutoDetectMode = async (mode: AutoDetectMode): Promise<boolean> => {
+  const previous = settings.autoDetectMode
+  settings.autoDetectMode = mode
+  if (mode !== 'notify') settings.autoDetectPrompt = null
+  const seq = ++autoDetectSaveSeq
+  autoDetectInFlight += 1
+  try {
+    const r = await fetch('/api/record/auto_detect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    })
+    const d = await readJsonSafe<AutoDetectResponse>(r)
+    if (seq !== autoDetectSaveSeq) return true
+    if (!r.ok || d.ok === false) {
+      settings.autoDetectMode = previous
+      toast(d.error || 'Не удалось сохранить автоопределение звонков', 'error')
+      return false
+    }
+    const saved = parseAutoDetectMode(d.mode)
+    if (saved) settings.autoDetectMode = saved
+    return true
+  } catch (e) {
+    if (seq !== autoDetectSaveSeq) return false
+    settings.autoDetectMode = previous
+    toast(`Не удалось сохранить автоопределение звонков: ${errText(e)}`, 'error')
+    return false
+  } finally {
+    autoDetectInFlight -= 1
+  }
+}
+
+export const clearAutoDetectPrompt = (): void => {
+  if (settings.autoDetectPrompt) {
+    dismissedPromptId = settings.autoDetectPrompt.id
+  }
+  settings.autoDetectPrompt = null
+}
+
+export const dismissAutoDetectPrompt = async (): Promise<void> => {
+  clearAutoDetectPrompt()
+  try {
+    await fetch('/api/record/auto_detect/dismiss', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+  } catch {}
+}
 
 export const loadSummaryFeature = async (): Promise<void> => {
   if (settings.summaryFeature !== null) return

@@ -47,6 +47,7 @@ fn toggle_recording(state: &Arc<Mutex<RecordingState>>) {
 
 #[cfg(feature = "tauri-ui")]
 fn finalize_recording_on_exit(app: &tauri::AppHandle<tauri::Wry>) {
+    crate::auto_detect::stop();
     let Some(st) = app.try_state::<Arc<Mutex<RecordingState>>>() else {
         return;
     };

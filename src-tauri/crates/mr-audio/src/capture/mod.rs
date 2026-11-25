@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::{AudioError, Result};
 use stream::LevelMeter;
 
+pub mod detect;
 pub mod stream;
 
 #[cfg(target_os = "linux")]
@@ -16,6 +17,8 @@ mod cli;
 mod linux;
 #[cfg(target_os = "linux")]
 pub mod pulse;
+#[cfg(target_os = "linux")]
+mod pulse_detect;
 
 #[cfg(target_os = "windows")]
 mod windows;
@@ -57,6 +60,10 @@ pub fn foreground_processing_stop() {
     foreground_service(true, false);
 }
 
+pub use detect::{
+    active_audio_clients, detection_capability, ActiveAudioClient, CaptureState,
+    DetectionCapability,
+};
 pub use stream::{read_raw_f32, resample_to};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

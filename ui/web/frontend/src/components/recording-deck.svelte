@@ -8,7 +8,12 @@ import {
   screenRecorder,
   toggleScreenCapture,
 } from '../lib/screen-recorder.svelte.ts'
-import { hasSystemAudio, settings } from '../lib/settings.svelte.ts'
+import {
+  clearAutoDetectPrompt,
+  hasSystemAudio,
+  settings,
+  syncAutoDetectStatus,
+} from '../lib/settings.svelte.ts'
 import { toast } from '../lib/toast.svelte.ts'
 import { engine, syncEngineFromStatus } from '../lib/transcript.svelte.ts'
 import { emit, openTranscript, ui } from '../lib/ui.svelte.ts'
@@ -40,6 +45,7 @@ type StatusResponse = {
   recording?: boolean
   elapsed?: number
   device?: { mic_name?: string; mic_muted?: boolean }
+  auto_detect?: unknown
 }
 
 let isRecording = $state(false)
@@ -114,6 +120,7 @@ const toggleRecord = async (): Promise<void> => {
       const d = await readJsonSafe<RecordStartResponse>(r)
       if (d.ok) {
         setRecordingState(true)
+        clearAutoDetectPrompt()
         if (wantScreen) {
           screenRecorder.active = true
           toast('Запись экрана и звука началась')
@@ -123,6 +130,7 @@ const toggleRecord = async (): Promise<void> => {
         if (d.screen_error) toast(`Экран не записывается: ${d.screen_error}`, 'error')
       } else if (d.error === 'Запись уже идёт') {
         setRecordingState(true)
+        clearAutoDetectPrompt()
       } else {
         toast(d.error || 'Не удалось начать запись', 'error')
       }
@@ -188,6 +196,7 @@ const pollLevels = async (): Promise<void> => {
       systemAudioPermission = d.system_audio_permission
       settings.systemAudioPermission = d.system_audio_permission
     }
+    syncAutoDetectStatus(d.auto_detect)
     // Запись могли включить/выключить извне (глобальный хоткей, IPC,
     // второй клик по ярлыку) — кнопка обязана следовать за реальностью.
     if (d.recording && !isRecording) {
@@ -250,7 +259,11 @@ onMount(() => {
         <span class="status-dot {isRecording ? 'active' : ''}" aria-hidden="true"></span>
         <span class="deck-status-content">
           {#if isRecording}
-            {screenRecorder.active ? 'Идёт запись экрана и звука' : 'Идёт запись встречи'}
+            {screenRecorder.active
+              ? 'Идёт запись экрана и звука'
+              : settings.autoRecording
+                ? 'Автозапись встречи'
+                : 'Идёт запись встречи'}
           {:else if engine.running}
             Расшифровка {engine.pct}%{#if engine.file} · <button
               type="button"

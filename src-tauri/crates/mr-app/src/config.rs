@@ -111,6 +111,45 @@ pub(crate) fn save_auto_transcribe(enabled: bool) {
     update_config(|cfg| cfg["auto_transcribe"] = json!(enabled));
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum AutoDetectMode {
+    #[default]
+    Off,
+    Notify,
+    Auto,
+}
+
+impl AutoDetectMode {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Notify => "notify",
+            Self::Auto => "auto",
+        }
+    }
+
+    pub(crate) fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "off" => Some(Self::Off),
+            "notify" => Some(Self::Notify),
+            "auto" => Some(Self::Auto),
+            _ => None,
+        }
+    }
+}
+
+pub(crate) fn configured_auto_detect_mode() -> AutoDetectMode {
+    load_config()
+        .get("auto_detect_mode")
+        .and_then(|x| x.as_str())
+        .and_then(AutoDetectMode::parse)
+        .unwrap_or(AutoDetectMode::Off)
+}
+
+pub(crate) fn save_auto_detect_mode(mode: AutoDetectMode) {
+    update_config(|cfg| cfg["auto_detect_mode"] = json!(mode.as_str()));
+}
+
 pub(crate) fn configured_hotwords() -> Vec<String> {
     let raw: Vec<String> = load_config()
         .get("hotwords")

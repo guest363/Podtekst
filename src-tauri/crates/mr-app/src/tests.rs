@@ -604,6 +604,64 @@ mod live_api_tests {
             "ручной выбор режима должен сохраняться"
         );
 
+        let (st, v) = json(http(port, "GET", "/api/record/auto_detect", &[], &[]));
+        assert_eq!(st, 200);
+        assert_eq!(v.get("ok").and_then(|x| x.as_bool()), Some(true));
+        assert_eq!(v.get("mode").and_then(|x| x.as_str()), Some("off"));
+        assert!(v.get("supported").and_then(|x| x.as_bool()).is_some());
+        assert!(v.get("capability").and_then(|x| x.as_str()).is_some());
+        let (st, v) = json(http(
+            port,
+            "POST",
+            "/api/record/auto_detect",
+            &[("Content-Type", "application/json")],
+            json!({"mode":"invalid"}).to_string().as_bytes(),
+        ));
+        assert_eq!(
+            (st, v.get("ok").and_then(|x| x.as_bool())),
+            (400, Some(false))
+        );
+        let (st, v) = json(http(
+            port,
+            "POST",
+            "/api/record/auto_detect",
+            &[("Content-Type", "application/json")],
+            json!({"mode":"notify"}).to_string().as_bytes(),
+        ));
+        assert_eq!(
+            (
+                st,
+                v.get("ok").and_then(|x| x.as_bool()),
+                v.get("mode").and_then(|x| x.as_str())
+            ),
+            (200, Some(true), Some("notify"))
+        );
+        let (st, v) = json(http(
+            port,
+            "POST",
+            "/api/record/auto_detect/dismiss",
+            &[("Content-Type", "application/json")],
+            b"{}",
+        ));
+        assert_eq!(
+            (st, v.get("ok").and_then(|x| x.as_bool())),
+            (200, Some(true))
+        );
+        let (_, v) = json(http(port, "GET", "/api/status", &[], &[]));
+        assert_eq!(v["auto_detect"]["mode"].as_str(), Some("notify"));
+        assert_eq!(v["auto_detect"]["auto_recording"].as_bool(), Some(false));
+        assert!(v["auto_detect"]["prompt"].is_null());
+        assert!(v["auto_detect"]["supported"].as_bool().is_some());
+        assert!(v["auto_detect"]["capability"].as_str().is_some());
+        let (st, _) = json(http(
+            port,
+            "POST",
+            "/api/record/auto_detect",
+            &[("Content-Type", "application/json")],
+            json!({"mode":"off"}).to_string().as_bytes(),
+        ));
+        assert_eq!(st, 200);
+
         let (_, v) = json(http(port, "GET", "/api/transcribe/auto", &[], &[]));
         assert_eq!(v.get("enabled").and_then(|x| x.as_bool()), Some(true));
         let (st, v) = json(http(

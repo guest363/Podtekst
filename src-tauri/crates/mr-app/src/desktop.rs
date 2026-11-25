@@ -120,6 +120,38 @@ pub fn uninstall_autostart() -> Result<bool> {
     Ok(true)
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn escape_applescript(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\r' | '\n' => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn escape_xml(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            '\r' => {}
+            c if c.is_control() && c != '\n' && c != '\t' => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 pub fn notify_icon(title: &str, body: &str, icon: &str) {
     #[cfg(target_os = "linux")]
     {
@@ -135,12 +167,64 @@ pub fn notify_icon(title: &str, body: &str, icon: &str) {
     #[cfg(target_os = "macos")]
     {
         let _ = icon;
-        let script = format!("display notification \"{body}\" with title \"{title}\"");
-        let _ = std::process::Command::new("osascript")
+        let esc_body = escape_applescript(body);
+        let esc_title = escape_applescript(title);
+        let script = format!("display notification \"{esc_body}\" with title \"{esc_title}\"");
+        if let Ok(mut child) = std::process::Command::new("osascript")
             .args(["-e", &script])
+            .spawn()
+        {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::Stdio;
+
+        let _ = icon;
+        let xml = format!(
+            "<toast><visual><binding template=\"ToastText02\"><text id=\"1\">{}</text><text id=\"2\">{}</text></binding></visual></toast>",
+            escape_xml(title),
+            escape_xml(body),
+        );
+        // shortcut: системный AUMID PowerShell показывает подпись «Windows PowerShell» в центре уведомлений, заменить после регистрации ярлыка/AUMID установщиком.
+        let ps = "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; \
+            [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null; \
+            $doc = New-Object Windows.Data.Xml.Dom.XmlDocument; \
+            $doc.LoadXml($env:PODTEKST_TOAST_XML); \
+            $toast = [Windows.UI.Notifications.ToastNotification]::new($doc); \
+            [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show($toast)";
+        let ps_exe = std::env::var_os("SystemRoot")
+            .map(|root| {
+                PathBuf::from(root)
+                    .join("System32")
+                    .join("WindowsPowerShell")
+                    .join("v1.0")
+                    .join("powershell.exe")
+            })
+            .filter(|path| path.is_file())
+            .unwrap_or_else(|| PathBuf::from("powershell.exe"));
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = std::process::Command::new(ps_exe)
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                ps,
+            ])
+            .env("PODTEKST_TOAST_XML", xml)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn();
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         let _ = (title, body, icon);
     }
@@ -188,5 +272,14 @@ mod tests {
         }
         let _ = std::fs::remove_dir_all(&tmp);
         res.unwrap();
+    }
+
+    #[test]
+    fn notification_escapers_handle_special_chars() {
+        assert_eq!(escape_applescript("a\"b\\c\nd"), "a\\\"b\\\\c d");
+        assert_eq!(
+            escape_xml("<Zoom>\x00\x07\x1b & \"'ok'\"\n\tline"),
+            "&lt;Zoom&gt; &amp; &quot;&apos;ok&apos;&quot;\n\tline"
+        );
     }
 }
