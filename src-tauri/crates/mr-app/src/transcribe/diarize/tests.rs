@@ -2560,3 +2560,59 @@ fn post_assign_merge_consolidates_duplicate_clusters_and_voice_runs() {
     assert_eq!(min_keep_labels[&0], 0);
     assert_eq!(min_keep_labels[&1], 1);
 }
+
+#[test]
+fn tiny_unmatched_noise_tail_is_not_promoted_on_long_recording() {
+    let mut units = vec![
+        AcoustUnit {
+            utterance: 0,
+            start: 0.0,
+            end: 60.0,
+            dur: 60.0,
+            quality: 1.0,
+            embedding: vec![1.0, 0.0],
+        },
+        AcoustUnit {
+            utterance: 1,
+            start: 70.0,
+            end: 71.0,
+            dur: 1.0,
+            quality: 1.0,
+            embedding: vec![0.0, 1.0],
+        },
+    ];
+    let mut labels = HashMap::from([(0usize, 0usize)]);
+    let mut next = 1usize;
+    let promoted = promote_unmatched_utterances(
+        &units,
+        &mut labels,
+        &mut next,
+        0,
+        SpeechSupport::default(),
+        None,
+    );
+    assert!(promoted.is_empty());
+    assert!(!labels.contains_key(&1));
+
+    units.push(AcoustUnit {
+        utterance: 2,
+        start: 80.0,
+        end: 81.1,
+        dur: 1.1,
+        quality: 1.0,
+        embedding: vec![0.0, 1.0],
+    });
+    let mut labels2 = HashMap::from([(0usize, 0usize)]);
+    let mut next2 = 1usize;
+    let promoted2 = promote_unmatched_utterances(
+        &units,
+        &mut labels2,
+        &mut next2,
+        0,
+        SpeechSupport::default(),
+        None,
+    );
+    assert_eq!(promoted2, vec![1]);
+    assert_eq!(labels2.get(&1), Some(&1));
+    assert_eq!(labels2.get(&2), Some(&1));
+}

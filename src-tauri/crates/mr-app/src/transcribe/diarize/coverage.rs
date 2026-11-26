@@ -8,7 +8,7 @@ use crate::transcribe::Utterance;
 /// Замер на AMI (real10, 120 с): реальный четвёртый спикер с 2.48 с чистой речи
 /// (3.9 % от 64 с) отбраковывался порогом 5 %/1.5 с и переезжал в чужой кластер.
 /// Шумовые обрывки того же набора — 1.2–1.52 с, их режет MIN_CLUSTER_SEC = 2.0.
-const MIN_CLUSTER_SHARE: f64 = 0.03;
+pub(in crate::transcribe::diarize) const MIN_CLUSTER_SHARE: f64 = 0.03;
 pub(in crate::transcribe::diarize) const MIN_CLUSTER_SEC: f64 = 2.0;
 const MIN_TURN_SHARE: f64 = 0.25;
 const MIN_TURN_SEC: f64 = 1.0;
