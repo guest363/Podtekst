@@ -5,9 +5,9 @@ cd "$(dirname "$0")"
 command -v cargo >/dev/null 2>&1 || { echo "[ОШИБКА] Установите Rust: https://rustup.rs"; read -p "Enter..."; exit 1; }
 FEATS="--features tauri-ui"
 for a in "$@"; do [ "$a" = "--web" ] || [ "$a" = "--browser" ] && FEATS=""; done
-# Cargo сам инкрементально пересобирает изменённые исходники (после git pull)
+# --bin podtekst пропускает сборку мобильных staticlib/cdylib mr_app_lib.
 # shellcheck disable=SC2086
-(cd src-tauri && cargo build --release -p mr-app $FEATS)
+(cd src-tauri && cargo build --release -p mr-app --bin podtekst $FEATS)
 # Ad-hoc подпись даёт TCC стабильную личность: иначе macOS может спрашивать
 # доступ к микрофону при каждом запуске или молча отказать.
 BIN="src-tauri/target/release/podtekst"

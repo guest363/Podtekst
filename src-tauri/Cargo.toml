@@ -31,20 +31,39 @@ ureq = { version = "2.12", default-features = false, features = ["tls"] }
 libc = "0.2"
 log = { version = "0.4", features = ["std", "kv"] }
 
-# Меньший релизный бинарник: тонкий LTO + вырезание символов отладки.
+# Для крейтов workspace оставляем line-tables-only (имена файлов и номера строк в
+# backtrace сохраняются, но PDB на Windows кратно меньше и быстрее линкуется);
+# сторонним крейтам отладочная информация в dev/test не нужна (наследуется test).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+# Меньший релизный бинарник: тонкий LTO + вырезание символов отладки
+# без codegen-units = 1, чтобы LLVM распараллеливал кодогенерацию и ThinLTO.
 [profile.release]
 lto = "thin"
-codegen-units = 1
 strip = "symbols"
+
+# Быстрая локальная оптимизированная сборка без долгой фазы ThinLTO;
+# продовый [profile.release] с lto = "thin" при этом остаётся без изменений.
+[profile.release-fast]
+inherits = "release"
+lto = false
 
 # Dev-сборка: оптимизации release, но с debug_assertions и без strip.
 # release_max_level_off в `log` выключает макросы только при debug_assertions=false,
 # поэтому в этом профиле dev-логи компилируются, а в обычном release — нет.
+# LTO выключен намеренно: иначе dev-пересборка тратит лишнюю минуту на ThinLTO.
 [profile.dev-opt]
 inherits = "release"
 debug-assertions = true
 overflow-checks = true
-lto = "thin"
+lto = false
 codegen-units = 16
 debug = 1
 strip = "none"
+
+[profile.dev-opt.package."*"]
+debug = false

@@ -13,8 +13,8 @@ rem %* может содержать кавычки и &, поэтому ище�
 for %%a in (%*) do (
     if /I "%%~a"=="--web" set "FEATS="
 )
-rem Cargo сам инкрементально пересобирает изменённые исходники (после git pull)
-cargo build --release --manifest-path src-tauri\Cargo.toml -p mr-app %FEATS%
+rem --bin podtekst пропускает сборку мобильных staticlib/cdylib mr_app_lib.
+cargo build --release --manifest-path src-tauri\Cargo.toml -p mr-app --bin podtekst %FEATS%
 if errorlevel 1 (
     echo [ОШИБКА] Сборка не удалась — запуск отменён
     pause

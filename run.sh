@@ -162,14 +162,15 @@ if [ "$NEEDS_RUST_BUILD" = 1 ]; then
     else
         echo "→ Сборка podtekst (Rust)…"
         if [ "$WANT_DEV" = 1 ]; then
+            # --bin podtekst пропускает сборку мобильных staticlib/cdylib mr_app_lib.
             # shellcheck disable=SC2086
-            (cd "$SCRIPT_DIR/src-tauri" && CARGO_TARGET_DIR="$TARGET_DIR" cargo build --profile dev-opt -p mr-app $FEATS)
+            (cd "$SCRIPT_DIR/src-tauri" && CARGO_TARGET_DIR="$TARGET_DIR" cargo build --profile dev-opt -p mr-app --bin podtekst $FEATS)
         elif [ "$WANT_WEB" = 1 ]; then
-            (cd "$SCRIPT_DIR/src-tauri" && CARGO_TARGET_DIR=target/web cargo build --release -p mr-app)
+            (cd "$SCRIPT_DIR/src-tauri" && CARGO_TARGET_DIR=target/web cargo build --release -p mr-app --bin podtekst)
             cp "$SCRIPT_DIR/src-tauri/target/web/release/podtekst" "$BIN"
         else
             # shellcheck disable=SC2086
-            (cd "$SCRIPT_DIR/src-tauri" && cargo build --release -p mr-app $FEATS)
+            (cd "$SCRIPT_DIR/src-tauri" && cargo build --release -p mr-app --bin podtekst $FEATS)
         fi
         if [ "$WANT_DEV" = 0 ]; then
             mkdir -p "$SCRIPT_DIR/dist"

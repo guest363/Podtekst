@@ -147,8 +147,13 @@ fn main() {
     println!("cargo:rerun-if-env-changed=TARGET_CC");
     // Коммит и dirty меняются без правки файлов пакета: без этих строк
     // build-скрипт не перезапускается и артефакты несут чужую ревизию.
-    println!("cargo:rerun-if-changed=../../.git/HEAD");
-    println!("cargo:rerun-if-changed=../../.git/refs");
+    // Пути относительно crates/mr-app (три уровня вверх до корня репо);
+    // несуществующий путь в rerun-if-changed заставляет Cargo пересобирать крейт каждый раз.
+    for path in ["../../../.git/HEAD", "../../../.git/refs"] {
+        if Path::new(path).exists() {
+            println!("cargo:rerun-if-changed={path}");
+        }
+    }
     println!("cargo:rerun-if-changed=Cargo.toml");
 
     // manifest.json dev-запуска хранит точку воспроизведения; git может
@@ -171,6 +176,9 @@ fn main() {
     }
     #[cfg(not(feature = "tauri-ui"))]
     {
-        println!("cargo:rerun-if-changed=../../ui/web/static/index.html");
+        let static_index = "../../../ui/web/static/index.html";
+        if Path::new(static_index).exists() {
+            println!("cargo:rerun-if-changed={static_index}");
+        }
     }
 }

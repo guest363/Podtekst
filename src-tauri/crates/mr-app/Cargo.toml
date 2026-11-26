@@ -7,9 +7,15 @@ description = "Подтекст (Podtekst) — нативное ядро (CLI + 
 license = "MIT"
 repository = "https://github.com/guest363/podtekst"
 
+# Тонкая точка входа без #[test]: без test = false Cargo линкует лишний пустой тестовый бинарник.
 [[bin]]
 name = "podtekst"
 path = "src/main.rs"
+test = false
+
+[[test]]
+name = "diar_local"
+required-features = ["onnx"]
 
 # Мобильные сборки Tauri (Android/iOS) подключают ядро как cdylib/staticlib
 # через JNI-обёртку `mobile_entry_point`; rlib — для бина и тестов.

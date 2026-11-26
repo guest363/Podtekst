@@ -1,0 +1,5 @@
+# Штатный rust-lld из тулчейна кратно ускоряет линковку на Windows MSVC
+# без внешней установки LLVM и без RUSTFLAGS, ломающих общий кэш сборок.
+# Размещён в корне репо, чтобы его видел и verify.sh/run.bat (--manifest-path), и cd src-tauri.
+[target.x86_64-pc-windows-msvc]
+linker = ".cargo/rust-lld.bat"

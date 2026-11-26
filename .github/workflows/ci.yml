@@ -98,7 +98,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: ./scripts/verify.sh --rust
       - name: Release build (default features, no system deps)
-        run: cargo build --release -p mr-app --locked
+        run: cargo build --release -p mr-app --bin podtekst --locked
       - name: Headless --web smoke (no runtime -> 503, startup OK)
         run: |
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/mr-app/Cargo.toml | head -n1)"

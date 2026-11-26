@@ -24,6 +24,15 @@ ort-directml = ["onnx", "ort/directml", "ort/copy-dylibs"]
 ort-coreml = ["onnx", "ort/coreml"]
 ort-nnapi = ["onnx", "ort/nnapi"]
 
+# ONNX-тесты без required-features компилируются и линкуются пустыми при запуске без --features onnx.
+[[test]]
+name = "fbank_level"
+required-features = ["onnx"]
+
+[[test]]
+name = "onnx_real"
+required-features = ["onnx"]
+
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", default-features = false, features = ["Win32_Foundation", "Win32_Graphics_Dxgi", "Win32_System_LibraryLoader"] }
 
