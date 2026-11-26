@@ -33,6 +33,9 @@ const SHORT_FLIP_MARGIN: f64 = 0.06;
 /// Ниже этого сходства со своим профилем карточка точно чужая, даже если
 /// альтернативного совпадения в базе голосов нет.
 const MIN_CLUSTER_KEEP_SIM: f64 = 0.30;
+/// Одиночный короткий сплит без совпадения с профилем (шум/перекрытие на стыке)
+/// не должен рождать новую анонимную карточку, если других его реплик не нашлось.
+const MAX_ANON_ORPHAN_SPLIT_SEC: f64 = 5.0;
 
 struct ChannelNeighbor {
     speaker: String,
@@ -414,14 +417,14 @@ fn verify_matched_card(
     embedding: &[f64],
     duration: f64,
     profiles: &[SpeakerProfile],
-) -> bool {
+) -> Option<bool> {
     let flip_margin = if duration < SHORT_FLIP_SEC {
         SHORT_FLIP_MARGIN
     } else {
         mr_ml::DEFAULT_MIN_MARGIN
     };
     if !contradicts(embedding, &utterance.speaker, profiles, flip_margin) {
-        return false;
+        return None;
     }
     let result = match_verified_embedding(embedding, profiles, infos, changed, verified);
     if !should_split_matched_card(
@@ -431,8 +434,9 @@ fn verify_matched_card(
         &result,
         flip_margin,
     ) {
-        return false;
+        return None;
     }
+    let result_matched = result.matched;
     let has_matched_card = result.matched
         && result.name.as_ref().is_some_and(|matched_name| {
             infos
@@ -461,6 +465,7 @@ fn verify_matched_card(
     reassign_utterance(
         utterance, infos, names, changed, name, claim_name, result, embedding,
     )
+    .then_some(result_matched)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -609,6 +614,84 @@ fn embed_utterance(
     Some((embedding, duration))
 }
 
+struct VerificationSplitTracker {
+    initial_names: HashSet<String>,
+    anon_splits: Vec<(usize, String, f64, f64)>,
+    split_counts: HashMap<String, usize>,
+}
+
+impl VerificationSplitTracker {
+    fn new(initial_names: HashSet<String>) -> Self {
+        Self {
+            initial_names,
+            anon_splits: Vec::new(),
+            split_counts: HashMap::new(),
+        }
+    }
+
+    fn record(
+        &mut self,
+        idx: usize,
+        prev_speaker: String,
+        prev_silhouette: f64,
+        target: &str,
+        matched_profile: bool,
+        duration: f64,
+    ) {
+        *self.split_counts.entry(prev_speaker.clone()).or_default() += 1;
+        if !matched_profile && !self.initial_names.contains(target) {
+            self.anon_splits
+                .push((idx, prev_speaker, prev_silhouette, duration));
+        }
+    }
+
+    /// Откатывает одиночные короткие (< 5 с) сплиты в новые анонимные карточки,
+    /// не подтверждённые ни профилем, ни вторым фрагментом того же голоса.
+    fn revert_singleton_orphans(
+        mut self,
+        utterances: &mut [Utterance],
+        infos: &mut Vec<SpeakerInfo>,
+        changed: &mut HashSet<String>,
+        reassigned: &mut usize,
+    ) {
+        if self.anon_splits.is_empty() {
+            return;
+        }
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for utterance in utterances.iter() {
+            *counts.entry(utterance.speaker.clone()).or_default() += 1;
+        }
+        let mut reverted_cards: HashSet<String> = HashSet::new();
+        for (idx, prev_speaker, prev_silhouette, duration) in self.anon_splits {
+            if duration >= MAX_ANON_ORPHAN_SPLIT_SEC {
+                continue;
+            }
+            let card = &utterances[idx].speaker;
+            if self.initial_names.contains(card)
+                || counts.get(card).copied() != Some(1)
+                || infos.iter().any(|info| info.name == *card && info.matched)
+            {
+                continue;
+            }
+            reverted_cards.insert(std::mem::replace(
+                &mut utterances[idx].speaker,
+                prev_speaker.clone(),
+            ));
+            utterances[idx].silhouette = prev_silhouette;
+            *reassigned = reassigned.saturating_sub(1);
+            if let Some(left) = self.split_counts.get_mut(&prev_speaker) {
+                *left = left.saturating_sub(1);
+                if *left == 0 {
+                    changed.remove(&prev_speaker);
+                }
+            }
+        }
+        if !reverted_cards.is_empty() {
+            infos.retain(|info| !reverted_cards.contains(&info.name));
+        }
+    }
+}
+
 fn run_with_embedder(
     utterances: &mut Vec<Utterance>,
     infos: &mut Vec<SpeakerInfo>,
@@ -618,6 +701,7 @@ fn run_with_embedder(
     mut embed: impl FnMut(&[f32]) -> Option<Vec<f64>>,
 ) {
     let mut names: HashSet<String> = infos.iter().map(|info| info.name.clone()).collect();
+    let mut tracker = VerificationSplitTracker::new(names.clone());
     let mut verified: HashMap<String, Vec<(Vec<f64>, f64)>> = HashMap::new();
     let mut changed = HashSet::new();
     let mut next_unknown = 1;
@@ -625,7 +709,7 @@ fn run_with_embedder(
     let mut chained = 0;
     let mut failures = 0;
     let mut last_on_channel: HashMap<usize, ChannelNeighbor> = HashMap::new();
-    for utterance in utterances.iter_mut() {
+    for (idx, utterance) in utterances.iter_mut().enumerate() {
         let Some(channel) = utterance
             .channel
             .and_then(|channel| usize::try_from(channel).ok())
@@ -648,7 +732,9 @@ fn run_with_embedder(
             continue;
         };
         let inherited = if verify_card {
-            if verify_matched_card(
+            let prev_speaker = utterance.speaker.clone();
+            let prev_silhouette = utterance.silhouette;
+            if let Some(matched_profile) = verify_matched_card(
                 utterance,
                 infos,
                 &mut names,
@@ -660,6 +746,14 @@ fn run_with_embedder(
                 profiles,
             ) {
                 reassigned += 1;
+                tracker.record(
+                    idx,
+                    prev_speaker,
+                    prev_silhouette,
+                    &utterance.speaker,
+                    matched_profile,
+                    duration,
+                );
             }
             false
         } else {
@@ -697,6 +791,7 @@ fn run_with_embedder(
             },
         );
     }
+    tracker.revert_singleton_orphans(utterances, infos, &mut changed, &mut reassigned);
     let adopted = adopt_short_between_matched_neighbors(utterances, infos, &changed);
     update_verified_cards(
         infos,
@@ -1816,5 +1911,112 @@ mod tests {
             .iter()
             .find(|i| i.name == "Собеседник 1")
             .is_some_and(|i| !i.matched && i.embedding.is_none()));
+    }
+
+    #[test]
+    fn single_short_unmatched_split_reverts_to_matched_card() {
+        let profiles = vec![axis_profile("A", 1.0, 0)];
+        let a_vec = axis_vec(1.0, 0);
+        let outlier = axis_vec(0.0, 1);
+
+        let mut u0 = utterance(0.0, 4.0, "A");
+        u0.channel = Some(0);
+        let mut u1 = utterance(9.0, 11.5, "A");
+        u1.channel = Some(0);
+        u1.silhouette = 0.25;
+        let mut u2 = utterance(17.0, 21.0, "A");
+        u2.channel = Some(0);
+        let mut utterances = vec![u0, u1, u2];
+
+        let mut card_a = info("A", true, a_vec.clone());
+        card_a.channel = Some(0);
+        let mut infos = vec![card_a];
+
+        let mut samples = vec![0.2f32; 16000 * 22];
+        samples[16000 * 9..16000 * 12].fill(-0.2);
+        let channels = HashMap::from([(0usize, samples)]);
+        let views: HashMap<usize, &[f32]> = channels
+            .iter()
+            .map(|(ch, buf)| (*ch, buf.as_slice()))
+            .collect();
+        let no_vad = HashMap::new();
+        run_with_embedder(
+            &mut utterances,
+            &mut infos,
+            &channels,
+            VerificationInput {
+                samples: &views,
+                vad: &no_vad,
+                segmentations: &HashMap::new(),
+                echo: None,
+            },
+            &profiles,
+            move |chunk| {
+                if chunk[0] < 0.0 {
+                    Some(outlier.clone())
+                } else {
+                    Some(a_vec.clone())
+                }
+            },
+        );
+
+        assert_eq!(infos.len(), 1);
+        assert!(infos[0].matched && infos[0].name == "A");
+        assert_eq!(utterances.len(), 3);
+        assert!(utterances.iter().all(|u| u.speaker == "A"));
+        assert_eq!(utterances[1].silhouette, 0.25);
+    }
+
+    #[test]
+    fn repeated_unmatched_splits_keep_new_anonymous_card() {
+        let profiles = vec![axis_profile("A", 1.0, 0)];
+        let a_vec = axis_vec(1.0, 0);
+        let guest = axis_vec(0.0, 1);
+
+        let mut u0 = utterance(0.0, 4.0, "A");
+        u0.channel = Some(0);
+        let mut u1 = utterance(9.0, 11.5, "A");
+        u1.channel = Some(0);
+        let mut u2 = utterance(17.0, 19.5, "A");
+        u2.channel = Some(0);
+        let mut utterances = vec![u0, u1, u2];
+
+        let mut card_a = info("A", true, a_vec.clone());
+        card_a.channel = Some(0);
+        let mut infos = vec![card_a];
+
+        let mut samples = vec![0.2f32; 16000 * 20];
+        samples[16000 * 9..16000 * 20].fill(-0.2);
+        let channels = HashMap::from([(0usize, samples)]);
+        let views: HashMap<usize, &[f32]> = channels
+            .iter()
+            .map(|(ch, buf)| (*ch, buf.as_slice()))
+            .collect();
+        let no_vad = HashMap::new();
+        run_with_embedder(
+            &mut utterances,
+            &mut infos,
+            &channels,
+            VerificationInput {
+                samples: &views,
+                vad: &no_vad,
+                segmentations: &HashMap::new(),
+                echo: None,
+            },
+            &profiles,
+            move |chunk| {
+                if chunk[0] < 0.0 {
+                    Some(guest.clone())
+                } else {
+                    Some(a_vec.clone())
+                }
+            },
+        );
+
+        assert_eq!(infos.len(), 2);
+        assert_eq!(utterances.len(), 3);
+        assert_eq!(utterances[0].speaker, "A");
+        assert_eq!(utterances[1].speaker, "Собеседник 1");
+        assert_eq!(utterances[2].speaker, "Собеседник 1");
     }
 }

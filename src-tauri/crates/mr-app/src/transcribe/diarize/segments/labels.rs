@@ -135,6 +135,12 @@ pub(in crate::transcribe::diarize) fn promote_unmatched_utterances(
             by_existing.entry(label).or_default().push(index);
         }
     }
+    let existing_intervals: Vec<(f64, f64)> = by_existing
+        .values()
+        .flatten()
+        .map(|&index| (units[index].start, units[index].end))
+        .collect();
+    let existing_speech = support.duration(&existing_intervals);
     let existing: Vec<(usize, Vec<f64>)> = by_existing
         .into_iter()
         .map(|(label, mut members)| {
@@ -230,9 +236,17 @@ pub(in crate::transcribe::diarize) fn promote_unmatched_utterances(
             clusters.push((indices, clean, centroid));
         }
     }
+    let total_speech = existing_speech + clusters.iter().map(|(_, clean, _)| *clean).sum::<f64>();
     let mut used: HashSet<usize> = label_of.values().copied().collect();
     let mut promoted = Vec::new();
-    for (indices, _, _) in clusters {
+    for (indices, clean, _) in clusters {
+        // Согласуем с coverage::reject_small_clusters: одиночные < 2 с обрывки
+        // (< 3 % длинной речи) — шумовые хвосты, их наследует ближайший сосед.
+        if clean < super::super::coverage::MIN_CLUSTER_SEC
+            && clean < total_speech * super::super::coverage::MIN_CLUSTER_SHARE
+        {
+            continue;
+        }
         if max_speakers > 0 && used.len() >= max_speakers {
             break;
         }
