@@ -12,7 +12,7 @@
 | Модель | Лицензия | Источник |
 |--------|----------|----------|
 | Silero VAD v6.3 | MIT | https://github.com/snakers4/silero-vad |
-| GigaAM-v3 e2e RNNT (int8, ONNX) | MIT | https://github.com/salute-developers/GigaAM , конвертация https://huggingface.co/istupakov/gigaam-v3-onnx |
+| GigaAM-v4 e2e RNNT (int8, ONNX) | MIT | https://huggingface.co/ai-sage/GigaAM-v4 , переквантованная сборка https://huggingface.co/guest363/gigaam-v4-e2e-rnnt-int8-onnx |
 | GigaAM-v3 e2e CTC (int8, ONNX) | MIT | https://github.com/salute-developers/GigaAM , конвертация https://huggingface.co/istupakov/gigaam-v3-onnx |
 | PyAnnote Segmentation 3.0 (ONNX) | MIT | https://github.com/pyannote/pyannote-audio , конвертация https://huggingface.co/onnx-community/pyannote-segmentation-3.0 |
 | Whisper large-v3-turbo (int8, ONNX) | MIT (базовая модель OpenAI) | https://github.com/openai/whisper , конвертация https://huggingface.co/onnx-community/whisper-large-v3-turbo |

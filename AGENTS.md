@@ -4,7 +4,7 @@
 (Linux PipeWire/PulseAudio, macOS CoreAudio + ScreenCaptureKit, Windows WASAPI loopback).
 Микрофон и система пишутся раздельно, в том числе при выводе на колонки; акустическое эхо
 подавляется VAD-гейтом и дедупликацией, цифровые дубли сводятся к одному исходному каналу.
-Стек: Rust + Tauri v2 + ONNX Runtime. Модели: GigaAM-v3 e2e RNNT int8, Whisper turbo,
+Стек: Rust + Tauri v2 + ONNX Runtime. Модели: GigaAM-v4 e2e RNNT int8, Whisper turbo,
 Silero VAD v6, PyAnnote 3.0, ERes2NetV2 192-dim — всё локально, без облаков.
 
 Это карта проекта, а не мануал: правила — `docs/ai/code-style.md`, процесс —

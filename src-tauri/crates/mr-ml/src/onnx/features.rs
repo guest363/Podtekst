@@ -374,6 +374,12 @@ pub const GIGAAM_FRONTEND: FrontendParams = FrontendParams {
     kaldi_exact: false,
 };
 
+/// Контракт `ai-sage/GigaAM-v4`: 64 HTK-mel, `center=false`, без preemphasis.
+pub const GIGAAM_V4_FRONTEND: FrontendParams = FrontendParams {
+    preemphasis: 0.0,
+    ..GIGAAM_FRONTEND
+};
+
 pub const WESPEAKER_FRONTEND: FrontendParams = FrontendParams {
     win_length: 400,
     fft_size: 512,
@@ -670,7 +676,7 @@ pub fn ensure_mel_width(mel: &[Vec<f32>], width: usize) -> Result<(), String> {
     }
 }
 
-pub fn nemo_mel(samples: &[f32]) -> Vec<Vec<f32>> {
+fn peak_normalized_mel(samples: &[f32], params: FrontendParams) -> Vec<Vec<f32>> {
     const NOISE_FLOOR: f32 = 0.002;
     const TARGET_PEAK: f32 = 0.9;
     let peak = samples.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
@@ -680,10 +686,18 @@ pub fn nemo_mel(samples: &[f32]) -> Vec<Vec<f32>> {
             .iter()
             .map(|&x| (x * scale).clamp(-1.0, 1.0))
             .collect();
-        log_mel_frames(&norm, GIGAAM_FRONTEND)
+        log_mel_frames(&norm, params)
     } else {
-        log_mel_frames(samples, GIGAAM_FRONTEND)
+        log_mel_frames(samples, params)
     }
+}
+
+pub fn nemo_mel(samples: &[f32]) -> Vec<Vec<f32>> {
+    peak_normalized_mel(samples, GIGAAM_FRONTEND)
+}
+
+pub fn nemo_mel_v4(samples: &[f32]) -> Vec<Vec<f32>> {
+    peak_normalized_mel(samples, GIGAAM_V4_FRONTEND)
 }
 
 /// WeSpeaker/pyannote fbank [frames × 80] + глобальная CMN (минус среднее по utterance),

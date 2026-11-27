@@ -31,14 +31,14 @@ impl AsrEngine {
 
     pub(super) fn model_id(self) -> &'static str {
         match self {
-            Self::Gigaam => "gigaam-v3-rnnt-int8",
+            Self::Gigaam => "gigaam-v4-rnnt-int8",
             Self::Whisper => "whisper-large-v3-turbo-q",
         }
     }
 
     pub(super) fn display_name(self) -> &'static str {
         match self {
-            Self::Gigaam => "GigaAM-v3 (русский язык)",
+            Self::Gigaam => "GigaAM-v4 (русский язык)",
             Self::Whisper => "Whisper large-v3-turbo (30+ языков)",
         }
     }
@@ -52,11 +52,15 @@ impl AsrEngine {
 
     /// Файл-маркер установки: по нему выбор движка не требует загрузки весов.
     pub(super) fn installed(self) -> bool {
-        let (dir, marker) = match self {
-            Self::Gigaam => (GIGAAM_DIR, "gigaam_enc_q.onnx"),
-            Self::Whisper => (WHISPER_DIR, "whisper_enc_q.onnx"),
+        let dir = match self {
+            Self::Gigaam => {
+                let d = models_root().join(GIGAAM_DIR);
+                return d.join("rnnt_encoder.onnx").is_file()
+                    || d.join("gigaam_enc_q.onnx").is_file();
+            }
+            Self::Whisper => WHISPER_DIR,
         };
-        models_root().join(dir).join(marker).is_file()
+        models_root().join(dir).join("whisper_enc_q.onnx").is_file()
     }
 
     pub(super) fn missing_error(self) -> String {

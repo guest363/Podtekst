@@ -27,7 +27,10 @@ fn models_dir() -> Option<PathBuf> {
             "Silero VAD" => vad_model_file(&p).is_none(),
             "PyAnnote segmentation" => segmentation_model_file(&p).is_none(),
             "ERes2NetV2" => embedding_model_file(&p).is_none(),
-            _ => model_file(&p, "gigaam_enc_q.onnx").is_none(),
+            _ => {
+                model_file(&p, "rnnt_encoder.onnx").is_none()
+                    && model_file(&p, "gigaam_enc_q.onnx").is_none()
+            }
         })
         .collect();
         if !missing.is_empty() {
@@ -204,7 +207,9 @@ fn encoder_io_contract() {
         eprintln!("SKIP: нет моделей");
         return;
     };
-    let Some(enc_path) = model_file(&dir, "gigaam_enc_q.onnx") else {
+    let Some(enc_path) =
+        model_file(&dir, "rnnt_encoder.onnx").or_else(|| model_file(&dir, "gigaam_enc_q.onnx"))
+    else {
         eprintln!("SKIP: нет энкодера");
         return;
     };
@@ -225,11 +230,19 @@ fn encoder_io_contract() {
         i64_in.insert(ln, (vec![1i64], vec![t as i64]));
     }
     let out = enc.run_mixed(f32_in, i64_in).expect("encoder run");
-    let (shape, data) = out.get("encoded").expect("выход encoded").clone();
-    println!("enc out shape: {shape:?}");
-    assert_eq!(shape.len(), 3);
-    assert!(shape.contains(&768), "нет dim 768 в {shape:?}");
-    assert!(data.iter().all(|x| x.is_finite()));
+    if enc.output_names.iter().any(|n| n == "head_outputs") {
+        let (shape, data) = out.get("head_outputs").expect("выход head_outputs").clone();
+        println!("enc out shape: {shape:?}");
+        assert_eq!(shape.len(), 4);
+        assert_eq!(shape[3], 320, "нет dim 320 в {shape:?}");
+        assert!(data.iter().all(|x| x.is_finite()));
+    } else {
+        let (shape, data) = out.get("encoded").expect("выход encoded").clone();
+        println!("enc out shape: {shape:?}");
+        assert_eq!(shape.len(), 3);
+        assert!(shape.contains(&768), "нет dim 768 в {shape:?}");
+        assert!(data.iter().all(|x| x.is_finite()));
+    }
 }
 
 #[test]
@@ -272,13 +285,18 @@ fn gigaam_transcribes_real_russian_speech() {
         eprintln!("SKIP: нет моделей");
         return;
     };
-    let need = [
+    let has_v4 = ["rnnt_encoder.onnx", "rnnt_advance.onnx", "gigaam_vocab.txt"]
+        .iter()
+        .all(|f| model_file(&dir, f).is_some());
+    let has_v3 = [
         "gigaam_enc_q.onnx",
         "gigaam_dec_q.onnx",
         "gigaam_joint_q.onnx",
         "gigaam_vocab.txt",
-    ];
-    if need.iter().any(|f| model_file(&dir, f).is_none()) {
+    ]
+    .iter()
+    .all(|f| model_file(&dir, f).is_some());
+    if !has_v4 && !has_v3 {
         eprintln!("SKIP: нет файлов GigaAM");
         return;
     }

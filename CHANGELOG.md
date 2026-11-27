@@ -3,6 +3,12 @@
 Все заметные изменения проекта. Формат - [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии - [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.2.0] - 2026-11-27
+
+### Обновлено
+
+* **Распознавание русской речи GigaAM-v4 (Zapformer, INT8)**: основная модель переведена с `GigaAM-v3` на собственную переквантованную ONNX INT8-сборку [`guest363/gigaam-v4-e2e-rnnt-int8-onnx`](https://huggingface.co/guest363/gigaam-v4-e2e-rnnt-int8-onnx) (на базе [`ai-sage/GigaAM-v4`](https://huggingface.co/ai-sage/GigaAM-v4), single-head `e2e` + `QInt8` per-tensor + пред-сфьюженный граф ONNX Runtime). На тестовых наборах WER снизился на 31% на чистой русской речи (`fleurs-ru`) и на 51% на дальнем микрофоне и шуме (`golos-farfield`) при сохранении высокой скорости на CPU и обратной совместимости с установленными весами `v3`.
+
 ## [1.1.2] - 2026-11-26
 
 ### Исправлено

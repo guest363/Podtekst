@@ -86,7 +86,12 @@ pub(super) fn run(
                 blank_penalty = blank_penalty;
                 "ev=asr.blank_penalty"
             );
-            let mel = use_gigaam.then(|| mr_ml::onnx::features::nemo_mel(chunk));
+            let mel = if use_gigaam {
+                let g = models.gigaam.as_ref().ok_or("нет GigaAM-модели")?;
+                Some(g.compute_mel(chunk))
+            } else {
+                None
+            };
             let mel_frames = mel.as_ref().map(|m| m.len()).unwrap_or(0);
             if log::log_enabled!(target: "asr", log::Level::Debug) {
                 let (mel_min, mel_max, mel_nan) =
@@ -122,7 +127,7 @@ pub(super) fn run(
                         log::error!(
                             target: "asr",
                             i = seg_index,
-                            model = "gigaam-v3-rnnt-int8",
+                            model = "gigaam-v4-rnnt-int8",
                             mel_frames = mel_frames,
                             error = error;
                             "ev=asr.infer_error"

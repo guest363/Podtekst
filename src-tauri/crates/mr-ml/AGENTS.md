@@ -18,7 +18,7 @@
 - `src/onnx/accel/{mod,platform}.rs` - однократный preflight ускорителей и библиотек (`DXGI` + `LoadLibraryW` на Windows, `libcuda.so.1` + CUDA 13 `.so` через `dlopen` на Linux, `CoreML::is_available` на macOS, `libneuralnetworks.so` API 29+ на Android), выбор адаптера и лимит VRAM для CUDA.
 - `src/onnx/session.rs` - `OrtSession` с профилями `SessionProfile`, по-сессионной проверкой EP (`memory_pattern = false` для DirectML, `Heuristic` + `memory_limit` для CUDA), синтетическим `probe` и безопасным откатом на CPU.
 - `src/onnx/vad.rs` - детектор речи Silero VAD v6.3 с сохранением скрытого состояния (state) между окнами 32 мс и pre-roll 64 мс.
-- `src/onnx/rnnt.rs` - акустическая модель GigaAM-v3 e2e RNNT (энкодер, предиктор, джойнер). Декодер и джойнер работают в один поток для исключения накладных расходов синхронизации.
+- `src/onnx/rnnt.rs` - акустическая модель GigaAM-v4 e2e RNNT (Zapformer + `rnnt_advance`, с обратной совместимостью с GigaAM-v3).
 - `src/onnx/whisper.rs` - мультиязычный ASR Whisper large-v3-turbo.
 - `src/onnx/embed.rs` - модель ERes2NetV2 (3D-Speaker) для извлечения 192-мерных отпечатков; батчевый инференс до 8 окон одинаковой длины без паддинга и warmup сессии при загрузке.
 - `src/onnx/segmentation.rs` - PyAnnote 3.0 Powerset: окна 10 с с шагом 2 с, VAD-гейт тишины, батчинг при динамической оси, маски перекрытий и локальные метки спикеров.

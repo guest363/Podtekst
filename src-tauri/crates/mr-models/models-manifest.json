@@ -1,6 +1,6 @@
 {
   "manifest_version": 2,
-  "updated_at": "2026-11-25T00:00:00",
+  "updated_at": "2026-11-27T00:00:00",
   "models": [
     {
       "id": "vad-silero-v6",
@@ -31,48 +31,41 @@
     },
     {
       "id": "asr-gigaam-v3-rnnt-int8",
-      "title": "GigaAM-v3 e2e RNNT int8 (русский язык, SOTA)",
-      "version": "3.1.0",
+      "title": "GigaAM-v4 e2e RNNT int8 (русский язык, SOTA)",
+      "version": "4.0.0",
       "order": 2,
       "upstream": {
         "kind": "hf",
-        "repo": "istupakov/gigaam-v3-onnx",
-        "revision": "322c3b29492673eb7d0b434bfa9dfb8653e34d02",
-        "version": "3.1.0"
+        "repo": "guest363/gigaam-v4-e2e-rnnt-int8-onnx",
+        "revision": "37fc1df801b6fb5630af8368ebe80b3ff8e9fab1",
+        "version": "4.0.0"
       },
       "files": [
         {
-          "filename": "gigaam_enc_q.onnx",
-          "url_hf": "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/322c3b29492673eb7d0b434bfa9dfb8653e34d02/v3_e2e_rnnt_encoder.int8.onnx",
-          "size_bytes": 224570477,
-          "sha256": "4e0e076a6076cd110277e529b8ac8f32cd5297f7fbebad5341ae8ddb7d00817b",
+          "filename": "rnnt_encoder.onnx",
+          "url_hf": "https://huggingface.co/guest363/gigaam-v4-e2e-rnnt-int8-onnx/resolve/37fc1df801b6fb5630af8368ebe80b3ff8e9fab1/rnnt_encoder.onnx",
+          "size_bytes": 240507216,
+          "sha256": "6c975ed5909e6ccb97263f163ee7f67386e2b6ff26f27682e131391a904ac5fe",
           "optional": false
         },
         {
-          "filename": "gigaam_dec_q.onnx",
-          "url_hf": "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/322c3b29492673eb7d0b434bfa9dfb8653e34d02/v3_e2e_rnnt_decoder.int8.onnx",
-          "size_bytes": 1159170,
-          "sha256": "89014e134865615b91e037157e46e389b1271e6072460efc010ea08e61e23146",
-          "optional": false
-        },
-        {
-          "filename": "gigaam_joint_q.onnx",
-          "url_hf": "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/322c3b29492673eb7d0b434bfa9dfb8653e34d02/v3_e2e_rnnt_joint.int8.onnx",
-          "size_bytes": 687791,
-          "sha256": "ade116563dbf66e503b0994efab6b5861412743e52bf31c39fc3fffa3783d5d1",
+          "filename": "rnnt_advance.onnx",
+          "url_hf": "https://huggingface.co/guest363/gigaam-v4-e2e-rnnt-int8-onnx/resolve/37fc1df801b6fb5630af8368ebe80b3ff8e9fab1/rnnt_advance.onnx",
+          "size_bytes": 6371247,
+          "sha256": "f2662f86c17474ee5d382ee5e039fa88a119aff1ffdd49612494d64eae8950ec",
           "optional": false
         },
         {
           "filename": "gigaam_vocab.txt",
-          "url_hf": "https://huggingface.co/istupakov/gigaam-v3-onnx/resolve/322c3b29492673eb7d0b434bfa9dfb8653e34d02/v3_e2e_rnnt_vocab.txt",
-          "size_bytes": 13354,
-          "sha256": "39abae20e692998290c574e606f11a9edef2902a1995463fcff63d1490cf22b7",
+          "url_hf": "https://huggingface.co/guest363/gigaam-v4-e2e-rnnt-int8-onnx/resolve/37fc1df801b6fb5630af8368ebe80b3ff8e9fab1/gigaam_vocab.txt",
+          "size_bytes": 10995,
+          "sha256": "755106f2cb7fda211a5414717b31b7984e2965d3d14e610eef3c104cafc892ac",
           "optional": false
         }
       ],
       "embedding_space": null,
       "license": "MIT",
-      "description": "Основная модель: быстрое и точное распознавание русской речи на процессоре."
+      "description": "Основная модель (Zapformer): быстрое и точное распознавание русской речи на процессоре."
     },
     {
       "id": "asr-gigaam-v3-e2e-ctc-int8",

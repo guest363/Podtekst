@@ -436,9 +436,9 @@ mod resolve_tests {
         let model = dir.join("models").join("asr-gigaam-v3-rnnt-int8");
         std::fs::create_dir_all(&model).unwrap();
         for name in [
-            "gigaam_dec_q.onnx",
-            "gigaam_enc_q.onnx",
-            "gigaam_enc_q.onnx.part",
+            "rnnt_advance.onnx",
+            "rnnt_encoder.onnx",
+            "rnnt_encoder.onnx.part",
             "junk_enc.onnx",
         ] {
             std::fs::write(model.join(name), b"x").unwrap();
@@ -446,13 +446,13 @@ mod resolve_tests {
         let found = find_model_file("asr-gigaam-v3-rnnt-int8", ".onnx").expect("файл модели");
         assert_eq!(
             found.file_name().unwrap().to_string_lossy(),
-            "gigaam_enc_q.onnx",
+            "rnnt_encoder.onnx",
             "первый файл манифеста, а не мусор в каталоге"
         );
-        let decoder = find_model_file("asr-gigaam-v3-rnnt-int8", "dec").expect("декодер");
+        let decoder = find_model_file("asr-gigaam-v3-rnnt-int8", "adv").expect("декодер");
         assert_eq!(
             decoder.file_name().unwrap().to_string_lossy(),
-            "gigaam_dec_q.onnx"
+            "rnnt_advance.onnx"
         );
         restore(old, &dir);
     }
