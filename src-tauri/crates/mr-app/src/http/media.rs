@@ -337,6 +337,99 @@ pub(super) fn parse_byte_range(range_header: &str, file_size: u64) -> Option<(u6
     }
 }
 
+/// Браузерный `<audio>` надёжно играет только несжатый PCM WAV (8/16/24/32 бит);
+/// сжатые диктофонные кодеки (IMA ADPCM, µ-law и т.п.) и float WAV вызывают `onerror`.
+fn is_browser_pcm_wav(path: &Path) -> bool {
+    let mut head = [0u8; 4096];
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let n = std::io::Read::read(&mut f, &mut head).unwrap_or(0);
+    parse_wav_header(&head[..n])
+        .is_some_and(|info| info.audio_format == 1 && matches!(info.bits, 8 | 16 | 24 | 32))
+}
+
+/// Для не-PCM WAV один раз декодирует аудио в 16-битный PCM WAV в кэше:
+/// исходный файл остаётся нетронутым, а повторные `Range`-запросы отдаются с диска.
+fn playable_wav_path(src: &Path) -> std::path::PathBuf {
+    playable_wav_path_in(src, &crate::config::app_data_dir().join("audio_cache"))
+}
+
+fn playable_wav_path_in(src: &Path, cache_dir: &Path) -> std::path::PathBuf {
+    if is_browser_pcm_wav(src) {
+        return src.to_path_buf();
+    }
+    let meta = match std::fs::metadata(src) {
+        Ok(m) => m,
+        Err(_) => return src.to_path_buf(),
+    };
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(src.to_string_lossy().as_bytes());
+    h.update(meta.len().to_le_bytes());
+    h.update(mtime.to_le_bytes());
+    let key: String = h
+        .finalize()
+        .iter()
+        .take(16)
+        .map(|b| format!("{b:02x}"))
+        .collect();
+
+    let cache_path = cache_dir.join(format!("{key}.wav"));
+    if cache_path
+        .metadata()
+        .is_ok_and(|m| m.is_file() && m.len() > 44)
+    {
+        return cache_path;
+    }
+
+    let Ok(chans) = mr_audio::decode::decode_to_channels_16k_auto(src) else {
+        return src.to_path_buf();
+    };
+    let frames = chans.iter().map(|c| c.len()).max().unwrap_or(0);
+    if chans.is_empty() || frames == 0 || std::fs::create_dir_all(cache_dir).is_err() {
+        return src.to_path_buf();
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let part = cache_dir.join(format!(".{key}.{}.{nanos}.part", std::process::id()));
+    let spec = hound::WavSpec {
+        channels: chans.len() as u16,
+        sample_rate: 16_000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let write_res = (|| -> Result<(), hound::Error> {
+        let mut w = hound::WavWriter::create(&part, spec)?;
+        for f in 0..frames {
+            for ch in &chans {
+                let s = (ch.get(f).copied().unwrap_or(0.0).clamp(-1.0, 1.0) * 32767.0) as i16;
+                w.write_sample(s)?;
+            }
+        }
+        w.finalize()
+    })();
+    if write_res.is_err() {
+        let _ = std::fs::remove_file(&part);
+        return src.to_path_buf();
+    }
+    if std::fs::rename(&part, &cache_path).is_err() {
+        let _ = std::fs::remove_file(&part);
+        if !cache_path.is_file() {
+            return src.to_path_buf();
+        }
+    }
+    cache_path
+}
+
 pub(super) fn serve_audio_file(request: tiny_http::Request, url_path: &str) {
     let enc = url_path.strip_prefix("/audio/").unwrap_or("");
     let safe = safe_file_name(enc);
@@ -359,13 +452,18 @@ pub(super) fn serve_audio_file(request: tiny_http::Request, url_path: &str) {
         let _ = request.respond(resp);
         return;
     }
-    let size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
     let ctype = guess_media_type(&real);
+    let play_path = if ctype == "audio/wav" {
+        playable_wav_path(&real)
+    } else {
+        real
+    };
+    let size = std::fs::metadata(&play_path).map(|m| m.len()).unwrap_or(0);
     let range = header_value(&request, "Range").unwrap_or_default();
     if range.starts_with("bytes=") {
         if let Some((start, end)) = parse_byte_range(&range, size) {
             let len = end - start + 1;
-            let mut f = match std::fs::File::open(&real) {
+            let mut f = match std::fs::File::open(&play_path) {
                 Ok(f) => f,
                 Err(_) => {
                     let resp = tiny_http::Response::from_string("Read error").with_status_code(500);
@@ -406,7 +504,7 @@ pub(super) fn serve_audio_file(request: tiny_http::Request, url_path: &str) {
             return;
         }
     }
-    match std::fs::File::open(&real) {
+    match std::fs::File::open(&play_path) {
         Ok(f) => {
             // Потоковая отдача: файл не грузится в память целиком (важно для видео в гигабайты).
             // with_chunked_threshold(usize::MAX) сохраняет Content-Length вместо chunked-кодирования:
@@ -928,6 +1026,43 @@ mod tests {
             );
             assert!(build_wav_snippet(&mp3, 20.0, 21.0, None).is_none());
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn non_pcm_wav_is_transcoded_to_cached_pcm16_for_playback() {
+        let dir = std::env::temp_dir().join(format!("mr-play-wav-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let pcm_wav = dir.join("pcm.wav");
+        let samples = vec![0.25f32; 1600];
+        mr_audio::write_mono_wav(&pcm_wav, &samples, 16_000).unwrap();
+        assert!(is_browser_pcm_wav(&pcm_wav));
+        assert_eq!(playable_wav_path(&pcm_wav), pcm_wav);
+
+        // 32-bit IEEE float WAV (format_tag = 3): symphonia декодирует, но для <audio> конвертируем в PCM16.
+        let float_wav = dir.join("float.wav");
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16_000,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let mut w = hound::WavWriter::create(&float_wav, spec).unwrap();
+        for &s in &samples {
+            w.write_sample(s).unwrap();
+        }
+        w.finalize().unwrap();
+        assert!(!is_browser_pcm_wav(&float_wav));
+
+        let cache_dir = dir.join("audio_cache");
+        let cached = playable_wav_path_in(&float_wav, &cache_dir);
+        assert_ne!(cached, float_wav);
+        assert!(is_browser_pcm_wav(&cached));
+        // Повторный вызов возвращает тот же кэшированный файл.
+        assert_eq!(playable_wav_path_in(&float_wav, &cache_dir), cached);
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
